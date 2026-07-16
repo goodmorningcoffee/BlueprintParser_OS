@@ -313,6 +313,13 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     join(process.cwd(), "src/components/viewer/hitTest.ts"),
     "utf8",
   );
+  // [refactor jul16 P3.2 markup] The markup controller extraction moved ONE bbox call site, ONE
+  // handle call site, and ONE corner enumeration out of the overlay into tools/markup.ts; the
+  // totals below are pinned ACROSS both files so a lost/duplicated call site still fails.
+  const MARKUP_CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/markup.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
   const squish = (s: string): string => s.replace(/\s+/g, " ").trim();
 
@@ -328,11 +335,13 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     );
   });
 
-  it("pins helper call counts 2 withHoles / 2 polyline / 3 bbox / 3 handle", () => {
+  it("pins helper call counts 2 withHoles / 2 polyline / 2+1 bbox / 2+1 handle", () => {
     expect(count(AO, "pointInPolygonWithHoles(")).toBe(2); // double-click + single area loop
     expect(count(AO, "pointNearPolyline(")).toBe(2); // double-click + single line loop
-    expect(count(AO, "pointInNormalizedBbox(")).toBe(3); // double-click else + generic + markup
-    expect(count(AO, "pointInHandle(")).toBe(3); // vertices + pointer corners + markup corners
+    expect(count(AO, "pointInNormalizedBbox(")).toBe(2); // double-click else + generic bbox loop
+    expect(count(AO, "pointInHandle(")).toBe(2); // vertices + pointer corners
+    expect(count(MARKUP_CTRL, "pointInNormalizedBbox(")).toBe(1); // markup select (moved P3.2)
+    expect(count(MARKUP_CTRL, "pointInHandle(")).toBe(1); // markup corners (moved P3.2)
   });
 
   it("pins the old inline math ABSENT from the targeted branches", () => {
@@ -351,7 +360,8 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
   });
 
   it("pins the corner handle enumeration order tl -> tr -> bl -> br at both sites", () => {
-    expect(count(AO, "tl: { x: minX * width, y: minY * height },")).toBe(2);
+    expect(count(AO, "tl: { x: minX * width, y: minY * height },")).toBe(1); // pointer block
+    expect(count(MARKUP_CTRL, "tl: { x: minX * width, y: minY * height },")).toBe(1); // markup (moved P3.2)
   });
 
   it("pins exact helper call strings including scale-argument order (width, height)", () => {
@@ -360,9 +370,12 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     // the non-square Layer C witness (d) provides the behavior-level backstop.
     expect(count(AO, "pointInPolygonWithHoles(clickNorm, data.vertices, data.holes)")).toBe(2);
     expect(count(AO, "pointNearPolyline(pos, data.vertices, width, height)")).toBe(2);
-    expect(count(AO, "pointInNormalizedBbox(pos, ann.bbox, width, height)")).toBe(3);
-    expect(count(AO, "pointInHandle(pos, corner, HANDLE)")).toBe(2);
+    expect(count(AO, "pointInNormalizedBbox(pos, ann.bbox, width, height)")).toBe(2);
+    expect(count(AO, "pointInHandle(pos, corner, HANDLE)")).toBe(1);
     expect(count(AO, "pointInHandle(pos, { x: vx, y: vy }, HANDLE)")).toBe(1);
+    // The moved markup sites keep the same (width, height) scale-argument order.
+    expect(count(MARKUP_CTRL, "pointInNormalizedBbox(position, ann.bbox, width, height)")).toBe(1);
+    expect(count(MARKUP_CTRL, "pointInHandle(position, corner, HANDLE)")).toBe(1);
   });
 
   it("pins the distinct double-click (one else-if loop) vs single-click (three ordered loops) shape", () => {

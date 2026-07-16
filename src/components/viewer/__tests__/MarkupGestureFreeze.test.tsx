@@ -349,22 +349,34 @@ describe("markup gesture freeze (real overlay, production mousedown)", () => {
   });
 });
 
-describe("markup seam topology pins (pre-move: three legacy blocks live in the overlay)", () => {
+describe("markup seam topology pins (post-move: controller registered, blocks extracted)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
   );
+  const CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/markup.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
-  it("pins the three markup mousedown blocks present in the overlay", () => {
-    expect(count(AO, "// Markup mode: check corners for resize or label for delete on selected")).toBe(1);
-    expect(count(AO, "// Markup mode: check if clicking annotation to select")).toBe(1);
-    expect(count(AO, "// Empty Markup canvas: capture the exact base-mode generation for mouseup.")).toBe(1);
-    expect(count(AO, 'if (toolAtDown.mode !== "markup") return;')).toBe(1);
+  it("pins the markup blocks fully extracted from the overlay", () => {
+    expect(count(AO, "// Markup mode:")).toBe(0);
+    expect(count(AO, 'if (toolAtDown.mode !== "markup") return;')).toBe(0);
+    // The factory carries the three markup-proven capabilities exactly once.
+    expect(count(AO, "selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },")).toBe(1);
+    expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
+    // The pointer block's rich label logic (pencil + text measurement) stays in the overlay.
+    expect(count(AO, "// Pencil icon clicked — edit markup")).toBe(1);
+    expect(count(AO, "deleteSelected();")).toBe(1);
   });
 
-  it("pins the context factory not yet carrying the markup capabilities", () => {
-    expect(count(AO, "selection: {")).toBe(0);
-    expect(count(AO, "deferredDrawing: {")).toBe(0);
+  it("pins the controller as the sole home of the markup gesture", () => {
+    expect(count(CTRL, 'press.toolAtDown.activeTool === null && press.toolAtDown.mode === "markup"')).toBe(1);
+    expect(count(CTRL, "invalidateToolTailAuthority();")).toBe(1);
+    expect(count(CTRL, "selection.deleteSelected();")).toBe(1);
+    expect(count(CTRL, "deferredDrawing.start(position);")).toBe(1);
+    expect(count(CTRL, "event.stopPropagation();")).toBe(4);
+    // The claim itself is pinned BEHAVIORALLY in MarkupControllerFreeze.test.ts on every path.
   });
 });

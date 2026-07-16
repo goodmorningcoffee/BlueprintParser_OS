@@ -1,6 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import type { UseAnnotationsResult } from "@/queries/useAnnotations";
+import type { ClientAnnotation } from "@/types";
 import type { useYoloTagActions } from "@/queries/useYoloTags";
 import type { ParseFlowState } from "@/stores/parseFlowStore";
 import type { SessionState } from "@/stores/sessionStore";
@@ -75,7 +76,12 @@ export interface ToolMutationCapabilities {
  *   and must be decided there on correctness grounds (DR010 Q4 / PERF-1).
  * - mutations: addAnnotation/removeAnnotation/updateAnnotation/updateYoloTag are hook-returned and
  *   absent from the mousedown dependency array; wiring them eagerly would churn the sacred handler
- *   identity. RE-OPENS at markup (first addAnnotation prover) with a dep-neutral sourcing.
+ *   identity. [refactor jul16 P3.2 markup] Markup did NOT prove this field: its only mutation
+ *   need (deleteSelected) is a per-render composite whose definition stays in the overlay for the
+ *   pointer block, so it rides the selection capability instead (census: no raw mutation call in
+ *   the markup blocks). RE-OPENS at takeoffCount — the sole raw-mutation caller in the legacy
+ *   mousedown (its count-marker branch calls persistCreate, which is ALREADY in the 37-entry dep
+ *   array, so the wiring stays dep-neutral there).
  */
 export interface ToolContext {
   readonly press: ToolPressSnapshot;
@@ -89,6 +95,25 @@ export interface ToolContext {
   readonly stores: Readonly<ToolStoreCapabilities>;
   readonly mutations?: Readonly<ToolMutationCapabilities>;
   readonly canAdoptProjectLifecycle: () => boolean;
+  /**
+   * [refactor jul16 P3.2 markup] Capabilities PROVEN by the markup controller. Optional-typed
+   * (like cssScale) so synthetic contexts and pre-markup tests stay legal; AnnotationOverlay's
+   * factory always wires all three. Dep-neutral by construction: selectedId / pageAnnotations /
+   * startDeferredDrawing were already in the 37-entry mousedown dependency array; the three
+   * setters are stable useState setters; deleteSelected is the same per-render closure the legacy
+   * handler already captured (its definition stays in the overlay — the pointer block calls it).
+   */
+  readonly selection?: Readonly<{
+    selectedId: number | null;
+    setSelectedId: (id: number | null) => void;
+    setResizeCorner: (corner: string | null) => void;
+    setDragging: (dragging: boolean) => void;
+    deleteSelected: () => void;
+  }>;
+  readonly pageAnnotations?: readonly ClientAnnotation[];
+  readonly deferredDrawing?: Readonly<{
+    start: (pos: { x: number; y: number }, clearSelection?: boolean) => boolean;
+  }>;
 }
 
 export interface ToolController {

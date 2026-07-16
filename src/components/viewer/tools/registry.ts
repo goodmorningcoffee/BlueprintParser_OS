@@ -1,12 +1,14 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { calibrationController } from "./calibration";
+import { markupController } from "./markup";
 import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 
-// [refactor jul16 P3.2] Array order is RUNTIME PRIORITY (board §5: calibration first), which is
-// NOT the extraction chronology. First registration: calibration.
+// [refactor jul16 P3.2] Array order is RUNTIME PRIORITY (board §5: calibration FIRST, markup
+// LAST), which is NOT the extraction chronology (markup was extracted second). Every future
+// controller inserts BETWEEN calibration and markup — the tuple's tail slot belongs to markup.
 export const TOOLS = Object.freeze(
-  [calibrationController] as const,
+  [calibrationController, markupController] as const,
 ) satisfies readonly ToolController[];
 
 /**

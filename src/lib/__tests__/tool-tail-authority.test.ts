@@ -411,6 +411,9 @@ describe("AT2 one exact global tool-tail authority", () => {
       "src/components/viewer/SymbolSearchPanel.tsx:invalidateToolTailAuthority",
       "src/components/viewer/SymbolSearchPanel.tsx:ownsLatestToolOperation",
       "src/components/viewer/TakeoffPanel.tsx:invalidateToolTailAuthority",
+      // [refactor jul16 P3.2] The markup controller inherited the overlay's pre-dispatch
+      // invalidation for claimed markup-mode presses (pre-move AO:1957 semantics).
+      "src/components/viewer/tools/markup.ts:invalidateToolTailAuthority",
       "src/queries/useAnnotations.ts:invalidateToolTailAuthority",
       "src/stores/toolStore.ts:invalidateLatestToolOperation",
       "src/stores/toolStore.ts:invalidateToolTailAuthority",

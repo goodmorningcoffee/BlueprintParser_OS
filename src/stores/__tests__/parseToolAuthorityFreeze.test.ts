@@ -298,8 +298,13 @@ describe("later user tool intent revokes parse completion writes", () => {
     expect(compactPrefix).toContain(
       "constpress={toolAtDown,position:pos,publicId,pageNumber}asconst;",
     );
+    // [refactor jul16 P3.2 markup] The factory gained the markup-proven capabilities: selection
+    // (five handler-closure members), the memoized pageAnnotations, and the deferred-drawing
+    // starter — all dep-neutral (already in the 37-entry array, stable setters, or the same
+    // per-render deleteSelected closure the pointer block captures).
     expect(compactPrefix).toContain(
-      "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle,}))){return;}",
+      "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
+        "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing},}))){return;}",
     );
     expect(compactPrefix).not.toContain("cssScale");
     expect(compactPrefix).not.toContain("mutations");

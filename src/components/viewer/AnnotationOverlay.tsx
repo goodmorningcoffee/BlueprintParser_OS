@@ -1480,6 +1480,10 @@ export default memo(function AnnotationOverlay({
       // [refactor jul16 P3.2] Non-empty registry: wire the already-captured press eagerly and the
       // shared context lazily. Every identifier here is already in this callback's dependency
       // array or module scope, so the 37-entry array stays byte-identical (physics contract).
+      // The markup-proven capabilities (selection / pageAnnotations / deferredDrawing) are
+      // dep-neutral too: selectedId, pageAnnotations, and startDeferredDrawing are already in the
+      // dependency array; the setters are stable; deleteSelected is the same per-render closure
+      // this handler already captured for the pointer block's delete-x.
       const press = { toolAtDown, position: pos, publicId, pageNumber } as const;
       if (
         dispatchToolMouseDown(TOOLS, e, press, () => ({
@@ -1487,6 +1491,9 @@ export default memo(function AnnotationOverlay({
           page: { publicId, number: pageNumber, width, height },
           stores: TOOL_STORE_CAPABILITIES,
           canAdoptProjectLifecycle,
+          selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },
+          pageAnnotations,
+          deferredDrawing: { start: startDeferredDrawing },
         }))
       ) {
         return;
@@ -2278,54 +2285,10 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // (Drawing/picking mode handlers moved before the pointer block above)
-
-      // Markup mode: check corners for resize or label for delete on selected
-      if (selectedId !== null && toolAtDown.mode === "markup") {
-        const selAnn = pageAnnotations.find((a) => a.id === selectedId);
-        if (selAnn) {
-          const [minX, minY, maxX, maxY] = selAnn.bbox;
-          const corners = {
-            tl: { x: minX * width, y: minY * height },
-            tr: { x: maxX * width, y: minY * height },
-            bl: { x: minX * width, y: maxY * height },
-            br: { x: maxX * width, y: maxY * height },
-          };
-
-          for (const [key, corner] of Object.entries(corners)) {
-            if (pointInHandle(pos, corner, HANDLE)) {
-              e.stopPropagation();
-              setResizeCorner(key);
-              setDragging(true);
-              return;
-            }
-          }
-
-          const ax = minX * width;
-          const ay = minY * height;
-          if (pos.y >= ay - 18 && pos.y <= ay && pos.x >= ax) {
-            e.stopPropagation();
-            deleteSelected();
-            return;
-          }
-        }
-      }
-
-      // Markup mode: check if clicking annotation to select
-      if (toolAtDown.mode === "markup") {
-        for (const ann of pageAnnotations) {
-          if (pointInNormalizedBbox(pos, ann.bbox, width, height)) {
-            e.stopPropagation();
-            setSelectedId(ann.id);
-            return;
-          }
-        }
-      }
-
-      // Empty Markup canvas: capture the exact base-mode generation for mouseup.
-      if (toolAtDown.mode !== "markup") return;
-      e.stopPropagation();
-      startDeferredDrawing(pos);
+      // [refactor jul16 P3.2] The markup mousedown blocks (selected corner-resize + label-bar
+      // delete, annotation select, empty-canvas deferred-draw start) live in tools/markup.ts now,
+      // claimed at the registry seam. Presses reaching this tail are mode "move"/non-markup
+      // fallthroughs, which were always inert here.
     },
     [addBucketFillBarrier, addPolygonVertex, canAdoptProjectLifecycle, cancelDeferredDrawing, getPos, height,
       isKeynoteYoloPicking, multiSelect, pageAnnotations, pageKeynotes, pageNumber, persistCreate,

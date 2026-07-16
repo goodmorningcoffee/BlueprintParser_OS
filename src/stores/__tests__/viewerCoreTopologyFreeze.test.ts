@@ -728,11 +728,11 @@ describe("P2.3 V2 split useNavigation topology", () => {
       TOOL_OWNER,
       new Set(["mode"]),
     );
+    // [refactor jul16 P3.2 markup] Three toolAtDown.mode reads left with the markup mousedown
+    // blocks (now behind press.toolAtDown in tools/markup.ts — same snapshot object, zero new
+    // store reads); the overlay keeps one subscribed selector plus four snapshot aliases.
     expect(modeAccesses).toEqual([
       { kind: "selector", member: "mode" },
-      { kind: "getState-alias", member: "mode" },
-      { kind: "getState-alias", member: "mode" },
-      { kind: "getState-alias", member: "mode" },
       { kind: "getState-alias", member: "mode" },
       { kind: "getState-alias", member: "mode" },
       { kind: "getState-alias", member: "mode" },

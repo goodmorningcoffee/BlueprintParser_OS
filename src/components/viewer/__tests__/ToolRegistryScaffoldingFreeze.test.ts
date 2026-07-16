@@ -161,11 +161,15 @@ describe("P3.1 tool registry scaffolding", () => {
 
   // [refactor jul16 P3.2] Rewritten non-vacuously at first registration (was the frozen-empty
   // pin). The length-0 short-circuit keeps executable coverage via a synthetic empty registry.
-  it("exports one exact frozen registry with calibration registered at runtime priority first", () => {
-    expect(TOOLS).toHaveLength(1);
+  // Second registration: markup owns the LAST runtime slot (board §5 priority — NOT extraction
+  // chronology); future controllers insert BETWEEN calibration and markup.
+  it("exports one exact frozen registry: calibration first, markup last", () => {
+    expect(TOOLS).toHaveLength(2);
     expect(Object.isFrozen(TOOLS)).toBe(true);
     expect(TOOLS[0].kind).toBe("calibration");
+    expect(TOOLS[TOOLS.length - 1].kind).toBe("markup");
     expect(Object.isFrozen(TOOLS[0])).toBe(true);
+    expect(Object.isFrozen(TOOLS[1])).toBe(true);
   });
 
   it("keeps the allocation-free length-0 short-circuit via a synthetic empty registry", () => {
@@ -173,8 +177,10 @@ describe("P3.1 tool registry scaffolding", () => {
   });
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
+    // [refactor jul16 P3.2] mode "move" keeps this press non-eligible for BOTH registered
+    // controllers (calibration needs its activation; markup needs mode "markup").
     const nullPress = Object.freeze({
-      toolAtDown: { activeTool: null },
+      toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;
     const createContext = vi.fn(() => context);
     expect(dispatchToolMouseDown(TOOLS, event, nullPress, createContext)).toBe(
