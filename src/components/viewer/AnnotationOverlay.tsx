@@ -22,7 +22,6 @@ import {
 } from "@/queries/useYoloTags";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import {
-  advanceCalibrationGesture,
   publishSettledPolygonReset,
   publishSettledSymbolSearchDeactivate,
   useToolStore,
@@ -74,6 +73,7 @@ import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
 import { persistFetch, canPersist , apiErrorMessage } from "@/lib/client-persist";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
+import { TOOL_STORE_CAPABILITIES } from "./tools/capabilities";
 import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
@@ -1477,33 +1477,18 @@ export default memo(function AnnotationOverlay({
       const toolAtDown = useToolStore.getState();
       const activeTool = toolAtDown.activeTool;
       const pos = getPos(e);
-      if (dispatchToolMouseDown(TOOLS, e)) return;
-
-      // Scale calibration mode
-      if (activeTool?.kind === "calibration") {
-        if (toolAtDown.calibrationMode === "point1") {
-          e.stopPropagation();
-          const normX = pos.x / width;
-          const normY = pos.y / height;
-          advanceCalibrationGesture(
-            activeTool,
-            "point1",
-            "p1",
-            { x: normX, y: normY },
-            "point2",
-          );
-        } else if (toolAtDown.calibrationMode === "point2") {
-          e.stopPropagation();
-          const normX = pos.x / width;
-          const normY = pos.y / height;
-          advanceCalibrationGesture(
-            activeTool,
-            "point2",
-            "p2",
-            { x: normX, y: normY },
-            "input",
-          );
-        }
+      // [refactor jul16 P3.2] Non-empty registry: wire the already-captured press eagerly and the
+      // shared context lazily. Every identifier here is already in this callback's dependency
+      // array or module scope, so the 37-entry array stays byte-identical (physics contract).
+      const press = { toolAtDown, position: pos, publicId, pageNumber } as const;
+      if (
+        dispatchToolMouseDown(TOOLS, e, press, () => ({
+          press,
+          page: { publicId, number: pageNumber, width, height },
+          stores: TOOL_STORE_CAPABILITIES,
+          canAdoptProjectLifecycle,
+        }))
+      ) {
         return;
       }
 

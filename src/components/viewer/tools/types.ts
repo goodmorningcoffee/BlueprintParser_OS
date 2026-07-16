@@ -9,8 +9,9 @@ import type { UiState } from "@/stores/uiStore";
 import type { ViewerCoreState } from "@/stores/viewerCoreStore";
 
 // [refactor jul15 P3.1] Controller identity is deliberately separate from ActiveTool.kind.
-// The activation union has eight owners; takeoff and base interaction expand into 13 ordered
-// dispatch units as their legacy branches move behind this strangler boundary.
+// The activation union has eight owners; takeoff, the parseRect keynote-pick split, and base
+// interaction expand into 13 ordered dispatch units as their legacy branches move behind this
+// strangler boundary.
 export type ToolControllerKind =
   | "calibration"
   | "split"
@@ -63,9 +64,18 @@ export interface ToolMutationCapabilities {
 }
 
 /**
- * Shared controller boundary. It is typed in P3.1 but intentionally not materialized until the
- * first controller lands, so the empty registry cannot add cssScale or mutation dependencies to
- * AnnotationOverlay's current mousedown callback.
+ * Shared controller boundary, materialized since P3.2 (calibration) under the canonical
+ * proven-capabilities rule: a field is wired only when a concrete extraction proves it.
+ *
+ * [refactor jul16 P3.2] cssScale and mutations are OPTIONAL and deliberately unwired:
+ * - cssScale: no mousedown path reads it file-wide; closing the factory over the prop would add
+ *   a dependency to AnnotationOverlay's mousedown callback (physics contract pins the 37-entry
+ *   array byte-identical). The sourcing decision (prop-in-deps / stale-closure / ref) RE-OPENS at
+ *   the first controller whose method READS context.cssScale — expected count/markup drawPreview —
+ *   and must be decided there on correctness grounds (DR010 Q4 / PERF-1).
+ * - mutations: addAnnotation/removeAnnotation/updateAnnotation/updateYoloTag are hook-returned and
+ *   absent from the mousedown dependency array; wiring them eagerly would churn the sacred handler
+ *   identity. RE-OPENS at markup (first addAnnotation prover) with a dep-neutral sourcing.
  */
 export interface ToolContext {
   readonly press: ToolPressSnapshot;
@@ -75,9 +85,9 @@ export interface ToolContext {
     width: number;
     height: number;
   }>;
-  readonly cssScale: number;
+  readonly cssScale?: number;
   readonly stores: Readonly<ToolStoreCapabilities>;
-  readonly mutations: Readonly<ToolMutationCapabilities>;
+  readonly mutations?: Readonly<ToolMutationCapabilities>;
   readonly canAdoptProjectLifecycle: () => boolean;
 }
 

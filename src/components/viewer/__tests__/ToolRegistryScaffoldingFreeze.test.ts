@@ -159,11 +159,28 @@ describe("P3.1 tool registry scaffolding", () => {
     expect(createContext).toHaveBeenCalledTimes(1);
   });
 
-  it("exports one exact frozen empty registry with dependency-free fallthrough", () => {
-    expect(TOOLS).toHaveLength(0);
+  // [refactor jul16 P3.2] Rewritten non-vacuously at first registration (was the frozen-empty
+  // pin). The length-0 short-circuit keeps executable coverage via a synthetic empty registry.
+  it("exports one exact frozen registry with calibration registered at runtime priority first", () => {
+    expect(TOOLS).toHaveLength(1);
     expect(Object.isFrozen(TOOLS)).toBe(true);
-    expect(dispatchToolMouseDown(TOOLS, event)).toBe(false);
-    expect(TOOLS).toHaveLength(0);
+    expect(TOOLS[0].kind).toBe("calibration");
+    expect(Object.isFrozen(TOOLS[0])).toBe(true);
+  });
+
+  it("keeps the allocation-free length-0 short-circuit via a synthetic empty registry", () => {
+    expect(dispatchToolMouseDown(Object.freeze([] as const), event)).toBe(false);
+  });
+
+  it("real-registry dispatch with a non-eligible press falls through without building context", () => {
+    const nullPress = Object.freeze({
+      toolAtDown: { activeTool: null },
+    }) as unknown as ToolPressSnapshot;
+    const createContext = vi.fn(() => context);
+    expect(dispatchToolMouseDown(TOOLS, event, nullPress, createContext)).toBe(
+      false,
+    );
+    expect(createContext).not.toHaveBeenCalled();
   });
 
   it("fails loudly if untyped JavaScript registers a tool without wiring context", () => {

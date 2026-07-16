@@ -261,7 +261,9 @@ describe("later user tool intent revokes parse completion writes", () => {
   it("rejects stale canvas targets before coordinates and claims only accepted branch work", () => {
     const source = readFileSync("src/components/viewer/AnnotationOverlay.tsx", "utf8");
     const start = source.indexOf("const handleMouseDown = useCallback(");
-    const firstBranch = source.indexOf("// Scale calibration mode", start);
+    // [refactor jul16 P3.2] First legacy branch after the seam is now Split (calibration moved
+    // behind the registry).
+    const firstBranch = source.indexOf("// Split Area mode", start);
     expect(start).toBeGreaterThan(-1);
     expect(firstBranch).toBeGreaterThan(start);
     const gesturePrefix = source.slice(start, firstBranch);
@@ -289,9 +291,18 @@ describe("later user tool intent revokes parse completion writes", () => {
     expect(activationSnapshot).toBeLessThan(coordinates);
     expect(coordinates).toBeLessThan(registryDispatch);
     const compactPrefix = gesturePrefix.replace(/\s+/g, "");
+    // [refactor jul16 P3.2] Non-vacuous 4-arg seam witness: the eagerly-captured press wires the
+    // pre-seam snapshot/coordinates, the lazy factory wires page + module-level store readers +
+    // the already-admitted lifecycle authority. cssScale/mutations stay unwired (proven-
+    // capabilities rule; see tools/types.ts).
     expect(compactPrefix).toContain(
-      "if(dispatchToolMouseDown(TOOLS,e))return;",
+      "constpress={toolAtDown,position:pos,publicId,pageNumber}asconst;",
     );
+    expect(compactPrefix).toContain(
+      "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle,}))){return;}",
+    );
+    expect(compactPrefix).not.toContain("cssScale");
+    expect(compactPrefix).not.toContain("mutations");
     const mouseDown = source.slice(
       start,
       source.indexOf("const handleMouseMove = useCallback(", start),
@@ -305,14 +316,17 @@ describe("later user tool intent revokes parse completion writes", () => {
     expect(gesturePrefix).not.toContain("invalidateToolTailAuthority");
     expect(gesturePrefix).not.toContain("invalidateParseToolAuthority");
 
-    const calibration = sourceSlice(
-      "src/components/viewer/AnnotationOverlay.tsx",
-      "// Scale calibration mode",
-      "// Split Area mode",
+    // [refactor jul16 P3.2] The calibration gesture lives in the controller now; the overlay's
+    // mousedown must carry no calibration logic at all.
+    const calibration = readFileSync(
+      "src/components/viewer/tools/calibration.ts",
+      "utf8",
     );
     expect(calibration.match(/advanceCalibrationGesture\(/g)).toHaveLength(2);
     expect(calibration).not.toContain("setCalibrationPoint(");
     expect(calibration).not.toContain("setCalibrationMode(");
+    expect(mouseDown).not.toContain("advanceCalibrationGesture(");
+    expect(mouseDown).not.toContain('calibrationMode === "point1"');
     const calibrationCommand = sourceSlice(
       "src/stores/toolStore.ts",
       "export function advanceCalibrationGesture(",

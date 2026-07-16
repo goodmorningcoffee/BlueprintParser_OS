@@ -190,26 +190,35 @@ describe("calibration gesture freeze (real overlay, production mousedown)", () =
   });
 });
 
-describe("calibration seam topology pins (pre-move; rewritten by the extraction commit)", () => {
+describe("calibration seam topology pins (post-move: controller registered, branch extracted)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
   );
+  const CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/calibration.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
-  it("pins the 2-arg empty-registry seam immediately followed by the legacy calibration branch", () => {
-    expect(count(AO, "if (dispatchToolMouseDown(TOOLS, e)) return;")).toBe(1);
-    expect(count(AO, "// Scale calibration mode")).toBe(1);
-    // Two guards pre-move: the mousedown branch (leaves in the extraction) and the Escape
-    // keydown branch (STAYS — out of P3.2 scope). Post-move this becomes 1.
-    expect(count(AO, 'activeTool?.kind === "calibration"')).toBe(2);
+  it("pins the 4-arg seam wiring the captured press and lazy context factory", () => {
+    expect(count(AO, "dispatchToolMouseDown(TOOLS, e, press,")).toBe(1);
+    expect(count(AO, "const press = { toolAtDown, position: pos, publicId, pageNumber } as const;")).toBe(1);
+    expect(count(AO, "stores: TOOL_STORE_CAPABILITIES,")).toBe(1);
   });
 
-  it("pins the two gesture-advance call sites and per-phase stopPropagation in the overlay", () => {
-    expect(count(AO, "advanceCalibrationGesture(")).toBe(2);
-    // Each phase branch stops propagation before advancing; the trailing unconditional return
-    // (outside both sub-branches) is the consume-without-stopPropagation seam for input/idle.
-    expect(count(AO, 'toolAtDown.calibrationMode === "point1"')).toBe(1);
-    expect(count(AO, 'toolAtDown.calibrationMode === "point2"')).toBe(1);
+  it("pins the calibration branch fully extracted from the overlay", () => {
+    expect(count(AO, "// Scale calibration mode")).toBe(0);
+    expect(count(AO, "advanceCalibrationGesture(")).toBe(0);
+    // Only the Escape keydown branch remains (out of P3.2 scope; the mousedown branch left).
+    expect(count(AO, 'activeTool?.kind === "calibration"')).toBe(1);
+  });
+
+  it("pins the controller as the sole home of the gesture calls with per-phase stopPropagation", () => {
+    expect(count(CTRL, "advanceCalibrationGesture(")).toBe(2);
+    expect(count(CTRL, "event.stopPropagation();")).toBe(2);
+    expect(count(CTRL, 'toolAtDown.calibrationMode === "point1"')).toBe(1);
+    expect(count(CTRL, 'toolAtDown.calibrationMode === "point2"')).toBe(1);
+    expect(CTRL).toContain("return true;"); // unconditional claim (terminal semantics)
   });
 });

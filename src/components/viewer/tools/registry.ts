@@ -1,10 +1,12 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 
+import { calibrationController } from "./calibration";
 import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 
-// [refactor jul15 P3.1] Empty by design: the registry seam lands before any behavior moves.
+// [refactor jul16 P3.2] Array order is RUNTIME PRIORITY (board §5: calibration first), which is
+// NOT the extraction chronology. First registration: calibration.
 export const TOOLS = Object.freeze(
-  [] as const,
+  [calibrationController] as const,
 ) satisfies readonly ToolController[];
 
 /**
