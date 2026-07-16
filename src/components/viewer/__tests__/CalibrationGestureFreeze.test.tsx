@@ -219,6 +219,7 @@ describe("calibration seam topology pins (post-move: controller registered, bran
     expect(count(CTRL, "event.stopPropagation();")).toBe(2);
     expect(count(CTRL, 'toolAtDown.calibrationMode === "point1"')).toBe(1);
     expect(count(CTRL, 'toolAtDown.calibrationMode === "point2"')).toBe(1);
-    expect(CTRL).toContain("return true;"); // unconditional claim (terminal semantics)
+    // The terminal claim itself is pinned BEHAVIORALLY in CalibrationControllerFreeze.test.ts
+    // (input-phase onMouseDown === true) — a source-text pin here would be vacuous.
   });
 });
