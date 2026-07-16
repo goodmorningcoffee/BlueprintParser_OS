@@ -124,6 +124,41 @@ describe("markupController block order and geometry", () => {
     expect(event.stopPropagation).toHaveBeenCalledTimes(1);
   });
 
+  // [refactor jul16 P3.2 repair, prober hole A] Only "tl" (direct) and "br" (end-to-end resize)
+  // had witnesses; a "tr"/"bl" key drift silently no-ops handleMouseMove's resize dispatch.
+  it("reports the exact corner key for each of the four handles", () => {
+    const cornerPresses = [
+      { key: "tl", position: { x: 40, y: 20 } },
+      { key: "tr", position: { x: 120, y: 20 } },
+      { key: "bl", position: { x: 40, y: 80 } },
+      { key: "br", position: { x: 120, y: 80 } },
+    ] as const;
+    for (const { key, position } of cornerPresses) {
+      const { context, selection } = contextFor({
+        position,
+        annotations: [BOX],
+        selectedId: 7,
+      });
+      expect(markupController.onMouseDown(mockEvent(), context)).toBe(true);
+      expect(selection.setResizeCorner).toHaveBeenCalledExactlyOnceWith(key);
+    }
+  });
+
+  // [refactor jul16 P3.2 repair, prober hole D] Pins HANDLE === 8 and pointInHandle's STRICT
+  // inequality: dx=7 claims the corner, dx=8 falls through — here into the label bar, whose
+  // zone contains both presses (y=20=ay, x>=40).
+  it("corner tolerance is strictly less-than 8 CSS px", () => {
+    const inside = contextFor({ position: { x: 47, y: 20 }, annotations: [BOX], selectedId: 7 });
+    expect(markupController.onMouseDown(mockEvent(), inside.context)).toBe(true);
+    expect(inside.selection.setResizeCorner).toHaveBeenCalledExactlyOnceWith("tl");
+    expect(inside.selection.deleteSelected).not.toHaveBeenCalled();
+
+    const outside = contextFor({ position: { x: 48, y: 20 }, annotations: [BOX], selectedId: 7 });
+    expect(markupController.onMouseDown(mockEvent(), outside.context)).toBe(true);
+    expect(outside.selection.setResizeCorner).not.toHaveBeenCalled();
+    expect(outside.selection.deleteSelected).toHaveBeenCalledTimes(1);
+  });
+
   it("a corner hit beats the label bar when the press lies in both", () => {
     // (44,16): within 8px of tl(40,20) AND inside the label zone y∈[2,20], x≥40.
     const { context, selection } = contextFor({
@@ -136,10 +171,12 @@ describe("markupController block order and geometry", () => {
     expect(selection.deleteSelected).not.toHaveBeenCalled();
   });
 
-  it("label bar hits inclusively at y = ay−18 and y = ay (anisotropic ay = minY·height)", () => {
-    for (const y of [2, 20]) {
+  // [refactor jul16 P3.2 repair, prober hole 4] (40,10) pins the INCLUSIVE left edge x === ax —
+  // previously only x=60/44/39 were exercised, so `>= ax` → `> ax` survived every net.
+  it("label bar hits inclusively at y = ay−18, y = ay, and x = ax (anisotropic ay = minY·height)", () => {
+    for (const { x, y } of [{ x: 60, y: 2 }, { x: 60, y: 20 }, { x: 40, y: 10 }]) {
       const { context, selection, deferredDrawing } = contextFor({
-        position: { x: 60, y },
+        position: { x, y },
         annotations: [BOX],
         selectedId: 7,
       });
@@ -208,6 +245,9 @@ describe("markupController block order and geometry", () => {
       { position: { x: 80, y: 50 }, annotations: [BOX] }, // select path (non-drawing)
       { position: { x: 150, y: 30 } }, // empty-canvas draw path
       { position: { x: 60, y: 11 }, annotations: [BOX], selectedId: 7 }, // label-delete path
+      // [refactor jul16 P3.2 repair, prober hole 6b] corner-resize path: hoisting the invalidate
+      // below the corner loop kept count(...)===1 pins green while skipping this path.
+      { position: { x: 40, y: 20 }, annotations: [BOX], selectedId: 7 }, // corner-resize path
     ]) {
       const token = claimToolTailAuthority({});
       expect(ownsToolTailAuthority(token)).toBe(true);
