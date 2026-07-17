@@ -6,12 +6,15 @@
 // identities discriminated by activeItem.shape — polygon and linear. Only the linear identity
 // moves here; matches() is kind-only eligibility (takeoffItems is COMPONENT data, so the
 // resolution cannot happen in matches), and onMouseDown resolves activeItem and DECLINES —
-// return false with ZERO side effects — for !activeItem and every non-linear shape (polygon
-// stays legacy; count shapes fall through to the takeoffCount controller BEHIND this one in
-// the registry), mirroring legacy's positive `shape === "linear"` check with its complement
+// return false with ZERO side effects — for !activeItem and every non-linear shape (count
+// shapes fall through to the takeoffCount controller BEHIND this one in the registry),
+// mirroring legacy's positive `shape === "linear"` check with its complement
 // (TAKEOFF_LINEAR_IMPL/RECON_CENSUS.md §2). Decline-then-consumer stays single-execution:
-// legacy IS the prelude for polygon, and takeoffCount re-runs the same prelude for count
-// claims, so no press can double-invalidate or double-stop.
+// legacy WAS the prelude for polygon until its extraction, and takeoffCount re-runs the same
+// prelude for count claims, so no press can double-invalidate or double-stop.
+// [refactor jul17 P3.2 takeoffPolygon] Polygon presses now claim at takeoffPolygon AHEAD of
+// this slot — this controller's polygon-decline is dead-but-honest and stays (the pairwise-
+// disjoint claim partition keeps registry order unobservable).
 //
 // SPLIT CAPABILITY GUARD (SPEC §2.1, registry-integration constraint): the decline paths need
 // only takeoffItems; takeoffDrawing is demanded AFTER the shape match, immediately before the
