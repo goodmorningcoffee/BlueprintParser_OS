@@ -165,10 +165,13 @@ describe("P3.1 tool registry scaffolding", () => {
   // chronology); future controllers insert BETWEEN calibration and markup.
   // [refactor jul17 P3.2] Third registration: takeoffCount takes the first INTERIOR slot (board
   // §5 priority #6); the interior stays §5-ordered as later controllers land around it.
-  it("exports one exact frozen registry: calibration first, takeoffCount interior, markup last", () => {
-    expect(TOOLS).toHaveLength(3);
+  // [refactor jul17 P3.2] Fourth registration: takeoffLinear slots in AHEAD of takeoffCount
+  // (board §5 priority #5) — a linear press claims before takeoffCount's linear-decline is ever
+  // consulted; the decline stays anyway (honest partition, ordering-robust).
+  it("exports one exact frozen registry: calibration first, takeoffLinear then takeoffCount interior, markup last", () => {
+    expect(TOOLS).toHaveLength(4);
     expect(Object.isFrozen(TOOLS)).toBe(true);
-    expect(TOOLS.map((tool) => tool.kind)).toEqual(["calibration", "takeoffCount", "markup"]);
+    expect(TOOLS.map((tool) => tool.kind)).toEqual(["calibration", "takeoffLinear", "takeoffCount", "markup"]);
     expect(TOOLS[TOOLS.length - 1].kind).toBe("markup");
     for (const tool of TOOLS) {
       expect(Object.isFrozen(tool)).toBe(true);
@@ -181,8 +184,8 @@ describe("P3.1 tool registry scaffolding", () => {
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
     // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
-    // THREE registered controllers (calibration and takeoffCount need their activations; markup
-    // needs mode "markup").
+    // FOUR registered controllers (calibration and the two takeoffPlacement controllers need
+    // their activations; markup needs mode "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;

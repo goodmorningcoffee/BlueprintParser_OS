@@ -1486,7 +1486,9 @@ export default memo(function AnnotationOverlay({
       // this handler already captured for the pointer block's delete-x.
       // [refactor jul17 P3.2] The takeoffCount-proven capabilities (mutations.persistCreate /
       // transientError / takeoffItems) are equally dep-neutral: all three identifiers were
-      // already in the dependency array for the legacy count branch.
+      // already in the dependency array for the legacy count branch. The takeoffLinear-proven
+      // takeoffDrawing capability follows the same rule: the two store action bindings and the
+      // saveLinearPolyline composite were already dependencies of the legacy linear branch.
       const press = { toolAtDown, position: pos, publicId, pageNumber } as const;
       if (
         dispatchToolMouseDown(TOOLS, e, press, () => ({
@@ -1500,6 +1502,7 @@ export default memo(function AnnotationOverlay({
           mutations: { annotations: { persistCreate } },
           transientError: { publish: publishTransientBucketFillError },
           takeoffItems,
+          takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline },
         }))
       ) {
         return;
@@ -1786,42 +1789,14 @@ export default memo(function AnnotationOverlay({
           return;
         }
 
-        // Linear polyline drawing mode
-        if (activeItem.shape === "linear") {
-          const normX = pos.x / width;
-          const normY = pos.y / height;
-
-          if (toolAtDown.polygonDrawingMode === "idle") {
-            // Start new polyline
-            setPolygonDrawingMode("drawing");
-            if (!canAdoptProjectLifecycle()) return;
-            addPolygonVertex({ x: normX, y: normY });
-          } else if (toolAtDown.polygonDrawingMode === "drawing") {
-            // Finish line: click within 10px of last vertex
-            if (toolAtDown.polygonVertices.length >= 2) {
-              const lastV = toolAtDown.polygonVertices[toolAtDown.polygonVertices.length - 1];
-              const lastX = lastV.x * width;
-              const lastY = lastV.y * height;
-              const dist = Math.sqrt((pos.x - lastX) ** 2 + (pos.y - lastY) ** 2);
-              if (dist < 10) {
-                saveLinearPolyline();
-                return;
-              }
-            }
-            // Add vertex (skip on double-click second click)
-            if (e.detail < 2) {
-              addPolygonVertex({ x: normX, y: normY });
-            }
-          }
-          return;
-        }
-
         // [refactor jul17 P3.2] The count identity (existing-marker select loop + half-size
-        // clamped-bbox placement + optimistic persistCreate) lives in tools/takeoffCount.ts now,
-        // claimed at the registry seam before this branch — a count press never reaches here.
-        // The polygon/linear identities above remain until their own extractions; this terminal
-        // return preserves the branch's always-claims contract for the residual (unreachable)
-        // shape partition.
+        // clamped-bbox placement + optimistic persistCreate) lives in tools/takeoffCount.ts, and
+        // the linear identity (idle-start, strict-<10 last-vertex finish snap into
+        // saveLinearPolyline, detail-gated vertex append) lives in tools/takeoffLinear.ts — both
+        // claimed at the registry seam before this branch, so neither press kind reaches here.
+        // The polygon identity above remains until its own extraction; this terminal return
+        // preserves the branch's always-claims contract for the residual (unreachable) shape
+        // partition.
         return;
       }
 

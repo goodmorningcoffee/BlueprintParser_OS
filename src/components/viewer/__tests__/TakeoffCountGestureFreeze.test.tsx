@@ -454,7 +454,7 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     expect(count(AO, "\n          takeoffItems,")).toBe(1); // factory field; dep-array entry is mid-line
   });
 
-  it("pins the surviving legacy branch: resolution, silent return, prelude, polygon/linear, terminal claim", () => {
+  it("pins the surviving legacy branch: resolution, silent return, prelude, polygon-only, terminal claim", () => {
     const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
     expect(branch).toBeGreaterThan(-1);
     const slice = AO.slice(branch, AO.indexOf("// Keynote YOLO picking"));
@@ -463,6 +463,8 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     const invalidate = slice.indexOf("invalidateToolTailAuthority();");
     const stop = slice.indexOf("e.stopPropagation();");
     const polygon = slice.indexOf('if (activeItem.shape === "polygon") {');
+    // [refactor jul17 P3.2] The linear identity moved to tools/takeoffLinear.ts (fourth
+    // registration) — the branch now serves polygon plus the unreachable residual partition.
     const linear = slice.indexOf('if (activeItem.shape === "linear") {');
     const residual = slice.indexOf("The count identity");
     expect(resolution).toBeGreaterThan(-1);
@@ -470,8 +472,8 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     expect(invalidate).toBeGreaterThan(silentReturn);
     expect(stop).toBeGreaterThan(invalidate);
     expect(polygon).toBeGreaterThan(stop);
-    expect(linear).toBeGreaterThan(polygon);
-    expect(residual).toBeGreaterThan(linear); // the unreachable-partition comment + terminal return
+    expect(linear).toBe(-1); // extracted — the overlay no longer discriminates linear
+    expect(residual).toBeGreaterThan(polygon); // the unreachable-partition comment + terminal return
   });
 
   it("pins the controller as the sole home of the count gesture", () => {

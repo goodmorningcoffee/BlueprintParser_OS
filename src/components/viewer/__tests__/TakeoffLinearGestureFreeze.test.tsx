@@ -472,25 +472,39 @@ describe("takeoff linear gesture freeze (real overlay, production mousedown)", (
   });
 });
 
-describe("takeoff linear seam topology pins (pre-move: linear identity lives in the overlay)", () => {
+describe("takeoff linear seam topology pins (post-move: controller registered, linear identity extracted)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
   );
+  const CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/takeoffLinear.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
-  it("pins the linear identity present in the overlay mousedown exactly once", () => {
-    expect(count(AO, 'if (activeItem.shape === "linear") {')).toBe(1);
-    expect(count(AO, "if (dist < 10) {")).toBe(1);
-    expect(count(AO, "const lastV = toolAtDown.polygonVertices[toolAtDown.polygonVertices.length - 1];")).toBe(1);
-    // Three call sites: mousedown finish (moves at extraction), Enter keydown + dblclick (stay).
-    expect(count(AO, "saveLinearPolyline();")).toBe(3);
-    // Both mousedown identities share one branch: linear sits between polygon and the residual
-    // count comment (the count-freeze topology describe pins the full ordering).
+  it("pins the linear identity fully extracted from the overlay", () => {
+    expect(count(AO, 'if (activeItem.shape === "linear") {')).toBe(0);
+    expect(count(AO, "if (dist < 10) {")).toBe(0);
+    expect(count(AO, "const lastV = toolAtDown.polygonVertices[toolAtDown.polygonVertices.length - 1];")).toBe(0);
+    // The two SURVIVING call sites: Enter keydown + dblclick (the mousedown site moved).
+    expect(count(AO, "saveLinearPolyline();")).toBe(2);
+    // The polygon identity still lives in the branch until its own extraction.
     expect(count(AO, 'if (activeItem.shape === "polygon") {')).toBe(1);
+    // The factory carries the takeoffLinear-proven capability exactly once.
+    expect(count(AO, "takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline },")).toBe(1);
   });
 
-  it("pins the controller file as not yet existing (rewritten at the extraction commit)", () => {
-    expect(existsSync(join(process.cwd(), "src/components/viewer/tools/takeoffLinear.ts"))).toBe(false);
+  it("pins the controller as the sole home of the linear gesture", () => {
+    expect(existsSync(join(process.cwd(), "src/components/viewer/tools/takeoffLinear.ts"))).toBe(true);
+    expect(count(CTRL, 'press.toolAtDown.activeTool?.kind === "takeoffPlacement"')).toBe(1);
+    expect(count(CTRL, "if (!activeItem) return false;")).toBe(1);
+    expect(count(CTRL, 'if (activeItem.shape !== "linear") return false;')).toBe(1);
+    expect(count(CTRL, "invalidateToolTailAuthority();")).toBe(1);
+    expect(count(CTRL, "event.stopPropagation();")).toBe(1);
+    expect(count(CTRL, "if (dist < 10) {")).toBe(1);
+    expect(count(CTRL, "takeoffDrawing.saveLinearPolyline();")).toBe(1);
+    expect(count(CTRL, "if (event.detail < 2) {")).toBe(1);
+    // The claim/decline values are pinned BEHAVIORALLY in TakeoffLinearControllerFreeze.test.ts.
   });
 });

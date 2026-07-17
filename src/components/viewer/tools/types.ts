@@ -125,6 +125,27 @@ export interface ToolContext {
   readonly transientError?: Readonly<{
     publish: (message: string) => void;
   }>;
+  /**
+   * [refactor jul17 P3.2 takeoffLinear] Capability PROVEN by the takeoffLinear controller,
+   * optional-typed like the markup/takeoffCount groups; the overlay factory always wires it.
+   * Dep-neutral by construction: all three members are already in the 37-entry mousedown
+   * dependency array.
+   * - setPolygonDrawingMode / addPolygonVertex are the overlay's SUBSCRIBED zustand action
+   *   bindings — actions are defined once in the store's create(), so these are the SAME
+   *   function objects `stores.tool.getState()` would return. They ride a capability instead of
+   *   the store reader because contract §4.3 types `stores` as imperative getState() READERS;
+   *   routing commands through the reader would widen that contract for every future reviewer.
+   * - saveLinearPolyline is the per-render useCallback COMPOSITE (optimistic persistCreate +
+   *   settled polygon reset + mouse-position clear); its definition STAYS in the overlay — the
+   *   Enter-keydown and double-click finish paths still call it there (deleteSelected
+   *   precedent: the moved call site rides the capability, the closure stays home).
+   * - savePolygon RE-OPENS at takeoffPolygon under the proven-capabilities rule.
+   */
+  readonly takeoffDrawing?: Readonly<{
+    setPolygonDrawingMode: ToolStoreState["setPolygonDrawingMode"];
+    addPolygonVertex: ToolStoreState["addPolygonVertex"];
+    saveLinearPolyline: () => void;
+  }>;
 }
 
 export interface ToolController {

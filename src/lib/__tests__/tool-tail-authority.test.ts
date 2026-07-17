@@ -418,6 +418,10 @@ describe("AT2 one exact global tool-tail authority", () => {
       // prelude's invalidation for claimed count presses (pre-move AO:1750 semantics); declined
       // presses invalidate in the surviving legacy branch instead, never in both.
       "src/components/viewer/tools/takeoffCount.ts:invalidateToolTailAuthority",
+      // [refactor jul17 P3.2] The takeoffLinear controller inherited the same branch prelude for
+      // claimed linear presses (pre-move AO:1756 semantics); its declines are zero-side-effect,
+      // so exactly one borrower invalidates per press.
+      "src/components/viewer/tools/takeoffLinear.ts:invalidateToolTailAuthority",
       "src/queries/useAnnotations.ts:invalidateToolTailAuthority",
       "src/stores/toolStore.ts:invalidateLatestToolOperation",
       "src/stores/toolStore.ts:invalidateToolTailAuthority",

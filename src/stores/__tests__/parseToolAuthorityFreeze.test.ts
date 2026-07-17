@@ -306,10 +306,14 @@ describe("later user tool intent revokes parse completion writes", () => {
     // [refactor jul17 P3.2 takeoffCount] Plus the takeoffCount-proven capabilities: the narrowed
     // persistCreate mutations slice, the transient-error publisher, and the component takeoffItems
     // array — all three identifiers already in the 37-entry dependency array.
+    // [refactor jul17 P3.2 takeoffLinear] Plus the takeoffLinear-proven takeoffDrawing group: the
+    // two subscribed store action bindings and the saveLinearPolyline composite — same
+    // dep-neutrality rule (all three already in the 37-entry array).
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
-        "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems,}))){return;}",
+        "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
+        "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline},}))){return;}",
     );
     expect(compactPrefix).not.toContain("cssScale");
     const mouseDown = source.slice(
