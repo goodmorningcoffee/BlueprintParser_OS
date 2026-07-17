@@ -354,9 +354,11 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     expect(count(AO, "< HANDLE && Math.abs(")).toBe(0);
   });
 
-  it("pins exactly THREE residual mousedown Math.sqrt sites (polygon close / linear finish / count marker)", () => {
+  it("pins exactly TWO residual mousedown Math.sqrt sites (polygon close / linear finish)", () => {
     // Census §"Explicitly excluded": these are draw-placement thresholds, NOT hit-test targets.
-    expect(count(AO, "Math.sqrt")).toBe(3);
+    // [refactor jul17 P3.2] The third site (count-marker center-distance select) moved with the
+    // count identity to tools/takeoffCount.ts; polygon/linear stay until their own extractions.
+    expect(count(AO, "Math.sqrt")).toBe(2);
   });
 
   it("pins the corner handle enumeration order tl -> tr -> bl -> br at both sites", () => {

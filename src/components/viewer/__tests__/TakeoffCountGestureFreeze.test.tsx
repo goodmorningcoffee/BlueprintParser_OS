@@ -430,37 +430,60 @@ describe("takeoff count gesture freeze (real overlay, production mousedown)", ()
   });
 });
 
-describe("takeoff count seam topology pins (pre-move: the count identity lives in the overlay)", () => {
+describe("takeoff count seam topology pins (post-move: controller registered, count identity extracted)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
   );
+  const CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/takeoffCount.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
-  it("pins the count identity inside the legacy takeoffPlacement branch", () => {
-    expect(count(AO, "// Count marker placement")).toBe(1);
-    expect(count(AO, "const hs = 0.005;")).toBe(1);
-    expect(count(AO, "if (dist < 14) {")).toBe(1);
-    expect(count(AO, 'type: "count-marker",')).toBe(1);
-    expect(count(AO, "Failed to save marker")).toBe(2); // template + bare fallback literal
-    expect(count(AO, "void persistCreate(")).toBe(5);
+  it("pins the count identity fully extracted from the overlay", () => {
+    expect(count(AO, "// Count marker placement")).toBe(0);
+    expect(count(AO, "const hs = 0.005;")).toBe(0);
+    expect(count(AO, "if (dist < 14) {")).toBe(0);
+    expect(count(AO, 'type: "count-marker",')).toBe(0);
+    expect(count(AO, "Failed to save marker")).toBe(0);
+    expect(count(AO, "void persistCreate(")).toBe(4); // savePolygon/bucket/saveLinear/markup-save
+    // The factory carries the three takeoffCount-proven capabilities exactly once each.
+    expect(count(AO, "mutations: { annotations: { persistCreate } },")).toBe(1);
+    expect(count(AO, "transientError: { publish: publishTransientBucketFillError },")).toBe(1);
+    expect(count(AO, "\n          takeoffItems,")).toBe(1); // factory field; dep-array entry is mid-line
   });
 
-  it("pins the branch prelude ordering: resolution, silent return, invalidate, stop, shape dispatch", () => {
+  it("pins the surviving legacy branch: resolution, silent return, prelude, polygon/linear, terminal claim", () => {
     const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
     expect(branch).toBeGreaterThan(-1);
-    const slice = AO.slice(branch, AO.indexOf("// Count marker placement"));
+    const slice = AO.slice(branch, AO.indexOf("// Keynote YOLO picking"));
     const resolution = slice.indexOf("takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId)");
     const silentReturn = slice.indexOf("if (!activeItem) return;");
     const invalidate = slice.indexOf("invalidateToolTailAuthority();");
     const stop = slice.indexOf("e.stopPropagation();");
     const polygon = slice.indexOf('if (activeItem.shape === "polygon") {');
     const linear = slice.indexOf('if (activeItem.shape === "linear") {');
+    const residual = slice.indexOf("The count identity");
     expect(resolution).toBeGreaterThan(-1);
     expect(silentReturn).toBeGreaterThan(resolution);
     expect(invalidate).toBeGreaterThan(silentReturn);
     expect(stop).toBeGreaterThan(invalidate);
     expect(polygon).toBeGreaterThan(stop);
     expect(linear).toBeGreaterThan(polygon);
+    expect(residual).toBeGreaterThan(linear); // the unreachable-partition comment + terminal return
+  });
+
+  it("pins the controller as the sole home of the count gesture", () => {
+    expect(count(CTRL, 'press.toolAtDown.activeTool?.kind === "takeoffPlacement"')).toBe(1);
+    expect(count(CTRL, "if (!activeItem) return false;")).toBe(1);
+    expect(count(CTRL, 'if (activeItem.shape === "polygon" || activeItem.shape === "linear") return false;')).toBe(1);
+    expect(count(CTRL, "invalidateToolTailAuthority();")).toBe(1);
+    expect(count(CTRL, "event.stopPropagation();")).toBe(1);
+    expect(count(CTRL, "if (dist < 14) {")).toBe(1);
+    expect(count(CTRL, "const hs = 0.005;")).toBe(1);
+    expect(count(CTRL, "void mutations.annotations.persistCreate(")).toBe(1);
+    expect(count(CTRL, "Failed to save marker")).toBe(2); // template + bare fallback literal
+    // The claim/decline values are pinned BEHAVIORALLY in TakeoffCountControllerFreeze.test.ts.
   });
 });

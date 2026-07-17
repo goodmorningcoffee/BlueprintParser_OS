@@ -1,8 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import type { UseAnnotationsResult } from "@/queries/useAnnotations";
-import type { ClientAnnotation } from "@/types";
-import type { useYoloTagActions } from "@/queries/useYoloTags";
+import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 import type { ParseFlowState } from "@/stores/parseFlowStore";
 import type { SessionState } from "@/stores/sessionStore";
 import type { ToolStoreState } from "@/stores/toolStore";
@@ -49,39 +48,35 @@ export interface ToolStoreCapabilities {
   readonly ui: ToolStoreReader<UiState>;
 }
 
+/**
+ * [refactor jul17 P3.2 takeoffCount] NARROWED to the proven slice (proven-capabilities rule):
+ * takeoffCount is the sole raw-mutation caller in the legacy mousedown and it calls ONLY
+ * persistCreate — which is already in the 37-entry mousedown dependency array, so the wiring is
+ * dep-neutral. The speculative P3.1 members are deliberately dropped, each with a re-open note:
+ * - addAnnotation / removeAnnotation / updateAnnotation RE-OPEN at pointerGroup (the pointer
+ *   block's drag/resize/delete paths are their first movers); they are hook-returned and NOT in
+ *   the dep array, so their sourcing (deps-churn vs stale-closure vs ref) must be decided at that
+ *   extraction on correctness grounds.
+ * - updateYoloTag RE-OPENS at tagPick/tagAdd under the same rule.
+ */
 export interface ToolMutationCapabilities {
-  readonly annotations: Readonly<
-    Pick<
-      UseAnnotationsResult,
-      | "addAnnotation"
-      | "removeAnnotation"
-      | "updateAnnotation"
-      | "persistCreate"
-    >
-  >;
-  readonly yolo: Readonly<
-    Pick<ReturnType<typeof useYoloTagActions>, "updateYoloTag">
-  >;
+  readonly annotations: Readonly<Pick<UseAnnotationsResult, "persistCreate">>;
 }
 
 /**
  * Shared controller boundary, materialized since P3.2 (calibration) under the canonical
  * proven-capabilities rule: a field is wired only when a concrete extraction proves it.
  *
- * [refactor jul16 P3.2] cssScale and mutations are OPTIONAL and deliberately unwired:
+ * [refactor jul16 P3.2] cssScale is OPTIONAL and deliberately unwired:
  * - cssScale: no mousedown path reads it file-wide; closing the factory over the prop would add
  *   a dependency to AnnotationOverlay's mousedown callback (physics contract pins the 37-entry
  *   array byte-identical). The sourcing decision (prop-in-deps / stale-closure / ref) RE-OPENS at
  *   the first controller whose method READS context.cssScale — expected count/markup drawPreview —
  *   and must be decided there on correctness grounds (DR010 Q4 / PERF-1).
- * - mutations: addAnnotation/removeAnnotation/updateAnnotation/updateYoloTag are hook-returned and
- *   absent from the mousedown dependency array; wiring them eagerly would churn the sacred handler
- *   identity. [refactor jul16 P3.2 markup] Markup did NOT prove this field: its only mutation
- *   need (deleteSelected) is a per-render composite whose definition stays in the overlay for the
- *   pointer block, so it rides the selection capability instead (census: no raw mutation call in
- *   the markup blocks). RE-OPENS at takeoffCount — the sole raw-mutation caller in the legacy
- *   mousedown (its count-marker branch calls persistCreate, which is ALREADY in the 37-entry dep
- *   array, so the wiring stays dep-neutral there).
+ * - mutations: [refactor jul17 P3.2 takeoffCount] PROVEN and wired, narrowed to the persistCreate
+ *   slice (see ToolMutationCapabilities note — the markup extraction established that composite
+ *   component closures like deleteSelected ride their own capability instead). Optional-typed so
+ *   synthetic contexts and pre-takeoffCount tests stay legal; the overlay factory always wires it.
  */
 export interface ToolContext {
   readonly press: ToolPressSnapshot;
@@ -113,6 +108,22 @@ export interface ToolContext {
   readonly pageAnnotations?: readonly ClientAnnotation[];
   readonly deferredDrawing?: Readonly<{
     start: (pos: { x: number; y: number }, clearSelection?: boolean) => boolean;
+  }>;
+  /**
+   * [refactor jul17 P3.2 takeoffCount] Capabilities PROVEN by the takeoffCount controller,
+   * optional-typed like the markup trio; the overlay factory always wires both. Dep-neutral by
+   * construction: takeoffItems and publishTransientBucketFillError are already in the 37-entry
+   * mousedown dependency array.
+   * - takeoffItems is the COMPONENT render array (useTakeoffItems), byte-identical staleness to
+   *   the legacy closure read (D1-class one-macrotask refresh lag, sanctioned) — NOT a fresh
+   *   readTakeoffItems cache bridge, which would be a freshness behavior change.
+   * - transientError.publish is the overlay's publishTransientBucketFillError: the bucket-fill
+   *   error channel doubles as the viewer's generic transient toast; the marker-specific text
+   *   lives in the controller.
+   */
+  readonly takeoffItems?: readonly ClientTakeoffItem[];
+  readonly transientError?: Readonly<{
+    publish: (message: string) => void;
   }>;
 }
 

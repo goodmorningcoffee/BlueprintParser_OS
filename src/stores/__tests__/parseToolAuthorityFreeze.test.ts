@@ -293,8 +293,9 @@ describe("later user tool intent revokes parse completion writes", () => {
     const compactPrefix = gesturePrefix.replace(/\s+/g, "");
     // [refactor jul16 P3.2] Non-vacuous 4-arg seam witness: the eagerly-captured press wires the
     // pre-seam snapshot/coordinates, the lazy factory wires page + module-level store readers +
-    // the already-admitted lifecycle authority. cssScale/mutations stay unwired (proven-
-    // capabilities rule; see tools/types.ts).
+    // the already-admitted lifecycle authority. cssScale stays unwired (proven-capabilities
+    // rule); [refactor jul17 P3.2] mutations is wired as the takeoffCount-proven persistCreate
+    // slice (see tools/types.ts).
     expect(compactPrefix).toContain(
       "constpress={toolAtDown,position:pos,publicId,pageNumber}asconst;",
     );
@@ -302,12 +303,15 @@ describe("later user tool intent revokes parse completion writes", () => {
     // (five handler-closure members), the memoized pageAnnotations, and the deferred-drawing
     // starter — all dep-neutral (already in the 37-entry array, stable setters, or the same
     // per-render deleteSelected closure the pointer block captures).
+    // [refactor jul17 P3.2 takeoffCount] Plus the takeoffCount-proven capabilities: the narrowed
+    // persistCreate mutations slice, the transient-error publisher, and the component takeoffItems
+    // array — all three identifiers already in the 37-entry dependency array.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
-        "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing},}))){return;}",
+        "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
+        "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems,}))){return;}",
     );
     expect(compactPrefix).not.toContain("cssScale");
-    expect(compactPrefix).not.toContain("mutations");
     const mouseDown = source.slice(
       start,
       source.indexOf("const handleMouseMove = useCallback(", start),

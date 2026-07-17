@@ -163,13 +163,16 @@ describe("P3.1 tool registry scaffolding", () => {
   // pin). The length-0 short-circuit keeps executable coverage via a synthetic empty registry.
   // Second registration: markup owns the LAST runtime slot (board §5 priority — NOT extraction
   // chronology); future controllers insert BETWEEN calibration and markup.
-  it("exports one exact frozen registry: calibration first, markup last", () => {
-    expect(TOOLS).toHaveLength(2);
+  // [refactor jul17 P3.2] Third registration: takeoffCount takes the first INTERIOR slot (board
+  // §5 priority #6); the interior stays §5-ordered as later controllers land around it.
+  it("exports one exact frozen registry: calibration first, takeoffCount interior, markup last", () => {
+    expect(TOOLS).toHaveLength(3);
     expect(Object.isFrozen(TOOLS)).toBe(true);
-    expect(TOOLS[0].kind).toBe("calibration");
+    expect(TOOLS.map((tool) => tool.kind)).toEqual(["calibration", "takeoffCount", "markup"]);
     expect(TOOLS[TOOLS.length - 1].kind).toBe("markup");
-    expect(Object.isFrozen(TOOLS[0])).toBe(true);
-    expect(Object.isFrozen(TOOLS[1])).toBe(true);
+    for (const tool of TOOLS) {
+      expect(Object.isFrozen(tool)).toBe(true);
+    }
   });
 
   it("keeps the allocation-free length-0 short-circuit via a synthetic empty registry", () => {
@@ -177,8 +180,9 @@ describe("P3.1 tool registry scaffolding", () => {
   });
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
-    // [refactor jul16 P3.2] mode "move" keeps this press non-eligible for BOTH registered
-    // controllers (calibration needs its activation; markup needs mode "markup").
+    // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
+    // THREE registered controllers (calibration and takeoffCount need their activations; markup
+    // needs mode "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;

@@ -2,13 +2,17 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { calibrationController } from "./calibration";
 import { markupController } from "./markup";
+import { takeoffCountController } from "./takeoffCount";
 import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 
 // [refactor jul16 P3.2] Array order is RUNTIME PRIORITY (board §5: calibration FIRST, markup
 // LAST), which is NOT the extraction chronology (markup was extracted second). Every future
 // controller inserts BETWEEN calibration and markup — the tuple's tail slot belongs to markup.
+// [refactor jul17 P3.2] takeoffCount is the first interior insert (board §5 priority #6). The
+// interior stays ordered by the §5 sequence as controllers land: split/bucketFill/takeoffPolygon/
+// takeoffLinear slot in BEFORE takeoffCount; keynotePick..pointerGroup between it and markup.
 export const TOOLS = Object.freeze(
-  [calibrationController, markupController] as const,
+  [calibrationController, takeoffCountController, markupController] as const,
 ) satisfies readonly ToolController[];
 
 /**

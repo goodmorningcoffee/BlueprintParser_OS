@@ -1484,6 +1484,9 @@ export default memo(function AnnotationOverlay({
       // dep-neutral too: selectedId, pageAnnotations, and startDeferredDrawing are already in the
       // dependency array; the setters are stable; deleteSelected is the same per-render closure
       // this handler already captured for the pointer block's delete-x.
+      // [refactor jul17 P3.2] The takeoffCount-proven capabilities (mutations.persistCreate /
+      // transientError / takeoffItems) are equally dep-neutral: all three identifiers were
+      // already in the dependency array for the legacy count branch.
       const press = { toolAtDown, position: pos, publicId, pageNumber } as const;
       if (
         dispatchToolMouseDown(TOOLS, e, press, () => ({
@@ -1494,6 +1497,9 @@ export default memo(function AnnotationOverlay({
           selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },
           pageAnnotations,
           deferredDrawing: { start: startDeferredDrawing },
+          mutations: { annotations: { persistCreate } },
+          transientError: { publish: publishTransientBucketFillError },
+          takeoffItems,
         }))
       ) {
         return;
@@ -1810,55 +1816,12 @@ export default memo(function AnnotationOverlay({
           return;
         }
 
-        // Count marker placement
-        // Check if clicking existing count marker → select it
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "takeoff") continue;
-          const [minX, minY, maxX, maxY] = ann.bbox;
-          const cx = ((minX + maxX) / 2) * width;
-          const cy = ((minY + maxY) / 2) * height;
-          const dist = Math.sqrt((pos.x - cx) ** 2 + (pos.y - cy) ** 2);
-          if (dist < 14) {
-            setSelectedId(ann.id);
-            return;
-          }
-        }
-
-        // Place new marker
-        const normX = pos.x / width;
-        const normY = pos.y / height;
-        const hs = 0.005;
-        const bbox: [number, number, number, number] = [
-          Math.max(0, normX - hs),
-          Math.max(0, normY - hs),
-          Math.min(1, normX + hs),
-          Math.min(1, normY + hs),
-        ];
-
-        const markerData: CountMarkerData = {
-          type: "count-marker",
-          shape: activeItem.shape,
-          color: activeItem.color,
-          takeoffItemId: activeItem.id,
-        };
-
-        // [refactor jul11 P2.2⑥ C4] Count markers use the same optimistic-create seam as
-        // polygons and lines; tool-specific failure text/timing remains local to this caller.
-        void persistCreate({
-          pageNumber,
-          name: activeItem.name,
-          bbox,
-          source: "takeoff",
-          data: markerData as unknown as Record<string, unknown>,
-        }, {
-          canAdopt: canAdoptProjectLifecycle,
-          onError: (err) => {
-            publishTransientBucketFillError(
-              err instanceof Error ? `Failed to save marker: ${err.message}` : "Failed to save marker",
-            );
-          },
-        });
-
+        // [refactor jul17 P3.2] The count identity (existing-marker select loop + half-size
+        // clamped-bbox placement + optimistic persistCreate) lives in tools/takeoffCount.ts now,
+        // claimed at the registry seam before this branch — a count press never reaches here.
+        // The polygon/linear identities above remain until their own extractions; this terminal
+        // return preserves the branch's always-claims contract for the residual (unreachable)
+        // shape partition.
         return;
       }
 
