@@ -275,6 +275,33 @@ describe("takeoff linear gesture freeze (real overlay, production mousedown)", (
     ]);
   });
 
+  it("W3c: the snap metric is EUCLIDEAN off-axis — the diagonal boundary pair discriminates every rival metric", async () => {
+    // Review-probe finding (S145): every other boundary fixture is axis-aligned or distance-zero,
+    // where Euclidean/Manhattan/Chebyshev agree — a Manhattan mutant survived all six nets. This
+    // diagonal pair kills the whole family: (105,57) is Euclidean sqrt(74) ≈ 8.60 < 10 (finishes)
+    // but Manhattan 12 (mutant appends); (106,58) is EXACTLY 10 via the doubled 3-4-5 triangle
+    // (appends, exact in doubles) but Chebyshev 8 (mutant finishes) and squared-distance 100 < 10
+    // is false either way (the dropped-sqrt mutant dies on the finishing leg).
+    seedLinearState([], [linearItem({ id: 6 })]);
+    let canvas = await mountCanvas();
+    enterDrawing(TWO_VERTS); // last vertex px (100,50)
+
+    press(canvas, 105, 57); // Euclidean 8.60 — finishes
+    expect(polylineRows()).toHaveLength(1);
+    expect(useToolStore.getState().polygonDrawingMode).toBe("idle");
+
+    cleanup();
+    seedLinearState([], [linearItem({ id: 6 })]);
+    canvas = await mountCanvas();
+    enterDrawing(TWO_VERTS);
+    press(canvas, 106, 58); // Euclidean exactly 10 — appends
+    expect(polylineRows()).toHaveLength(0);
+    expect(useToolStore.getState().polygonVertices).toEqual([
+      ...TWO_VERTS,
+      { x: 106 / 200, y: 58 / 100 },
+    ]);
+  });
+
   it("W4: the last-vertex pixel position is anisotropic (x by width, y by height) — the transposed point appends, the true point finishes", async () => {
     const verts = [
       { x: 0.8, y: 0.9 },

@@ -272,6 +272,46 @@ describe("takeoffLinearController drawing arm", () => {
     });
   });
 
+  it("the snap metric is EUCLIDEAN off-axis (diagonal boundary pair — review-probe repair)", () => {
+    // (105,57) from (100,50): Euclidean sqrt(74) ≈ 8.60 finishes; Manhattan 12 would append.
+    const inside = contextFor({
+      position: { x: 105, y: 57 },
+      toolAtDown: drawingState(),
+    });
+    expect(takeoffLinearController.onMouseDown(mockEvent(), inside.context)).toBe(true);
+    expect(inside.takeoffDrawing.saveLinearPolyline).toHaveBeenCalledTimes(1);
+    expect(inside.takeoffDrawing.addPolygonVertex).not.toHaveBeenCalled();
+
+    // (106,58): Euclidean EXACTLY 10 (doubled 3-4-5, exact in doubles) appends; Chebyshev 8
+    // would finish.
+    const boundary = contextFor({
+      position: { x: 106, y: 58 },
+      toolAtDown: drawingState(),
+    });
+    expect(takeoffLinearController.onMouseDown(mockEvent(), boundary.context)).toBe(true);
+    expect(boundary.takeoffDrawing.saveLinearPolyline).not.toHaveBeenCalled();
+    expect(boundary.takeoffDrawing.addPolygonVertex).toHaveBeenCalledTimes(1);
+  });
+
+  it("the detail gate is exactly `< 2` (operator pins — review-probe repair)", () => {
+    // detail 3 (triple-click tail): `< 2` false → no append; a `!== 2` mutant would append.
+    const triple = contextFor({
+      position: { x: 180, y: 20 },
+      toolAtDown: drawingState(),
+    });
+    expect(takeoffLinearController.onMouseDown(mockEvent(3), triple.context)).toBe(true);
+    expect(triple.takeoffDrawing.addPolygonVertex).not.toHaveBeenCalled();
+
+    // detail 0 (synthetic/keyboard-class press): `< 2` true → appends; an `=== 1` mutant would
+    // silently drop it. Legacy semantics preserved byte-for-byte.
+    const zero = contextFor({
+      position: { x: 180, y: 20 },
+      toolAtDown: drawingState(),
+    });
+    expect(takeoffLinearController.onMouseDown(mockEvent(0), zero.context)).toBe(true);
+    expect(zero.takeoffDrawing.addPolygonVertex).toHaveBeenCalledTimes(1);
+  });
+
   it("the last-vertex pixel position is anisotropic (x by width, y by height)", () => {
     // Last vertex norm (0.2, 0.4): true px (40, 40); transposed scaling would put it at (20, 80).
     const verts = [{ x: 0.8, y: 0.9 }, { x: 0.2, y: 0.4 }];
