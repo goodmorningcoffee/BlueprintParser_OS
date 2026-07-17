@@ -516,10 +516,12 @@ describe("takeoff linear seam topology pins (post-move: controller registered, l
     expect(count(AO, "const lastV = toolAtDown.polygonVertices[toolAtDown.polygonVertices.length - 1];")).toBe(0);
     // The two SURVIVING call sites: Enter keydown + dblclick (the mousedown site moved).
     expect(count(AO, "saveLinearPolyline();")).toBe(2);
-    // The polygon identity still lives in the branch until its own extraction.
-    expect(count(AO, 'if (activeItem.shape === "polygon") {')).toBe(1);
-    // The factory carries the takeoffLinear-proven capability exactly once.
-    expect(count(AO, "takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline },")).toBe(1);
+    // [refactor jul17 P3.2] The polygon identity moved to tools/takeoffPolygon.ts — the branch
+    // now holds no shape identity at all (TakeoffPolygonGestureFreeze owns its pins).
+    expect(count(AO, 'if (activeItem.shape === "polygon") {')).toBe(0);
+    // The factory carries the takeoffDrawing capability exactly once (savePolygon joined at the
+    // polygon extraction).
+    expect(count(AO, "takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline, savePolygon },")).toBe(1);
   });
 
   it("pins the controller as the sole home of the linear gesture", () => {

@@ -422,6 +422,10 @@ describe("AT2 one exact global tool-tail authority", () => {
       // claimed linear presses (pre-move AO:1756 semantics); its declines are zero-side-effect,
       // so exactly one borrower invalidates per press.
       "src/components/viewer/tools/takeoffLinear.ts:invalidateToolTailAuthority",
+      // [refactor jul17 P3.2] The takeoffPolygon controller inherited the same branch prelude for
+      // claimed polygon presses (pre-move AO:1759 semantics); its declines are zero-side-effect,
+      // so exactly one borrower invalidates per press.
+      "src/components/viewer/tools/takeoffPolygon.ts:invalidateToolTailAuthority",
       "src/queries/useAnnotations.ts:invalidateToolTailAuthority",
       "src/stores/toolStore.ts:invalidateLatestToolOperation",
       "src/stores/toolStore.ts:invalidateToolTailAuthority",

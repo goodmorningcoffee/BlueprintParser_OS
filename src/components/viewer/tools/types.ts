@@ -128,7 +128,7 @@ export interface ToolContext {
   /**
    * [refactor jul17 P3.2 takeoffLinear] Capability PROVEN by the takeoffLinear controller,
    * optional-typed like the markup/takeoffCount groups; the overlay factory always wires it.
-   * Dep-neutral by construction: all three members are already in the 37-entry mousedown
+   * Dep-neutral by construction: all members are already in the 37-entry mousedown
    * dependency array.
    * - setPolygonDrawingMode / addPolygonVertex are the overlay's SUBSCRIBED zustand action
    *   bindings — actions are defined once in the store's create(), so these are the SAME
@@ -139,12 +139,16 @@ export interface ToolContext {
    *   settled polygon reset + mouse-position clear); its definition STAYS in the overlay — the
    *   Enter-keydown and double-click finish paths still call it there (deleteSelected
    *   precedent: the moved call site rides the capability, the closure stays home).
-   * - savePolygon RE-OPENS at takeoffPolygon under the proven-capabilities rule.
+   * - savePolygon [refactor jul17 P3.2 takeoffPolygon]: the recorded re-open, fulfilled — the
+   *   polygon COMPOSITE twin of saveLinearPolyline under the exact same contract (definition
+   *   stays in the overlay; Enter/dblclick close paths still call it there; only the mousedown
+   *   close site moved into the controller).
    */
   readonly takeoffDrawing?: Readonly<{
     setPolygonDrawingMode: ToolStoreState["setPolygonDrawingMode"];
     addPolygonVertex: ToolStoreState["addPolygonVertex"];
     saveLinearPolyline: () => void;
+    savePolygon: () => void;
   }>;
 }
 

@@ -309,11 +309,14 @@ describe("later user tool intent revokes parse completion writes", () => {
     // [refactor jul17 P3.2 takeoffLinear] Plus the takeoffLinear-proven takeoffDrawing group: the
     // two subscribed store action bindings and the saveLinearPolyline composite — same
     // dep-neutrality rule (all three already in the 37-entry array).
+    // [refactor jul17 P3.2 takeoffPolygon] savePolygon joined the takeoffDrawing group at the
+    // polygon extraction (the recorded re-open, fulfilled) — same composite contract and the
+    // same dep-neutrality rule (savePolygon was already in the 37-entry array).
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
         "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
-        "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline},}))){return;}",
+        "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline,savePolygon},}))){return;}",
     );
     expect(compactPrefix).not.toContain("cssScale");
     const mouseDown = source.slice(

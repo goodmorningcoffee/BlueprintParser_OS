@@ -454,7 +454,7 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     expect(count(AO, "\n          takeoffItems,")).toBe(1); // factory field; dep-array entry is mid-line
   });
 
-  it("pins the surviving legacy branch: resolution, silent return, prelude, polygon-only, terminal claim", () => {
+  it("pins the surviving legacy branch: resolution, silent return, prelude, terminal claim only", () => {
     const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
     expect(branch).toBeGreaterThan(-1);
     const slice = AO.slice(branch, AO.indexOf("// Keynote YOLO picking"));
@@ -462,18 +462,21 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     const silentReturn = slice.indexOf("if (!activeItem) return;");
     const invalidate = slice.indexOf("invalidateToolTailAuthority();");
     const stop = slice.indexOf("e.stopPropagation();");
+    // [refactor jul17 P3.2] The polygon identity moved to tools/takeoffPolygon.ts (fifth
+    // registration) — the LAST identity out. The branch keeps the !activeItem silent return
+    // (its only reachable path) plus the prelude + terminal return as the always-claims
+    // contract for the residual (unreachable) partition (TAKEOFF_POLYGON_IMPL/RECON_CENSUS.md
+    // §2, option a).
     const polygon = slice.indexOf('if (activeItem.shape === "polygon") {');
-    // [refactor jul17 P3.2] The linear identity moved to tools/takeoffLinear.ts (fourth
-    // registration) — the branch now serves polygon plus the unreachable residual partition.
     const linear = slice.indexOf('if (activeItem.shape === "linear") {');
-    const residual = slice.indexOf("The count identity");
+    const residual = slice.indexOf("All three takeoff identities live behind the registry seam");
     expect(resolution).toBeGreaterThan(-1);
     expect(silentReturn).toBeGreaterThan(resolution);
     expect(invalidate).toBeGreaterThan(silentReturn);
     expect(stop).toBeGreaterThan(invalidate);
-    expect(polygon).toBeGreaterThan(stop);
+    expect(polygon).toBe(-1); // extracted — the overlay no longer discriminates polygon
     expect(linear).toBe(-1); // extracted — the overlay no longer discriminates linear
-    expect(residual).toBeGreaterThan(polygon); // the unreachable-partition comment + terminal return
+    expect(residual).toBeGreaterThan(stop); // the unreachable-partition comment + terminal return
   });
 
   it("pins the controller as the sole home of the count gesture", () => {

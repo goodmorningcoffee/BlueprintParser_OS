@@ -303,10 +303,16 @@ describe("takeoffCountController.wantsEvents (P3.4 render-gate scaffolding)", ()
 });
 
 describe("registry integration (first eligible-decline controller)", () => {
-  it("a declined polygon press propagates FALSE through the real TOOLS tuple", () => {
+  it("an unresolvable-item press propagates FALSE through the real TOOLS tuple", () => {
+    // [refactor jul17 P3.2 takeoffPolygon] Was the declined-POLYGON witness; the fifth
+    // registration claims polygon presses upstream (and this context deliberately carries no
+    // takeoffDrawing — a polygon CLAIM here would hit takeoffPolygon's split-guard throw), so
+    // the genuinely unclaimable press through the whole tuple is now !activeItem. All three
+    // takeoff controllers decline it with zero side effects (split guard: their decline paths
+    // demand only takeoffItems, which this context has).
     const { context } = contextFor({
       position: { x: 120, y: 70 },
-      toolAtDown: toolState({ activeTakeoffItemId: 6 }),
+      toolAtDown: toolState({ activeTakeoffItemId: 999 }),
       items: [item({ id: 6, shape: "polygon" })],
     });
     const event = mockEvent();

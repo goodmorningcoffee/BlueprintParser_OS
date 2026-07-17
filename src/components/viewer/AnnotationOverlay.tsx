@@ -1502,7 +1502,7 @@ export default memo(function AnnotationOverlay({
           mutations: { annotations: { persistCreate } },
           transientError: { publish: publishTransientBucketFillError },
           takeoffItems,
-          takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline },
+          takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline, savePolygon },
         }))
       ) {
         return;
@@ -1759,44 +1759,15 @@ export default memo(function AnnotationOverlay({
         invalidateToolTailAuthority();
         e.stopPropagation();
 
-        // Polygon drawing mode
-        if (activeItem.shape === "polygon") {
-          const normX = pos.x / width;
-          const normY = pos.y / height;
-
-          if (toolAtDown.polygonDrawingMode === "idle") {
-            // Start new polygon
-            setPolygonDrawingMode("drawing");
-            if (!canAdoptProjectLifecycle()) return;
-            addPolygonVertex({ x: normX, y: normY });
-          } else if (toolAtDown.polygonDrawingMode === "drawing") {
-            // Check snap-to-first-point to close (>= 3 vertices required)
-            if (toolAtDown.polygonVertices.length >= 3) {
-              const firstV = toolAtDown.polygonVertices[0];
-              const firstX = firstV.x * width;
-              const firstY = firstV.y * height;
-              const dist = Math.sqrt((pos.x - firstX) ** 2 + (pos.y - firstY) ** 2);
-              if (dist < 15) {
-                savePolygon();
-                return;
-              }
-            }
-            // Add vertex (skip on double-click second click)
-            if (e.detail < 2) {
-              addPolygonVertex({ x: normX, y: normY });
-            }
-          }
-          return;
-        }
-
-        // [refactor jul17 P3.2] The count identity (existing-marker select loop + half-size
-        // clamped-bbox placement + optimistic persistCreate) lives in tools/takeoffCount.ts, and
-        // the linear identity (idle-start, strict-<10 last-vertex finish snap into
-        // saveLinearPolyline, detail-gated vertex append) lives in tools/takeoffLinear.ts — both
-        // claimed at the registry seam before this branch, so neither press kind reaches here.
-        // The polygon identity above remains until its own extraction; this terminal return
-        // preserves the branch's always-claims contract for the residual (unreachable) shape
-        // partition.
+        // [refactor jul17 P3.2] All three takeoff identities live behind the registry seam now:
+        // count (existing-marker select loop + clamped-bbox placement) in tools/takeoffCount.ts,
+        // linear (strict-<10 last-vertex finish snap into saveLinearPolyline) in
+        // tools/takeoffLinear.ts, and polygon (strict-<15 FIRST-vertex close snap into
+        // savePolygon) in tools/takeoffPolygon.ts — every resolvable shape claims upstream, so
+        // the only press that reaches this branch is !activeItem, which returned silently above
+        // BEFORE the prelude. The prelude + this terminal return stay as the branch's
+        // always-claims contract for any residual (currently unreachable) shape partition
+        // (TAKEOFF_POLYGON_IMPL/RECON_CENSUS.md §2, option a; collapse is a P3-review candidate).
         return;
       }
 

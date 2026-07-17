@@ -4,6 +4,7 @@ import { calibrationController } from "./calibration";
 import { markupController } from "./markup";
 import { takeoffCountController } from "./takeoffCount";
 import { takeoffLinearController } from "./takeoffLinear";
+import { takeoffPolygonController } from "./takeoffPolygon";
 import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 
 // [refactor jul16 P3.2] Array order is RUNTIME PRIORITY (board §5: calibration FIRST, markup
@@ -12,10 +13,13 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // [refactor jul17 P3.2] takeoffCount was the first interior insert (board §5 priority #6);
 // takeoffLinear slots in AHEAD of it (§5 priority #5) — a linear press claims here and never
 // reaches takeoffCount's linear-decline, which stays anyway (honest partition, ordering-robust).
-// The interior stays §5-ordered as later controllers land: split/bucketFill/takeoffPolygon
-// slot in BEFORE takeoffLinear; keynotePick..pointerGroup between takeoffCount and markup.
+// takeoffPolygon slots in AHEAD of takeoffLinear (§5 priority #4) — the same argument makes the
+// linear/count polygon-declines dead-but-honest; the five-way claim set is pairwise disjoint,
+// so registry order stays unobservable.
+// The interior stays §5-ordered as later controllers land: split/bucketFill slot in BEFORE
+// takeoffPolygon; keynotePick..pointerGroup between takeoffCount and markup.
 export const TOOLS = Object.freeze(
-  [calibrationController, takeoffLinearController, takeoffCountController, markupController] as const,
+  [calibrationController, takeoffPolygonController, takeoffLinearController, takeoffCountController, markupController] as const,
 ) satisfies readonly ToolController[];
 
 /**

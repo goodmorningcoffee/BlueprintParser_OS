@@ -98,6 +98,12 @@ function contextFor(options: {
     saveLinearPolyline: vi.fn(() => {
       journal.push("save");
     }),
+    // [refactor jul17 P3.2 takeoffPolygon] Required group member since savePolygon joined the
+    // capability; registry-integration presses that reach the takeoffPolygon slot meet ITS
+    // split guard through this same context.
+    savePolygon: vi.fn(() => {
+      journal.push("savePolygon");
+    }),
   };
   const inner = options.canAdopt ?? (() => true);
   const canAdoptProjectLifecycle = () => {
@@ -386,16 +392,22 @@ describe("registry integration (interior slot AHEAD of takeoffCount)", () => {
     expect(persistCreate).toHaveBeenCalledTimes(1); // count placed its marker
   });
 
-  it("a polygon press propagates FALSE through the whole tuple", () => {
+  it("a polygon press claims AHEAD of this slot — takeoffLinear's polygon-decline is never consulted", () => {
+    // [refactor jul17 P3.2 takeoffPolygon] Was the all-decline FALSE-propagation witness; the
+    // fifth registration (takeoffPolygon, board §5 priority #4) claims polygon presses BEFORE
+    // this controller runs, making its polygon-decline dead-but-honest (it stays — the direct
+    // eligible-decline it.each above pins it forever). The claim's idle arm runs through the
+    // SAME takeoffDrawing capability this context carries.
     const { context, takeoffDrawing, persistCreate } = contextFor({
       position: { x: 50, y: 50 },
       toolAtDown: toolState({ activeTakeoffItemId: 7 }),
       items: [item({ id: 7, shape: "polygon" })],
     });
     const event = mockEvent();
-    expect(dispatchToolMouseDown(TOOLS, event, context.press, () => context)).toBe(false);
-    expect(event.stopPropagation).not.toHaveBeenCalled(); // nothing downstream claimed either
-    expect(takeoffDrawing.setPolygonDrawingMode).not.toHaveBeenCalled();
-    expect(persistCreate).not.toHaveBeenCalled();
+    expect(dispatchToolMouseDown(TOOLS, event, context.press, () => context)).toBe(true);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1); // claimed at takeoffPolygon
+    expect(takeoffDrawing.setPolygonDrawingMode).toHaveBeenCalledTimes(1); // polygon idle arm ran
+    expect(takeoffDrawing.saveLinearPolyline).not.toHaveBeenCalled();
+    expect(persistCreate).not.toHaveBeenCalled(); // count never consulted
   });
 });

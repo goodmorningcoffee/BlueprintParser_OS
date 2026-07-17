@@ -525,23 +525,40 @@ describe("takeoff polygon gesture freeze (real overlay, production mousedown)", 
   });
 });
 
-describe("takeoff polygon seam topology pins (pre-move: the polygon identity still lives in the overlay)", () => {
+describe("takeoff polygon seam topology pins (post-move: controller registered, polygon identity extracted)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
   );
+  const CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/takeoffPolygon.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
-  it("pins the polygon identity in the surviving takeoffPlacement branch", () => {
-    expect(count(AO, 'if (activeItem.shape === "polygon") {')).toBe(1);
-    expect(count(AO, "if (dist < 15) {")).toBe(1);
-    expect(count(AO, "const firstV = toolAtDown.polygonVertices[0];")).toBe(1);
-    // The residual mousedown Math.sqrt census (HitTestBehaviorFreeze owns the whole-file pin).
-    expect(count(AO, "Math.sqrt")).toBe(1);
-    // All three savePolygon call sites pre-move: mousedown (moves), dblclick + Enter (stay).
-    expect(count(AO, "savePolygon();")).toBe(3);
-    // The factory takeoffDrawing group does NOT yet carry savePolygon.
-    expect(count(AO, "takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline },")).toBe(1);
-    expect(existsSync(join(process.cwd(), "src/components/viewer/tools/takeoffPolygon.ts"))).toBe(false);
+  it("pins the polygon identity fully extracted from the overlay", () => {
+    expect(count(AO, 'if (activeItem.shape === "polygon") {')).toBe(0);
+    expect(count(AO, "if (dist < 15) {")).toBe(0);
+    expect(count(AO, "const firstV = toolAtDown.polygonVertices[0];")).toBe(0);
+    // The overlay mousedown owns no distance math anymore (HitTestBehaviorFreeze whole-file pin).
+    expect(count(AO, "Math.sqrt")).toBe(0);
+    // The two SURVIVING call sites: Enter keydown + dblclick (the mousedown site moved).
+    expect(count(AO, "savePolygon();")).toBe(2);
+    // The factory takeoffDrawing group carries savePolygon exactly once.
+    expect(count(AO, "takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline, savePolygon },")).toBe(1);
+  });
+
+  it("pins the controller as the sole home of the polygon gesture", () => {
+    expect(existsSync(join(process.cwd(), "src/components/viewer/tools/takeoffPolygon.ts"))).toBe(true);
+    expect(count(CTRL, 'press.toolAtDown.activeTool?.kind === "takeoffPlacement"')).toBe(1);
+    expect(count(CTRL, "if (!activeItem) return false;")).toBe(1);
+    expect(count(CTRL, 'if (activeItem.shape !== "polygon") return false;')).toBe(1);
+    expect(count(CTRL, "invalidateToolTailAuthority();")).toBe(1);
+    expect(count(CTRL, "event.stopPropagation();")).toBe(1);
+    expect(count(CTRL, "const firstV = toolAtDown.polygonVertices[0];")).toBe(1);
+    expect(count(CTRL, "if (dist < 15) {")).toBe(1);
+    expect(count(CTRL, "takeoffDrawing.savePolygon();")).toBe(1);
+    expect(count(CTRL, "if (event.detail < 2) {")).toBe(1);
+    // The claim/decline values are pinned BEHAVIORALLY in TakeoffPolygonControllerFreeze.test.ts.
   });
 });
