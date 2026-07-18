@@ -457,7 +457,9 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
   it("pins the surviving legacy branch: resolution, silent return, prelude, terminal claim only", () => {
     const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
     expect(branch).toBeGreaterThan(-1);
-    const slice = AO.slice(branch, AO.indexOf("// Keynote YOLO picking"));
+    const end = AO.indexOf("// Keynote YOLO picking", branch);
+    expect(end).toBeGreaterThan(branch);
+    const slice = AO.slice(branch, end);
     const resolution = slice.indexOf("takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId)");
     const silentReturn = slice.indexOf("if (!activeItem) return;");
     const invalidate = slice.indexOf("invalidateToolTailAuthority();");
