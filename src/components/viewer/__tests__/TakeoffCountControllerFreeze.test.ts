@@ -41,6 +41,8 @@ import { TOOL_STORE_CAPABILITIES } from "../tools/capabilities";
 import type { ToolContext, ToolPressSnapshot } from "../tools/types";
 
 const HS = 0.005; // mirrors the production half-size so expected bboxes share the exact doubles
+const CAPABILITY_ERROR =
+  "takeoffCount controller requires the takeoffItems/selection/pageAnnotations/mutations/transientError capabilities";
 
 function mockEvent() {
   return { stopPropagation: vi.fn() } as unknown as ReactMouseEvent & {
@@ -133,29 +135,39 @@ describe("takeoffCountController eligibility", () => {
     expect(takeoffCountController.matches(press(toolState({ activeTakeoffItemId: null })))).toBe(true);
   });
 
-  it("fails loudly before event/tail side effects when a claimed count press lacks any capability", () => {
-    for (const capability of [
-      "takeoffItems",
-      "selection",
-      "pageAnnotations",
-      "mutations",
-      "transientError",
-    ] as const) {
-      const token = claimToolTailAuthority({});
-      const { context, selection, persistCreate, transientError } = contextFor({
-        position: { x: 1, y: 1 },
-      });
-      const bare = { ...context, [capability]: undefined };
-      const event = mockEvent();
-      expect(() => takeoffCountController.onMouseDown(event, bare as ToolContext)).toThrow(
-        "takeoffCount controller requires the takeoffItems/selection/pageAnnotations/mutations/transientError capabilities",
-      );
-      expect(event.stopPropagation).not.toHaveBeenCalled();
-      expect(ownsToolTailAuthority(token)).toBe(true);
-      expect(selection.setSelectedId).not.toHaveBeenCalled();
-      expect(persistCreate).not.toHaveBeenCalled();
-      expect(transientError.publish).not.toHaveBeenCalled();
+  it.each([
+    { label: "placement without takeoffItems", capability: "takeoffItems", position: { x: 1, y: 1 }, annotations: [] },
+    { label: "placement without selection", capability: "selection", position: { x: 1, y: 1 }, annotations: [] },
+    { label: "placement without pageAnnotations", capability: "pageAnnotations", position: { x: 1, y: 1 }, annotations: [] },
+    { label: "placement without mutations", capability: "mutations", position: { x: 1, y: 1 }, annotations: [] },
+    { label: "placement without transientError", capability: "transientError", position: { x: 1, y: 1 }, annotations: [] },
+    { label: "selection without mutations", capability: "mutations", position: { x: 80, y: 30 }, annotations: [MARKER] },
+    { label: "selection without transientError", capability: "transientError", position: { x: 80, y: 30 }, annotations: [MARKER] },
+  ] as const)("$label: fails loudly before event/tail/controller side effects", ({
+    capability,
+    position,
+    annotations,
+  }) => {
+    const token = claimToolTailAuthority({});
+    const { context, selection, persistCreate, transientError } = contextFor({
+      position,
+      annotations,
+    });
+    const bare = { ...context, [capability]: undefined };
+    const event = mockEvent();
+    let thrown: unknown;
+    try {
+      takeoffCountController.onMouseDown(event, bare as ToolContext);
+    } catch (error) {
+      thrown = error;
     }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(CAPABILITY_ERROR);
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+    expect(ownsToolTailAuthority(token)).toBe(true);
+    expect(selection.setSelectedId).not.toHaveBeenCalled();
+    expect(persistCreate).not.toHaveBeenCalled();
+    expect(transientError.publish).not.toHaveBeenCalled();
   });
 });
 
