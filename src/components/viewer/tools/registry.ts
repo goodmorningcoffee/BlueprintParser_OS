@@ -4,6 +4,7 @@ import { calibrationController } from "./calibration";
 import { keynotePickController } from "./keynotePick";
 import { markupController } from "./markup";
 import { parseRectController } from "./parseRect";
+import { symbolSearchController } from "./symbolSearch";
 import { takeoffCountController } from "./takeoffCount";
 import { takeoffLinearController } from "./takeoffLinear";
 import { takeoffPolygonController } from "./takeoffPolygon";
@@ -20,8 +21,9 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // so registry order stays unobservable.
 // The interior stays §5-ordered as later controllers land: split/bucketFill slot in BEFORE
 // takeoffPolygon. keynotePick precedes parseRect so an active YOLO miss can eligible-decline into
-// the generic rectangle starter in the SAME dispatch; tagPick/symbolSearch/tagAdd will eventually
-// slot between them. pointerGroup remains between parseRect and markup.
+// the generic rectangle starter in the SAME dispatch. symbolSearch now occupies its exact middle
+// slot; tagPick will insert before it and tagAdd after it. pointerGroup remains between parseRect
+// and markup.
 export const TOOLS = Object.freeze(
   [
     calibrationController,
@@ -29,6 +31,7 @@ export const TOOLS = Object.freeze(
     takeoffLinearController,
     takeoffCountController,
     keynotePickController,
+    symbolSearchController,
     parseRectController,
     markupController,
   ] as const,

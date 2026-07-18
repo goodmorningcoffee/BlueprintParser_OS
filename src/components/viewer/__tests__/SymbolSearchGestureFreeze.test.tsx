@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 //
-// [refactor jul18 P3.2] PRE-MOVE executable freeze for the symbolSearch mousedown lift.
-// The legacy branch is a terminal deferred-rectangle start: every symbolTemplate press stops
-// propagation and returns, including a start rejected by reentrant exact-activation ownership.
-// Shared move/mouseup/mouseleave settlement deliberately stays in AnnotationOverlay.
+// [refactor jul18 P3.2] Authored PRE-MOVE as the executable symbolSearch mousedown freeze; its
+// topology block is rewritten POST-MOVE. The legacy branch was a terminal deferred-rectangle
+// start: every symbolTemplate press stopped propagation and returned, including a start rejected
+// by reentrant exact-activation ownership. Shared settlement deliberately stays in the overlay.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -349,13 +349,14 @@ describe("symbolSearch gesture freeze (real overlay)", () => {
   });
 });
 
-describe("symbolSearch seam topology pins (pre-move)", () => {
+describe("symbolSearch seam topology pins (post-move)", () => {
   const root = process.cwd();
   const overlayPath = join(root, "src/components/viewer/AnnotationOverlay.tsx");
   const registryPath = join(root, "src/components/viewer/tools/registry.ts");
   const controllerPath = join(root, "src/components/viewer/tools/symbolSearch.ts");
   const AO = readFileSync(overlayPath, "utf8");
   const REGISTRY = readFileSync(registryPath, "utf8");
+  const CONTROLLER = readFileSync(controllerPath, "utf8");
   const mouseDownStart = AO.indexOf("const handleMouseDown = useCallback(");
   const mouseMoveStart = AO.indexOf("const handleMouseMove = useCallback(");
   const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
@@ -364,31 +365,31 @@ describe("symbolSearch seam topology pins (pre-move)", () => {
   const sha256 = (value: string): string =>
     createHash("sha256").update(value).digest("hex");
 
-  it("pins the exact legacy terminal branch as the sole mousedown home", () => {
+  it("pins the legacy branch absent and the controller as the sole mousedown home", () => {
     expect(mouseDownStart).toBeGreaterThan(-1);
     expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
-    expect(existsSync(controllerPath)).toBe(false);
-    expect(count(MOUSEDOWN, "// Symbol search draw mode")).toBe(1);
-    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "symbolTemplate")')).toBe(1);
-    const branchStart = MOUSEDOWN.indexOf("      // Symbol search draw mode");
-    const branchEnd = MOUSEDOWN.indexOf(
-      "      // Tag Add owns its exact tag payload",
-      branchStart,
-    );
-    const branch = MOUSEDOWN.slice(branchStart, branchEnd - 1);
-    expect(branch).toContain("e.stopPropagation();\n        startDeferredDrawing(pos);\n        return;");
-    expect(branch).not.toContain("startDeferredDrawing(pos,");
-    expect(branch).not.toContain("invalidateToolTailAuthority");
-    expect(sha256(branch)).toBe(
-      "6bb7dee26564933b7e570a91edadff1eba56c39b16ddb202c9fa690e544848a9",
-    );
+    expect(existsSync(controllerPath)).toBe(true);
+    expect(count(MOUSEDOWN, "// Symbol search draw mode")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "symbolTemplate")')).toBe(0);
+    expect(count(CONTROLLER, 'kind: "symbolSearch"')).toBe(1);
+    expect(count(CONTROLLER, 'state.activeTool?.kind === "symbolTemplate"')).toBe(1);
+    expect(count(CONTROLLER, 'press.toolAtDown.activeTool?.kind === "symbolTemplate"')).toBe(1);
+    expect(count(CONTROLLER, "event.stopPropagation();")).toBe(1);
+    expect(count(CONTROLLER, "deferredDrawing.start(context.press.position);")).toBe(1);
+    expect(CONTROLLER).not.toContain("invalidateToolTailAuthority");
+    expect(CONTROLLER).not.toContain("context.press.position, false");
   });
 
-  it("pins registry absence and the retained starter/factory/dependency contract", () => {
-    expect(REGISTRY).not.toContain("symbolSearchController");
-    expect(REGISTRY).toContain("keynotePickController,\n    parseRectController,");
+  it("pins exact registry placement and the retained starter/factory/dependency contract", () => {
+    expect(REGISTRY).toContain('import { symbolSearchController } from "./symbolSearch";');
+    expect(REGISTRY).toContain(
+      "keynotePickController,\n    symbolSearchController,\n    parseRectController,",
+    );
     expect(count(AO, "const startDeferredDrawing = useCallback(")).toBe(1);
     expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
+    expect(AO).toContain(
+      "plus symbolSearch starts are claimed at the registry seam",
+    );
 
     const callbackStart = AO.indexOf("  const handleMouseDown = useCallback(");
     const callbackEnd = AO.indexOf("\n  );", callbackStart);

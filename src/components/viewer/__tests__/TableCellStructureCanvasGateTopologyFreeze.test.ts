@@ -2,7 +2,7 @@
 //
 // [refactor jul18 P3 draw #5] Exact two-gate TATR canvas reachability seam. Normalizing only the
 // sanctioned inline predicates back to the accepted parent freezes every other draw-effect byte,
-// dependency, pass, and canvas gate while keeping AO at its 2,840-line architecture ceiling.
+// dependency, pass, and canvas gate while following AO's exact ratcheted architecture ceiling.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -80,7 +80,7 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps AnnotationOverlay at the exact 2,840-line architecture ceiling", () => {
-    expect(count(AO, "\n")).toBe(2_840);
+  it("keeps AnnotationOverlay at the exact 2,833-line architecture ceiling", () => {
+    expect(count(AO, "\n")).toBe(2_833);
   });
 });

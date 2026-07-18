@@ -1830,13 +1830,6 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Symbol search draw mode
-      if (activeTool?.kind === "symbolTemplate") {
-        e.stopPropagation();
-        startDeferredDrawing(pos);
-        return;
-      }
-
       // Tag Add owns its exact tag payload for the complete deferred rectangle.
       if (activeTool?.kind === "tagAdd") {
         e.stopPropagation();
@@ -1845,8 +1838,8 @@ export default memo(function AnnotationOverlay({
       }
 
       // [refactor jul18 P3.2] keynotePick hit/miss routing and generic parseRect deferred starts
-      // are claimed atomically at the registry seam. Conditional subscriptions/filtering and
-      // complete drawing settlement stay in this component.
+      // plus symbolSearch starts are claimed at the registry seam. Conditional subscriptions,
+      // filtering, and complete drawing settlement stay in this component.
 
       // Every non-null specialized owner suppresses base pointer/group/markup fallthrough.
       if (activeTool !== null) return;
