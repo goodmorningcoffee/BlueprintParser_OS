@@ -105,6 +105,10 @@ export interface ToolContext {
     setDragging: (dragging: boolean) => void;
     deleteSelected: () => void;
   }>;
+  /** Component-owned drag journal; proven by markup's selected-corner start path. */
+  readonly annotationDrag?: Readonly<{
+    beginBBox: (annotation: ClientAnnotation, resizeCorner: string) => boolean;
+  }>;
   readonly pageAnnotations?: readonly ClientAnnotation[];
   readonly deferredDrawing?: Readonly<{
     start: (pos: { x: number; y: number }, clearSelection?: boolean) => boolean;

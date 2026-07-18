@@ -967,21 +967,14 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     unsubscribe();
   });
 
-  it("keeps the Overlay page effect local and pins the global page authority boundary", () => {
-    const pageEffect = useEffectCalls(source).find((effect) => {
+  it("keeps page selection off passive Overlay effects and pins the global authority boundary", () => {
+    const passiveSelectionEffects = useEffectCalls(source).filter((effect) => {
       if (effect.arguments.length < 2) return false;
       if (dependencyTexts(effect, source).join(",") !== "pageNumber") return false;
       return callLabels(functionBlock(effect.arguments[0]), source).includes("setSelectedId");
     });
-    if (!pageEffect) throw new Error("Expected the AnnotationOverlay page-change effect");
-    const block = functionBlock(pageEffect.arguments[0]);
-
-    expect(block.statements.map((statement) => compact(statement, source))).toEqual([
-      "if(selectedPageRef.current===pageNumber)return;",
-      "selectedPageRef.current=pageNumber;",
-      "setSelectedId(null);",
-    ]);
-    expect(dependencyTexts(pageEffect, source)).toEqual(["pageNumber"]);
+    expect(passiveSelectionEffects).toEqual([]);
+    expect(source).not.toContain("selectedPageRef");
 
     const commands = parseSource(VIEWER_COMMANDS);
     const pageBoundary = findNamedFunction(commands, "publishViewerPageBoundary");

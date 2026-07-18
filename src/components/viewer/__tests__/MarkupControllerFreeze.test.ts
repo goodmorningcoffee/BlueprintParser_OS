@@ -72,16 +72,18 @@ function contextFor(options: {
     deleteSelected: vi.fn(),
   };
   const deferredDrawing = { start: vi.fn(() => true) };
+  const annotationDrag = { beginBBox: vi.fn(() => true) };
   const context: ToolContext = {
     press,
     page,
     stores: TOOL_STORE_CAPABILITIES,
     canAdoptProjectLifecycle: () => true,
     selection,
+    annotationDrag,
     pageAnnotations: options.annotations ?? [],
     deferredDrawing,
   };
-  return { context, selection, deferredDrawing };
+  return { context, selection, annotationDrag, deferredDrawing };
 }
 
 // bbox [0.2,0.2,0.6,0.8] on 200×100: pixel box (40,20)–(120,80); label bar y ∈ [2,20] at x ≥ 40.
@@ -111,7 +113,7 @@ describe("markupController block order and geometry", () => {
   it("corner first-hit order is tl→tr→bl→br when handles overlap", () => {
     // Tiny box on a 100×100 page: all four handles within 8px of the press.
     const tiny = annotation(3, [0.1, 0.1, 0.14, 0.12]); // corners (10,10) (14,10) (10,12) (14,12)
-    const { context, selection } = contextFor({
+    const { context, selection, annotationDrag } = contextFor({
       position: { x: 12, y: 11 },
       annotations: [tiny],
       selectedId: 3,
@@ -119,9 +121,36 @@ describe("markupController block order and geometry", () => {
     });
     const event = mockEvent();
     expect(markupController.onMouseDown(event, context)).toBe(true);
+    expect(annotationDrag.beginBBox).toHaveBeenCalledExactlyOnceWith(tiny, "tl");
     expect(selection.setResizeCorner).toHaveBeenCalledExactlyOnceWith("tl");
     expect(selection.setDragging).toHaveBeenCalledExactlyOnceWith(true);
     expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails loudly only when a corner path lacks its drag journal", () => {
+    const { context } = contextFor({
+      position: { x: 40, y: 20 },
+      annotations: [BOX],
+      selectedId: 7,
+    });
+    expect(() => markupController.onMouseDown(
+      mockEvent(),
+      { ...context, annotationDrag: undefined },
+    )).toThrow("markup corner resize requires the annotationDrag capability");
+  });
+
+  it("does not publish resize state when exact drag admission is denied", () => {
+    const { context, selection, annotationDrag } = contextFor({
+      position: { x: 40, y: 20 },
+      annotations: [BOX],
+      selectedId: 7,
+    });
+    annotationDrag.beginBBox.mockReturnValue(false);
+    const event = mockEvent();
+    expect(markupController.onMouseDown(event, context)).toBe(true);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(selection.setResizeCorner).not.toHaveBeenCalled();
+    expect(selection.setDragging).not.toHaveBeenCalled();
   });
 
   // [refactor jul16 P3.2 repair, prober hole A] Only "tl" (direct) and "br" (end-to-end resize)

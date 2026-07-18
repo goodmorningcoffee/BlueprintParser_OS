@@ -58,7 +58,11 @@ export const markupController: ToolController = Object.freeze({
 
         for (const [key, corner] of Object.entries(corners)) {
           if (pointInHandle(position, corner, HANDLE)) {
+            if (!context.annotationDrag) {
+              throw new Error("markup corner resize requires the annotationDrag capability");
+            }
             event.stopPropagation();
+            if (!context.annotationDrag.beginBBox(selAnn, key)) return true;
             selection.setResizeCorner(key);
             selection.setDragging(true);
             return true;

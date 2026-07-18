@@ -941,6 +941,23 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
 });
 
 describe("AnnotationOverlay focus passive-effect ownership", () => {
+  it("clears A's settled selection on lifecycle replacement without an active drag", () => {
+    const id = -70;
+    const a = userAnnotation({ id, name: "Settled selection A" });
+    const b = userAnnotation({ id, name: "Same-ID successor B", note: "must survive" });
+    seedAnnotations(queryClient, [a]);
+    useUiStore.setState({ focusAnnotationId: id });
+    renderCanvas();
+
+    act(() => installSameIdSuccessor(() => {
+      useToolStore.setState({ mode: "pointer" });
+      seedAnnotations(queryClient, [b]);
+    }));
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    expect(readSeededAnnotations(queryClient)).toEqual([b]);
+  });
+
   it("does not transfer A's queued focus into same-ID successor B", () => {
     const aFocusId = -71;
     const bFocusId = -72;

@@ -38,6 +38,20 @@ import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 // no await inserted between. Existing persistence paths keep optimistic rows on failure by design.
 
 export type AnnotationUpdater = (rows: ClientAnnotation[]) => ClientAnnotation[];
+export type AnnotationDragKind = "bbox" | "vertex";
+/** Discriminated exact geometry body used for the synchronous cache flush and eventual PUT. */
+export type AnnotationDragPayload =
+  | Readonly<{
+      kind: "bbox";
+      payload: Readonly<{ bbox: ClientAnnotation["bbox"] }>;
+    }>
+  | Readonly<{
+      kind: "vertex";
+      payload: Readonly<{
+        bbox: ClientAnnotation["bbox"];
+        data: ClientAnnotation["data"];
+      }>;
+    }>;
 /**
  * The POST shape deliberately keeps server-defaulted fields optional.
  *
@@ -88,6 +102,81 @@ const EMPTY_ANNOTATIONS = Object.freeze([]) as unknown as ClientAnnotation[];
  */
 export function readAnnotations(qc: QueryClient, publicId: string): ClientAnnotation[] {
   return qc.getQueryData<ClientAnnotation[]>(queryKeys.annotations.all(publicId)) ?? EMPTY_ANNOTATIONS;
+}
+
+/**
+ * Publish one exact, component-owned drag payload without creating a missing project cache.
+ *
+ * The returned row is the canonical structurally-shared row produced by TanStack Query. Drag
+ * abandonment retains that exact reference as its compare-and-swap witness, so it cannot roll a
+ * newer publication back merely because the newer row happens to contain equal geometry.
+ */
+export function publishAnnotationDrag(
+  qc: QueryClient,
+  publicId: string,
+  pageNumber: number,
+  annotationId: number,
+  update: AnnotationDragPayload,
+): ClientAnnotation | null {
+  let matchedIndex = -1;
+  const published = qc.setQueryData<ClientAnnotation[]>(
+    queryKeys.annotations.all(publicId),
+    (old) => {
+      if (!old) return old;
+      const index = old.findIndex(
+        (annotation) => annotation.id === annotationId && annotation.pageNumber === pageNumber,
+      );
+      if (index === -1) return undefined;
+      matchedIndex = index;
+      const annotation = old[index];
+      const next = [...old];
+      next[index] = update.kind === "vertex"
+        ? {
+            ...annotation,
+            bbox: update.payload.bbox,
+            data: update.payload.data,
+          }
+        : { ...annotation, bbox: update.payload.bbox };
+      return next;
+    },
+  );
+  if (matchedIndex === -1 || !published) return null;
+  const exact = published[matchedIndex];
+  return exact?.id === annotationId && exact.pageNumber === pageNumber ? exact : null;
+}
+
+/**
+ * Roll back only the drag-owned fields of the exact row last published by this gesture.
+ * Missing caches/rows and successor publications are deliberately left untouched.
+ */
+export function rollbackAnnotationDrag(
+  qc: QueryClient,
+  publicId: string,
+  pageNumber: number,
+  annotationId: number,
+  lastPublishedRow: ClientAnnotation | null,
+  origin: ClientAnnotation,
+  kind: AnnotationDragKind,
+): boolean {
+  if (!lastPublishedRow) return false;
+  let rolledBack = false;
+  qc.setQueryData<ClientAnnotation[]>(
+    queryKeys.annotations.all(publicId),
+    (old) => {
+      if (!old) return old;
+      const index = old.findIndex(
+        (annotation) => annotation.id === annotationId && annotation.pageNumber === pageNumber,
+      );
+      if (index === -1 || old[index] !== lastPublishedRow) return undefined;
+      rolledBack = true;
+      const next = [...old];
+      next[index] = kind === "vertex"
+        ? { ...old[index], bbox: origin.bbox, data: origin.data }
+        : { ...old[index], bbox: origin.bbox };
+      return next;
+    },
+  );
+  return rolledBack;
 }
 
 /**

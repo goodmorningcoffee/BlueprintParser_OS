@@ -316,7 +316,9 @@ describe("later user tool intent revokes parse completion writes", () => {
     // narrow projection; isKeynoteYoloPicking was already in the same 37-entry array.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
-        "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
+        "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected}," +
+        "annotationDrag:{beginBBox:(annotation,corner)=>beginAnnotationDrag(annotation,{kind:\"bbox\",resizeCorner:corner,dragOffset:{x:0,y:0}},),}," +
+        "pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
         "keynotePick:{active:isKeynoteYoloPicking}," +
         "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
         "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline,savePolygon},}))){return;}",
@@ -772,7 +774,7 @@ describe("later user tool intent revokes parse completion writes", () => {
     }
   });
 
-  it("pins exact authority for calibration, symbol, detection, and local-only page effects", () => {
+  it("pins exact authority for calibration, symbol, detection, and page selection", () => {
     const calibration = sourceSlice(
       "src/components/viewer/CalibrationInput.tsx",
       "async function handleOk()",
@@ -829,14 +831,14 @@ describe("later user tool intent revokes parse completion writes", () => {
     }
     expect(detection).not.toContain("invalidateParseToolAuthority");
 
-    const pageEffect = sourceSlice(
-      "src/components/viewer/AnnotationOverlay.tsx",
-      "// The synchronous viewer page command owns every Tool/Parse/drawing boundary.",
-      "// Exit polygon drawing when switching interaction modes",
+    const pageBoundary = sourceSlice(
+      "src/components/viewer/useAnnotationDragMachine.ts",
+      "// Synchronous subscription closes the batched source→destination→source page ABA hole.",
+      "const lifecycleRef",
     );
-    expect(pageEffect.match(/setSelectedId\(null\)/g)).toHaveLength(1);
-    expect(pageEffect).toContain("}, [pageNumber]);");
-    expect(pageEffect).not.toMatch(
+    expect(pageBoundary.match(/setSelectedId\(null\)/g)).toHaveLength(1);
+    expect(pageBoundary).toContain("useViewerCoreStore.subscribe");
+    expect(pageBoundary).not.toMatch(
       /useToolStore|publishSettled|invalidate.*Authority|reset.*Drawing|setSymbolSearchActive/,
     );
 

@@ -363,8 +363,9 @@ describe("markup seam topology pins (post-move: controller registered, blocks ex
   it("pins the markup blocks fully extracted from the overlay", () => {
     expect(count(AO, "// Markup mode:")).toBe(0);
     expect(count(AO, 'if (toolAtDown.mode !== "markup") return;')).toBe(0);
-    // The factory carries the three markup-proven capabilities exactly once.
+    // The factory carries the original trio plus the exact component-owned drag admission.
     expect(count(AO, "selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },")).toBe(1);
+    expect(count(AO, "beginBBox: (annotation, corner) => beginAnnotationDrag(")).toBe(1);
     expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
     // The pointer block's rich label logic (pencil + text measurement) stays in the overlay.
     expect(count(AO, "// Pencil icon clicked — edit markup")).toBe(1);
@@ -375,6 +376,7 @@ describe("markup seam topology pins (post-move: controller registered, blocks ex
     expect(count(CTRL, 'press.toolAtDown.activeTool === null && press.toolAtDown.mode === "markup"')).toBe(1);
     expect(count(CTRL, "invalidateToolTailAuthority();")).toBe(1);
     expect(count(CTRL, "selection.deleteSelected();")).toBe(1);
+    expect(count(CTRL, "context.annotationDrag.beginBBox(selAnn, key)")).toBe(1);
     expect(count(CTRL, "deferredDrawing.start(position);")).toBe(1);
     expect(count(CTRL, "event.stopPropagation();")).toBe(4);
     // The claim itself is pinned BEHAVIORALLY in MarkupControllerFreeze.test.ts on every path.

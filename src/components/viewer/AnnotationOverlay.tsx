@@ -9,7 +9,10 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 // value or a dep there (TAKEOFF_IMPL/SPEC.md §3.3 :372 row).
 import { useQueryClient } from "@tanstack/react-query";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
-import { useAnnotations, readAnnotations } from "@/queries/useAnnotations";
+import {
+  useAnnotations,
+  readAnnotations,
+} from "@/queries/useAnnotations";
 import { readTextractForPage } from "@/queries/textractCache";
 import {
   readPageIntelligence,
@@ -76,6 +79,7 @@ import { TOOL_STORE_CAPABILITIES } from "./tools/capabilities";
 import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
+import { useAnnotationDragMachine } from "./useAnnotationDragMachine";
 
 interface AnnotationOverlayProps {
   width: number;
@@ -289,7 +293,6 @@ export default memo(function AnnotationOverlay({
   const { _setDrawing: setDrawing, _setDrawStart: setDrawStart, _setDrawEnd: setDrawEnd, _setMousePos: setMousePos } = useToolStore.getState();
   const rafRef = useRef<number>(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const selectedPageRef = useRef(pageNumber);
   // Multi-select layer — owns the Group-tool lasso + shift-click accumulation.
   // See useMultiSelectInteraction for the interaction contract. Backward
   // compat: single-select paths (drag-to-move, pencil-edit) keep using the
@@ -297,11 +300,9 @@ export default memo(function AnnotationOverlay({
   const multiSelect = useMultiSelectInteraction();
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const dragBboxRef = useRef<[number, number, number, number] | null>(null);
   // Vertex drag state (Bug 2). Lives outside the bbox drag path — polygon
   // vertex edits update data.vertices instead of the annotation bbox.
   const [draggingVertex, setDraggingVertex] = useState<{ annId: number; idx: number } | null>(null);
-  const draggingVertexRef = useRef<{ annId: number; idx: number } | null>(null);
   // One-shot focus signal from external components (TakeoffPanel, AreaTab).
   // When set, we transfer the value to local selectedId and clear the field.
   const focusAnnotationId = useUiStore((s) => s.focusAnnotationId);
@@ -1442,26 +1443,16 @@ export default memo(function AnnotationOverlay({
   }, [annotations, canAdoptProjectLifecycle, isDemo, publicId,
     publishTransientBucketFillError, selectedId]);
 
-  /** Persist a vertex edit: PUTs both bbox and data. Parallel to
-   *  saveDragPosition which only sends bbox. Pattern cloned from the
-   *  split-area persistence code at L941 which also sends both fields. */
-  const saveVertexEdit = useCallback((annId: number) => {
-    if (!canAdoptProjectLifecycle()) return;
-    if (!canPersist(publicId, isDemo)) return;
-    if (annId <= 0) return; // skip tempIds (optimistic local-only)
-    const ann = annotations.find((a) => a.id === annId);
-    if (!ann) return;
-    (async () => {
-      try {
-        await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox, data: ann.data }, "PUT");
-      } catch (err) {
-        publishTransientBucketFillError(
-          err instanceof Error ? `Failed to save edit: ${err.message}` : "Failed to save edit",
-        );
-      }
-    })();
-  }, [annotations, canAdoptProjectLifecycle, isDemo, publicId,
-    publishTransientBucketFillError]);
+  const {
+    begin: beginAnnotationDrag,
+    finish: finishAnnotationDrag,
+    readActive: readActiveAnnotationDrag,
+    schedule: scheduleAnnotationDragPublish,
+  } = useAnnotationDragMachine({
+    queryClient: qc, publicId, pageNumber, canAdoptProjectLifecycle,
+    publishTransientError: publishTransientBucketFillError,
+    setDragging, setResizeCorner, setDraggingVertex, setSelectedId,
+  });
 
   const HANDLE = 8; // corner handle size in pixels
 
@@ -1496,6 +1487,11 @@ export default memo(function AnnotationOverlay({
           stores: TOOL_STORE_CAPABILITIES,
           canAdoptProjectLifecycle,
           selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },
+          annotationDrag: {
+            beginBBox: (annotation, corner) => beginAnnotationDrag(
+              annotation, { kind: "bbox", resizeCorner: corner, dragOffset: { x: 0, y: 0 } },
+            ),
+          },
           pageAnnotations,
           deferredDrawing: { start: startDeferredDrawing },
           keynotePick: { active: isKeynoteYoloPicking },
@@ -2022,9 +2018,9 @@ export default memo(function AnnotationOverlay({
                 const vy = polyData.vertices[i].y * height;
                 if (pointInHandle(pos, { x: vx, y: vy }, HANDLE)) {
                   e.stopPropagation();
+                  if (!beginAnnotationDrag(selAnn, { kind: "vertex", vertexIndex: i })) return;
                   const handle = { annId: selAnn.id, idx: i };
                   setDraggingVertex(handle);
-                  draggingVertexRef.current = handle;
                   setDragging(true);
                   return;
                 }
@@ -2043,6 +2039,8 @@ export default memo(function AnnotationOverlay({
               for (const [key, corner] of Object.entries(corners)) {
                 if (pointInHandle(pos, corner, HANDLE)) {
                   e.stopPropagation();
+                  if (!beginAnnotationDrag(selAnn, { kind: "bbox", resizeCorner: key,
+                    dragOffset: { x: 0, y: 0 } })) return;
                   setResizeCorner(key);
                   setDragging(true);
                   return;
@@ -2142,9 +2140,12 @@ export default memo(function AnnotationOverlay({
                 if (!canAdoptProjectLifecycle()) return;
               }
             }
+            const nextDragOffset = { x: pos.x - ax, y: pos.y - ay };
+            if (!beginAnnotationDrag(ann, { kind: "bbox", resizeCorner: null,
+              dragOffset: nextDragOffset })) return;
             setDragging(true);
             setResizeCorner(null);
-            setDragOffset({ x: pos.x - ax, y: pos.y - ay });
+            setDragOffset(nextDragOffset);
             return;
           }
         }
@@ -2177,6 +2178,7 @@ export default memo(function AnnotationOverlay({
       // claimed at the registry seam. Presses reaching this tail are mode "move"/non-markup
       // fallthroughs, which were always inert here.
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- render composites use this exact 37-entry capture.
     [addBucketFillBarrier, addPolygonVertex, canAdoptProjectLifecycle, cancelDeferredDrawing, getPos, height,
       isKeynoteYoloPicking, multiSelect, pageAnnotations, pageKeynotes, pageNumber, persistCreate,
       projectDbId, publicId, publishTransientBucketFillError, publishTransientSplitError, qc,
@@ -2204,20 +2206,20 @@ export default memo(function AnnotationOverlay({
         setDrawEnd(getPos(e));
         return;
       }
-      // Vertex drag (Bug 2). Runs before bbox drag since draggingVertex and
-      // selectedId are both set. Early return so the bbox path doesn't also
-      // execute.
-      if (dragging && draggingVertexRef.current) {
+      // Ref-owned operation prevents stale React state from lending physics to a successor.
+      const annotationDrag = readActiveAnnotationDrag();
+      if (!annotationDrag) return;
+      if (annotationDrag.operation.kind === "vertex") {
         const pos = getPos(e);
-        const dv = draggingVertexRef.current;
-        const ann = pageAnnotations.find((a) => a.id === dv.annId);
+        const ann = pageAnnotations.find((row) => row.id === annotationDrag.annotationId);
         if (!ann) return;
         const data = ann.data as unknown as AreaPolygonData;
-        if (!data.vertices || dv.idx >= data.vertices.length) return;
+        const vertexIndex = annotationDrag.operation.vertexIndex;
+        if (!data.vertices || vertexIndex >= data.vertices.length) return;
         const newX = Math.max(0, Math.min(1, pos.x / width));
         const newY = Math.max(0, Math.min(1, pos.y / height));
         const newVertices = data.vertices.map((v, i) =>
-          i === dv.idx ? { x: newX, y: newY } : v,
+          i === vertexIndex ? { x: newX, y: newY } : v,
         );
         // Recompute bbox from new vertices
         const xs = newVertices.map((v) => v.x);
@@ -2240,35 +2242,33 @@ export default memo(function AnnotationOverlay({
           newAreaSqUnits = Math.max(0, outerArea - holesArea);
         }
         const updatedData = { ...data, vertices: newVertices, areaSqUnits: newAreaSqUnits };
-        // rAF-throttle — matches the bbox-drag pattern below.
-        cancelAnimationFrame(rafRef.current);
-        const id = ann.id;
-        rafRef.current = requestAnimationFrame(() => {
-          if (!canAdoptProjectLifecycle()) return;
-          updateAnnotation(id, {
+        scheduleAnnotationDragPublish(annotationDrag, {
+          kind: "vertex",
+          payload: {
             bbox: newBboxVtx,
             data: updatedData as unknown as Record<string, unknown>,
-          });
+          },
         });
         return;
       }
 
-      if (dragging && selectedId !== null) {
+      if (annotationDrag.operation.kind === "bbox") {
         const pos = getPos(e);
-        const ann = pageAnnotations.find((a) => a.id === selectedId);
+        const ann = pageAnnotations.find((row) => row.id === annotationDrag.annotationId);
         if (!ann) return;
         const [minX, minY, maxX, maxY] = ann.bbox;
 
         let newBbox: [number, number, number, number];
-        if (resizeCorner) {
+        const operation = annotationDrag.operation;
+        if (operation.resizeCorner) {
           // Resize from corner
           const px = pos.x / width;
           const py = pos.y / height;
           newBbox = [minX, minY, maxX, maxY];
-          if (resizeCorner === "tl") newBbox = [px, py, maxX, maxY];
-          if (resizeCorner === "tr") newBbox = [minX, py, px, maxY];
-          if (resizeCorner === "bl") newBbox = [px, minY, maxX, py];
-          if (resizeCorner === "br") newBbox = [minX, minY, px, py];
+          if (operation.resizeCorner === "tl") newBbox = [px, py, maxX, maxY];
+          if (operation.resizeCorner === "tr") newBbox = [minX, py, px, maxY];
+          if (operation.resizeCorner === "bl") newBbox = [px, minY, maxX, py];
+          if (operation.resizeCorner === "br") newBbox = [minX, minY, px, py];
           newBbox = [
             Math.max(0, Math.min(newBbox[0], newBbox[2] - 0.01)),
             Math.max(0, Math.min(newBbox[1], newBbox[3] - 0.01)),
@@ -2279,8 +2279,8 @@ export default memo(function AnnotationOverlay({
           // Move entire annotation
           const w = maxX - minX;
           const h = maxY - minY;
-          const newMinX = (pos.x - dragOffset.x) / width;
-          const newMinY = (pos.y - dragOffset.y) / height;
+          const newMinX = (pos.x - operation.dragOffset.x) / width;
+          const newMinY = (pos.y - operation.dragOffset.y) / height;
           newBbox = [
             Math.max(0, Math.min(newMinX, 1 - w)),
             Math.max(0, Math.min(newMinY, 1 - h)),
@@ -2289,38 +2289,27 @@ export default memo(function AnnotationOverlay({
           ];
         }
         // Throttle store updates to screen refresh rate via rAF
-        dragBboxRef.current = newBbox;
-        cancelAnimationFrame(rafRef.current);
-        const id = selectedId;
-        rafRef.current = requestAnimationFrame(() => {
-          if (!canAdoptProjectLifecycle()) return;
-          if (dragBboxRef.current) updateAnnotation(id, { bbox: dragBboxRef.current });
+        scheduleAnnotationDragPublish(annotationDrag, {
+          kind: "bbox",
+          payload: { bbox: newBbox },
         });
       }
     },
-    [canAdoptProjectLifecycle, dragging, selectedId, dragOffset, resizeCorner, pageAnnotations,
-      width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos,
+    [canAdoptProjectLifecycle, width, height, getPos, pageAnnotations, polygonDrawingMode,
+      readActiveAnnotationDrag, scheduleAnnotationDragPublish, setDrawEnd, setMousePos,
       scaleCalibrations]
   );
 
   const handleMouseUp = useCallback(() => {
-    // Vertex drag end (Bug 2). Runs before bbox-drag end — both conditions
-    // could be true (dragging && selectedId) but vertex drag needs a
-    // different persistence path (bbox + data) vs bbox-only.
-    if (dragging && draggingVertexRef.current) {
-      const annId = draggingVertexRef.current.annId;
-      setDragging(false);
-      setDraggingVertex(null);
-      draggingVertexRef.current = null;
-      saveVertexEdit(annId);
+    // Exact terminal precedence remains vertex before bbox; both now consume the same generation-
+    // owned journal while retaining their distinct `{bbox,data}` / `{bbox}` wire bodies.
+    const annotationDrag = readActiveAnnotationDrag();
+    if (annotationDrag?.operation.kind === "vertex") {
+      finishAnnotationDrag(annotationDrag, true);
       return;
     }
-
-    // Save dragged/resized position
-    if (dragging && selectedId !== null) {
-      setDragging(false);
-      setResizeCorner(null);
-      saveDragPosition();
+    if (annotationDrag?.operation.kind === "bbox") {
+      finishAnnotationDrag(annotationDrag, true);
       return;
     }
 
@@ -2418,7 +2407,8 @@ export default memo(function AnnotationOverlay({
           return;
       }
     });
-  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, setDrawing, pageAnnotations, multiSelect, qc, updateYoloTag]);
+  }, [finishAnnotationDrag, width, height, setDrawing, pageAnnotations, multiSelect, qc,
+    readActiveAnnotationDrag, updateYoloTag]);
 
   const handleDoubleClick = useCallback(() => {
     if (useSessionStore.getState().publicId !== publicId ||
@@ -2633,14 +2623,6 @@ export default memo(function AnnotationOverlay({
   }, [canAdoptProjectLifecycle, dragging, isDemo, publicId,
     publishTransientBucketFillError, removeAnnotation, saveDragPosition, selectedId]);
 
-  // The synchronous viewer page command owns every Tool/Parse/drawing boundary. This residual
-  // component effect is intentionally local-only and cannot erase destination-page work.
-  useEffect(() => {
-    if (selectedPageRef.current === pageNumber) return;
-    selectedPageRef.current = pageNumber;
-    setSelectedId(null);
-  }, [pageNumber]);
-
   // Exit polygon drawing when switching interaction modes
   const modeCleanupLifecycleRef = useRef(canAdoptProjectLifecycle);
   useEffect(() => {
@@ -2796,6 +2778,20 @@ export default memo(function AnnotationOverlay({
     canvasCursor = "crosshair";
   }
 
+  function handleMouseLeave() {
+    // Cancel the deferred lease before publishing; exact-session finish cannot clear admitted B.
+    const expected = readActiveAnnotationDrag();
+    cancelDeferredDrawing();
+    if (expected) {
+      finishAnnotationDrag(expected, false);
+      return;
+    }
+    if (readActiveAnnotationDrag() === null && dragging) {
+      setDragging(false);
+      setResizeCorner(null);
+      setDraggingVertex(null);
+    }
+  }
   return (
     <>
       <canvas
@@ -2804,13 +2800,7 @@ export default memo(function AnnotationOverlay({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
-        onMouseLeave={() => {
-          if (dragging) {
-            setDragging(false);
-            setResizeCorner(null);
-          }
-          cancelDeferredDrawing();
-        }}
+        onMouseLeave={handleMouseLeave}
         style={{
           position: "absolute",
           top: 0,

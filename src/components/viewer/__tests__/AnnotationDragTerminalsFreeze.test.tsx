@@ -23,6 +23,7 @@ import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
@@ -322,6 +323,26 @@ afterEach(() => {
 });
 
 describe("AnnotationOverlay exact annotation-drag terminals", () => {
+  it("publishes and PUTs the exact origin on click-without-move with no queued frame", () => {
+    const frames = installRetainedFrames();
+    seedRows([userAnnotation()]);
+    const canvas = renderCanvas();
+    const installedOrigin = row(BBOX_ID);
+    const beforeCount = queryClient.getQueryState(
+      queryKeys.annotations.all(PUBLIC_ID),
+    )!.dataUpdateCount;
+
+    startBBoxDrag(canvas);
+    fireEvent.mouseUp(canvas);
+
+    expect(frames).toHaveLength(0);
+    expect(row(BBOX_ID)).toMatchObject({ bbox: ORIGIN_BBOX, data: installedOrigin.data });
+    expect(queryClient.getQueryState(
+      queryKeys.annotations.all(PUBLIC_ID),
+    )!.dataUpdateCount).toBe(beforeCount + 1);
+    expectOnlyPut(BBOX_ID, { bbox: ORIGIN_BBOX });
+  });
+
   it("flushes and PUTs the exact latest bbox on mouseup before rAF, retains selection, and retires the frame", () => {
     const frames = installRetainedFrames();
     seedRows([userAnnotation()]);
@@ -344,6 +365,26 @@ describe("AnnotationOverlay exact annotation-drag terminals", () => {
     persistFetchMock.mockClear();
     fireEvent.keyDown(window, { key: "Delete" });
     expect(readAnnotations(queryClient, PUBLIC_ID)).toEqual([]);
+  });
+
+  it("starts and terminally persists a real pointer-mode corner resize", () => {
+    const frames = installRetainedFrames();
+    seedRows([userAnnotation()]);
+    const canvas = renderCanvas();
+
+    // A plain origin click selects the box and closes its initial move journal.
+    startBBoxDrag(canvas);
+    fireEvent.mouseUp(canvas);
+    persistFetchMock.mockClear();
+
+    // The selected top-left handle owns this second gesture as a resize, not a move.
+    fireEvent.mouseDown(canvas, { clientX: 20, clientY: 20, button: 0, detail: 1 });
+    fireEvent.mouseMove(canvas, { clientX: 10, clientY: 10, buttons: 1 });
+    expect(frames).toHaveLength(1);
+    fireEvent.mouseUp(canvas);
+
+    expect(row(BBOX_ID).bbox).toEqual([0.1, 0.1, 0.4, 0.4]);
+    expectOnlyPut(BBOX_ID, { bbox: [0.1, 0.1, 0.4, 0.4] });
   });
 
   it("flushes and PUTs exact full vertex data on mouseup before rAF and makes the closed callback inert", () => {
@@ -586,6 +627,130 @@ describe("AnnotationOverlay exact annotation-drag terminals", () => {
     expect(readAnnotations(queryClient, PUBLIC_ID)).toEqual([origin, destination]);
   });
 
+  it("rolls back a published drag when frame cancellation synchronously exits its page", () => {
+    let crossPageOnCancel = false;
+    const frames = installRetainedFrames({
+      onCancel: () => {
+        if (!crossPageOnCancel) return;
+        crossPageOnCancel = false;
+        setViewerStoreStateForTest({ pageNumber: 2 });
+      },
+    });
+    const origin = userAnnotation();
+    const destination = pageTwoAnnotation();
+    seedRows([origin, destination]);
+    const canvas = renderCanvas();
+
+    startBBoxDrag(canvas);
+    fireEvent.mouseMove(canvas, { clientX: 50, clientY: 50, buttons: 1 });
+    runFrame(frames[0]);
+    expect(row(BBOX_ID).bbox).toEqual(HALF_MOVE_BBOX);
+
+    fireEvent.mouseMove(canvas, { clientX: 70, clientY: 60, buttons: 1 });
+    expect(frames).toHaveLength(2);
+    crossPageOnCancel = true;
+    fireEvent.mouseUp(canvas);
+
+    expect(useViewerCoreStore.getState().pageNumber).toBe(2);
+    const rolledBack = row(BBOX_ID);
+    expect(rolledBack).toMatchObject({
+      bbox: origin.bbox,
+      name: origin.name,
+      note: origin.note,
+    });
+    expect(row(PAGE_TWO_ID)).toBe(destination);
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    runFrame(frames[1]);
+    expect(row(BBOX_ID)).toBe(rolledBack);
+  });
+
+  it("preserves a same-id successor installed during cancel-driven page ABA", () => {
+    const destination = pageTwoAnnotation();
+    const successor = userAnnotation({
+      name: "cancel-boundary successor",
+      note: "must remain exact",
+      bbox: [0.05, 0.05, 0.15, 0.15],
+    });
+    let installedSuccessor: ClientAnnotation | null = null;
+    let crossPageOnCancel = false;
+    const frames = installRetainedFrames({
+      onCancel: () => {
+        if (!crossPageOnCancel) return;
+        crossPageOnCancel = false;
+        setViewerStoreStateForTest({ pageNumber: 2 });
+        seedRows([successor, destination]);
+        installedSuccessor = row(BBOX_ID);
+        setViewerStoreStateForTest({ pageNumber: PAGE });
+      },
+    });
+    seedRows([userAnnotation(), destination]);
+    const canvas = renderCanvas();
+
+    startBBoxDrag(canvas);
+    fireEvent.mouseMove(canvas, { clientX: 50, clientY: 50, buttons: 1 });
+    runFrame(frames[0]);
+    fireEvent.mouseMove(canvas, { clientX: 70, clientY: 60, buttons: 1 });
+
+    crossPageOnCancel = true;
+    fireEvent.mouseUp(canvas);
+
+    expect(installedSuccessor).not.toBeNull();
+    expect(row(BBOX_ID)).toBe(installedSuccessor);
+    expect(row(BBOX_ID)).toMatchObject({
+      name: "cancel-boundary successor",
+      note: "must remain exact",
+      bbox: successor.bbox,
+    });
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    runFrame(frames[1]);
+    expect(row(BBOX_ID)).toBe(installedSuccessor);
+  });
+
+  it("rolls back the replaced active drag when begin cancellation exits its page", () => {
+    let crossPageOnCancel = false;
+    const frames = installRetainedFrames({
+      onCancel: () => {
+        if (!crossPageOnCancel) return;
+        crossPageOnCancel = false;
+        setViewerStoreStateForTest({ pageNumber: 2 });
+      },
+    });
+    const dragA = userAnnotation({
+      bbox: [0.1, 0.1, 0.3, 0.3],
+      name: "replaced gesture A",
+    });
+    const dragB = userAnnotation({
+      id: 174,
+      bbox: [0.7, 0.7, 0.9, 0.9],
+      name: "replacement gesture B",
+    });
+    const destination = pageTwoAnnotation();
+    seedRows([dragA, dragB, destination]);
+    const canvas = renderCanvas();
+
+    fireEvent.mouseDown(canvas, { clientX: 20, clientY: 20, button: 0 });
+    fireEvent.mouseMove(canvas, { clientX: 40, clientY: 40, buttons: 1 });
+    runFrame(frames[0]);
+    expect(row(BBOX_ID).bbox).toEqual([0.3, 0.3, 0.5, 0.5]);
+    fireEvent.mouseMove(canvas, { clientX: 50, clientY: 50, buttons: 1 });
+
+    crossPageOnCancel = true;
+    fireEvent.mouseDown(canvas, { clientX: 80, clientY: 80, button: 0 });
+
+    expect(useViewerCoreStore.getState().pageNumber).toBe(2);
+    const rolledBack = row(BBOX_ID);
+    expect(rolledBack).toMatchObject({
+      bbox: dragA.bbox,
+      name: dragA.name,
+      note: dragA.note,
+    });
+    expect(row(dragB.id)).toBe(dragB);
+    expect(row(PAGE_TWO_ID)).toBe(destination);
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    runFrame(frames[1]);
+    expect(row(BBOX_ID)).toBe(rolledBack);
+  });
+
   it("makes an unmounted drag frame inert without publishing or persisting", () => {
     const frames = installRetainedFrames();
     const origin = userAnnotation();
@@ -818,7 +983,7 @@ describe("AnnotationOverlay exact annotation-drag terminals", () => {
     expect(persistFetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses A physics in the same-publicId pre-passive-effect replacement window", () => {
+  it("refuses stale old-render physics immediately after lifecycle replacement", () => {
     const frames = installRetainedFrames();
     seedRows([vertexAnnotation()]);
     const canvas = renderCanvas();
