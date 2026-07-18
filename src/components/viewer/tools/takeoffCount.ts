@@ -3,14 +3,13 @@
 // registry's first ELIGIBLE-DECLINE controller. Byte-for-semantics lift of the COUNT identity of
 // the legacy takeoffPlacement mousedown branch (pre-move AO:1813-1862 at parent 967116c).
 //
-// The legacy branch (AO:1746-1863) serves THREE controller identities discriminated by
-// activeItem.shape — polygon / linear / count-as-residual-else. Only the count identity moves
-// here; matches() is kind-only eligibility (activeTakeoffItemId lives in the press, but
-// takeoffItems is COMPONENT data, so the resolution cannot happen in matches), and onMouseDown
-// resolves activeItem and DECLINES — return false with ZERO side effects — for !activeItem /
-// polygon / linear, so the surviving legacy branch handles them (TAKEOFF_COUNT_IMPL/
-// RECON_CENSUS.md). Decline-then-legacy is automatically single-execution: legacy IS the prelude
-// (invalidate + stopPropagation), so no press can double-invalidate or double-stop.
+// The original legacy branch (AO:1746-1863) served THREE controller identities discriminated by
+// activeItem.shape — polygon / linear / count-as-residual-else. All three identities are now
+// extracted. This controller owns count; matches() remains kind-only eligibility
+// (activeTakeoffItemId lives in the press, but takeoffItems is COMPONENT data, so resolution
+// cannot happen in matches), and onMouseDown retains honest zero-side-effect declines for
+// !activeItem / polygon / linear. The polygon/linear controllers normally claim those identities
+// earlier in registry order; only an unresolved item reaches the inert legacy skeleton.
 //
 // Reordering note (census, decline-before-side-effects proof): legacy ran the prelude BEFORE the
 // shape checks; this controller checks shape BEFORE the prelude. The reordered steps are two pure
@@ -30,9 +29,10 @@ export const takeoffCountController: ToolController = Object.freeze({
   matches: (press) => press.toolAtDown.activeTool?.kind === "takeoffPlacement",
   onMouseDown(event, context) {
     const { takeoffItems, selection, pageAnnotations, mutations, transientError } = context;
-    if (!takeoffItems || !selection || !pageAnnotations || !mutations || !transientError) {
+    if (!takeoffItems) {
       // Same fail-loud posture as the dispatcher's missing press/factory guard: a wired overlay
-      // can never hit this; only a mis-built synthetic context can.
+      // can never hit this; only a mis-built synthetic context can. The remaining capabilities
+      // are claim-only and are deliberately guarded after the identity partition below.
       throw new Error(
         "takeoffCount controller requires the takeoffItems/selection/pageAnnotations/mutations/transientError capabilities",
       );
@@ -43,10 +43,17 @@ export const takeoffCountController: ToolController = Object.freeze({
     // the component array (D1-class one-macrotask refresh lag, sanctioned — census), NOT a fresh
     // cache read.
     const activeItem = takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId);
-    // ELIGIBLE-DECLINE, zero side effects (contract §4.2): the surviving legacy branch owns the
-    // silent !activeItem return and the polygon/linear identities until their own extractions.
+    // ELIGIBLE-DECLINE, zero side effects (contract §4.2): polygon/linear are normally claimed by
+    // earlier controllers, but these direct partition checks remain ordering-robust. Only the
+    // silent !activeItem decline reaches the inert legacy skeleton.
     if (!activeItem) return false;
     if (activeItem.shape === "polygon" || activeItem.shape === "linear") return false;
+
+    if (!selection || !pageAnnotations || !mutations || !transientError) {
+      throw new Error(
+        "takeoffCount controller requires the takeoffItems/selection/pageAnnotations/mutations/transientError capabilities",
+      );
+    }
 
     // Claimed count press: the branch prelude (pre-move AO:1750-1751) now runs exactly once, here.
     invalidateToolTailAuthority();

@@ -6,10 +6,12 @@
 // partial-claim fallthrough). Pins:
 //   1. eligibility is EXACTLY activeTool?.kind === "takeoffPlacement" (kind-only: takeoffItems
 //      is component data, so activeItem resolution CANNOT happen in matches);
-//   2. the capability fail-loud guard (all five capabilities);
+//   2. the capability fail-loud guards (takeoffItems for every eligible press; the remaining
+//      four capabilities only after the count identity claims the press);
 //   3. the ELIGIBLE-DECLINE contract — the registry's first: !activeItem / polygon / linear
 //      return FALSE with ZERO side effects (no stopPropagation, no tail invalidation, no
-//      capability call), leaving the surviving legacy branch as the single prelude owner;
+//      capability call); polygon/linear normally claim upstream, while only !activeItem reaches
+//      the inert legacy skeleton and returns before its prelude;
 //   4. select-before-place: strict <14 anisotropic center distance, takeoff-source-only
 //      transparency, pageAnnotations array order; the select path claims TRUE without
 //      persistCreate;
@@ -131,7 +133,7 @@ describe("takeoffCountController eligibility", () => {
     expect(takeoffCountController.matches(press(toolState({ activeTakeoffItemId: null })))).toBe(true);
   });
 
-  it("fails loudly when any of the five capabilities is missing", () => {
+  it("fails loudly before event/tail side effects when a claimed count press lacks any capability", () => {
     for (const capability of [
       "takeoffItems",
       "selection",
@@ -139,11 +141,20 @@ describe("takeoffCountController eligibility", () => {
       "mutations",
       "transientError",
     ] as const) {
-      const { context } = contextFor({ position: { x: 1, y: 1 } });
+      const token = claimToolTailAuthority({});
+      const { context, selection, persistCreate, transientError } = contextFor({
+        position: { x: 1, y: 1 },
+      });
       const bare = { ...context, [capability]: undefined };
-      expect(() => takeoffCountController.onMouseDown(mockEvent(), bare as ToolContext)).toThrow(
+      const event = mockEvent();
+      expect(() => takeoffCountController.onMouseDown(event, bare as ToolContext)).toThrow(
         "takeoffCount controller requires the takeoffItems/selection/pageAnnotations/mutations/transientError capabilities",
       );
+      expect(event.stopPropagation).not.toHaveBeenCalled();
+      expect(ownsToolTailAuthority(token)).toBe(true);
+      expect(selection.setSelectedId).not.toHaveBeenCalled();
+      expect(persistCreate).not.toHaveBeenCalled();
+      expect(transientError.publish).not.toHaveBeenCalled();
     }
   });
 });
@@ -154,7 +165,7 @@ describe("takeoffCountController eligible-decline (zero side effects)", () => {
     { label: "id not in items", state: toolState({ activeTakeoffItemId: 999 }), items: [item({ id: 5 })] },
     { label: "polygon item", state: toolState({ activeTakeoffItemId: 6 }), items: [item({ id: 6, shape: "polygon" })] },
     { label: "linear item", state: toolState({ activeTakeoffItemId: 7 }), items: [item({ id: 7, shape: "linear" })] },
-  ])("$label: returns FALSE, touches nothing", ({ state, items }) => {
+  ])("$label: returns FALSE with no count-claim capabilities and touches nothing", ({ state, items }) => {
     const token = claimToolTailAuthority({});
     const { context, selection, persistCreate, transientError } = contextFor({
       position: { x: 120, y: 70 },
@@ -162,8 +173,15 @@ describe("takeoffCountController eligible-decline (zero side effects)", () => {
       items,
       annotations: [MARKER],
     });
+    const leanContext = {
+      ...context,
+      selection: undefined,
+      pageAnnotations: undefined,
+      mutations: undefined,
+      transientError: undefined,
+    } as ToolContext;
     const event = mockEvent();
-    expect(takeoffCountController.onMouseDown(event, context)).toBe(false);
+    expect(takeoffCountController.onMouseDown(event, leanContext)).toBe(false);
     expect(event.stopPropagation).not.toHaveBeenCalled();
     expect(ownsToolTailAuthority(token)).toBe(true); // no tail invalidation on decline
     expect(selection.setSelectedId).not.toHaveBeenCalled();
