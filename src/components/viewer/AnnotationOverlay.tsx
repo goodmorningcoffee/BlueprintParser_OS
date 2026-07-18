@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 // value or a dep there (TAKEOFF_IMPL/SPEC.md §3.3 :372 row).
 import { useQueryClient } from "@tanstack/react-query";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
-import { useAnnotations, readAnnotations } from "@/queries/useAnnotations";
+import { enrichMarkupEditFromResponse, isCurrentMarkupEdit, publishMarkupEdit, readAnnotations, retireMarkupEdit, rollbackMarkupEdit, useAnnotations } from "@/queries/useAnnotations";
 import { readTextractForPage } from "@/queries/textractCache";
 import {
   readPageIntelligence,
@@ -313,15 +313,24 @@ export default memo(function AnnotationOverlay({
     }
   }, [canAdoptProjectLifecycle, focusAnnotationId]);
 
-  // Markup name+notes+csi modal state. csiCode is new — when editing an
-  // existing annotation, loaded from data.csiCodes[0] if present. Users can
-  // overwrite or leave blank; saveMarkup persists into data.csiCodes.
+  // Markup modal: the first CSI entry is editable; save preserves its detected-code tail.
   const [pendingMarkup, setPendingMarkup] = useState<[number, number, number, number] | null>(null);
   const [markupName, setMarkupName] = useState("");
   const [markupNote, setMarkupNote] = useState("");
   const [markupCsi, setMarkupCsi] = useState("");
   const [editingAnnotationId, setEditingAnnotationId] = useState<number | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const clearMarkupDialog = useCallback(() => {
+    setPendingMarkup(null); setMarkupName(""); setMarkupNote("");
+    setMarkupCsi(""); setEditingAnnotationId(null);
+  }, []);
+  const markupDialogAuthorityRef = useRef({ pageNumber, canAdoptProjectLifecycle });
+  useEffect(() => {
+    const previous = markupDialogAuthorityRef.current;
+    markupDialogAuthorityRef.current = { pageNumber, canAdoptProjectLifecycle };
+    if (previous.pageNumber === pageNumber && previous.canAdoptProjectLifecycle === canAdoptProjectLifecycle) return;
+    clearMarkupDialog();
+  }, [canAdoptProjectLifecycle, clearMarkupDialog, pageNumber]);
   const {
     showDetections, confidenceThreshold, activeModels, hiddenClasses,
     confidenceThresholds, activeAnnotationFilter, activeCsiFilter, hiddenAnnotationIds,
@@ -2675,48 +2684,49 @@ export default memo(function AnnotationOverlay({
     }
   }, [canAdoptProjectLifecycle, setMousePos, showTakeoffPanel]);
 
-  // Save markup from dialog (handles both create and edit). CSI code is
-  // persisted into data.csiCodes as a single-element array — the server's
-  // annotation PUT/POST merges with any auto-detected codes so both manual
-  // and detected entries end up in data.csiCodes.
+  // Create keeps the generic persistCreate policy; edit uses exact cache/wire terminals.
   const saveMarkup = useCallback(() => {
     if (!canAdoptProjectLifecycle()) return;
     if (!pendingMarkup || !markupName.trim()) return;
+    if (useViewerCoreStore.getState().pageNumber !== pageNumber) { clearMarkupDialog(); return; }
     const [minX, minY, maxX, maxY] = pendingMarkup;
     const name = markupName.trim();
     const note = markupNote.trim() || null;
     const csi = markupCsi.trim();
-    const csiCodes = csi ? [csi] : undefined;
-    const annotationData = csiCodes ? { csiCodes } : undefined;
 
     if (editingAnnotationId !== null) {
-      // Edit existing annotation — merge csiCodes into existing data.
-      const existing = annotations.find((a) => a.id === editingAnnotationId);
-      const mergedData = annotationData
-        ? { ...(existing?.data ?? {}), csiCodes }
-        : existing?.data;
-      updateAnnotation(editingAnnotationId, { name, note, data: mergedData ?? null });
-      if (!canAdoptProjectLifecycle()) return;
-      if (canPersist(publicId, isDemo)) {
-        const editId = editingAnnotationId;
+      const publication = publishMarkupEdit(qc, publicId, pageNumber, editingAnnotationId,
+        { name, note, csiCode: csi });
+      const ownsLifecycle = publication !== null && canAdoptProjectLifecycle();
+      const ownsPage = publication !== null && useViewerCoreStore.getState().pageNumber === publication.pageNumber;
+      const ownsWire = publication !== null && ownsLifecycle && ownsPage && isCurrentMarkupEdit(qc, publication);
+      if (publication && ownsLifecycle && !ownsPage) rollbackMarkupEdit(qc, publication);
+      if (publication && ownsWire && canPersist(publicId, isDemo)) {
         (async () => {
+          let response: unknown;
           try {
-            await persistFetch(
-              `/api/annotations/${editId}`,
-              { name, note, ...(annotationData ? { data: mergedData } : {}) },
+            response = await persistFetch(
+              `/api/annotations/${publication.annotationId}`,
+              { name, note, ...(publication.dataForRequest
+                ? { data: publication.dataForRequest } : {}) },
               "PUT",
             );
           } catch (err) {
-            publishTransientBucketFillError(
-              err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
-            );
+            const rolledBack = canAdoptProjectLifecycle() && rollbackMarkupEdit(qc, publication);
+            if (rolledBack && canAdoptProjectLifecycle()) {
+              publishTransientBucketFillError(
+                err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
+              );
+            } else retireMarkupEdit(qc, publication);
+            return;
           }
+          if (canAdoptProjectLifecycle()) enrichMarkupEditFromResponse(qc, publication, response);
+          else retireMarkupEdit(qc, publication);
         })();
-      }
+      } else if (publication) retireMarkupEdit(qc, publication);
     } else {
-      // [refactor jul11 P2.2⑥ C4] Markup historically omitted `source` and absent `data` from
-      // the POST. Optional draft fields preserve that wire shape while the cache row normalizes
-      // them to source="user" and data=null.
+      const annotationData = csi ? { csiCodes: [csi] } : undefined;
+      // [P2.2⑥ C4] Optional draft fields preserve the sparse POST; cache still normalizes them.
       void persistCreate({
         pageNumber,
         name,
@@ -2733,19 +2743,9 @@ export default memo(function AnnotationOverlay({
       });
     }
 
-    if (!canAdoptProjectLifecycle()) return;
-    setPendingMarkup(null);
-    if (!canAdoptProjectLifecycle()) return;
-    setMarkupName("");
-    if (!canAdoptProjectLifecycle()) return;
-    setMarkupNote("");
-    if (!canAdoptProjectLifecycle()) return;
-    setMarkupCsi("");
-    if (!canAdoptProjectLifecycle()) return;
-    setEditingAnnotationId(null);
-  }, [annotations, canAdoptProjectLifecycle, editingAnnotationId, isDemo, markupCsi,
-    markupName, markupNote, pageNumber, pendingMarkup, persistCreate, publicId,
-    publishTransientBucketFillError, updateAnnotation]);
+    clearMarkupDialog();
+  }, [canAdoptProjectLifecycle, clearMarkupDialog, editingAnnotationId, isDemo, markupCsi, markupName,
+    markupNote, pageNumber, pendingMarkup, persistCreate, publicId, publishTransientBucketFillError, qc]);
 
   // Canvas gates — single source of truth so render-null and pointer-events can't drift.
   // Drift here has caused lasso + markup disappear bugs before (see group-tool fix 2026-04-19).
@@ -2832,7 +2832,7 @@ export default memo(function AnnotationOverlay({
           onNoteChange={setMarkupNote}
           onCsiChange={setMarkupCsi}
           onSave={saveMarkup}
-          onCancel={() => { setPendingMarkup(null); setEditingAnnotationId(null); setMarkupCsi(""); }}
+          onCancel={clearMarkupDialog}
         />
       )}
     </>

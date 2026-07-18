@@ -26,6 +26,7 @@ import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 //   • handler/library live synchronous read -> readAnnotations(qc, publicId)
 //   • live functional whole-array transform -> writeAnns(qc, publicId, updater)
 //   • optimistic single-create              -> persistCreate(draft, options)
+//   • exact optimistic markup edit          -> publishMarkupEdit + owned terminal helper
 //
 // Do not reach back into the deleted viewerStore.annotations field. `setAnnotations` is deliberately a
 // VALUE replacement, while CRUD/writeAnns are functional: several existing post-await handlers
@@ -35,7 +36,8 @@ import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 // The three cross-backend operations below (bucket fill and takeoff undo/redo) write BOTH this
 // cache and zustand UI/tool state. TanStack notifyManager cannot make those backends atomic; their
 // sanctioned <=1-frame tear is documented in SPEC §4. Cache is written first, then zustand, with
-// no await inserted between. Existing persistence paths keep optimistic rows on failure by design.
+// no await inserted between. Generic create/bucket paths keep optimistic rows on failure; markup
+// edit is the narrow exception and uses the exact-row CAS terminals below.
 
 export type AnnotationUpdater = (rows: ClientAnnotation[]) => ClientAnnotation[];
 export type AnnotationDragKind = "bbox" | "vertex";
@@ -177,6 +179,251 @@ export function rollbackAnnotationDrag(
     },
   );
   return rolledBack;
+}
+
+export type MarkupEditInput = Readonly<{
+  name: string;
+  note: string | null;
+  csiCode: string;
+}>;
+
+export type MarkupEditPublication = Readonly<{
+  publicId: string;
+  pageNumber: number;
+  annotationId: number;
+  ownerToken: symbol;
+  origin: ClientAnnotation;
+  published: ClientAnnotation;
+  dataForRequest?: NonNullable<ClientAnnotation["data"]>;
+}>;
+
+type MarkupEditOwnerSlot = { token: symbol; active: boolean };
+const markupEditOwners = new WeakMap<QueryClient, Map<string, MarkupEditOwnerSlot>>();
+
+function markupEditKey(publicId: string, pageNumber: number, annotationId: number): string {
+  return JSON.stringify([publicId, pageNumber, annotationId]);
+}
+
+function installMarkupEditOwner(qc: QueryClient, key: string, ownerToken: symbol): void {
+  let owners = markupEditOwners.get(qc);
+  if (!owners) {
+    owners = new Map();
+    markupEditOwners.set(qc, owners);
+  }
+  owners.set(key, { token: ownerToken, active: true });
+}
+
+function ownsMarkupEdit(qc: QueryClient, publication: MarkupEditPublication): boolean {
+  const slot = markupEditOwners.get(qc)?.get(markupEditKey(
+    publication.publicId,
+    publication.pageNumber,
+    publication.annotationId,
+  ));
+  return slot?.token === publication.ownerToken && slot.active;
+}
+
+function retireMarkupEditOwner(qc: QueryClient, key: string, ownerToken: symbol): boolean {
+  const owners = markupEditOwners.get(qc);
+  if (owners?.get(key)?.token !== ownerToken) return false;
+  owners.delete(key);
+  if (owners.size === 0) markupEditOwners.delete(qc);
+  return true;
+}
+
+function settleMarkupEdit(qc: QueryClient, publication: MarkupEditPublication): boolean {
+  const slot = markupEditOwners.get(qc)?.get(markupEditKey(
+    publication.publicId,
+    publication.pageNumber,
+    publication.annotationId,
+  ));
+  if (slot?.token !== publication.ownerToken || !slot.active) return false;
+  slot.active = false;
+  return true;
+}
+
+/** Retire this operation token without changing its cache row; successor tokens always win. */
+export function retireMarkupEdit(
+  qc: QueryClient,
+  publication: MarkupEditPublication,
+): boolean {
+  return retireMarkupEditOwner(qc, markupEditKey(
+    publication.publicId,
+    publication.pageNumber,
+    publication.annotationId,
+  ), publication.ownerToken);
+}
+
+/** Publish one markup edit and retain the exact canonical row needed by both async terminals. */
+export function publishMarkupEdit(
+  qc: QueryClient,
+  publicId: string,
+  pageNumber: number,
+  annotationId: number,
+  input: MarkupEditInput,
+): MarkupEditPublication | null {
+  const ownerToken = Symbol("markup-edit");
+  const ownershipKey = markupEditKey(publicId, pageNumber, annotationId);
+  let matchedIndex = -1;
+  let origin: ClientAnnotation | null = null;
+  let dataForRequest: NonNullable<ClientAnnotation["data"]> | undefined;
+  const publishedRows = qc.setQueryData<ClientAnnotation[]>(
+    queryKeys.annotations.all(publicId),
+    (old) => {
+      if (!old) return old;
+      const index = old.findIndex(
+        (row) => row.id === annotationId && row.pageNumber === pageNumber,
+      );
+      if (index === -1) return undefined;
+      installMarkupEditOwner(qc, ownershipKey, ownerToken);
+      matchedIndex = index;
+      origin = old[index];
+      const existingCodes = Array.isArray(origin.data?.csiCodes)
+        ? origin.data.csiCodes
+        : [];
+      const nextCodes = input.csiCode
+        ? [...new Set([input.csiCode, ...existingCodes.slice(1)])]
+        : null;
+      dataForRequest = nextCodes
+        ? { ...(origin.data ?? {}), csiCodes: nextCodes }
+        : undefined;
+      const next = [...old];
+      next[index] = {
+        ...origin,
+        name: input.name,
+        note: input.note,
+        data: dataForRequest ?? origin.data ?? null,
+      };
+      return next;
+    },
+  );
+  if (matchedIndex === -1 || !origin || !publishedRows) {
+    retireMarkupEditOwner(qc, ownershipKey, ownerToken);
+    return null;
+  }
+  const published = publishedRows[matchedIndex];
+  if (published?.id !== annotationId || published.pageNumber !== pageNumber) {
+    retireMarkupEditOwner(qc, ownershipKey, ownerToken);
+    return null;
+  }
+  return { publicId, pageNumber, annotationId, ownerToken, origin, published, dataForRequest };
+}
+
+/** Read-only pre-wire ownership check for synchronously reentrant cache publication. */
+export function isCurrentMarkupEdit(
+  qc: QueryClient,
+  publication: MarkupEditPublication,
+): boolean {
+  if (!ownsMarkupEdit(qc, publication)) return false;
+  return readAnnotations(qc, publication.publicId).find(
+    (row) => row.id === publication.annotationId && row.pageNumber === publication.pageNumber,
+  ) === publication.published;
+}
+
+/** Restore the origin under exact ownership; true also requires no reentrant successor terminal. */
+export function rollbackMarkupEdit(
+  qc: QueryClient,
+  publication: MarkupEditPublication,
+): boolean {
+  if (!ownsMarkupEdit(qc, publication)) return false;
+  let rolledBack = false;
+  let matchedIndex = -1;
+  const rolledRows = qc.setQueryData<ClientAnnotation[]>(
+    queryKeys.annotations.all(publication.publicId),
+    (old) => {
+      if (!old) {
+        retireMarkupEdit(qc, publication);
+        return old;
+      }
+      const index = old.findIndex(
+        (row) => row.id === publication.annotationId && row.pageNumber === publication.pageNumber,
+      );
+      if (index === -1 || old[index] !== publication.published ||
+          !ownsMarkupEdit(qc, publication)) {
+        retireMarkupEdit(qc, publication);
+        return undefined;
+      }
+      rolledBack = true;
+      matchedIndex = index;
+      const next = [...old];
+      next[index] = publication.origin;
+      settleMarkupEdit(qc, publication);
+      return next;
+    },
+  );
+  // A stays installed but inactive through notification: reentrant B displaces it, suppressing
+  // A's error even when structural sharing reuses the restored row and B settles synchronously.
+  const retainedTerminal = retireMarkupEdit(qc, publication);
+  if (!rolledBack || !retainedTerminal || matchedIndex === -1 || !rolledRows) return false;
+  const current = readAnnotations(qc, publication.publicId).find(
+    (row) => row.id === publication.annotationId && row.pageNumber === publication.pageNumber,
+  );
+  return current === rolledRows[matchedIndex];
+}
+
+/** CAS-merge server-detected CSI strings without letting a late success enrich a successor row. */
+export function enrichMarkupEditFromResponse(
+  qc: QueryClient,
+  publication: MarkupEditPublication,
+  response: unknown,
+): ClientAnnotation | null {
+  if (!ownsMarkupEdit(qc, publication)) return null;
+  const rawCodes = (response as { autoCsiCodes?: unknown } | null)?.autoCsiCodes;
+  const autoCodes = Array.isArray(rawCodes)
+    ? rawCodes.filter((code): code is string => typeof code === "string")
+    : [];
+  if (autoCodes.length === 0) {
+    const current = isCurrentMarkupEdit(qc, publication) ? publication.published : null;
+    retireMarkupEdit(qc, publication);
+    return current;
+  }
+
+  let matchedIndex = -1;
+  let adopted: ClientAnnotation | null = null;
+  let changed = false;
+  const publishedRows = qc.setQueryData<ClientAnnotation[]>(
+    queryKeys.annotations.all(publication.publicId),
+    (old) => {
+      if (!old) {
+        retireMarkupEdit(qc, publication);
+        return old;
+      }
+      const index = old.findIndex(
+        (row) => row.id === publication.annotationId && row.pageNumber === publication.pageNumber,
+      );
+      if (index === -1 || old[index] !== publication.published ||
+          !ownsMarkupEdit(qc, publication)) {
+        retireMarkupEdit(qc, publication);
+        return undefined;
+      }
+      matchedIndex = index;
+      adopted = old[index];
+      const existingCodes = Array.isArray(adopted.data?.csiCodes)
+        ? adopted.data.csiCodes
+        : [];
+      const mergedCodes = [...new Set([...existingCodes, ...autoCodes])];
+      if (mergedCodes.length === existingCodes.length &&
+          mergedCodes.every((code, index) => code === existingCodes[index])) {
+        retireMarkupEdit(qc, publication);
+        return undefined;
+      }
+      changed = true;
+      const next = [...old];
+      next[index] = {
+        ...adopted,
+        data: { ...(adopted.data ?? {}), csiCodes: mergedCodes },
+      };
+      settleMarkupEdit(qc, publication);
+      return next;
+    },
+  );
+  if (matchedIndex === -1 || !adopted) return null;
+  if (!changed) return adopted;
+  const retainedTerminal = retireMarkupEdit(qc, publication);
+  if (!retainedTerminal || !publishedRows) return null;
+  const current = readAnnotations(qc, publication.publicId).find(
+    (row) => row.id === publication.annotationId && row.pageNumber === publication.pageNumber,
+  );
+  return current === publishedRows[matchedIndex] ? current : null;
 }
 
 /**
