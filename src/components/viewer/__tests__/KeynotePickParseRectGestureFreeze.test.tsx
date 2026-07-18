@@ -246,6 +246,32 @@ describe("keynote pick + parseRect gesture freeze (real overlay)", () => {
     expect(drawingState()._drawing).toBe(false);
   });
 
+  it("uses Column A specifically when multiple keynote columns exist", async () => {
+    const columnA: typeof COL_A = [0.1, 0.1, 0.4, 0.9];
+    const columnB: typeof COL_A = [0.6, 0.1, 0.9, 0.9];
+    // The complementary pair proves both that a multi-column state remains active and that index
+    // 0 — not the last/second column — owns filtering.
+    seedOverlay([
+      yolo(15, "Column A Only", [0.15, 0.2, 0.3, 0.7]),
+      yolo(16, "Column B Only", [0.65, 0.2, 0.8, 0.7]),
+    ]);
+    const canvas = await mountCanvas();
+    await activateKeynotePicking(canvas, { columns: [columnA, columnB] });
+
+    press(canvas, 40, 30);
+    expect(useParseFlowStore.getState().keynoteYoloClass).toEqual({
+      model: "fixture",
+      className: "Column A Only",
+    });
+    expect(drawingState()._drawing).toBe(false);
+
+    press(canvas, 140, 30);
+
+    expect(useParseFlowStore.getState().keynoteYoloClass?.className).toBe("Column A Only");
+    expect(drawingState()._drawing).toBe(true);
+    expect(drawingState()._drawStart).toEqual({ x: 140, y: 30 });
+  });
+
   it.each([
     { edge: "left", bbox: [0.19, 0.2, 0.4, 0.4] as const, point: [60, 30] as const },
     { edge: "top", bbox: [0.3, 0.09, 0.5, 0.3] as const, point: [80, 20] as const },
@@ -341,7 +367,11 @@ describe("keynote pick + parseRect gesture freeze (real overlay)", () => {
   });
 
   it.each([
-    { label: "wrong step", step: "define-row" as const, columns: [[...COL_A]] },
+    {
+      label: "wrong step",
+      step: "define-row" as const,
+      columns: [[...COL_A] as typeof COL_A],
+    },
     { label: "no column", step: "define-column" as const, columns: [] },
   ])("$label disables picking and lets parseRect draw", async ({ step, columns }) => {
     seedOverlay([yolo(10, "Inactive Picker")]);
@@ -411,39 +441,45 @@ describe("keynote pick + parseRect gesture freeze (real overlay)", () => {
     expect(cancelled).toHaveBeenCalledTimes(1);
   });
 });
-describe("keynotePick + parseRect seam topology pins (pre-move)", () => {
+describe("keynotePick + parseRect seam topology pins (post-move)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
   );
   const keynoteController = join(process.cwd(), "src/components/viewer/tools/keynotePick.ts");
   const parseController = join(process.cwd(), "src/components/viewer/tools/parseRect.ts");
+  const KEYNOTE = readFileSync(keynoteController, "utf8");
+  const PARSE = readFileSync(parseController, "utf8");
+  const mouseDownStart = AO.indexOf("const handleMouseDown = useCallback(");
+  const mouseMoveStart = AO.indexOf("const handleMouseMove = useCallback(");
+  const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
-  it("pins both legacy mousedown identities in the overlay before the atomic move", () => {
-    const keynote = AO.indexOf("// Keynote YOLO picking");
-    const tagPick = AO.indexOf("// YOLO Tag picking", keynote);
-    const genericParse = AO.indexOf('if (activeTool?.kind === "parseRect")', tagPick);
-    const pointerTail = AO.indexOf("// Every non-null specialized owner", genericParse);
-    expect(keynote).toBeGreaterThan(-1);
-    expect(tagPick).toBeGreaterThan(keynote);
-    expect(genericParse).toBeGreaterThan(tagPick);
-    expect(pointerTail).toBeGreaterThan(genericParse);
-    const keynoteSlice = AO.slice(keynote, tagPick);
-    expect(keynoteSlice).toContain("invalidateToolTailAuthority();");
-    expect(keynoteSlice).toContain("e.stopPropagation();");
-    expect(keynoteSlice).toContain('data?.modelName || "unknown"');
-    expect(keynoteSlice).toContain("setKeynoteManualInputsForUser(");
-    expect(keynoteSlice).toContain("fall through to drawing mode");
-    const parseSlice = AO.slice(genericParse, pointerTail);
-    expect(parseSlice).toContain("e.stopPropagation();");
-    expect(parseSlice).toContain("startDeferredDrawing(pos);");
-    expect(count(parseSlice, "invalidateToolTailAuthority();")).toBe(0);
+  it("pins both legacy mousedown identities absent from the overlay after the atomic move", () => {
+    expect(mouseDownStart).toBeGreaterThan(-1);
+    expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
+    expect(count(AO, "// Keynote YOLO picking")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "parseRect")')).toBe(0);
+    expect(count(AO, "setKeynoteManualInputsForUser")).toBe(0);
+    expect(count(AO, "keynotePick: { active: isKeynoteYoloPicking },")).toBe(1);
+    expect(AO).toContain("keynotePick hit/miss routing and generic parseRect deferred starts");
   });
 
-  it("pins the future controller files absent and the render/deferred homes retained", () => {
-    expect(existsSync(keynoteController)).toBe(false);
-    expect(existsSync(parseController)).toBe(false);
+  it("pins the two controllers as the sole homes of the exact claim/decline seam", () => {
+    expect(existsSync(keynoteController)).toBe(true);
+    expect(existsSync(parseController)).toBe(true);
+    expect(KEYNOTE).toContain("if (!context.keynotePick?.active) return false;");
+    expect(KEYNOTE).toContain('if (annotation.source !== "yolo") continue;');
+    expect(KEYNOTE).toContain("invalidateToolTailAuthority();");
+    expect(KEYNOTE).toContain("event.stopPropagation();");
+    expect(KEYNOTE).toContain('annotation.data?.modelName || "unknown"');
+    expect(KEYNOTE).toContain("setKeynoteManualInputsForUser({");
+    expect(PARSE).toContain("event.stopPropagation();");
+    expect(PARSE).toContain("deferredDrawing.start(context.press.position);");
+    expect(PARSE).not.toContain("invalidateToolTailAuthority");
+  });
+
+  it("pins the render projection and deferred settlement homes retained in the overlay", () => {
     expect(count(AO, 'activeToolKey === "parseRect:keynote" ? s.keynoteParseStep : "idle"')).toBe(1);
     expect(count(AO, 'activeToolKey === "parseRect:keynote" ? s.keynoteColumnBBs')).toBe(1);
     expect(count(AO, "const isKeynoteYoloPicking =")).toBe(1);

@@ -40,7 +40,6 @@ import {
   addTableParseColumnForUser,
   addTableParseRowForUser,
   focusParsedTableRegionInCatalog,
-  setKeynoteManualInputsForUser,
   setKeynoteParseStepWithTool,
   setNotesParseStepWithTool,
   setSpecParseStepWithTool,
@@ -1499,6 +1498,7 @@ export default memo(function AnnotationOverlay({
           selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },
           pageAnnotations,
           deferredDrawing: { start: startDeferredDrawing },
+          keynotePick: { active: isKeynoteYoloPicking },
           mutations: { annotations: { persistCreate } },
           transientError: { publish: publishTransientBucketFillError },
           takeoffItems,
@@ -1774,25 +1774,6 @@ export default memo(function AnnotationOverlay({
       // ─── Drawing/picking modes: must come BEFORE pointer block ─────
       // The pointer block always returns, so these would be unreachable after it.
 
-      // Keynote YOLO picking: click a YOLO annotation to assign its class
-      if (activeTool?.kind === "parseRect" && activeTool.flow === "keynote" &&
-          isKeynoteYoloPicking) {
-        const clickNormX = pos.x / width;
-        const clickNormY = pos.y / height;
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "yolo") continue;
-          const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
-          if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
-            invalidateToolTailAuthority();
-            e.stopPropagation();
-            const model = (ann as any).data?.modelName || "unknown";
-            setKeynoteManualInputsForUser({ keynoteYoloClass: { model, className: ann.name } });
-            return;
-          }
-        }
-        // If click didn't hit a YOLO annotation, fall through to drawing mode
-      }
-
       // YOLO Tag picking
       if (activeTool?.kind === "tagPick") {
         const clickNormX = pos.x / width;
@@ -1861,12 +1842,9 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Only the active parse flow and its current draw-capable step may lease mouseup.
-      if (activeTool?.kind === "parseRect") {
-        e.stopPropagation();
-        startDeferredDrawing(pos);
-        return;
-      }
+      // [refactor jul18 P3.2] keynotePick hit/miss routing and generic parseRect deferred starts
+      // are claimed atomically at the registry seam. Conditional subscriptions/filtering and
+      // complete drawing settlement stay in this component.
 
       // Every non-null specialized owner suppresses base pointer/group/markup fallthrough.
       if (activeTool !== null) return;

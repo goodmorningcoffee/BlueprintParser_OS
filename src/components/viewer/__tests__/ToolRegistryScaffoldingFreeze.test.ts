@@ -171,10 +171,20 @@ describe("P3.1 tool registry scaffolding", () => {
   // [refactor jul17 P3.2] Fifth registration: takeoffPolygon slots in AHEAD of takeoffLinear
   // (board §5 priority #4) — the same argument makes the linear/count polygon-declines
   // dead-but-honest; the five-way claim set is pairwise disjoint, so order stays unobservable.
-  it("exports one exact frozen registry: calibration first, takeoffPolygon/takeoffLinear/takeoffCount interior, markup last", () => {
-    expect(TOOLS).toHaveLength(5);
+  // [refactor jul18 P3.2] Sixth/seventh registrations land atomically: keynotePick MUST precede
+  // parseRect so an eligible pick miss delegates within the same lazy context; a hit consumes.
+  it("exports one exact frozen registry with keynotePick immediately before parseRect and markup last", () => {
+    expect(TOOLS).toHaveLength(7);
     expect(Object.isFrozen(TOOLS)).toBe(true);
-    expect(TOOLS.map((tool) => tool.kind)).toEqual(["calibration", "takeoffPolygon", "takeoffLinear", "takeoffCount", "markup"]);
+    expect(TOOLS.map((tool) => tool.kind)).toEqual([
+      "calibration",
+      "takeoffPolygon",
+      "takeoffLinear",
+      "takeoffCount",
+      "keynotePick",
+      "parseRect",
+      "markup",
+    ]);
     expect(TOOLS[TOOLS.length - 1].kind).toBe("markup");
     for (const tool of TOOLS) {
       expect(Object.isFrozen(tool)).toBe(true);
@@ -187,8 +197,8 @@ describe("P3.1 tool registry scaffolding", () => {
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
     // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
-    // FIVE registered controllers (calibration and the three takeoffPlacement controllers need
-    // their activations; markup needs mode "markup").
+    // SEVEN registered controllers (calibration, the three takeoffPlacement controllers, and
+    // both parse units need their activations; markup needs mode "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;

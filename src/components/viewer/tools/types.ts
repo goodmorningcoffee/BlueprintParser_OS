@@ -110,6 +110,16 @@ export interface ToolContext {
     start: (pos: { x: number; y: number }, clearSelection?: boolean) => boolean;
   }>;
   /**
+   * [refactor jul18 P3.2 keynotePick] The exact AnnotationOverlay RENDER projection derived
+   * from its conditional keynote subscriptions. This is deliberately not recomputed from
+   * stores.parseFlow at invocation time: the render-captured timing and candidate projection are
+   * part of the legacy picker contract. Optional so an inactive split guard can decline before
+   * requiring picker-only context and existing synthetic contexts remain legal.
+   */
+  readonly keynotePick?: Readonly<{
+    active: boolean;
+  }>;
+  /**
    * [refactor jul17 P3.2 takeoffCount] Capabilities PROVEN by the takeoffCount controller,
    * optional-typed like the markup trio; the overlay factory always wires both. Dep-neutral by
    * construction: takeoffItems and publishTransientBucketFillError are already in the 37-entry

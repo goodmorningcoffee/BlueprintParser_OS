@@ -1,7 +1,9 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { calibrationController } from "./calibration";
+import { keynotePickController } from "./keynotePick";
 import { markupController } from "./markup";
+import { parseRectController } from "./parseRect";
 import { takeoffCountController } from "./takeoffCount";
 import { takeoffLinearController } from "./takeoffLinear";
 import { takeoffPolygonController } from "./takeoffPolygon";
@@ -17,9 +19,19 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // linear/count polygon-declines dead-but-honest; the five-way claim set is pairwise disjoint,
 // so registry order stays unobservable.
 // The interior stays §5-ordered as later controllers land: split/bucketFill slot in BEFORE
-// takeoffPolygon; keynotePick..pointerGroup between takeoffCount and markup.
+// takeoffPolygon. keynotePick precedes parseRect so an active YOLO miss can eligible-decline into
+// the generic rectangle starter in the SAME dispatch; tagPick/symbolSearch/tagAdd will eventually
+// slot between them. pointerGroup remains between parseRect and markup.
 export const TOOLS = Object.freeze(
-  [calibrationController, takeoffPolygonController, takeoffLinearController, takeoffCountController, markupController] as const,
+  [
+    calibrationController,
+    takeoffPolygonController,
+    takeoffLinearController,
+    takeoffCountController,
+    keynotePickController,
+    parseRectController,
+    markupController,
+  ] as const,
 ) satisfies readonly ToolController[];
 
 /**

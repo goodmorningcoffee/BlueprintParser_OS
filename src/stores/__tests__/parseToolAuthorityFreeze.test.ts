@@ -312,9 +312,12 @@ describe("later user tool intent revokes parse completion writes", () => {
     // [refactor jul17 P3.2 takeoffPolygon] savePolygon joined the takeoffDrawing group at the
     // polygon extraction (the recorded re-open, fulfilled) — same composite contract and the
     // same dep-neutrality rule (savePolygon was already in the 37-entry array).
+    // [refactor jul18 P3.2 keynotePick] The exact render-derived picking boolean joins as one
+    // narrow projection; isKeynoteYoloPicking was already in the same 37-entry array.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected},pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
+        "keynotePick:{active:isKeynoteYoloPicking}," +
         "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
         "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline,savePolygon},}))){return;}",
     );

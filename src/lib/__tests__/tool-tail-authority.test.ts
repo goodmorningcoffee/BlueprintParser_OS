@@ -411,6 +411,10 @@ describe("AT2 one exact global tool-tail authority", () => {
       "src/components/viewer/SymbolSearchPanel.tsx:invalidateToolTailAuthority",
       "src/components/viewer/SymbolSearchPanel.tsx:ownsLatestToolOperation",
       "src/components/viewer/TakeoffPanel.tsx:invalidateToolTailAuthority",
+      // [refactor jul18 P3.2] Keynote picking inherited the legacy hit-only invalidation. Its
+      // eligible miss has zero effects and delegates to parseRect; parseRect is deliberately
+      // absent because deferredDrawing.start remains the sole lease/authority owner.
+      "src/components/viewer/tools/keynotePick.ts:invalidateToolTailAuthority",
       // [refactor jul16 P3.2] The markup controller inherited the overlay's pre-dispatch
       // invalidation for claimed markup-mode presses (pre-move AO:1957 semantics).
       "src/components/viewer/tools/markup.ts:invalidateToolTailAuthority",
@@ -437,6 +441,9 @@ describe("AT2 one exact global tool-tail authority", () => {
       "src/stores/viewerCommands.ts:ownsLatestToolOperation",
       "src/stores/viewerCommands.ts:ownsToolTailAuthority",
     ]);
+    expect(borrowers).not.toContain(
+      "src/components/viewer/tools/parseRect.ts:invalidateToolTailAuthority",
+    );
 
     expect(newAuthorityBorrowers("src/lib/borrower-mutant.ts", `
       import {

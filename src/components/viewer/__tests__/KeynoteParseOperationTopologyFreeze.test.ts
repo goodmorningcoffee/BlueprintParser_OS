@@ -13,6 +13,7 @@ const COMPARE_TAB = "src/components/viewer/CompareEditTab.tsx";
 const KEYNOTE_ITEM = "src/components/viewer/KeynoteItem.tsx";
 const SPECS_NOTES = "src/components/viewer/SpecsNotesPanel.tsx";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
+const KEYNOTE_PICK_CONTROLLER = "src/components/viewer/tools/keynotePick.ts";
 const PDF_PAGE = "src/components/viewer/PDFPage.tsx";
 const GUIDED_OVERLAY = "src/components/viewer/GuidedParseOverlay.tsx";
 const COMMANDS = "src/stores/viewerCommands.ts";
@@ -317,9 +318,11 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
       'ownsGuided?["table","keynote","notes"]:["keynote"]',
     );
 
-    expect(compact(namedRoot(ANNOTATION_OVERLAY, "handleMouseDown"))).toContain(
-      "setKeynoteManualInputsForUser({keynoteYoloClass:{model,className:ann.name}})",
+    expect(compact(text(KEYNOTE_PICK_CONTROLLER))).toContain(
+      "setKeynoteManualInputsForUser({keynoteYoloClass:{model,className:annotation.name}",
     );
+    expect(compact(namedRoot(ANNOTATION_OVERLAY, "handleMouseDown")))
+      .not.toContain("setKeynoteManualInputsForUser");
     const mouseUp = compact(namedRoot(ANNOTATION_OVERLAY, "handleMouseUp"));
     expect(mouseUp).toContain("consumeToolTailAuthority(lease.token,()=>{");
     expect(mouseUp).toContain("switch(owner.activation.flow)");

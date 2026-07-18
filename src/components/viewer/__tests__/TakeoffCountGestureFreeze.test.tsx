@@ -457,7 +457,9 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
   it("pins the surviving legacy branch: resolution, silent return, prelude, terminal claim only", () => {
     const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
     expect(branch).toBeGreaterThan(-1);
-    const end = AO.indexOf("// Keynote YOLO picking", branch);
+    // [refactor jul18 P3.2] keynotePick moved out atomically with parseRect. The next surviving
+    // legacy mousedown block is YOLO Tag picking, so it is the non-vacuous slice end now.
+    const end = AO.indexOf("// YOLO Tag picking", branch);
     expect(end).toBeGreaterThan(branch);
     const slice = AO.slice(branch, end);
     const resolution = slice.indexOf("takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId)");
