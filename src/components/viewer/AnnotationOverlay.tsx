@@ -468,7 +468,7 @@ export default memo(function AnnotationOverlay({
     // Early exit: nothing to draw on this page
     if (pageAnnotations.length === 0 && !activeYoloTagId && pageTagInstances.size === 0
         && Object.keys(activeTableTagViews).length === 0
-        && !symbolSearchResults && !llmHighlight) {
+        && !symbolSearchResults && !llmHighlight && !(showTableCellStructure && tableCellStructure?.pageNumber === pageNumber)) {
       return;
     }
 
@@ -2755,7 +2755,7 @@ export default memo(function AnnotationOverlay({
     pageAnnotations.length > 0 ||
     polygonDrawingMode !== "idle" ||
     pendingMarkup !== null ||
-    canvasWantsEvents
+    canvasWantsEvents || (showTableCellStructure && tableCellStructure?.pageNumber === pageNumber)
   );
   if (!canvasShouldRender) return null;
 
