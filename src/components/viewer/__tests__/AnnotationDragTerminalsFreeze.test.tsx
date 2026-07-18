@@ -192,6 +192,16 @@ function runFrame(frame: RetainedFrame, time = 16): void {
   act(() => frame.callback(time));
 }
 
+function pressEnter(): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  });
+  fireEvent(window, event);
+  return event;
+}
+
 let queryClient: QueryClient;
 let lifecycleHandles: OpenProjectHandle[];
 let holdProjects: boolean;
@@ -367,6 +377,36 @@ describe("AnnotationOverlay exact annotation-drag terminals", () => {
     expect(readAnnotations(queryClient, PUBLIC_ID)).toEqual([]);
   });
 
+  it("flushes and PUTs the exact latest bbox on Enter before rAF, retains selection, and retires the frame", () => {
+    const frames = installRetainedFrames();
+    seedRows([userAnnotation()]);
+    const canvas = renderCanvas();
+
+    startBBoxDrag(canvas);
+    fireEvent.mouseMove(canvas, { clientX: 60, clientY: 70, buttons: 1 });
+    expect(frames).toHaveLength(1);
+
+    const enter = pressEnter();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(row(BBOX_ID).bbox).toEqual(MOVED_BBOX);
+    expectOnlyPut(BBOX_ID, { bbox: MOVED_BBOX });
+
+    const successor = userAnnotation({
+      name: "newer target after bbox Enter",
+      note: "dequeued Enter frame must stay inert",
+      bbox: [0.1, 0.1, 0.2, 0.2],
+    });
+    act(() => seedRows([successor]));
+    const installedSuccessor = row(BBOX_ID);
+    runFrame(frames[0]);
+    expect(row(BBOX_ID)).toBe(installedSuccessor);
+
+    persistFetchMock.mockClear();
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(readAnnotations(queryClient, PUBLIC_ID)).toEqual([]);
+  });
+
   it("starts and terminally persists a real pointer-mode corner resize", () => {
     const frames = installRetainedFrames();
     seedRows([userAnnotation()]);
@@ -402,6 +442,36 @@ describe("AnnotationOverlay exact annotation-drag terminals", () => {
     expectOnlyPut(VERTEX_ID, expected);
 
     const successor = vertexAnnotation({ name: "newer vertex target", note: "B" });
+    act(() => seedRows([successor]));
+    const installedSuccessor = row(VERTEX_ID);
+    runFrame(frames[0]);
+    expect(row(VERTEX_ID)).toBe(installedSuccessor);
+
+    persistFetchMock.mockClear();
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(readAnnotations(queryClient, PUBLIC_ID)).toEqual([]);
+  });
+
+  it("finishes vertex-first on Enter before rAF with exact bbox+data and an inert dequeued frame", () => {
+    const frames = installRetainedFrames();
+    seedRows([vertexAnnotation()]);
+    const canvas = renderCanvas();
+    const expected = exactVertexPayload();
+
+    startVertexDrag(canvas);
+    fireEvent.mouseMove(canvas, { clientX: 90, clientY: 10, buttons: 1 });
+    expect(frames).toHaveLength(1);
+
+    const enter = pressEnter();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(row(VERTEX_ID)).toMatchObject(expected);
+    expectOnlyPut(VERTEX_ID, expected);
+
+    const successor = vertexAnnotation({
+      name: "newer target after vertex Enter",
+      note: "vertex Enter frame must not borrow it",
+    });
     act(() => seedRows([successor]));
     const installedSuccessor = row(VERTEX_ID);
     runFrame(frames[0]);

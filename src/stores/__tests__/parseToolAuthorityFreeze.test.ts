@@ -495,7 +495,7 @@ describe("later user tool intent revokes parse completion writes", () => {
       /store\.activeTool\?\.kind === "bucketFill" && store\.bucketFillBarriers\.length > 0[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?store\.undoLastBarrier\(\)/,
       /else if \(store\.activeTool\?\.kind === "takeoffPlacement" &&[\s\S]*?store\.polygonDrawingMode === "drawing"\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?store\.undoLastVertex\(\)/,
       /e\.key === "Delete" \|\| e\.key === "Backspace"[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?removeAnnotation/,
-      /e\.key === "Enter" && dragging[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?saveDragPosition\(\)/,
+      /if \(e\.key === "Enter"\) \{[\s\S]*?const annotationDrag = readActiveAnnotationDrag\(\);[\s\S]*?annotationDrag\?\.operation\.kind === "vertex"[\s\S]*?annotationDrag\?\.operation\.kind === "bbox"[\s\S]*?e\.preventDefault\(\);[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?finishAnnotationDrag\(annotationDrag, true\)/,
     ]) {
       expect(source).toMatch(pattern);
     }

@@ -9,10 +9,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 // value or a dep there (TAKEOFF_IMPL/SPEC.md §3.3 :372 row).
 import { useQueryClient } from "@tanstack/react-query";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
-import {
-  useAnnotations,
-  readAnnotations,
-} from "@/queries/useAnnotations";
+import { useAnnotations, readAnnotations } from "@/queries/useAnnotations";
 import { readTextractForPage } from "@/queries/textractCache";
 import {
   readPageIntelligence,
@@ -2609,19 +2606,21 @@ export default memo(function AnnotationOverlay({
         setSelectedId(null);
       }
 
-      if (e.key === "Enter" && dragging) {
-        e.preventDefault();
-        invalidateToolTailAuthority();
-        setDragging(false);
-        setResizeCorner(null);
-        saveDragPosition();
+      if (e.key === "Enter") {
+        const annotationDrag = readActiveAnnotationDrag();
+        if (annotationDrag?.operation.kind === "vertex" ||
+            annotationDrag?.operation.kind === "bbox") {
+          e.preventDefault();
+          invalidateToolTailAuthority();
+          finishAnnotationDrag(annotationDrag, true);
+        }
       }
     }
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [canAdoptProjectLifecycle, dragging, isDemo, publicId,
-    publishTransientBucketFillError, removeAnnotation, saveDragPosition, selectedId]);
+  }, [canAdoptProjectLifecycle, finishAnnotationDrag, isDemo, publicId,
+    publishTransientBucketFillError, readActiveAnnotationDrag, removeAnnotation, selectedId]);
 
   // Exit polygon drawing when switching interaction modes
   const modeCleanupLifecycleRef = useRef(canAdoptProjectLifecycle);

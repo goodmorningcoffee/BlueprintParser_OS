@@ -126,4 +126,36 @@ describe("annotation drag machine topology", () => {
     expect(move.match(/pageAnnotations\.find/g)).toHaveLength(2);
     expect(move).not.toContain("readAnnotations(");
   });
+
+  it("routes Enter through the exact terminal with vertex-first precedence", () => {
+    const keyboard = OVERLAY.slice(
+      OVERLAY.indexOf("// Keyboard: Delete/Backspace"),
+      OVERLAY.indexOf("// Exit polygon drawing"),
+    );
+    const inputGuard = keyboard.indexOf("e.target instanceof HTMLInputElement");
+    const lifecycleGuard = keyboard.indexOf("if (!canAdoptProjectLifecycle()) return;");
+    const enterStart = keyboard.indexOf('if (e.key === "Enter")');
+    const enter = keyboard.slice(enterStart);
+    const read = enter.indexOf("const annotationDrag = readActiveAnnotationDrag();");
+    const vertex = enter.indexOf('annotationDrag?.operation.kind === "vertex"');
+    const bbox = enter.indexOf('annotationDrag?.operation.kind === "bbox"');
+    const invalidate = enter.indexOf("invalidateToolTailAuthority();");
+    const finish = enter.indexOf("finishAnnotationDrag(annotationDrag, true);");
+
+    expect(inputGuard).toBeGreaterThan(-1);
+    expect(lifecycleGuard).toBeGreaterThan(-1);
+    expect(enterStart).toBeGreaterThan(-1);
+    expect(read).toBeGreaterThan(-1);
+    expect(vertex).toBeGreaterThan(-1);
+    expect(bbox).toBeGreaterThan(-1);
+    expect(read).toBeLessThan(vertex);
+    expect(inputGuard).toBeLessThan(lifecycleGuard);
+    expect(lifecycleGuard).toBeLessThan(enterStart);
+    expect(vertex).toBeLessThan(bbox);
+    expect(bbox).toBeLessThan(invalidate);
+    expect(invalidate).toBeLessThan(finish);
+    expect(enter.match(/finishAnnotationDrag\(annotationDrag, true\);/g)).toHaveLength(1);
+    expect(enter).not.toContain('e.key === "Enter" && dragging');
+    expect(enter).not.toContain("saveDragPosition();");
+  });
 });
