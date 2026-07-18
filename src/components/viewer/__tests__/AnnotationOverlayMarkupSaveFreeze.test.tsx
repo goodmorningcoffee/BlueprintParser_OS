@@ -138,6 +138,26 @@ async function openPencilEditor(row: ClientAnnotation): Promise<HTMLCanvasElemen
   return canvas;
 }
 
+async function openMarkupCreator(): Promise<void> {
+  setViewerStoreStateForTest({ mode: "markup" });
+  seedAnnotations(queryClient, []);
+  const { container } = render(
+    <AnnotationOverlay width={100} height={100} cssScale={1} />,
+    { wrapper },
+  );
+  const canvas = await waitFor(() => {
+    const candidate = container.querySelector("canvas");
+    if (!(candidate instanceof HTMLCanvasElement)) throw new Error("Expected overlay canvas");
+    return candidate;
+  });
+  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(canvasRect());
+  fireEvent.mouseDown(canvas, { clientX: 10, clientY: 20, button: 0, detail: 1 });
+  fireEvent.mouseMove(canvas, { clientX: 60, clientY: 80 });
+  fireEvent.mouseUp(canvas);
+  await waitFor(() => expect(screen.getByTestId("markup-save-dialog")).toBeInTheDocument());
+  expect(dialogProps?.isEditing).toBe(false);
+}
+
 function changeDialog(values: { name?: string; note?: string; csi?: string }): void {
   act(() => {
     if (values.name !== undefined) dialogProps!.onNameChange(values.name);
@@ -251,7 +271,7 @@ describe("AnnotationOverlay markup edit persistence", () => {
     await act(async () => { await request.promise; });
   });
 
-  it("rejected PUT restores the exact origin row without dropping an interleaved row", async () => {
+  it("rejected PUT restores the full origin value without dropping an interleaved row", async () => {
     const request = deferred<Response>();
     fetchMock.mockReturnValue(request.promise);
     const origin = annotation();
@@ -352,6 +372,65 @@ describe("AnnotationOverlay markup edit persistence", () => {
     expect(screen.queryByTestId("markup-save-dialog")).not.toBeInTheDocument();
   });
 
+  it("a synchronous page transition rolls the unwired publication back", async () => {
+    const origin = annotation();
+    await openPencilEditor(origin);
+    changeDialog({ name: "Page-raced edit", csi: "09 91 00" });
+
+    let switched = false;
+    const targetQuery = queryClient.getQueryCache().find({
+      queryKey: queryKeys.annotations.all(PUBLIC_ID),
+      exact: true,
+    });
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (switched || event.type !== "updated" || event.query !== targetQuery) return;
+      if (readSeededAnnotations(queryClient)[0]?.name !== "Page-raced edit") return;
+      switched = true;
+      setViewerStoreStateForTest({ pageNumber: 2 });
+    });
+
+    saveDialog();
+    unsubscribe();
+
+    expect(switched).toBe(true);
+    expect(readSeededAnnotations(queryClient)[0]).toEqual(origin);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("markup-save-dialog")).not.toBeInTheDocument();
+  });
+
+  it("a synchronous lifecycle transition blocks the exact publication before the wire", async () => {
+    const origin = annotation();
+    await openPencilEditor(origin);
+    changeDialog({ name: "Lifecycle-raced edit", csi: "09 91 00" });
+    fetchMock.mockReturnValue(new Promise<Response>(() => {}));
+
+    let retired = false;
+    const targetQuery = queryClient.getQueryCache().find({
+      queryKey: queryKeys.annotations.all(PUBLIC_ID),
+      exact: true,
+    });
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (retired || event.type !== "updated" || event.query !== targetQuery) return;
+      if (readSeededAnnotations(queryClient)[0]?.name !== "Lifecycle-raced edit") return;
+      retired = true;
+      const successorHandle = openProject(queryClient, PUBLIC_ID, { demo: false });
+      lifecycleHandles.push(successorHandle);
+      setViewerStoreStateForTest({
+        projectId: 902, publicId: PUBLIC_ID, isDemo: false, pageNumber: PAGE, numPages: 1,
+      });
+    });
+
+    saveDialog();
+    unsubscribe();
+
+    expect(retired).toBe(true);
+    expect(readSeededAnnotations(queryClient)[0]).toMatchObject({ name: "Lifecycle-raced edit" });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      `/api/annotations/${ANNOTATION_ID}`,
+      expect.anything(),
+    );
+  });
+
   it.each(["success", "failure"] as const)(
     "retired same-id lifecycle adopts neither an old %s terminal nor its error",
     async (terminal) => {
@@ -394,6 +473,51 @@ describe("AnnotationOverlay markup edit persistence", () => {
     },
   );
 
+  it.each(["success", "failure"] as const)(
+    "retired lifecycle cannot settle the still-exact optimistic row on %s",
+    async (terminal) => {
+      const request = deferred<Response>();
+      fetchMock.mockImplementation((url: unknown) =>
+        String(url).startsWith("/api/annotations/")
+          ? request.promise
+          : new Promise<Response>(() => {}));
+      await openPencilEditor(annotation());
+      changeDialog({ name: "Exact lifecycle A edit", csi: "09 91 00" });
+      saveDialog();
+      const optimistic = readSeededAnnotations(queryClient)[0]!;
+
+      act(() => {
+        const successorHandle = openProject(queryClient, PUBLIC_ID, { demo: false });
+        lifecycleHandles.push(successorHandle);
+        setViewerStoreStateForTest({
+          projectId: 902,
+          publicId: PUBLIC_ID,
+          isDemo: false,
+          pageNumber: PAGE,
+          numPages: 1,
+          bucketFillError: "successor error sentinel",
+        });
+        queryClient.setQueryData(queryKeys.annotations.all(PUBLIC_ID), [optimistic]);
+      });
+      expect(readSeededAnnotations(queryClient)[0]).toBe(optimistic);
+
+      if (terminal === "success") {
+        request.resolve(jsonResponse({ success: true, autoCsiCodes: ["99 99 99"] }));
+      } else {
+        request.reject(new Error("retired exact failure"));
+      }
+      await act(async () => {
+        try { await request.promise; } catch { /* expected */ }
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(readSeededAnnotations(queryClient)[0]).toBe(optimistic);
+      expect(readSeededAnnotations(queryClient)[0]?.data?.csiCodes).not.toContain("99 99 99");
+      expect(useToolStore.getState().bucketFillError).toBe("successor error sentinel");
+    },
+  );
+
   it("page transition retires an open edit dialog before it can target the next page", async () => {
     const origin = annotation();
     await openPencilEditor(origin);
@@ -404,6 +528,63 @@ describe("AnnotationOverlay markup edit persistence", () => {
     await waitFor(() => expect(screen.queryByTestId("markup-save-dialog")).not.toBeInTheDocument());
     expect(readSeededAnnotations(queryClient)[0]).toBe(origin);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("same-id lifecycle transition retires an open edit dialog", async () => {
+    const origin = annotation();
+    await openPencilEditor(origin);
+    fetchMock.mockReturnValue(new Promise<Response>(() => {}));
+
+    act(() => {
+      const successorHandle = openProject(queryClient, PUBLIC_ID, { demo: false });
+      lifecycleHandles.push(successorHandle);
+      setViewerStoreStateForTest({
+        projectId: 902, publicId: PUBLIC_ID, isDemo: false, pageNumber: PAGE, numPages: 1,
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByTestId("markup-save-dialog")).not.toBeInTheDocument());
+    expect(readSeededAnnotations(queryClient)[0]).toBe(origin);
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      `/api/annotations/${ANNOTATION_ID}`,
+      expect.anything(),
+    );
+  });
+
+  it("failed markup create keeps its optimistic row", async () => {
+    const request = deferred<Response>();
+    fetchMock.mockReturnValue(request.promise);
+    await openMarkupCreator();
+    changeDialog({ name: "Local create", note: "Local note", csi: "08 11 13" });
+    saveDialog();
+    const optimistic = readSeededAnnotations(queryClient)[0]!;
+    expect(optimistic).toMatchObject({
+      name: "Local create", note: "Local note", data: { csiCodes: ["08 11 13"] },
+    });
+    expect(optimistic.id).toBeLessThan(0);
+
+    request.reject(new Error("offline create"));
+    await waitFor(() => expect(useToolStore.getState().bucketFillError).toContain("offline create"));
+    expect(readSeededAnnotations(queryClient)[0]).toBe(optimistic);
+  });
+
+  it("successful markup create adopts only the returned ID", async () => {
+    const request = deferred<Response>();
+    fetchMock.mockReturnValue(request.promise);
+    await openMarkupCreator();
+    changeDialog({ name: "Local create", note: "Local note", csi: "08 11 13" });
+    saveDialog();
+    const optimistic = readSeededAnnotations(queryClient)[0]!;
+
+    request.resolve(jsonResponse({
+      id: 8080,
+      name: "server overwrite",
+      note: "server overwrite",
+      bbox: [0, 0, 1, 1],
+      data: { csiCodes: ["server overwrite"] },
+    }));
+    await waitFor(() => expect(readSeededAnnotations(queryClient)[0]?.id).toBe(8080));
+    expect(readSeededAnnotations(queryClient)[0]).toEqual({ ...optimistic, id: 8080 });
   });
 
   it("demo edit remains local-only and never enters rollback", async () => {
