@@ -845,7 +845,7 @@ describe("later user tool intent revokes parse completion writes", () => {
     const passiveEffects = sourceSlice(
       "src/components/viewer/AnnotationOverlay.tsx",
       "// Exit polygon drawing when switching interaction modes",
-      "// Save markup from dialog",
+      "const saveMarkup = useCallback(() => {",
     );
     expect(passiveEffects.match(/publishSettledPolygonReset\(\)/g)).toHaveLength(3);
     expect(passiveEffects).not.toMatch(

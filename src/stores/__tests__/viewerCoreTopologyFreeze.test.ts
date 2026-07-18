@@ -722,6 +722,10 @@ describe("P2.3 V2 split useNavigation topology", () => {
       { kind: "getState-direct", member: "pageNumber" },
       { kind: "getState-direct", member: "pageNumber" },
       { kind: "getState-direct", member: "pageNumber" },
+      // Markup save entry and post-publication snapshots close stale-render and
+      // synchronous cache-notification page races without adding subscriptions.
+      { kind: "getState-direct", member: "pageNumber" },
+      { kind: "getState-direct", member: "pageNumber" },
     ]);
     const modeAccesses = storeMemberAccesses(
       source,
