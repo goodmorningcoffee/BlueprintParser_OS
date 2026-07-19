@@ -358,9 +358,9 @@ describe("AnnotationOverlay group-ring post-move topology", () => {
       "    // Group-membership outlines",
     );
     expect(count(linearCall, "\n")).toBe(10);
-    expect(Buffer.byteLength(linearCall, "utf8")).toBe(262);
+    expect(Buffer.byteLength(linearCall, "utf8")).toBe(218);
     expect(sha256(linearCall)).toBe(
-      "7f429ca3625531a90078894ab264ad5071ab00ddd54fcc867bccbcbf7464b299",
+      "878185b695eaf095f8e0f223995889f1fce7482f816bc21cd4f8e0a7bc9e19ff",
     );
 
     const groupCall = exactSlice(

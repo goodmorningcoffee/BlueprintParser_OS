@@ -2,13 +2,17 @@ import type { ClientAnnotation, LinearPolylineData } from "@/types";
 
 type LinearPolylineAnnotation = Pick<ClientAnnotation, "id" | "source" | "data">;
 
+export interface LinearPolylineSelection {
+  readonly isSelected: (annotationId: number) => boolean;
+}
+
 export interface DrawLinearPolylinesProps {
   readonly annotations: readonly LinearPolylineAnnotation[];
   readonly width: number;
   readonly height: number;
   readonly selectedId: number | null;
   readonly hiddenTakeoffItemIds: ReadonlySet<number>;
-  readonly isSelected: (annotationId: number) => boolean;
+  readonly selection: LinearPolylineSelection;
 }
 
 /**
@@ -22,7 +26,7 @@ export function drawLinearPolylines(
     height,
     selectedId,
     hiddenTakeoffItemIds,
-    isSelected,
+    selection,
   }: DrawLinearPolylinesProps,
 ): void {
   for (const ann of annotations) {
@@ -43,7 +47,7 @@ export function drawLinearPolylines(
     ctx.stroke();
 
     // Vertices when selected
-    if (ann.id === selectedId || isSelected(ann.id)) {
+    if (ann.id === selectedId || selection.isSelected(ann.id)) {
       for (const v of data.vertices) {
         ctx.fillStyle = data.color;
         ctx.beginPath();

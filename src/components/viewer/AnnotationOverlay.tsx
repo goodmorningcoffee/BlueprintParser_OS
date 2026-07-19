@@ -892,7 +892,7 @@ export default memo(function AnnotationOverlay({
       height,
       selectedId,
       hiddenTakeoffItemIds,
-      isSelected: (annotationId) => multiSelect.isSelected(annotationId),
+      selection: multiSelect,
     });
 
     // Group-membership outlines — one pass after all shape-specific loops.

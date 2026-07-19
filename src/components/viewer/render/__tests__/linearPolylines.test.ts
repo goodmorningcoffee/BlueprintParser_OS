@@ -114,7 +114,7 @@ describe("drawLinearPolylines", () => {
       height: 100,
       selectedId: null,
       hiddenTakeoffItemIds,
-      isSelected,
+      selection: { isSelected },
     });
 
     expect(hiddenHas).not.toHaveBeenCalled();
@@ -167,7 +167,7 @@ describe("drawLinearPolylines", () => {
       height: 100,
       selectedId: null,
       hiddenTakeoffItemIds,
-      isSelected,
+      selection: { isSelected },
     });
 
     expect(hiddenHas.mock.calls).toEqual([[503], [505], [507]]);
@@ -211,7 +211,7 @@ describe("drawLinearPolylines", () => {
       height: 100,
       selectedId: 303,
       hiddenTakeoffItemIds,
-      isSelected,
+      selection: { isSelected },
     });
 
     expect(hiddenHas.mock.calls).toEqual([[17], [18], [19]]);
@@ -329,14 +329,64 @@ describe("drawLinearPolylines", () => {
       height: 100,
       selectedId: null,
       hiddenTakeoffItemIds,
-      isSelected: () => {
-        order.push("selected");
-        return false;
+      selection: {
+        isSelected: () => {
+          order.push("selected");
+          return false;
+        },
       },
     });
 
     expect(order).toEqual(["data", "data", "hidden:77"]);
     expect(record.trace).toEqual([]);
+  });
+
+  it("keeps the selection member lookup before the annotation-id argument and preserves its receiver", () => {
+    const record = recordingContext();
+    const order: string[] = [];
+    const row = {
+      get id() {
+        order.push("id:get");
+        return 811;
+      },
+      source: "takeoff" as const,
+      data: linearData(
+        41,
+        "#14b8a6",
+        [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }],
+        1,
+        "LF",
+      ),
+    };
+    const selection = {
+      get isSelected() {
+        order.push("selection:get");
+        return function (this: unknown, id: number) {
+          order.push(this === selection ? "selection:this" : "selection:detached");
+          order.push(`selection:call:${id}`);
+          return false;
+        };
+      },
+    };
+
+    drawLinearPolylines(record.context, {
+      annotations: [row],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set(),
+      selection,
+    });
+
+    expect(order).toEqual([
+      "id:get",
+      "id:get",
+      "selection:get",
+      "id:get",
+      "selection:this",
+      "selection:call:811",
+    ]);
+    expect(record.stackDepth()).toBe(0);
   });
 
   it("keeps callback and context failures fail-loud without finally restoration", () => {
@@ -366,8 +416,10 @@ describe("drawLinearPolylines", () => {
       height: 100,
       selectedId: null,
       hiddenTakeoffItemIds,
-      isSelected: () => {
-        throw new Error("selection boom");
+      selection: {
+        isSelected: () => {
+          throw new Error("selection boom");
+        },
       },
     })).toThrow("selection boom");
     expect(hiddenHas.mock.calls).toEqual([[31]]);
@@ -384,7 +436,7 @@ describe("drawLinearPolylines", () => {
       height: 100,
       selectedId: null,
       hiddenTakeoffItemIds: new Set(),
-      isSelected: () => false,
+      selection: { isSelected: () => false },
     })).toThrow("context boom");
     expect(contextRecord.stackDepth()).toBe(1);
     expect(contextRecord.trace).not.toContainEqual(["call", "restore"]);

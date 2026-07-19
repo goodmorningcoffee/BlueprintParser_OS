@@ -496,14 +496,12 @@ describe("AnnotationOverlay linear-polyline post-move topology", () => {
       "    // Group-membership outlines",
     );
     expect(count(linearCall, "\n")).toBe(10);
-    expect(Buffer.byteLength(linearCall, "utf8")).toBe(262);
+    expect(Buffer.byteLength(linearCall, "utf8")).toBe(218);
     expect(sha256(linearCall)).toBe(
-      "7f429ca3625531a90078894ab264ad5071ab00ddd54fcc867bccbcbf7464b299",
+      "878185b695eaf095f8e0f223995889f1fce7482f816bc21cd4f8e0a7bc9e19ff",
     );
     expect(count(linearCall, "drawLinearPolylines(ctx, {")).toBe(1);
-    expect(linearCall).toContain(
-      "isSelected: (annotationId) => multiSelect.isSelected(annotationId),",
-    );
+    expect(linearCall).toContain("selection: multiSelect,");
     expect(linearCall).not.toContain("for (const ann of pageAnnotations)");
 
     const groupCall = exactSlice(
@@ -559,10 +557,10 @@ describe("AnnotationOverlay linear-polyline post-move topology", () => {
       );
     expect(() => expectPostMoveOrder(reordered)).toThrow();
 
-    expect(Buffer.byteLength(LINEAR_POLYLINES, "utf8")).toBe(2_469);
-    expect(count(LINEAR_POLYLINES, "\n")).toBe(73);
+    expect(Buffer.byteLength(LINEAR_POLYLINES, "utf8")).toBe(2_571);
+    expect(count(LINEAR_POLYLINES, "\n")).toBe(77);
     expect(sha256(LINEAR_POLYLINES)).toBe(
-      "6b68c8ba307390a574a5708bbb0cca9b4132b6ece8149723aa6f294a67d687ca",
+      "b5cc2e37f36c10df7e171ca46edae5dbbbb9978557edad6d0ea7785d57ff8ed4",
     );
     expect(count(
       LINEAR_POLYLINES,
