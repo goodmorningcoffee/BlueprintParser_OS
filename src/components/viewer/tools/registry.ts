@@ -1,5 +1,6 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 
+import { bucketFillController } from "./bucketFill";
 import { calibrationController } from "./calibration";
 import { keynotePickController } from "./keynotePick";
 import { markupController } from "./markup";
@@ -31,6 +32,7 @@ export const TOOLS = Object.freeze(
   [
     calibrationController,
     splitController,
+    bucketFillController,
     takeoffPolygonController,
     takeoffLinearController,
     takeoffCountController,

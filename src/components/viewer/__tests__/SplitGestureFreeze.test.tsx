@@ -13,7 +13,7 @@
 //   - a holed longest candidate is rejected after ranking without falling through or clearing A/B.
 //
 // The behavior rows remain the parent oracle; the final describe is now POST-move topology and
-// names the controller as the sole mousedown home in the exact 11-entry registry.
+// names the controller as the sole mousedown home in the exact 12-entry registry.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -548,14 +548,19 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
     expect(CONTROLLER).toContain(MISS_MESSAGE);
   });
 
-  it("pins Split immediately after Calibration in the exact 11-controller registry", () => {
+  it("pins Split immediately before BucketFill in the exact 12-controller registry", () => {
     expect(REGISTRY).toContain('import { splitController } from "./split";');
     expect(REGISTRY).toContain(
-      "    calibrationController,\n    splitController,\n    takeoffPolygonController,",
+      'import { bucketFillController } from "./bucketFill";',
+    );
+    expect(REGISTRY).toContain(
+      "    calibrationController,\n    splitController,\n    bucketFillController,\n" +
+        "    takeoffPolygonController,",
     );
     expect(TOOLS.map((controller) => controller.kind)).toEqual([
       "calibration",
       "split",
+      "bucketFill",
       "takeoffPolygon",
       "takeoffLinear",
       "takeoffCount",
@@ -566,7 +571,7 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
       "parseRect",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(11);
+    expect(TOOLS).toHaveLength(12);
   });
 
   it("pins the atomic acceptSplit terminal and sacred mousedown dependency block", () => {

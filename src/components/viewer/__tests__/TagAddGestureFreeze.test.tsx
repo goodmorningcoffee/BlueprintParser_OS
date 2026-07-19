@@ -401,14 +401,14 @@ describe("TagAdd seam topology pins (post-move)", () => {
     expect(CONTROLLER).not.toContain("event.button");
   });
 
-  it("pins controller registration, exact eleven-tool priority, and shared capability ownership", () => {
+  it("pins controller registration, exact twelve-tool priority, and shared capability ownership", () => {
     expect(REGISTRY).toContain('import { tagAddController } from "./tagAdd";');
     expect(REGISTRY).toContain(
       "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n" +
       "    tagAddController,\n    parseRectController,",
     );
     const entries = REGISTRY.match(/^    \w+Controller,$/gm) ?? [];
-    expect(entries).toHaveLength(11);
+    expect(entries).toHaveLength(12);
     expect(count(AO, "const startDeferredDrawing = useCallback(")).toBe(1);
     expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
 

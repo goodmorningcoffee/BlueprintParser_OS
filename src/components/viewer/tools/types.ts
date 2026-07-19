@@ -1,4 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
+import type { QueryClient } from "@tanstack/react-query";
 
 import type { UseAnnotationsResult } from "@/queries/useAnnotations";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
@@ -145,6 +146,17 @@ export interface ToolContext {
     setLineEndpoint: ToolStoreState["setSplitLineEndpoint"];
     setPreview: ToolStoreState["setSplitPreview"];
     publishError: (message: string, delayMs?: number) => void;
+  }>;
+  /**
+   * [refactor jul19 P3.2 BucketFill] Observer-free cache authority, exact render DB identity, and
+   * the captured barrier composite proven by the BucketFill mousedown controller. Optional so
+   * first-point/busy/preview/pending terminals and synthetic peer contexts stay capability-cold.
+   * All three identifiers already belong to the sacred 37-entry callback dependency block.
+   */
+  readonly bucketFill?: Readonly<{
+    queryClient: QueryClient;
+    projectDbId: number;
+    addBarrier: ToolStoreState["addBucketFillBarrier"];
   }>;
   /**
    * [refactor jul17 P3.2 takeoffCount] Capabilities PROVEN by the takeoffCount controller,

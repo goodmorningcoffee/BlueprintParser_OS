@@ -377,12 +377,10 @@ describe("AT2 one exact global tool-tail authority", () => {
     );
     expect(borrowers.sort()).toEqual([
       "src/components/viewer/AnnotationOverlay.tsx:cancelToolTailExact",
-      "src/components/viewer/AnnotationOverlay.tsx:claimLatestToolOperation",
       "src/components/viewer/AnnotationOverlay.tsx:claimToolTailAuthority",
       "src/components/viewer/AnnotationOverlay.tsx:consumeToolTailAuthority",
       "src/components/viewer/AnnotationOverlay.tsx:invalidateLatestToolOperation",
       "src/components/viewer/AnnotationOverlay.tsx:invalidateToolTailAuthority",
-      "src/components/viewer/AnnotationOverlay.tsx:ownsLatestToolOperation",
       "src/components/viewer/AnnotationOverlay.tsx:ownsToolTailAuthority",
       "src/components/viewer/AnnotationOverlay.tsx:registerToolTailCancellation",
       "src/components/viewer/AnnotationOverlay.tsx:releaseToolTailCancellation",
@@ -412,6 +410,17 @@ describe("AT2 one exact global tool-tail authority", () => {
       "src/components/viewer/SymbolSearchPanel.tsx:invalidateToolTailAuthority",
       "src/components/viewer/SymbolSearchPanel.tsx:ownsLatestToolOperation",
       "src/components/viewer/TakeoffPanel.tsx:invalidateToolTailAuthority",
+      // [refactor jul19 P3.2] BucketFill mechanically carries the legacy branch's dual claims,
+      // barrier invalidations, exact cancellation, and release-before-consume settlement.
+      "src/components/viewer/tools/bucketFill.ts:claimLatestToolOperation",
+      "src/components/viewer/tools/bucketFill.ts:claimToolTailAuthority",
+      "src/components/viewer/tools/bucketFill.ts:consumeToolTailAuthority",
+      "src/components/viewer/tools/bucketFill.ts:invalidateLatestToolOperation",
+      "src/components/viewer/tools/bucketFill.ts:invalidateToolTailAuthority",
+      "src/components/viewer/tools/bucketFill.ts:ownsLatestToolOperation",
+      "src/components/viewer/tools/bucketFill.ts:ownsToolTailAuthority",
+      "src/components/viewer/tools/bucketFill.ts:registerToolTailCancellation",
+      "src/components/viewer/tools/bucketFill.ts:releaseToolTailCancellation",
       // [refactor jul18 P3.2] Keynote picking inherited the legacy hit-only invalidation. Its
       // eligible miss has zero effects and delegates to parseRect; parseRect is deliberately
       // absent because deferredDrawing.start remains the sole lease/authority owner.

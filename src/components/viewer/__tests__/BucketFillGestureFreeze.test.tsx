@@ -697,7 +697,7 @@ describe("BucketFill gesture freeze (real overlay, production mousedown)", () =>
   });
 });
 
-describe("BucketFill seam topology pins (PRE-move: legacy branch is sole mousedown home)", () => {
+describe("BucketFill seam topology pins (POST-move: controller is sole mousedown home)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
@@ -714,52 +714,54 @@ describe("BucketFill seam topology pins (PRE-move: legacy branch is sole mousedo
     process.cwd(),
     "src/components/viewer/tools/bucketFill.ts",
   );
-  const branchStart = AO.indexOf(
-    "      // Bucket fill mode — independent of item selection",
-  );
-  const branchEnd = AO.indexOf("\n      // Takeoff placement mode", branchStart);
-  const BRANCH = AO.slice(branchStart, branchEnd);
+  const CONTROLLER = readFileSync(controllerPath, "utf8");
+  const mouseDownStart = AO.indexOf("  const handleMouseDown = useCallback(");
+  const mouseMoveStart = AO.indexOf("  const handleMouseMove = useCallback(");
+  const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
   const count = (haystack: string, needle: string): number =>
     haystack.split(needle).length - 1;
 
-  it("pins the exact 192-line legacy branch and controller absence", () => {
-    expect(branchStart).toBeGreaterThan(-1);
-    expect(branchEnd).toBeGreaterThan(branchStart);
-    expect(Buffer.byteLength(BRANCH, "utf8")).toBe(8515);
-    expect(BRANCH.match(/\n/g)).toHaveLength(192);
-    expect(createHash("sha256").update(BRANCH).digest("hex")).toBe(
-      "6316199413612529c9675b4549fbb1077e1c7d36d7b6869ff9f0ed9d35403f73",
-    );
-    expect(count(AO, "// Bucket fill mode — independent of item selection")).toBe(1);
-    expect(count(BRANCH, 'if (activeTool?.kind === "bucketFill")')).toBe(1);
-    expect(count(BRANCH, "clientBucketFill(")).toBe(1);
-    expect(count(BRANCH, 'fetch("/api/bucket-fill"')).toBe(1);
-    expect(existsSync(controllerPath)).toBe(false);
-    expect(TYPES).not.toContain("readonly bucketFill?:");
-    expect(AO.match(/\n/g)).toHaveLength(2646);
+  it("pins the legacy branch absent and the controller as the sole transport home", () => {
+    expect(mouseDownStart).toBeGreaterThan(-1);
+    expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
+    expect(existsSync(controllerPath)).toBe(true);
+    expect(count(MOUSEDOWN, "// Bucket fill mode — independent of item selection")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "bucketFill")')).toBe(0);
+    expect(count(MOUSEDOWN, "clientBucketFill(")).toBe(0);
+    expect(count(MOUSEDOWN, 'fetch("/api/bucket-fill"')).toBe(0);
+    expect(count(CONTROLLER, 'kind: "bucketFill"')).toBe(1);
+    expect(count(CONTROLLER, 'state.activeTool?.kind === "bucketFill"')).toBe(1);
+    expect(
+      count(CONTROLLER, 'press.toolAtDown.activeTool?.kind === "bucketFill"'),
+    ).toBe(1);
+    expect(count(CONTROLLER, "clientBucketFill(")).toBe(1);
+    expect(count(CONTROLLER, 'fetch("/api/bucket-fill"')).toBe(1);
+    expect(count(CONTROLLER, "return true;")).toBe(6);
+    expect(CONTROLLER.match(/\n/g)).toHaveLength(253);
+    expect(AO.match(/\n/g)).toHaveLength(2455);
   });
 
   it("pins explicit barrier invalidation and fresh-operation publication order", () => {
-    expect(BRANCH).toContain(
-      "invalidateToolTailAuthority();\n          " +
-        'invalidateLatestToolOperation("bucketFill");\n          const pending',
+    expect(CONTROLLER).toContain(
+      "invalidateToolTailAuthority();\n      " +
+        'invalidateLatestToolOperation("bucketFill");\n      const pending',
     );
-    const freshStart = BRANCH.indexOf("        const bucketToken = {};");
-    const globalClaim = BRANCH.indexOf(
-      "        claimToolTailAuthority(bucketToken);",
+    const freshStart = CONTROLLER.indexOf("    const bucketToken = {};");
+    const globalClaim = CONTROLLER.indexOf(
+      "    claimToolTailAuthority(bucketToken);",
       freshStart,
     );
-    const laneClaim = BRANCH.indexOf(
-      '        claimLatestToolOperation("bucketFill", bucketToken);',
+    const laneClaim = CONTROLLER.indexOf(
+      '    claimLatestToolOperation("bucketFill", bucketToken);',
       freshStart,
     );
-    const registration = BRANCH.indexOf(
-      "        registerToolTailCancellation(bucketToken, () => {",
+    const registration = CONTROLLER.indexOf(
+      "    registerToolTailCancellation(bucketToken, () => {",
       freshStart,
     );
-    const loading = BRANCH.indexOf(
-      "        useToolStore.setState({\n          bucketFillLoading: true,\n" +
-        "          bucketFillPreview: null,\n          bucketFillError: null,\n        });",
+    const loading = CONTROLLER.indexOf(
+      "    useToolStore.setState({\n      bucketFillLoading: true,\n" +
+        "      bucketFillPreview: null,\n      bucketFillError: null,\n    });",
       freshStart,
     );
     expect(freshStart).toBeGreaterThan(-1);
@@ -767,15 +769,19 @@ describe("BucketFill seam topology pins (PRE-move: legacy branch is sole mousedo
     expect(laneClaim).toBeGreaterThan(globalClaim);
     expect(registration).toBeGreaterThan(laneClaim);
     expect(loading).toBeGreaterThan(registration);
-    expect(count(BRANCH, "if (bfState.bucketFillLoading) return;")).toBe(1);
-    expect(count(BRANCH, "if (bfState.bucketFillPreview || bfState.bucketFillPendingPolygon) return;")).toBe(1);
+    expect(count(CONTROLLER, "if (bfState.bucketFillLoading) return true;")).toBe(1);
+    expect(CONTROLLER).toContain(
+      "if (bfState.bucketFillPreview || bfState.bucketFillPendingPolygon) {\n" +
+        "      return true;\n    }",
+    );
   });
 
-  it("pins the exact 11-controller PRE registry and Bucket destination slot", () => {
-    expect(REGISTRY).not.toContain('from "./bucketFill"');
+  it("pins the exact 12-controller registry and Bucket destination slot", () => {
+    expect(REGISTRY).toContain('import { bucketFillController } from "./bucketFill";');
     expect(TOOLS.map((controller) => controller.kind)).toEqual([
       "calibration",
       "split",
+      "bucketFill",
       "takeoffPolygon",
       "takeoffLinear",
       "takeoffCount",
@@ -786,20 +792,36 @@ describe("BucketFill seam topology pins (PRE-move: legacy branch is sole mousedo
       "parseRect",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(11);
+    expect(TOOLS).toHaveLength(12);
     expect(REGISTRY).toContain(
-      "    calibrationController,\n    splitController,\n    takeoffPolygonController,",
+      "    calibrationController,\n    splitController,\n    bucketFillController,\n" +
+        "    takeoffPolygonController,",
     );
   });
 
   it("pins Bucket import/authority homes and the sacred mousedown dependency block", () => {
-    expect(AO).toContain(
+    expect(AO).not.toContain(
       'import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";',
     );
-    expect(BRANCH).toContain("readAnnotations(qc, publicId)");
-    expect(BRANCH).toContain("readTextractForPage(qc, publicId, pageNumber)");
-    expect(BRANCH).toContain("apiErrorMessage(err)");
-    expect(BRANCH).toContain('ownsLatestToolOperation("bucketFill", bucketToken)');
+    expect(CONTROLLER).toContain("readAnnotations(queryClient, bucketPublicId)");
+    expect(CONTROLLER).toContain(
+      "readTextractForPage(queryClient, bucketPublicId, bucketPageNumber)",
+    );
+    expect(CONTROLLER).toContain("apiErrorMessage(error)");
+    expect(CONTROLLER).toContain(
+      'ownsLatestToolOperation("bucketFill", bucketToken)',
+    );
+    expect(count(AO, "readTextractForPage(")).toBe(1);
+    expect(count(CONTROLLER, "readTextractForPage(")).toBe(1);
+    expect(AO).not.toContain("claimLatestToolOperation,");
+    expect(AO).not.toContain("ownsLatestToolOperation,");
+    expect(AO).toContain(
+      "bucketFill: {\n            queryClient: qc,\n            projectDbId,\n" +
+        "            addBarrier: addBucketFillBarrier,\n          },",
+    );
+    expect(TYPES).toContain("readonly bucketFill?: Readonly<{");
+    expect(CONTROLLER).not.toMatch(/queryClient\.(?:setQueryData|setQueriesData|invalidateQueries|fetchQuery|ensureQueryData)/);
+    expect(CONTROLLER).not.toContain("useToolStore((");
 
     const callbackStart = AO.indexOf("  const handleMouseDown = useCallback(");
     const callbackEnd = AO.indexOf("\n  );", callbackStart);

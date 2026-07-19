@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commitAnnotationSplit } from "@/queries/annotationSplit";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
-import { enrichMarkupEditFromResponse, isCurrentMarkupEdit, publishMarkupEdit, readAnnotations, retireMarkupEdit, rollbackMarkupEdit, useAnnotations } from "@/queries/useAnnotations";
+import { enrichMarkupEditFromResponse, isCurrentMarkupEdit, publishMarkupEdit, retireMarkupEdit, rollbackMarkupEdit, useAnnotations } from "@/queries/useAnnotations";
 import { readTextractForPage } from "@/queries/textractCache";
 import {
   readPageIntelligence,
@@ -53,12 +53,10 @@ import type { ScoredMatch } from "@/lib/tag-mapping";
 import { captureCanvasGestureLease, matchesCanvasGestureLease, selectActiveToolKey, type CanvasGestureLease, type CanvasGestureSnapshot } from "@/lib/active-tool-state";
 import {
   cancelToolTailExact,
-  claimLatestToolOperation,
   claimToolTailAuthority,
   consumeToolTailAuthority,
   invalidateLatestToolOperation,
   invalidateToolTailAuthority,
-  ownsLatestToolOperation,
   ownsToolTailAuthority,
   registerToolTailCancellation,
   releaseToolTailCancellation,
@@ -67,8 +65,7 @@ import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsP
 // [refactor jul15 P3.1½] hit-test predicates extracted to the pure geometry leaf; math unchanged.
 import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
-import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
-import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { persistFetch, canPersist } from "@/lib/client-persist";
 import { captureProjectLifecycle } from "@/lib/project-lifecycle";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
@@ -1420,205 +1417,17 @@ export default memo(function AnnotationOverlay({
             setPreview: setSplitPreview,
             publishError: publishTransientSplitError,
           },
+          bucketFill: {
+            queryClient: qc,
+            projectDbId,
+            addBarrier: addBucketFillBarrier,
+          },
           mutations: { annotations: { persistCreate } },
           transientError: { publish: publishTransientBucketFillError },
           takeoffItems,
           takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline, savePolygon },
         }))
       ) {
-        return;
-      }
-
-      // Bucket fill mode — independent of item selection
-      if (activeTool?.kind === "bucketFill") {
-        const bfState = toolAtDown;
-        e.stopPropagation();
-        const normX = pos.x / width;
-        const normY = pos.y / height;
-
-        if (bfState.bucketFillBarrierMode) {
-          invalidateToolTailAuthority();
-          invalidateLatestToolOperation("bucketFill");
-          const pending = bfState.barrierPendingPoint;
-          if (pending) {
-            addBucketFillBarrier({ x1: pending.x, y1: pending.y, x2: normX, y2: normY });
-            if (!canAdoptProjectLifecycle()) return;
-            bfState.setBarrierPendingPoint(null);
-          } else {
-            bfState.setBarrierPendingPoint({ x: normX, y: normY });
-          }
-          return;
-        }
-
-        if (bfState.bucketFillLoading) return;
-        if (bfState.bucketFillPreview || bfState.bucketFillPendingPolygon) return; // preview/dialog showing
-
-        const bucketToken = {};
-        const bucketActivation = activeTool;
-        const bucketProjectDbId = projectDbId;
-        const bucketPublicId = publicId;
-        const bucketPageNumber = pageNumber;
-        claimToolTailAuthority(bucketToken);
-        claimLatestToolOperation("bucketFill", bucketToken);
-        // A competing global intent defeats this result tail. Its exact queued cancellation may
-        // still clear A's spinner while preserving a newer Bucket B (which rotates the lane).
-        registerToolTailCancellation(bucketToken, () => {
-          if (
-            !ownsLatestToolOperation("bucketFill", bucketToken) ||
-            useSessionStore.getState().projectId !== bucketProjectDbId ||
-            useSessionStore.getState().publicId !== bucketPublicId ||
-            useViewerCoreStore.getState().pageNumber !== bucketPageNumber
-          ) return;
-          useToolStore.setState((state) =>
-            state.activeTool === bucketActivation &&
-              (state.bucketFillLoading || state.bucketFillError !== null)
-              ? { bucketFillLoading: false, bucketFillError: null }
-              : state
-          );
-        });
-        useToolStore.setState({
-          bucketFillLoading: true,
-          bucketFillPreview: null,
-          bucketFillError: null,
-        });
-
-        const ownsBucketFill = () => {
-          const current = useToolStore.getState();
-          return canAdoptProjectLifecycle() &&
-            ownsToolTailAuthority(bucketToken) &&
-            ownsLatestToolOperation("bucketFill", bucketToken) &&
-            current.activeTool === bucketActivation &&
-            useSessionStore.getState().projectId === bucketProjectDbId &&
-            useSessionStore.getState().publicId === bucketPublicId &&
-            useViewerCoreStore.getState().pageNumber === bucketPageNumber;
-        };
-        if (!ownsBucketFill()) return;
-
-        const consumeBucketFill = (publish: () => void): boolean => {
-          if (!ownsBucketFill()) return false;
-          releaseToolTailCancellation(bucketToken);
-          return consumeToolTailAuthority(bucketToken, publish);
-        };
-
-        // [refactor jul11 P2.2⑥] Bucket-fill collision input is invocation-time state. Reading
-        // the cache bridge preserves getState freshness without resubscribing this handler.
-        const existingPolygons = readAnnotations(qc, publicId)
-          .filter((a: any) => a.pageNumber === pageNumber && a.source === "takeoff"
-            && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
-          .map((a: any) => ({ vertices: a.data.vertices }));
-
-        // OCR text bboxes — staged for Tier 2 (enclosed-text area accounting).
-        // The worker currently ignores these; pre-2026-04-22 it used them to
-        // erase text-to-passable before flood, which punched holes through
-        // walls when an OCR bbox straddled a thin wall. New paradigm: text
-        // is a wall during flood (stops the fill at letter boundaries), and
-        // a future feature will add the real-world area of fully-enclosed
-        // text bboxes back to the reported sqft. Keep passing the payload so
-        // Tier 2 is a one-line re-adoption; do not delete as "unused."
-        // Invocation-time cache read only: bucket fill must not add a Textract observer/redraw source
-        // to this sacred canvas surface.
-        const textractWords = readTextractForPage(qc, publicId, pageNumber)?.words ?? [];
-        const textBboxes = textractWords.map((w: { bbox: [number, number, number, number] }) => ({
-          x: w.bbox[0], y: w.bbox[1], w: w.bbox[2], h: w.bbox[3],
-        }));
-
-        const handleFillSuccess = (data: {
-          vertices: { x: number; y: number }[];
-          holes?: { vertices: { x: number; y: number }[] }[];
-          method: string;
-        }) => {
-          consumeBucketFill(() => useToolStore.setState({
-            bucketFillLoading: false,
-            bucketFillPreview: {
-              vertices: data.vertices,
-              holes: data.holes && data.holes.length > 0 ? data.holes : undefined,
-              method: data.method,
-            },
-          }));
-        };
-
-        const handleFillError = (message: string) => {
-          if (!ownsBucketFill()) return;
-          useToolStore.setState({
-            bucketFillLoading: false,
-            bucketFillError: message,
-          });
-          setTimeout(() => {
-            consumeBucketFill(() => useToolStore.getState().setBucketFillError(null));
-          }, 4000);
-        };
-
-        const serverFallback = () => {
-          if (!ownsBucketFill()) return;
-          void fetch("/api/bucket-fill", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projectId: bucketProjectDbId,
-              pageNumber,
-              seedPoint: { x: normX, y: normY },
-              tolerance: bfState.bucketFillTolerance,
-              dilate: bfState.bucketFillDilatePx,
-              barriers: bfState.bucketFillBarriers,
-              polygonBarriers: existingPolygons,
-              textBboxes,
-            }),
-          })
-            .then(async (res) => {
-              if (!ownsBucketFill()) return null;
-              // [refactor jul6 S030] apiErrorMessage: non-OK now serves {error:{code,message}};
-              // the engine's in-band {type:"error"}-at-200 protocol below is untouched.
-              if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
-              }
-              const data = await res.json();
-              return ownsBucketFill() ? data : null;
-            })
-            .then((data) => {
-              if (!ownsBucketFill()) return;
-              if (data?.type === "result" && data.vertices?.length >= 3) {
-                handleFillSuccess({
-                  vertices: data.vertices,
-                  holes: data.holes,
-                  method: data.method || "server-raster",
-                });
-              } else if (data?.type === "error") {
-                handleFillError(data.error || "Bucket fill failed");
-              } else {
-                consumeBucketFill(() => {
-                  useToolStore.setState({ bucketFillLoading: false });
-                });
-              }
-            })
-            .catch((err) => {
-              handleFillError(err?.message || "Bucket fill failed");
-            });
-        };
-
-        // Try client-side WebWorker first, fall back to server.
-        // maxDimension is the worker's resolution knob — 1000 is near-instant
-        // but averages thin walls out of existence on high-DPI CAD exports;
-        // 4000 is near-native PDF.js canvas resolution with a ~150-250ms cost
-        // on big fills. 2000 / 3000 are intermediate snaps on the slider.
-        const pageCanvas = findPageCanvas();
-        if (pageCanvas) {
-          const maxDimension = bfState.bucketFillResolution;
-          clientBucketFill(pageCanvas, { x: normX, y: normY }, {
-            tolerance: bfState.bucketFillTolerance,
-            dilation: bfState.bucketFillDilatePx,
-            barriers: bfState.bucketFillBarriers,
-            polygonBarriers: existingPolygons,
-            textBboxes,
-            maxDimension,
-          })
-            .then(handleFillSuccess)
-            .catch(() => {
-              if (ownsBucketFill()) serverFallback();
-            });
-        } else {
-          serverFallback();
-        }
         return;
       }
 

@@ -703,7 +703,8 @@ describe("splitController real registry integration", () => {
     ).toEqual([splitController]);
     expect(TOOLS.indexOf(splitController)).toBe(1);
     expect(TOOLS[0]?.kind).toBe("calibration");
-    expect(TOOLS[2]?.kind).toBe("takeoffPolygon");
+    expect(TOOLS[2]?.kind).toBe("bucketFill");
+    expect(TOOLS[3]?.kind).toBe("takeoffPolygon");
 
     const preview = Object.freeze({
       targetAnnotationId: 1,

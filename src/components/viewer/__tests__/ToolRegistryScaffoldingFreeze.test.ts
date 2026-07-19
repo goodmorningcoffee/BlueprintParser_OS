@@ -181,12 +181,15 @@ describe("P3.1 tool registry scaffolding", () => {
   // disjoint and every eligible press claims, including when deferred admission rejects.
   // Eleventh registration: Split takes the first interior runtime slot immediately after
   // Calibration. Every matched Split arm claims, so it cannot perturb any later controller.
-  it("exports one exact frozen registry with Split second and markup last", () => {
-    expect(TOOLS).toHaveLength(11);
+  // Twelfth registration: BucketFill takes the next interior slot immediately after Split and
+  // before TakeoffPolygon. Every matched BucketFill arm claims, preserving later priority.
+  it("exports one exact frozen registry with Split/BucketFill first and markup last", () => {
+    expect(TOOLS).toHaveLength(12);
     expect(Object.isFrozen(TOOLS)).toBe(true);
     expect(TOOLS.map((tool) => tool.kind)).toEqual([
       "calibration",
       "split",
+      "bucketFill",
       "takeoffPolygon",
       "takeoffLinear",
       "takeoffCount",
@@ -209,7 +212,7 @@ describe("P3.1 tool registry scaffolding", () => {
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
     // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
-    // ELEVEN registered controllers (calibration, Split, the three takeoffPlacement controllers,
+    // TWELVE registered controllers (calibration, Split, BucketFill, the three takeoffPlacement controllers,
     // and the five parse/pick/deferred units need their activations; markup needs mode "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },

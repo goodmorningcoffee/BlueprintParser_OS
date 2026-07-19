@@ -261,9 +261,9 @@ describe("later user tool intent revokes parse completion writes", () => {
   it("rejects stale canvas targets before coordinates and claims only accepted branch work", () => {
     const source = readFileSync("src/components/viewer/AnnotationOverlay.tsx", "utf8");
     const start = source.indexOf("const handleMouseDown = useCallback(");
-    // [refactor jul19 P3.2] Split joined Calibration behind the registry. Bucket Fill is now the
-    // first surviving legacy branch after the shared admission/context seam.
-    const firstBranch = source.indexOf("// Bucket fill mode", start);
+    // [refactor jul19 P3.2] Split and BucketFill joined Calibration behind the registry. The
+    // residual takeoff prelude is now the first surviving legacy branch after the shared seam.
+    const firstBranch = source.indexOf("// Takeoff placement mode", start);
     expect(start).toBeGreaterThan(-1);
     expect(firstBranch).toBeGreaterThan(start);
     const gesturePrefix = source.slice(start, firstBranch);
@@ -319,6 +319,8 @@ describe("later user tool intent revokes parse completion writes", () => {
     // handler, so the sacred dependency list remains byte-identical.
     // [refactor jul19 P3.2 Split] The subscribed endpoint/preview actions and exact Split error
     // publisher join as one narrow group; all three were already in the same dependency block.
+    // [refactor jul19 P3.2 BucketFill] Observer-free query authority, exact render DB identity,
+    // and the captured barrier composite join dep-neutrally from the same frozen block.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected}," +
@@ -327,6 +329,7 @@ describe("later user tool intent revokes parse completion writes", () => {
         "keynotePick:{active:isKeynoteYoloPicking}," +
         "tagPick:{scanControllerRef:tagScanControllerRef,setPickingMode:setYoloTagPickingMode,}," +
         "split:{setLineEndpoint:setSplitLineEndpoint,setPreview:setSplitPreview,publishError:publishTransientSplitError,}," +
+        "bucketFill:{queryClient:qc,projectDbId,addBarrier:addBucketFillBarrier,}," +
         "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
         "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline,savePolygon},}))){return;}",
     );
@@ -395,10 +398,9 @@ describe("later user tool intent revokes parse completion writes", () => {
       }
     }
 
-    const bucket = sourceSlice(
-      "src/components/viewer/AnnotationOverlay.tsx",
-      "// Bucket fill mode — independent of item selection",
-      "// Takeoff placement mode",
+    const bucket = readFileSync(
+      "src/components/viewer/tools/bucketFill.ts",
+      "utf8",
     );
     const globalClaim = bucket.indexOf("claimToolTailAuthority(bucketToken)");
     const laneClaim = bucket.indexOf(
@@ -418,9 +420,9 @@ describe("later user tool intent revokes parse completion writes", () => {
       "ownsToolTailAuthority(bucketToken)",
       'ownsLatestToolOperation("bucketFill", bucketToken)',
       "current.activeTool === bucketActivation",
-      "useSessionStore.getState().projectId === bucketProjectDbId",
-      "useSessionStore.getState().publicId === bucketPublicId",
-      "useViewerCoreStore.getState().pageNumber === bucketPageNumber",
+      "context.stores.session.getState().projectId === bucketProjectDbId",
+      "context.stores.session.getState().publicId === bucketPublicId",
+      "context.stores.viewerCore.getState().pageNumber === bucketPageNumber",
     ]) {
       expect(bucket).toContain(guard);
     }

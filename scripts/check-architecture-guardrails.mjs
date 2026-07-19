@@ -51,7 +51,6 @@ const RAW_FETCH_BASELINE = {
     { path: "src/components/dashboard/ProjectCard.tsx", max: 2 },
     { path: "src/components/dashboard/UploadWidget.tsx", max: 2 },
     { path: "src/components/viewer/AnnotationListItem.tsx", max: 1 },
-    { path: "src/components/viewer/AnnotationOverlay.tsx", max: 1 },
     { path: "src/components/viewer/AreaTab.tsx", max: 1 },
     { path: "src/components/viewer/AutoParseTab.tsx", max: 1 },
     { path: "src/components/viewer/BucketFillAssignDialog.tsx", max: 1 },
@@ -72,6 +71,7 @@ const RAW_FETCH_BASELINE = {
     { path: "src/components/viewer/TextPanel.tsx", max: 2 },
     { path: "src/components/viewer/ViewAllPanel.tsx", max: 3 },
     { path: "src/components/viewer/ViewerToolbar.tsx", max: 1 },
+    { path: "src/components/viewer/tools/bucketFill.ts", max: 1 },
   ],
 };
 
@@ -297,7 +297,7 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/components/viewer/AnnotationOverlay.tsx",
-      maxLines: 2646,
+      maxLines: 2455,
       reason: "viewer-hot-exception",
     },
     {

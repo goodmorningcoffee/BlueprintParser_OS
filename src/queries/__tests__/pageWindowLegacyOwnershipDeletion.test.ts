@@ -105,9 +105,10 @@ const TEXTRACT_PAGE_HOOK_TOPOLOGY: Record<string, number> = {
 };
 
 const TEXTRACT_ACTION_READ_TOPOLOGY: Record<string, number> = {
-  "src/components/viewer/AnnotationOverlay.tsx": 2,
+  "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/GuidedParseTab.tsx": 1,
   "src/components/viewer/KeynotePanel.tsx": 1,
+  "src/components/viewer/tools/bucketFill.ts": 1,
 };
 
 const TEXTRACT_BOOTSTRAP_OR_LOADER_FILES = [
