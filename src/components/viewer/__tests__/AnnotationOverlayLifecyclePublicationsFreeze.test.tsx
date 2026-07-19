@@ -11,7 +11,14 @@
 import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   openProject,
@@ -24,7 +31,10 @@ import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { useToolStore } from "@/stores/toolStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
-import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
+import {
+  readSeededAnnotations,
+  seedAnnotations,
+} from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import { useUiStore } from "@/stores/uiStore";
@@ -34,7 +44,6 @@ vi.mock("@/lib/bucket-fill-client", () => ({
   clientBucketFill: vi.fn(),
   findPageCanvas: vi.fn(() => null),
 }));
-vi.mock("../DrawingPreviewLayer", () => ({ default: () => null }));
 vi.mock("../MarkupDialog", () => ({ default: () => null }));
 
 import AnnotationOverlay from "../AnnotationOverlay";
@@ -45,7 +54,10 @@ const PAGE = 1;
 const ITEM_ID = 801;
 const B_MOUSE = { x: 91, y: 92 };
 const B_POINT = { x: 0.91, y: 0.92 };
-const B_VERTICES = [{ x: 0.81, y: 0.82 }, { x: 0.83, y: 0.84 }];
+const B_VERTICES = [
+  { x: 0.81, y: 0.82 },
+  { x: 0.83, y: 0.84 },
+];
 const B_SEARCH = "successor B search";
 const B_ANNOTATION_FILTER = "successor B annotation filter";
 const B_TAKEOFF_FILTER = 9801;
@@ -59,6 +71,18 @@ const SQUARE = [
   { x: 0.8, y: 0.2 },
   { x: 0.8, y: 0.8 },
   { x: 0.2, y: 0.8 },
+];
+const SPLIT_LEFT = [
+  SQUARE[0],
+  { x: 0.5, y: 0.2 },
+  { x: 0.5, y: 0.8 },
+  SQUARE[3],
+];
+const SPLIT_RIGHT = [
+  { x: 0.5, y: 0.2 },
+  SQUARE[1],
+  SQUARE[2],
+  { x: 0.5, y: 0.8 },
 ];
 
 function takeoffItem(shape: "polygon" | "linear"): ClientTakeoffItem {
@@ -92,6 +116,49 @@ function areaAnnotation(
       unit: "SF",
     },
     ...overrides,
+  };
+}
+
+function readySplitPreview(source: ClientAnnotation) {
+  const lineA = { x: 0.5, y: 0.2 };
+  const lineB = { x: 0.5, y: 0.8 };
+  return {
+    targetAnnotationId: source.id,
+    original: (source.data?.vertices as { x: number; y: number }[]) ?? SQUARE,
+    left: SPLIT_LEFT,
+    right: SPLIT_RIGHT,
+    lineA,
+    lineB,
+  };
+}
+
+function canonicalSplitResponse(
+  source: ClientAnnotation,
+  rightId = 8801,
+): { left: ClientAnnotation; right: ClientAnnotation } {
+  return {
+    left: {
+      ...source,
+      bbox: [0.2, 0.2, 0.5, 0.8],
+      data: {
+        ...(source.data ?? {}),
+        vertices: SPLIT_LEFT,
+        areaSqUnits: 0,
+      },
+    },
+    right: {
+      id: rightId,
+      pageNumber: PAGE,
+      name: "polygon item",
+      bbox: [0.5, 0.2, 0.8, 0.8],
+      note: null,
+      source: "takeoff",
+      data: {
+        ...(source.data ?? {}),
+        vertices: SPLIT_RIGHT,
+        areaSqUnits: 0,
+      },
+    },
   };
 }
 
@@ -134,12 +201,14 @@ function yoloTagFor(annotationId: number): YoloTag {
     yoloModel: "fixture-model",
     source: "schedule",
     scope: "project",
-    instances: [{
-      pageNumber: PAGE,
-      annotationId,
-      bbox: [0.2, 0.2, 0.4, 0.4],
-      confidence: 1,
-    }],
+    instances: [
+      {
+        pageNumber: PAGE,
+        annotationId,
+        bbox: [0.2, 0.2, 0.4, 0.4],
+        confidence: 1,
+      },
+    ],
   };
 }
 
@@ -164,6 +233,14 @@ function jsonResponse(body: unknown): Response {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue(body),
+  } as unknown as Response;
+}
+
+function errorResponse(message: string, status = 409): Response {
+  return {
+    ok: false,
+    status,
+    json: vi.fn().mockResolvedValue({ error: { code: "CONFLICT", message } }),
   } as unknown as Response;
 }
 
@@ -215,12 +292,13 @@ function canvasRect(): DOMRect {
 let queryClient: QueryClient;
 let holdSuccessor: boolean;
 let lifecycleHandles: OpenProjectHandle[];
-let splitPuts: Deferred<Response>[];
-let splitPosts: Deferred<Response>[];
+let splitRequests: Deferred<Response>[];
 const fetchMock = vi.fn();
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
 }
 
 function renderCanvas(beforeOverlay: ReactNode = null): HTMLCanvasElement {
@@ -239,7 +317,30 @@ function renderCanvas(beforeOverlay: ReactNode = null): HTMLCanvasElement {
   return canvas;
 }
 
-function InstallSuccessorBeforeOverlayEffects({ seedB }: { seedB: () => void }) {
+function renderReadySplit(
+  source: ClientAnnotation,
+  preview = readySplitPreview(source),
+): typeof preview {
+  seedAnnotations(queryClient, [source]);
+  seedTakeoff(queryClient, [takeoffItem("polygon")], []);
+  renderCanvas();
+  act(() => {
+    useToolStore.getState().setSplitAreaActive(true);
+    useToolStore.setState({
+      splitPreview: preview,
+      splitLineA: preview.lineA,
+      splitLineB: preview.lineB,
+    });
+  });
+  fetchMock.mockClear();
+  return preview;
+}
+
+function InstallSuccessorBeforeOverlayEffects({
+  seedB,
+}: {
+  seedB: () => void;
+}) {
   useEffect(() => {
     installSameIdSuccessor(seedB);
   }, [seedB]);
@@ -265,6 +366,14 @@ function installSameIdSuccessor(
   return handle;
 }
 
+async function installAuthenticatedLifecycle(): Promise<void> {
+  holdSuccessor = false;
+  const authenticated = openProject(queryClient, PUBLIC_ID, { demo: false });
+  lifecycleHandles.push(authenticated);
+  expect((await authenticated.result).status).toBe("opened");
+  holdSuccessor = true;
+}
+
 function installPolygonSuccessor(
   mode: "pointer" | "markup" = "pointer",
   activeTakeoffItemId: number | null = null,
@@ -283,56 +392,65 @@ function installPolygonSuccessor(
 
 function installFrames(): FrameRequestCallback[] {
   const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
-    frames.push(callback);
-    return frames.length;
-  }));
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn((callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    }),
+  );
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
   return frames;
 }
 
 beforeEach(async () => {
-  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   lifecycleHandles = [];
-  splitPuts = [];
-  splitPosts = [];
+  splitRequests = [];
   holdSuccessor = false;
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown, init?: RequestInit) => {
     const path = String(url);
-    if (path === `/api/annotations/${areaAnnotation().id}` && init?.method === "PUT") {
+    if (path === "/api/annotations/split" && init?.method === "POST") {
       const request = deferred<Response>();
-      splitPuts.push(request);
-      return request.promise;
-    }
-    if (path === "/api/annotations" && init?.method === "POST") {
-      const request = deferred<Response>();
-      splitPosts.push(request);
+      splitRequests.push(request);
       return request.promise;
     }
     if (path === `/api/projects/${PUBLIC_ID}`) {
-      return holdSuccessor ? never<Response>() : Promise.resolve(jsonResponse(projectResponse()));
+      return holdSuccessor
+        ? never<Response>()
+        : Promise.resolve(jsonResponse(projectResponse()));
     }
     if (path === `/api/projects/${PUBLIC_ID}/pages?from=1&to=15`) {
       return holdSuccessor
         ? never<Response>()
-        : Promise.resolve(jsonResponse({ from: 1, to: 2, pages: [], annotations: [] }));
+        : Promise.resolve(
+            jsonResponse({ from: 1, to: 2, pages: [], annotations: [] }),
+          );
     }
     if (path === `/api/annotation-groups?projectId=${PUBLIC_ID}`) {
       return Promise.resolve(jsonResponse({ groups: [], memberships: [] }));
     }
     if (path === `/api/demo/projects/${PUBLIC_ID}`) {
-      return holdSuccessor ? never<Response>() : Promise.resolve(jsonResponse(projectResponse()));
+      return holdSuccessor
+        ? never<Response>()
+        : Promise.resolve(jsonResponse(projectResponse()));
     }
     if (path === `/api/demo/projects/${PUBLIC_ID}/pages?from=1&to=15`) {
       return holdSuccessor
         ? never<Response>()
-        : Promise.resolve(jsonResponse({ from: 1, to: 2, pages: [], annotations: [] }));
+        : Promise.resolve(
+            jsonResponse({ from: 1, to: 2, pages: [], annotations: [] }),
+          );
     }
     throw new Error(`Unexpected Overlay lifecycle request: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(noopContext());
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    noopContext(),
+  );
 
   resetProjectData();
   // These presentation fields intentionally survive a production project reset. Pin them here so
@@ -382,6 +500,355 @@ afterEach(() => {
 });
 
 describe("AnnotationOverlay paired project publications", () => {
+  it("makes Escape and duplicate Enter inert for an already admitted durable Split", () => {
+    const source = areaAnnotation();
+    const lineA = { x: 0.1, y: 0.5 };
+    const lineB = { x: 0.9, y: 0.5 };
+    const pendingPreview = {
+      targetAnnotationId: source.id,
+      original: SQUARE,
+      left: [SQUARE[0], { x: 0.5, y: 0.2 }, { x: 0.5, y: 0.8 }, SQUARE[3]],
+      right: [{ x: 0.5, y: 0.2 }, SQUARE[1], SQUARE[2], { x: 0.5, y: 0.8 }],
+      lineA,
+      lineB,
+      commitPending: true as const,
+    };
+    seedAnnotations(queryClient, [source]);
+    renderCanvas();
+    act(() => {
+      useToolStore.getState().setSplitAreaActive(true);
+      useToolStore.setState({
+        splitPreview: pendingPreview,
+        splitLineA: lineA,
+        splitLineB: lineB,
+      });
+    });
+
+    fetchMock.mockClear();
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(useToolStore.getState().splitPreview).toBe(pendingPreview);
+    expect(useToolStore.getState().splitLineA).toBe(lineA);
+    expect(useToolStore.getState().splitLineB).toBe(lineB);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a durable Split server-first, emits one request, and adopts both canonical rows", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    const preview = renderReadySplit(source);
+    const rowsBefore = readSeededAnnotations(queryClient);
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(splitRequests).toHaveLength(1);
+    expect(readSeededAnnotations(queryClient)).toBe(rowsBefore);
+    expect(readSeededAnnotations(queryClient)).toEqual([source]);
+    expect(useToolStore.getState().splitPreview).not.toBe(preview);
+    expect(useToolStore.getState().splitPreview).toMatchObject({
+      commitPending: true,
+    });
+    expect(useToolStore.getState().splitLineA).toBe(preview.lineA);
+    expect(useToolStore.getState().splitLineB).toBe(preview.lineB);
+
+    const canonical = canonicalSplitResponse(source);
+    await act(async () => {
+      splitRequests[0].resolve(jsonResponse(canonical));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(readSeededAnnotations(queryClient)).toHaveLength(2),
+    );
+    const rowsAfter = readSeededAnnotations(queryClient);
+    expect(rowsAfter).toEqual([canonical.left, canonical.right]);
+    expect(rowsAfter[0]).not.toBe(source);
+    expect(useToolStore.getState()).toMatchObject({
+      activeTool: { kind: "split" },
+      splitPreview: null,
+      splitLineA: null,
+      splitLineB: null,
+      splitError: null,
+    });
+  });
+
+  it("suppresses duplicate real Split-button clicks behind one admitted request", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    renderReadySplit(source);
+    const split = screen.getByRole("button", { name: "Split" });
+
+    fireEvent.click(split);
+    fireEvent.click(split);
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(splitRequests).toHaveLength(1);
+    expect(readSeededAnnotations(queryClient)).toEqual([source]);
+    expect(screen.getByRole("button", { name: "Splitting…" })).toBeDisabled();
+    await act(async () => {
+      splitRequests[0].resolve(jsonResponse(canonicalSplitResponse(source)));
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(readSeededAnnotations(queryClient)).toHaveLength(2),
+    );
+  });
+
+  it("restores the exact ready Split and cache after a retryable server rejection", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    const preview = renderReadySplit(source);
+    const rowsBefore = readSeededAnnotations(queryClient);
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(splitRequests).toHaveLength(1);
+    expect(useToolStore.getState().splitPreview).toMatchObject({
+      commitPending: true,
+    });
+    const timeout = vi.spyOn(globalThis, "setTimeout");
+
+    await act(async () => {
+      splitRequests[0].resolve(errorResponse("Source annotation changed"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(useToolStore.getState().splitPreview).toBe(preview),
+    );
+    expect(readSeededAnnotations(queryClient)).toBe(rowsBefore);
+    expect(readSeededAnnotations(queryClient)[0]).toBe(source);
+    expect(useToolStore.getState().splitLineA).toBe(preview.lineA);
+    expect(useToolStore.getState().splitLineB).toBe(preview.lineB);
+    expect(useToolStore.getState().splitError).toBe(
+      "Failed to save split: Source annotation changed",
+    );
+    expect(
+      timeout.mock.calls.filter(([, delay]) => delay === 5000),
+    ).toHaveLength(1);
+  });
+
+  it("refuses a persistable temporary source before pending, cache mutation, or wire", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation({ id: -71 });
+    const preview = renderReadySplit(source);
+    const rowsBefore = readSeededAnnotations(queryClient);
+    const timeout = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(() => 1 as unknown as ReturnType<typeof setTimeout>);
+
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(splitRequests).toHaveLength(0);
+    expect(readSeededAnnotations(queryClient)).toBe(rowsBefore);
+    expect(useToolStore.getState().splitPreview).toBe(preview);
+    expect(useToolStore.getState().splitError).toBe(
+      "This area is still saving. Try the split again in a moment.",
+    );
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 5000);
+  });
+
+  it("refuses stale outer geometry and unknown area extensions before wire", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    const stalePreview = {
+      ...readySplitPreview(source),
+      original: [{ x: 0.21, y: 0.2 }, ...SQUARE.slice(1)],
+    };
+    renderReadySplit(source, stalePreview);
+    const timeout = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(() => 1 as unknown as ReturnType<typeof setTimeout>);
+
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(splitRequests).toHaveLength(0);
+    expect(useToolStore.getState().splitPreview).toBe(stalePreview);
+    expect(useToolStore.getState().splitError).toBe(
+      "This area changed after the split preview. Draw the split again.",
+    );
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 5000);
+
+    cleanup();
+    const unsupportedSource = areaAnnotation({
+      data: {
+        ...(source.data ?? {}),
+        vertices: SQUARE,
+        futureSplitMetadata: { revision: 1 },
+      },
+    });
+    const unsupportedPreview = renderReadySplit(unsupportedSource);
+    timeout.mockClear();
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(splitRequests).toHaveLength(0);
+    expect(useToolStore.getState().splitPreview).toBe(unsupportedPreview);
+    expect(useToolStore.getState().splitError).toBe(
+      "This area contains data that cannot be split safely.",
+    );
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 5000);
+  });
+
+  it("rechecks a synchronously replaced source after pending publication and never wires", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    const preview = renderReadySplit(source);
+    const successor = areaAnnotation({
+      name: "same-lifecycle source successor",
+    });
+    let replaced = false;
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (
+        replaced ||
+        previous.splitPreview !== preview ||
+        state.splitPreview?.commitPending !== true
+      ) {
+        return;
+      }
+      replaced = true;
+      seedAnnotations(queryClient, [successor]);
+    });
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    unsubscribe();
+
+    expect(replaced).toBe(true);
+    expect(splitRequests).toHaveLength(0);
+    expect(readSeededAnnotations(queryClient)).toEqual([successor]);
+    expect(useToolStore.getState()).toMatchObject({
+      splitPreview: null,
+      splitLineA: null,
+      splitLineB: null,
+      splitError:
+        "This area changed after the split preview. Draw the split again.",
+    });
+  });
+
+  it("clears old pending UI but never overwrites a same-lifecycle cache successor", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    renderReadySplit(source);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(splitRequests).toHaveLength(1);
+
+    const successor = areaAnnotation({ name: "same-lifecycle edit B" });
+    seedAnnotations(queryClient, [successor]);
+    const successorRows = readSeededAnnotations(queryClient);
+    const timeout = vi.spyOn(globalThis, "setTimeout");
+    await act(async () => {
+      splitRequests[0].resolve(jsonResponse(canonicalSplitResponse(source)));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(useToolStore.getState().splitPreview).toBeNull(),
+    );
+    expect(readSeededAnnotations(queryClient)).toBe(successorRows);
+    expect(readSeededAnnotations(queryClient)).toEqual([successor]);
+    expect(useToolStore.getState()).toMatchObject({
+      splitLineA: null,
+      splitLineB: null,
+      splitError:
+        "Split saved, but this view changed. Reopen the project to load it.",
+    });
+    expect(
+      timeout.mock.calls.filter(([, delay]) => delay === 5000),
+    ).toHaveLength(1);
+  });
+
+  it("warns and clears owned pending UI when a microtask replaces adopted rows before settlement", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    renderReadySplit(source);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(splitRequests).toHaveLength(1);
+
+    const successor = areaAnnotation({ name: "post-command cache successor" });
+    let queued = false;
+    let successorRows: readonly ClientAnnotation[] | undefined;
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (
+        queued ||
+        event.type !== "updated" ||
+        event.query.queryHash !==
+          JSON.stringify(queryKeys.annotations.all(PUBLIC_ID))
+      ) {
+        return;
+      }
+      const rows = readSeededAnnotations(queryClient);
+      if (!rows.some((row) => row.id === 8801)) return;
+      queued = true;
+      queueMicrotask(() => {
+        seedAnnotations(queryClient, [successor]);
+        successorRows = readSeededAnnotations(queryClient);
+      });
+    });
+    const timeout = vi.spyOn(globalThis, "setTimeout");
+
+    await act(async () => {
+      splitRequests[0].resolve(jsonResponse(canonicalSplitResponse(source)));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    unsubscribe();
+
+    await waitFor(() =>
+      expect(useToolStore.getState().splitPreview).toBeNull(),
+    );
+    expect(queued).toBe(true);
+    expect(readSeededAnnotations(queryClient)).toBe(successorRows);
+    expect(readSeededAnnotations(queryClient)).toEqual([successor]);
+    expect(useToolStore.getState()).toMatchObject({
+      splitLineA: null,
+      splitLineB: null,
+      splitError:
+        "Split saved, but this view changed. Reopen the project to load it.",
+    });
+    expect(
+      timeout.mock.calls.filter(([, delay]) => delay === 5000),
+    ).toHaveLength(1);
+  });
+
+  it("never clears a same-lifecycle Split preview successor after the old request adopts", async () => {
+    await installAuthenticatedLifecycle();
+    const source = areaAnnotation();
+    const ready = renderReadySplit(source);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(splitRequests).toHaveLength(1);
+
+    const successorLineA = { x: 0.2, y: 0.45 };
+    const successorLineB = { x: 0.8, y: 0.45 };
+    const successorPreview = {
+      ...ready,
+      lineA: successorLineA,
+      lineB: successorLineB,
+    };
+    act(() =>
+      useToolStore.setState({
+        splitPreview: successorPreview,
+        splitLineA: successorLineA,
+        splitLineB: successorLineB,
+        splitError: "successor preview owns UI",
+      }),
+    );
+
+    await act(async () => {
+      splitRequests[0].resolve(jsonResponse(canonicalSplitResponse(source)));
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(readSeededAnnotations(queryClient)).toHaveLength(2),
+    );
+    expect(useToolStore.getState().splitPreview).toBe(successorPreview);
+    expect(useToolStore.getState().splitLineA).toBe(successorLineA);
+    expect(useToolStore.getState().splitLineB).toBe(successorLineB);
+    expect(useToolStore.getState().splitError).toBe(
+      "successor preview owns UI",
+    );
+  });
+
   it.each([
     {
       label: "polygon",
@@ -395,47 +862,59 @@ describe("AnnotationOverlay paired project publications", () => {
     {
       label: "linear",
       shape: "linear" as const,
-      vertices: [{ x: 0.1, y: 0.1 }, { x: 0.7, y: 0.7 }],
+      vertices: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.7, y: 0.7 },
+      ],
     },
-  ])("$label reset does not clear successor B's mouse position", ({ shape, vertices }) => {
-    seedTakeoff(queryClient, [takeoffItem(shape)], []);
-    act(() => useToolStore.getState().setActiveTakeoffItemId(ITEM_ID));
-    const canvas = renderCanvas();
-    act(() => {
-      useToolStore.setState({
-        polygonDrawingMode: "drawing",
-        polygonVertices: vertices,
-        _mousePos: { x: 20, y: 30 },
-      });
-    });
-
-    let admittedB = false;
-    const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.polygonDrawingMode !== "drawing" ||
-          state.polygonDrawingMode !== "idle") return;
-      admittedB = true;
-      installSameIdSuccessor(() => {
+  ])(
+    "$label reset does not clear successor B's mouse position",
+    ({ shape, vertices }) => {
+      seedTakeoff(queryClient, [takeoffItem(shape)], []);
+      act(() => useToolStore.getState().setActiveTakeoffItemId(ITEM_ID));
+      const canvas = renderCanvas();
+      act(() => {
         useToolStore.setState({
-          activeTool: { kind: "takeoffPlacement" },
-          activeTakeoffItemId: ITEM_ID,
           polygonDrawingMode: "drawing",
-          polygonVertices: B_VERTICES,
-          _mousePos: B_MOUSE,
+          polygonVertices: vertices,
+          _mousePos: { x: 20, y: 30 },
         });
       });
-    });
 
-    expect(useToolStore.getState().activeTool?.kind).toBe("takeoffPlacement");
-    expect(useToolStore.getState().polygonDrawingMode).toBe("drawing");
-    expect(queryClient.getQueryData<ClientTakeoffItem[]>(
-      queryKeys.takeoff.items(PUBLIC_ID),
-    )).toHaveLength(1);
-    fireEvent.doubleClick(canvas);
-    unsubscribe();
+      let admittedB = false;
+      const unsubscribe = useToolStore.subscribe((state, previous) => {
+        if (
+          admittedB ||
+          previous.polygonDrawingMode !== "drawing" ||
+          state.polygonDrawingMode !== "idle"
+        )
+          return;
+        admittedB = true;
+        installSameIdSuccessor(() => {
+          useToolStore.setState({
+            activeTool: { kind: "takeoffPlacement" },
+            activeTakeoffItemId: ITEM_ID,
+            polygonDrawingMode: "drawing",
+            polygonVertices: B_VERTICES,
+            _mousePos: B_MOUSE,
+          });
+        });
+      });
 
-    expect(admittedB).toBe(true);
-    expect(useToolStore.getState()._mousePos).toEqual(B_MOUSE);
-  });
+      expect(useToolStore.getState().activeTool?.kind).toBe("takeoffPlacement");
+      expect(useToolStore.getState().polygonDrawingMode).toBe("drawing");
+      expect(
+        queryClient.getQueryData<ClientTakeoffItem[]>(
+          queryKeys.takeoff.items(PUBLIC_ID),
+        ),
+      ).toHaveLength(1);
+      fireEvent.doubleClick(canvas);
+      unsubscribe();
+
+      expect(admittedB).toBe(true);
+      expect(useToolStore.getState()._mousePos).toEqual(B_MOUSE);
+    },
+  );
 
   it("missing split target does not clear successor B's split endpoint", () => {
     const stalePreview = {
@@ -449,17 +928,34 @@ describe("AnnotationOverlay paired project publications", () => {
     renderCanvas();
     act(() => {
       useToolStore.getState().setSplitAreaActive(true);
-      useToolStore.setState({ splitPreview: stalePreview });
+      useToolStore.setState({
+        splitPreview: stalePreview,
+        splitLineA: stalePreview.lineA,
+        splitLineB: stalePreview.lineB,
+      });
     });
 
     let admittedB = false;
+    const successorPreview = {
+      ...stalePreview,
+      targetAnnotationId: 10_001,
+      lineA: B_POINT,
+      lineB: { x: 0.95, y: 0.96 },
+    };
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.splitPreview !== stalePreview || state.splitPreview !== null) return;
+      if (
+        admittedB ||
+        previous.splitPreview !== stalePreview ||
+        state.splitPreview !== null
+      )
+        return;
       admittedB = true;
       installSameIdSuccessor(() => {
         useToolStore.setState({
           activeTool: { kind: "split" },
-          splitLineA: B_POINT,
+          splitPreview: successorPreview,
+          splitLineA: successorPreview.lineA,
+          splitLineB: successorPreview.lineB,
         });
       });
     });
@@ -468,7 +964,9 @@ describe("AnnotationOverlay paired project publications", () => {
     unsubscribe();
 
     expect(admittedB).toBe(true);
-    expect(useToolStore.getState().splitLineA).toEqual(B_POINT);
+    expect(useToolStore.getState().splitPreview).toBe(successorPreview);
+    expect(useToolStore.getState().splitLineA).toBe(successorPreview.lineA);
+    expect(useToolStore.getState().splitLineB).toBe(successorPreview.lineB);
   });
 
   async function assertHoledAcceptFailsClosed(
@@ -573,6 +1071,8 @@ describe("AnnotationOverlay paired project publications", () => {
         holes: [],
         areaSqUnits: 36,
         unit: "SF",
+        csiCodes: ["03 30 00"],
+        keywords: ["concrete", "slab"],
       },
     });
     const lineA = { x: 0.1, y: 0.5 };
@@ -611,10 +1111,18 @@ describe("AnnotationOverlay paired project publications", () => {
     expect(rows).toHaveLength(2);
     expect(rows.find((row) => row.id === source.id)?.data).toMatchObject({
       vertices: left,
+      csiCodes: ["03 30 00"],
+      keywords: ["concrete", "slab"],
     });
+    expect(rows.find((row) => row.id === source.id)?.data).not.toHaveProperty(
+      "holes",
+    );
     expect(rows.find((row) => row.id < 0)?.data).toMatchObject({
       vertices: right,
+      csiCodes: ["03 30 00"],
+      keywords: ["concrete", "slab"],
     });
+    expect(rows.find((row) => row.id < 0)?.data).not.toHaveProperty("holes");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(useToolStore.getState()).toMatchObject({
       splitPreview: null,
@@ -643,8 +1151,13 @@ describe("AnnotationOverlay paired project publications", () => {
 
     let admittedB = false;
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || state.splitLineB === previous.splitLineB ||
-          state.splitLineB?.x !== 0.9 || state.splitLineB?.y !== 0.5) return;
+      if (
+        admittedB ||
+        state.splitLineB === previous.splitLineB ||
+        state.splitLineB?.x !== 0.9 ||
+        state.splitLineB?.y !== 0.5
+      )
+        return;
       admittedB = true;
       installSameIdSuccessor(() => {
         useToolStore.setState({
@@ -665,10 +1178,12 @@ describe("AnnotationOverlay paired project publications", () => {
     { label: "auth→auth", successorDemo: false },
     { label: "auth→demo", successorDemo: true },
   ])(
-    "$label retirement still completes the admitted split pair without adopting into B",
+    "$label retirement leaves the admitted atomic Split out of successor B",
     async ({ successorDemo }) => {
       holdSuccessor = false;
-      const authenticatedA = openProject(queryClient, PUBLIC_ID, { demo: false });
+      const authenticatedA = openProject(queryClient, PUBLIC_ID, {
+        demo: false,
+      });
       lifecycleHandles.push(authenticatedA);
       expect((await authenticatedA.result).status).toBe("opened");
       holdSuccessor = true;
@@ -698,22 +1213,48 @@ describe("AnnotationOverlay paired project publications", () => {
       renderCanvas();
       act(() => {
         useToolStore.getState().setSplitAreaActive(true);
-        useToolStore.setState({ splitPreview: preview });
+        useToolStore.setState({
+          splitPreview: preview,
+          splitLineA: preview.lineA,
+          splitLineB: preview.lineB,
+        });
       });
 
       fireEvent.keyDown(window, { key: "Enter" });
-      expect(splitPuts).toHaveLength(1);
-      expect(splitPosts).toHaveLength(0);
-      const optimisticRight = readSeededAnnotations(queryClient).find(
-        (annotation) => annotation.id < 0,
-      );
-      if (!optimisticRight) throw new Error("Expected captured optimistic right half");
+      expect(splitRequests).toHaveLength(1);
+      expect(readSeededAnnotations(queryClient)).toEqual([source]);
+      expect(useToolStore.getState().splitPreview).toMatchObject({
+        commitPending: true,
+      });
 
-      const successorRows = [userAnnotation({
-        // Deliberately collide with A's temp id so a missing saved-id guard rewrites B to 8801.
-        id: optimisticRight.id,
-        name: "successor B row",
-      })];
+      const requestCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/annotations/split" &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      if (!requestCall) throw new Error("Expected captured atomic Split POST");
+      expect(JSON.parse(String((requestCall[1] as RequestInit).body))).toEqual({
+        sourceAnnotationId: source.id,
+        expectedSource: {
+          pageNumber: PAGE,
+          bbox: source.bbox,
+          data: source.data,
+        },
+        lineA: preview.lineA,
+        lineB: preview.lineB,
+        measurements: {
+          leftAreaSqUnits: 0,
+          rightAreaSqUnits: 0,
+          unit: "SF",
+        },
+      });
+
+      const successorRows = [
+        userAnnotation({
+          id: 9901,
+          name: "successor B row",
+        }),
+      ];
       const successorPreview = {
         ...preview,
         targetAnnotationId: successorRows[0].id,
@@ -732,27 +1273,37 @@ describe("AnnotationOverlay paired project publications", () => {
       });
 
       await act(async () => {
-        splitPuts[0].resolve(jsonResponse({ id: source.id }));
+        splitRequests[0].resolve(
+          jsonResponse({
+            left: {
+              ...source,
+              bbox: [0.2, 0.2, 0.5, 0.8],
+              data: {
+                ...source.data,
+                vertices: preview.left,
+                areaSqUnits: 0,
+              },
+            },
+            right: {
+              id: 8801,
+              pageNumber: PAGE,
+              name: "polygon item",
+              bbox: [0.5, 0.2, 0.8, 0.8],
+              note: null,
+              source: "takeoff",
+              data: {
+                ...source.data,
+                vertices: preview.right,
+                areaSqUnits: 0,
+              },
+            },
+          }),
+        );
         await Promise.resolve();
       });
-      await waitFor(() => expect(splitPosts).toHaveLength(1));
-      const postCall = fetchMock.mock.calls.find(
-        ([url, init]) =>
-          url === "/api/annotations" &&
-          (init as RequestInit | undefined)?.method === "POST",
+      await waitFor(() =>
+        expect(readSeededAnnotations(queryClient)).toEqual(successorRows),
       );
-      if (!postCall) throw new Error("Expected captured right-half POST");
-      expect(JSON.parse(String((postCall[1] as RequestInit).body))).toMatchObject({
-        projectId: PUBLIC_ID,
-        pageNumber: PAGE,
-        bbox: [0.5, 0.2, 0.8, 0.8],
-        data: { vertices: right },
-      });
-
-      await act(async () => {
-        splitPosts[0].resolve(jsonResponse({ id: 8801 }));
-        await Promise.resolve();
-      });
       expect(readSeededAnnotations(queryClient)).toEqual(successorRows);
       expect(useToolStore.getState().splitPreview).toBe(successorPreview);
       expect(useToolStore.getState().splitLineA).toEqual(B_POINT);
@@ -773,7 +1324,11 @@ describe("AnnotationOverlay paired project publications", () => {
 
     let admittedB = false;
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || state.bucketFillBarriers.length <= previous.bucketFillBarriers.length) return;
+      if (
+        admittedB ||
+        state.bucketFillBarriers.length <= previous.bucketFillBarriers.length
+      )
+        return;
       admittedB = true;
       installSameIdSuccessor(() => {
         useToolStore.setState({
@@ -795,51 +1350,64 @@ describe("AnnotationOverlay paired project publications", () => {
   it.each([
     { label: "polygon", shape: "polygon" as const },
     { label: "linear", shape: "linear" as const },
-  ])("$label start does not append A's first vertex to successor B", ({ shape }) => {
-    seedTakeoff(queryClient, [takeoffItem(shape)], []);
-    const canvas = renderCanvas();
-    act(() => useToolStore.getState().setActiveTakeoffItemId(ITEM_ID));
+  ])(
+    "$label start does not append A's first vertex to successor B",
+    ({ shape }) => {
+      seedTakeoff(queryClient, [takeoffItem(shape)], []);
+      const canvas = renderCanvas();
+      act(() => useToolStore.getState().setActiveTakeoffItemId(ITEM_ID));
 
-    let admittedB = false;
-    const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.polygonDrawingMode !== "idle" ||
-          state.polygonDrawingMode !== "drawing") return;
-      admittedB = true;
-      installSameIdSuccessor(() => {
-        useToolStore.setState({
-          activeTool: { kind: "takeoffPlacement" },
-          activeTakeoffItemId: ITEM_ID,
-          polygonDrawingMode: "drawing",
-          polygonVertices: B_VERTICES,
+      let admittedB = false;
+      const unsubscribe = useToolStore.subscribe((state, previous) => {
+        if (
+          admittedB ||
+          previous.polygonDrawingMode !== "idle" ||
+          state.polygonDrawingMode !== "drawing"
+        )
+          return;
+        admittedB = true;
+        installSameIdSuccessor(() => {
+          useToolStore.setState({
+            activeTool: { kind: "takeoffPlacement" },
+            activeTakeoffItemId: ITEM_ID,
+            polygonDrawingMode: "drawing",
+            polygonVertices: B_VERTICES,
+          });
         });
       });
-    });
 
-    fireEvent.mouseDown(canvas, { clientX: 40, clientY: 50, button: 0 });
-    unsubscribe();
+      fireEvent.mouseDown(canvas, { clientX: 40, clientY: 50, button: 0 });
+      unsubscribe();
 
-    expect(admittedB).toBe(true);
-    expect(useToolStore.getState().polygonVertices).toEqual(B_VERTICES);
-  });
+      expect(admittedB).toBe(true);
+      expect(useToolStore.getState().polygonVertices).toEqual(B_VERTICES);
+    },
+  );
 });
 
 describe("AnnotationOverlay passive polygon cleanup ownership", () => {
   it("mode-change cleanup does not clear successor B's polygon cursor", () => {
     useUiStore.setState({ showTakeoffPanel: true });
     renderCanvas();
-    act(() => useToolStore.setState({
-      mode: "pointer",
-      activeTool: null,
-      activeTakeoffItemId: null,
-      polygonDrawingMode: "drawing",
-      polygonVertices: SQUARE,
-      _mousePos: { x: 20, y: 30 },
-    }));
+    act(() =>
+      useToolStore.setState({
+        mode: "pointer",
+        activeTool: null,
+        activeTakeoffItemId: null,
+        polygonDrawingMode: "drawing",
+        polygonVertices: SQUARE,
+        _mousePos: { x: 20, y: 30 },
+      }),
+    );
 
     let admittedB = false;
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.polygonDrawingMode !== "drawing" ||
-          state.polygonDrawingMode !== "idle") return;
+      if (
+        admittedB ||
+        previous.polygonDrawingMode !== "drawing" ||
+        state.polygonDrawingMode !== "idle"
+      )
+        return;
       admittedB = true;
       installPolygonSuccessor("markup");
     });
@@ -854,19 +1422,25 @@ describe("AnnotationOverlay passive polygon cleanup ownership", () => {
   it("active-item cleanup does not clear successor B's polygon cursor", () => {
     useUiStore.setState({ showTakeoffPanel: true });
     renderCanvas();
-    act(() => useToolStore.setState({
-      mode: "pointer",
-      activeTool: { kind: "takeoffPlacement" },
-      activeTakeoffItemId: null,
-      polygonDrawingMode: "drawing",
-      polygonVertices: SQUARE,
-      _mousePos: { x: 20, y: 30 },
-    }));
+    act(() =>
+      useToolStore.setState({
+        mode: "pointer",
+        activeTool: { kind: "takeoffPlacement" },
+        activeTakeoffItemId: null,
+        polygonDrawingMode: "drawing",
+        polygonVertices: SQUARE,
+        _mousePos: { x: 20, y: 30 },
+      }),
+    );
 
     let admittedB = false;
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.polygonDrawingMode !== "drawing" ||
-          state.polygonDrawingMode !== "idle") return;
+      if (
+        admittedB ||
+        previous.polygonDrawingMode !== "drawing" ||
+        state.polygonDrawingMode !== "idle"
+      )
+        return;
       admittedB = true;
       installPolygonSuccessor("pointer", ITEM_ID);
     });
@@ -881,19 +1455,25 @@ describe("AnnotationOverlay passive polygon cleanup ownership", () => {
   it("panel-close cleanup does not clear successor B's polygon cursor", () => {
     useUiStore.setState({ showTakeoffPanel: true });
     renderCanvas();
-    act(() => useToolStore.setState({
-      mode: "pointer",
-      activeTool: { kind: "takeoffPlacement" },
-      activeTakeoffItemId: null,
-      polygonDrawingMode: "drawing",
-      polygonVertices: SQUARE,
-      _mousePos: { x: 20, y: 30 },
-    }));
+    act(() =>
+      useToolStore.setState({
+        mode: "pointer",
+        activeTool: { kind: "takeoffPlacement" },
+        activeTakeoffItemId: null,
+        polygonDrawingMode: "drawing",
+        polygonVertices: SQUARE,
+        _mousePos: { x: 20, y: 30 },
+      }),
+    );
 
     let admittedB = false;
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.polygonDrawingMode !== "drawing" ||
-          state.polygonDrawingMode !== "idle") return;
+      if (
+        admittedB ||
+        previous.polygonDrawingMode !== "drawing" ||
+        state.polygonDrawingMode !== "idle"
+      )
+        return;
       admittedB = true;
       installPolygonSuccessor();
     });
@@ -908,19 +1488,25 @@ describe("AnnotationOverlay passive polygon cleanup ownership", () => {
   it("Escape cleanup does not clear successor B's polygon cursor", () => {
     useUiStore.setState({ showTakeoffPanel: true });
     const canvas = renderCanvas();
-    act(() => useToolStore.setState({
-      mode: "pointer",
-      activeTool: { kind: "takeoffPlacement" },
-      activeTakeoffItemId: null,
-      polygonDrawingMode: "drawing",
-      polygonVertices: SQUARE,
-      _mousePos: { x: 20, y: 30 },
-    }));
+    act(() =>
+      useToolStore.setState({
+        mode: "pointer",
+        activeTool: { kind: "takeoffPlacement" },
+        activeTakeoffItemId: null,
+        polygonDrawingMode: "drawing",
+        polygonVertices: SQUARE,
+        _mousePos: { x: 20, y: 30 },
+      }),
+    );
 
     let admittedB = false;
     const unsubscribe = useToolStore.subscribe((state, previous) => {
-      if (admittedB || previous.polygonDrawingMode !== "drawing" ||
-          state.polygonDrawingMode !== "idle") return;
+      if (
+        admittedB ||
+        previous.polygonDrawingMode !== "drawing" ||
+        state.polygonDrawingMode !== "idle"
+      )
+        return;
       admittedB = true;
       installPolygonSuccessor();
     });
@@ -955,33 +1541,45 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
       read: () => useUiStore.getState().showTextPanel,
       expected: false,
     },
-  ])("markup double-click preserves successor B's $label", ({ read, expected }) => {
-    const annotation = userAnnotation();
-    seedAnnotations(queryClient, [annotation]);
-    const canvas = renderCanvas();
+  ])(
+    "markup double-click preserves successor B's $label",
+    ({ read, expected }) => {
+      const annotation = userAnnotation();
+      seedAnnotations(queryClient, [annotation]);
+      const canvas = renderCanvas();
 
-    let admittedB = false;
-    const unsubscribe = useUiStore.subscribe((state, previous) => {
-      if (admittedB || previous.searchQuery === annotation.name ||
-          state.searchQuery !== annotation.name) return;
-      admittedB = true;
-      installSameIdSuccessor(() => {
-        useUiStore.setState({
-          searchQuery: B_SEARCH,
-          activeAnnotationFilter: B_ANNOTATION_FILTER,
-          activeMarkupId: B_MARKUP_ID,
-          textPanelTab: "annotations",
-          showTextPanel: false,
+      let admittedB = false;
+      const unsubscribe = useUiStore.subscribe((state, previous) => {
+        if (
+          admittedB ||
+          previous.searchQuery === annotation.name ||
+          state.searchQuery !== annotation.name
+        )
+          return;
+        admittedB = true;
+        installSameIdSuccessor(() => {
+          useUiStore.setState({
+            searchQuery: B_SEARCH,
+            activeAnnotationFilter: B_ANNOTATION_FILTER,
+            activeMarkupId: B_MARKUP_ID,
+            textPanelTab: "annotations",
+            showTextPanel: false,
+          });
         });
       });
-    });
 
-    fireEvent.mouseDown(canvas, { clientX: 30, clientY: 30, button: 0, detail: 2 });
-    unsubscribe();
+      fireEvent.mouseDown(canvas, {
+        clientX: 30,
+        clientY: 30,
+        button: 0,
+        detail: 2,
+      });
+      unsubscribe();
 
-    expect(admittedB).toBe(true);
-    expect(read()).toEqual(expected);
-  });
+      expect(admittedB).toBe(true);
+      expect(read()).toEqual(expected);
+    },
+  );
 
   it("takeoff double-click preserves successor B's takeoff filter", () => {
     const item = takeoffItem("polygon");
@@ -992,8 +1590,12 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
 
     let admittedB = false;
     const unsubscribe = useUiStore.subscribe((state, previous) => {
-      if (admittedB || previous.searchQuery === item.name ||
-          state.searchQuery !== item.name) return;
+      if (
+        admittedB ||
+        previous.searchQuery === item.name ||
+        state.searchQuery !== item.name
+      )
+        return;
       admittedB = true;
       installSameIdSuccessor(() => {
         useUiStore.setState({
@@ -1003,7 +1605,12 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
       });
     });
 
-    fireEvent.mouseDown(canvas, { clientX: 50, clientY: 50, button: 0, detail: 2 });
+    fireEvent.mouseDown(canvas, {
+      clientX: 50,
+      clientY: 50,
+      button: 0,
+      detail: 2,
+    });
     unsubscribe();
 
     expect(admittedB).toBe(true);
@@ -1026,39 +1633,49 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
       read: () => useUiStore.getState().activeYoloTagFilter,
       expected: B_YOLO_FILTER,
     },
-  ])("plain YOLO click preserves successor B's $label", ({ read, expected }) => {
-    const annotation = yoloAnnotation();
-    useUiStore.setState({ showDetections: true });
-    seedAnnotations(queryClient, [annotation]);
-    seedYoloTagsFromBootstrap(queryClient, PUBLIC_ID, {
-      yoloTags: [yoloTagFor(annotation.id)],
-    });
-    const canvas = renderCanvas();
+  ])(
+    "plain YOLO click preserves successor B's $label",
+    ({ read, expected }) => {
+      const annotation = yoloAnnotation();
+      useUiStore.setState({ showDetections: true });
+      seedAnnotations(queryClient, [annotation]);
+      seedYoloTagsFromBootstrap(queryClient, PUBLIC_ID, {
+        yoloTags: [yoloTagFor(annotation.id)],
+      });
+      const canvas = renderCanvas();
 
-    let admittedB = false;
-    const unsubscribe = useUiStore.subscribe((state, previous) => {
-      const selectedA = state.selectedAnnotationIds.size === 1 &&
-        state.selectedAnnotationIds.has(annotation.id);
-      const previouslySelectedA = previous.selectedAnnotationIds.size === 1 &&
-        previous.selectedAnnotationIds.has(annotation.id);
-      if (admittedB || previouslySelectedA || !selectedA) return;
-      admittedB = true;
-      installSameIdSuccessor(() => {
-        useUiStore.setState({
-          selectedAnnotationIds: new Set([9901]),
-          searchQuery: B_SEARCH,
-          activeYoloTagId: B_YOLO_TAG_ID,
-          activeYoloTagFilter: B_YOLO_FILTER,
+      let admittedB = false;
+      const unsubscribe = useUiStore.subscribe((state, previous) => {
+        const selectedA =
+          state.selectedAnnotationIds.size === 1 &&
+          state.selectedAnnotationIds.has(annotation.id);
+        const previouslySelectedA =
+          previous.selectedAnnotationIds.size === 1 &&
+          previous.selectedAnnotationIds.has(annotation.id);
+        if (admittedB || previouslySelectedA || !selectedA) return;
+        admittedB = true;
+        installSameIdSuccessor(() => {
+          useUiStore.setState({
+            selectedAnnotationIds: new Set([9901]),
+            searchQuery: B_SEARCH,
+            activeYoloTagId: B_YOLO_TAG_ID,
+            activeYoloTagFilter: B_YOLO_FILTER,
+          });
         });
       });
-    });
 
-    fireEvent.mouseDown(canvas, { clientX: 30, clientY: 30, button: 0, detail: 1 });
-    unsubscribe();
+      fireEvent.mouseDown(canvas, {
+        clientX: 30,
+        clientY: 30,
+        button: 0,
+        detail: 1,
+      });
+      unsubscribe();
 
-    expect(admittedB).toBe(true);
-    expect(read()).toEqual(expected);
-  });
+      expect(admittedB).toBe(true);
+      expect(read()).toEqual(expected);
+    },
+  );
 
   it("keynote click preserves successor B's search", () => {
     const keynote = {
@@ -1075,8 +1692,12 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
 
     let admittedB = false;
     const unsubscribe = useUiStore.subscribe((state, previous) => {
-      if (admittedB || previous.activeKeynoteFilter?.text === keynote.text ||
-          state.activeKeynoteFilter?.text !== keynote.text) return;
+      if (
+        admittedB ||
+        previous.activeKeynoteFilter?.text === keynote.text ||
+        state.activeKeynoteFilter?.text !== keynote.text
+      )
+        return;
       admittedB = true;
       installSameIdSuccessor(() => {
         useUiStore.setState({
@@ -1086,7 +1707,12 @@ describe("AnnotationOverlay pointer UI publication ownership", () => {
       });
     });
 
-    fireEvent.mouseDown(canvas, { clientX: 30, clientY: 30, button: 0, detail: 1 });
+    fireEvent.mouseDown(canvas, {
+      clientX: 30,
+      clientY: 30,
+      button: 0,
+      detail: 1,
+    });
     unsubscribe();
 
     expect(admittedB).toBe(true);
@@ -1098,15 +1724,21 @@ describe("AnnotationOverlay focus passive-effect ownership", () => {
   it("clears A's settled selection on lifecycle replacement without an active drag", () => {
     const id = -70;
     const a = userAnnotation({ id, name: "Settled selection A" });
-    const b = userAnnotation({ id, name: "Same-ID successor B", note: "must survive" });
+    const b = userAnnotation({
+      id,
+      name: "Same-ID successor B",
+      note: "must survive",
+    });
     seedAnnotations(queryClient, [a]);
     useUiStore.setState({ focusAnnotationId: id });
     renderCanvas();
 
-    act(() => installSameIdSuccessor(() => {
-      useToolStore.setState({ mode: "pointer" });
-      seedAnnotations(queryClient, [b]);
-    }));
+    act(() =>
+      installSameIdSuccessor(() => {
+        useToolStore.setState({ mode: "pointer" });
+        seedAnnotations(queryClient, [b]);
+      }),
+    );
     fireEvent.keyDown(window, { key: "Delete" });
 
     expect(readSeededAnnotations(queryClient)).toEqual([b]);
@@ -1116,8 +1748,16 @@ describe("AnnotationOverlay focus passive-effect ownership", () => {
     const aFocusId = -71;
     const bFocusId = -72;
     const rows = [
-      userAnnotation({ id: aFocusId, name: "Focus A", bbox: [0.1, 0.1, 0.3, 0.3] }),
-      userAnnotation({ id: bFocusId, name: "Focus B", bbox: [0.6, 0.6, 0.8, 0.8] }),
+      userAnnotation({
+        id: aFocusId,
+        name: "Focus A",
+        bbox: [0.1, 0.1, 0.3, 0.3],
+      }),
+      userAnnotation({
+        id: bFocusId,
+        name: "Focus B",
+        bbox: [0.6, 0.6, 0.8, 0.8],
+      }),
     ];
     seedAnnotations(queryClient, rows);
     useUiStore.setState({ focusAnnotationId: aFocusId });
@@ -1134,7 +1774,9 @@ describe("AnnotationOverlay focus passive-effect ownership", () => {
     // the inverse. Negative fixture ids keep this entirely cache-local.
     fireEvent.keyDown(window, { key: "Delete" });
 
-    expect(readSeededAnnotations(queryClient).map((row) => row.id)).toEqual([aFocusId]);
+    expect(readSeededAnnotations(queryClient).map((row) => row.id)).toEqual([
+      aFocusId,
+    ]);
   });
 });
 
@@ -1142,7 +1784,9 @@ describe("AnnotationOverlay queued mousemove frame ownership", () => {
   it("does not publish A's polygon cursor frame into successor B", () => {
     const frames = installFrames();
     const canvas = renderCanvas();
-    act(() => useToolStore.setState({ polygonDrawingMode: "drawing", _mousePos: null }));
+    act(() =>
+      useToolStore.setState({ polygonDrawingMode: "drawing", _mousePos: null }),
+    );
 
     fireEvent.mouseMove(canvas, { clientX: 30, clientY: 40 });
     expect(frames).toHaveLength(1);
@@ -1150,7 +1794,10 @@ describe("AnnotationOverlay queued mousemove frame ownership", () => {
     // isolates the already-queued A frame rather than a passive drawing cleanup.
     act(() => installSameIdSuccessor(() => {}));
     act(() => {
-      useToolStore.setState({ polygonDrawingMode: "drawing", _mousePos: B_MOUSE });
+      useToolStore.setState({
+        polygonDrawingMode: "drawing",
+        _mousePos: B_MOUSE,
+      });
     });
     act(() => frames[0](16));
 
@@ -1185,7 +1832,9 @@ describe("AnnotationOverlay queued mousemove frame ownership", () => {
         unit: "SF",
       },
     });
-    act(() => installSameIdSuccessor(() => seedAnnotations(queryClient, [bAnnotation])));
+    act(() =>
+      installSameIdSuccessor(() => seedAnnotations(queryClient, [bAnnotation])),
+    );
     act(() => frames[0](16));
 
     expect(readSeededAnnotations(queryClient)).toEqual([bAnnotation]);
@@ -1206,7 +1855,9 @@ describe("AnnotationOverlay queued mousemove frame ownership", () => {
       bbox: [0.7, 0.7, 0.9, 0.9],
       note: "B sentinel",
     });
-    act(() => installSameIdSuccessor(() => seedAnnotations(queryClient, [bAnnotation])));
+    act(() =>
+      installSameIdSuccessor(() => seedAnnotations(queryClient, [bAnnotation])),
+    );
     act(() => frames[0](16));
 
     expect(readSeededAnnotations(queryClient)).toEqual([bAnnotation]);

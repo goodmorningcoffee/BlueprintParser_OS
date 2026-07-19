@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 // (item edits do not redraw the canvas today); the bridge preserves that — do NOT add the hook
 // value or a dep there (TAKEOFF_IMPL/SPEC.md §3.3 :372 row).
 import { useQueryClient } from "@tanstack/react-query";
+import { commitAnnotationSplit } from "@/queries/annotationSplit";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
 import { enrichMarkupEditFromResponse, isCurrentMarkupEdit, publishMarkupEdit, readAnnotations, retireMarkupEdit, rollbackMarkupEdit, useAnnotations } from "@/queries/useAnnotations";
 import { readTextractForPage } from "@/queries/textractCache";
@@ -67,12 +68,13 @@ import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsP
 import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
-import { persistFetch, canPersist , apiErrorMessage } from "@/lib/client-persist";
+import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { captureProjectLifecycle } from "@/lib/project-lifecycle";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
+import { admitAnnotationSplit } from "./splitAcceptance";
 import { TOOL_STORE_CAPABILITIES } from "./tools/capabilities";
 import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
-import { SPLIT_HOLED_TARGET_MESSAGE } from "./tools/split";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useAnnotationDragMachine } from "./useAnnotationDragMachine";
@@ -243,6 +245,9 @@ export default memo(function AnnotationOverlay({
   // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
   const qc = useQueryClient();
+  // Durable Split admission must retain the lifecycle that owned this render. Capturing later in
+  // the key handler could let an old callback borrow a same-publicId successor generation.
+  const renderedProjectLifecycle = captureProjectLifecycle(qc);
   const keynoteParseStep = useParseFlowStore((s) =>
     activeToolKey === "parseRect:keynote" ? s.keynoteParseStep : "idle"
   );
@@ -269,8 +274,8 @@ export default memo(function AnnotationOverlay({
   const showTableCellStructure = useParseFlowStore((s) => s.showTableCellStructure);
   const toggleCellHighlight = useParseFlowStore((s) => s.toggleCellHighlight);
   // [refactor jul11 P2.2⑥] Annotation data/actions now share the one chunk-seeded cache facade.
-  // C4 converges the five independent create paths onto persistCreate; split stays explicit because
-  // its two-row PUT-before-POST order is load-bearing. The subscription remains data-only.
+  // C4 converges five one-row create paths onto persistCreate; Split retains the local facade
+  // actions while durable work delegates to its atomic command. The subscription remains data-only.
   const {
     annotations,
     addAnnotation,
@@ -1189,128 +1194,29 @@ export default memo(function AnnotationOverlay({
   }, [canAdoptProjectLifecycle, pageNumber, persistCreate, publicId,
     publishTransientBucketFillError, scaleCalibrations, setBucketFillPreview, width, height]);
 
-  /** Accept a pending Split Area preview: both halves stay under same takeoff item. */
+  /** Accept a pending Split Area preview through the exact server-first admission leaf. */
   const acceptSplit = useCallback(() => {
-    if (!canAdoptProjectLifecycle()) return;
-    const preview = useToolStore.getState().splitPreview;
-    if (!preview) return;
-
-    // [refactor jul11 P2.2⑥] Accept runs after an arbitrary preview lifetime, so it must read
-    // the live keyed cache here rather than closing over the render-captured annotations array.
-    const currentAnnotations = readAnnotations(qc, publicId);
-    // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
-    const currentItems = readTakeoffItems(qc, publicId);
-    const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
-    if (!target) {
-      useToolStore.getState().setSplitPreview(null);
-      if (!canAdoptProjectLifecycle()) return;
-      useToolStore.getState().setSplitLineEndpoint("a", null as unknown as { x: number; y: number });
-      return;
-    }
-    const targetData = target.data as AreaPolygonData;
-    if ((targetData.holes?.length ?? 0) > 0) {
-      publishTransientSplitError(SPLIT_HOLED_TARGET_MESSAGE, 5000);
-      return;
-    }
-    const parentItem = currentItems.find((t) => t.id === targetData.takeoffItemId);
-    if (!parentItem) {
-      useToolStore.getState().setSplitPreview(null);
-      return;
-    }
-
-    const calibration = scaleCalibrations[pageNumber];
-    const computeData = (verts: { x: number; y: number }[], itemId: number) => {
-      const xs = verts.map((v) => v.x);
-      const ys = verts.map((v) => v.y);
-      const bbox: [number, number, number, number] = [
-        Math.min(...xs), Math.min(...ys),
-        Math.max(...xs), Math.max(...ys),
-      ];
-      let areaSqUnits = 0;
-      let unit: import("@/types").AreaUnitSq = "SF";
-      if (calibration) {
-        areaSqUnits = computeRealArea(verts, width, height, calibration);
-        unit = AREA_UNIT_MAP[calibration.unit] || "SF";
-      }
-      const data: AreaPolygonData = {
-        type: "area-polygon",
-        takeoffItemId: itemId,
-        color: parentItem.color,
-        vertices: [...verts],
-        areaSqUnits,
-        unit,
-      };
-      return { data, bbox };
-    };
-
-    // Both halves stay under the SAME takeoff item — no new item creation.
-    const leftResult = computeData(preview.left, parentItem.id);
-    const rightResult = computeData(preview.right, parentItem.id);
-
-    // 1. Create right-half annotation FIRST (safe ordering — if anything fails, original is intact).
-    // [refactor jul11 P2.2⑥ C4] INTENTIONAL exception to persistCreate: split is a two-row
-    // transaction-shaped sequence (optimistic right -> optimistic left -> PUT left -> POST right).
-    // The shared one-row seam would dispatch the POST before the left update/PUT and subtly reorder
-    // failure behavior, so this load-bearing path stays explicit until it has a real transaction API.
-    const tempAnnId = -Date.now() - 1;
-    addAnnotation({
-      id: tempAnnId,
+    const admitted = admitAnnotationSplit({
+      queryClient: qc,
+      publicId,
+      isDemo,
       pageNumber,
-      name: parentItem.name,
-      bbox: rightResult.bbox,
-      note: null,
-      source: "takeoff",
-      data: rightResult.data as unknown as Record<string, unknown>,
+      lifecycle: renderedProjectLifecycle,
+      calibration: scaleCalibrations[pageNumber],
+      width,
+      height,
+      canAdoptProjectLifecycle,
+      publishError: publishTransientSplitError,
+      addAnnotation,
+      updateAnnotation,
     });
-    if (!canAdoptProjectLifecycle()) return;
-
-    // 2. Update original annotation to left half
-    updateAnnotation(target.id, {
-      bbox: leftResult.bbox,
-      data: leftResult.data as unknown as Record<string, unknown>,
-    });
-    if (!canAdoptProjectLifecycle()) return;
-
-    // 3. Persist both to server. Surface failures via the visible split-error
-    //    banner instead of console-only logging, so a dropped split is noticed.
-    if (canPersist(publicId, isDemo)) {
-      (async () => {
-        try {
-          if (target.id > 0) {
-            await persistFetch(
-              `/api/annotations/${target.id}`,
-              { bbox: leftResult.bbox, data: leftResult.data },
-              "PUT",
-            );
-          }
-          const saved = await persistFetch("/api/annotations", {
-            projectId: publicId,
-            pageNumber,
-            name: parentItem.name,
-            bbox: rightResult.bbox,
-            source: "takeoff",
-            data: rightResult.data,
-          }) as { id?: number } | null;
-          if (saved?.id && canAdoptProjectLifecycle()) {
-            updateAnnotation(tempAnnId, { id: saved.id });
-          }
-        } catch (err) {
-          publishTransientSplitError(
-            err instanceof Error ? `Failed to save split: ${err.message}` : "Failed to save split",
-          );
-        }
-      })();
-    }
-
-    // 4. Stay in split mode — clear preview + line, ready for next split. Escape exits.
-    const store = useToolStore.getState();
-    store.setSplitPreview(null);
-    if (!canAdoptProjectLifecycle()) return;
-    store.setSplitLineEndpoint("a", null);
-    if (!canAdoptProjectLifecycle()) return;
-    store.setSplitLineEndpoint("b", null);
+    if (!admitted) return;
+    void commitAnnotationSplit(qc, admitted.target, admitted.request)
+      .then(admitted.settle)
+      .catch(admitted.reject);
   }, [addAnnotation, canAdoptProjectLifecycle, height, isDemo, pageNumber,
-    publicId, publishTransientSplitError, scaleCalibrations, updateAnnotation, width]);
+    publicId, publishTransientSplitError, qc, renderedProjectLifecycle,
+    scaleCalibrations, updateAnnotation, width]);
 
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
@@ -2368,6 +2274,11 @@ export default memo(function AnnotationOverlay({
     function handleEscape(e: KeyboardEvent) {
       if (!canAdoptProjectLifecycle()) return;
       if (e.key === "Escape") {
+        const splitAtEscape = useToolStore.getState();
+        if (
+          splitAtEscape.activeTool?.kind === "split" &&
+          splitAtEscape.splitPreview?.commitPending === true
+        ) return;
         const expectedActiveTool = useToolStore.getState().activeTool;
         cancelDeferredDrawing();
         const tool = useToolStore.getState();
@@ -2423,6 +2334,7 @@ export default memo(function AnnotationOverlay({
         const store = useToolStore.getState();
         if (store.activeTool?.kind === "split" && store.splitPreview) {
           e.preventDefault();
+          if (store.splitPreview.commitPending === true) return;
           invalidateToolTailAuthority();
           acceptSplit();
         } else if (store.activeTool?.kind === "bucketFill" && store.bucketFillPreview) {

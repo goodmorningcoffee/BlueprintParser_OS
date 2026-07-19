@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 
+export { zSplitAnnotationRequest } from "@/lib/annotation-split-contract";
+
 /**
  * projects.publicId / pages.publicId / annotation_groups.publicId are pg `uuid` columns.
  * Validating as uuid REJECTS a non-uuid id with a 400 at the shell — which CLOSES the

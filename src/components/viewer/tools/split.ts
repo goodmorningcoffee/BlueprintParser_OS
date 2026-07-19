@@ -8,6 +8,7 @@
 // still violating registry ownership. The admitted press snapshot supplies both line A and the
 // render-projected annotation candidates—fresh store/cache reads would change legacy timing.
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
+import { SPLIT_HOLED_TARGET_MESSAGE } from "@/lib/annotation-split-contract";
 import { findSplittablePolygons } from "@/lib/polygon-split";
 import type { AreaPolygonData } from "@/types";
 
@@ -15,8 +16,7 @@ import type { ToolController } from "./types";
 
 const NO_CANDIDATE_MESSAGE =
   "Line does not cross any area polygon in exactly 2 places";
-export const SPLIT_HOLED_TARGET_MESSAGE =
-  "Area polygons with holes cannot be split yet";
+export { SPLIT_HOLED_TARGET_MESSAGE };
 
 export const splitController: ToolController = Object.freeze({
   kind: "split",

@@ -569,7 +569,7 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
     expect(TOOLS).toHaveLength(11);
   });
 
-  it("pins the hole-guarded acceptSplit composite and sacred dependency block", () => {
+  it("pins the atomic acceptSplit terminal and sacred mousedown dependency block", () => {
     const acceptStart = AO.indexOf("  /** Accept a pending Split Area preview");
     const acceptEnd = AO.indexOf(
       "  /** Save the current in-progress polyline",
@@ -579,9 +579,9 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
     expect(acceptEnd).toBeGreaterThan(acceptStart);
     // Exclude only the blank separator immediately before the next owned callback docblock.
     const acceptSplit = AO.slice(acceptStart, acceptEnd - 1);
-    expect(Buffer.byteLength(acceptSplit, "utf8")).toBe(5079);
+    expect(Buffer.byteLength(acceptSplit, "utf8")).toBe(856);
     expect(sha256(acceptSplit)).toBe(
-      "6f47246e2da40dd30f8f1631326c262617b77daba5f2bbc742248d3e9ae03e5d",
+      "6b8a5c88c395e32cea46009f6d5776cb22cf26ffbe4286b03af25654628cd1c0",
     );
 
     const callbackStart = AO.indexOf("  const handleMouseDown = useCallback(");

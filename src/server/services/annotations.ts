@@ -35,13 +35,25 @@
 //     cause server-side and throws a generic ApiError (the envelope's leak-free 500).
 
 import { db } from "@/lib/db";
-import { annotations } from "@/lib/db/schema";
+import { annotations, takeoffItems } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
 // [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB). Resolved once
 // per request (before any tx, I-1) and threaded through mergeAutoCsi into detect (D-1/D-2).
-import { getCompanyCsiContext, type CompanyCsiContext } from "@/lib/csi-company-db";
+import {
+  getCompanyCsiContext,
+  type CompanyCsiContext,
+} from "@/lib/csi-company-db";
 import { logger } from "@/lib/logger";
+import {
+  parseSplittableAreaData,
+  SPLIT_ANNOTATION_MAX_SOURCE_VERTICES,
+  SPLIT_HOLED_TARGET_MESSAGE,
+  SPLIT_UNSUPPORTED_AREA_DATA_MESSAGE,
+  type SplitAnnotationRequest,
+  type SplitAnnotationResponse,
+} from "@/lib/annotation-split-contract";
+import { splitPolygonByLine, type Pt } from "@/lib/polygon-split";
 import { ApiError } from "@/server/api/envelope";
 import {
   resolveByPublicId,
@@ -51,7 +63,13 @@ import {
   assertProjectWritable,
   withProjectWrite,
 } from "@/server/api/project-write-capability";
-import type { ClientAnnotation } from "@/types";
+import {
+  inspectSimpleSplitPolygon,
+  splitAreasConserve,
+  splitMeasurementsMatchGeometry,
+  storedSplitBboxMatches,
+} from "@/server/services/annotation-split-geometry";
+import type { AnnotationData, ClientAnnotation } from "@/types";
 
 /**
  * Auto-CSI merger for annotation inserts. Runs detectCsiCodes against the note text and merges
@@ -68,7 +86,9 @@ function mergeAutoCsi(
   const text = (noteText || "").trim();
   if (!text) return existingData ?? null;
   // [refactor jul9 P2-A C1] 4-arg: text-only detection (no textract words) + company config/DB.
-  const auto = detectCsiCodes(text, undefined, csiCtx.config, csiCtx.db).map((c) => c.code);
+  const auto = detectCsiCodes(text, undefined, csiCtx.config, csiCtx.db).map(
+    (c) => c.code,
+  );
   if (auto.length === 0) return existingData ?? null;
   const data = { ...(existingData ?? {}) };
   const manual = (data.csiCodes as string[]) || [];
@@ -88,14 +108,22 @@ interface AnnotationInput {
 
 /** Legacy bbox validator — exact frozen messages (deliberately NOT zBboxMinMax). */
 function validateBbox(bbox: number[]): string | null {
-  if (!bbox || bbox.length !== 4) return "bbox must be [minX, minY, maxX, maxY]";
+  if (!bbox || bbox.length !== 4)
+    return "bbox must be [minX, minY, maxX, maxY]";
   const [minX, minY, maxX, maxY] = bbox;
-  if ([minX, minY, maxX, maxY].some((v) => typeof v !== "number" || v < 0 || v > 1)) return "bbox values must be 0-1";
+  if (
+    [minX, minY, maxX, maxY].some(
+      (v) => typeof v !== "number" || v < 0 || v > 1,
+    )
+  )
+    return "bbox values must be 0-1";
   if (minX >= maxX || minY >= maxY) return "bbox min must be less than max";
   return null;
 }
 
-function toClientAnnotation(a: typeof annotations.$inferSelect): ClientAnnotation {
+function toClientAnnotation(
+  a: typeof annotations.$inferSelect,
+): ClientAnnotation {
   return {
     id: a.id,
     pageNumber: a.pageNumber,
@@ -105,6 +133,27 @@ function toClientAnnotation(a: typeof annotations.$inferSelect): ClientAnnotatio
     source: a.source as ClientAnnotation["source"],
     data: a.data ?? null,
   };
+}
+
+const SPLIT_STALE_CONFLICT_MESSAGE =
+  "Annotation changed before the split could be saved";
+const SPLIT_INVALID_SOURCE_MESSAGE =
+  "Annotation cannot be split in its current state";
+const SPLIT_INVALID_MEASUREMENTS_MESSAGE =
+  "Split measurements do not match the split geometry";
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
+
+function splitSourceCasWhere(projectId: number, body: SplitAnnotationRequest) {
+  return and(
+    eq(annotations.id, body.sourceAnnotationId),
+    eq(annotations.projectId, projectId),
+    eq(annotations.pageNumber, body.expectedSource.pageNumber),
+    eq(annotations.minX, body.expectedSource.bbox[0]),
+    eq(annotations.minY, body.expectedSource.bbox[1]),
+    eq(annotations.maxX, body.expectedSource.bbox[2]),
+    eq(annotations.maxY, body.expectedSource.bbox[3]),
+    eq(annotations.data, body.expectedSource.data as AnnotationData),
+  );
 }
 
 // [refactor jul8 P1-review PR-C1] the local resolveByPublicId (validate-before-auth recipe) was
@@ -125,7 +174,9 @@ async function verifyAnnotationAccess(annotationId: number) {
   if (!annotation) throw new ApiError("NOT_FOUND", "Not found");
   // [refactor jul9 P2-A C1] keep the resolved project (was discarded) so updateAnnotation
   // can derive companyId for the CSI resolver. Access check is byte-identical.
-  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: annotation.projectId });
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({
+    dbId: annotation.projectId,
+  });
   return { annotation, project, writeCapability };
 }
 
@@ -142,7 +193,12 @@ export async function createAnnotation(body: Record<string, unknown>) {
 /** Batch mode: { projectId, annotations: [...], deleteSource?, deletePageNumbers? }.
  *  Order (frozen): projectId-required → AUTH → per-annotation bbox → delete-before-insert+insert. */
 async function createAnnotationBatch(body: Record<string, unknown>) {
-  const { projectId, annotations: anns, deleteSource, deletePageNumbers } = body as {
+  const {
+    projectId,
+    annotations: anns,
+    deleteSource,
+    deletePageNumbers,
+  } = body as {
     projectId?: string;
     annotations: AnnotationInput[];
     deleteSource?: string;
@@ -151,7 +207,9 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
 
   if (!projectId) throw new ApiError("VALIDATION", "projectId required");
 
-  const { project, session } = await resolveByPublicId(projectId, { allowDemo: true });
+  const { project, session } = await resolveByPublicId(projectId, {
+    allowDemo: true,
+  });
   const writeCapability = assertProjectWritable(project);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
@@ -166,40 +224,44 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
 
   // delete-before-insert + insert wrapped in ONE tx so a failed insert can't leave a source's
   // annotations deleted-but-not-replaced (sanctioned scope-add; happy path identical — P1.2 precedent).
-  const inserted = await withProjectWrite(writeCapability, project.id, async (tx) => {
-    if (deleteSource && deletePageNumbers?.length) {
-      for (const pn of deletePageNumbers) {
-        await tx
-          .delete(annotations)
-          .where(
-            and(
-              eq(annotations.projectId, project.id),
-              eq(annotations.source, deleteSource),
-              eq(annotations.pageNumber, pn),
-            ),
-          );
+  const inserted = await withProjectWrite(
+    writeCapability,
+    project.id,
+    async (tx) => {
+      if (deleteSource && deletePageNumbers?.length) {
+        for (const pn of deletePageNumbers) {
+          await tx
+            .delete(annotations)
+            .where(
+              and(
+                eq(annotations.projectId, project.id),
+                eq(annotations.source, deleteSource),
+                eq(annotations.pageNumber, pn),
+              ),
+            );
+        }
       }
-    }
-    return tx
-      .insert(annotations)
-      .values(
-        anns.map((ann) => ({
-          name: ann.name,
-          minX: ann.bbox[0],
-          minY: ann.bbox[1],
-          maxX: ann.bbox[2],
-          maxY: ann.bbox[3],
-          pageNumber: ann.pageNumber,
-          threshold: ann.threshold ?? null,
-          note: ann.note || null,
-          source: ann.source || "user",
-          data: mergeAutoCsi(ann.note, ann.data, csiCtx), // [refactor jul9 P2-A C1]
-          creatorId: session.user.dbId,
-          projectId: project.id,
-        })),
-      )
-      .returning();
-  });
+      return tx
+        .insert(annotations)
+        .values(
+          anns.map((ann) => ({
+            name: ann.name,
+            minX: ann.bbox[0],
+            minY: ann.bbox[1],
+            maxX: ann.bbox[2],
+            maxY: ann.bbox[3],
+            pageNumber: ann.pageNumber,
+            threshold: ann.threshold ?? null,
+            note: ann.note || null,
+            source: ann.source || "user",
+            data: mergeAutoCsi(ann.note, ann.data, csiCtx), // [refactor jul9 P2-A C1]
+            creatorId: session.user.dbId,
+            projectId: project.id,
+          })),
+        )
+        .returning();
+    },
+  );
 
   return {
     count: inserted.length,
@@ -222,50 +284,277 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
 
   // QUIRK: pageNumber 0 is falsy → treated as missing (frozen).
   if (!projectId || !pageNumber || !name || !bbox || bbox.length !== 4) {
-    throw new ApiError("VALIDATION", "projectId, pageNumber, name, and bbox required");
+    throw new ApiError(
+      "VALIDATION",
+      "projectId, pageNumber, name, and bbox required",
+    );
   }
 
   const bboxErr = validateBbox(bbox);
   if (bboxErr) throw new ApiError("VALIDATION", bboxErr);
 
-  const { project, session } = await resolveByPublicId(projectId, { allowDemo: true });
+  const { project, session } = await resolveByPublicId(projectId, {
+    allowDemo: true,
+  });
   const writeCapability = assertProjectWritable(project);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
   // [refactor jul9 P2-A C1] company CSI context (no tx here); threaded into mergeAutoCsi.
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
-  const annotation = await withProjectWrite(writeCapability, project.id, async (tx) => {
-    const [created] = await tx
-      .insert(annotations)
-      .values({
-        name,
-        minX: bbox[0],
-        minY: bbox[1],
-        maxX: bbox[2],
-        maxY: bbox[3],
-        pageNumber,
-        note: note || null,
-        source: source || "user",
-        data: mergeAutoCsi(note, data, csiCtx), // [refactor jul9 P2-A C1]
-        creatorId: session.user.dbId,
-        projectId: project.id,
-      })
-      .returning();
-    return created;
-  });
+  const annotation = await withProjectWrite(
+    writeCapability,
+    project.id,
+    async (tx) => {
+      const [created] = await tx
+        .insert(annotations)
+        .values({
+          name,
+          minX: bbox[0],
+          minY: bbox[1],
+          maxX: bbox[2],
+          maxY: bbox[3],
+          pageNumber,
+          note: note || null,
+          source: source || "user",
+          data: mergeAutoCsi(note, data, csiCtx), // [refactor jul9 P2-A C1]
+          creatorId: session.user.dbId,
+          projectId: project.id,
+        })
+        .returning();
+      return created;
+    },
+  );
 
   return toClientAnnotation(annotation);
+}
+
+// ── Atomic annotation split ───────────────────────────────────────────────────
+
+/**
+ * Atomically split one persisted takeoff area. The request carries a complete source snapshot for
+ * comparison and client-derived measurements, but never authoritative output geometry or metadata.
+ * Both halves are recomputed from the transactionally locked source and commit together.
+ */
+export async function splitAnnotation(
+  body: SplitAnnotationRequest,
+): Promise<SplitAnnotationResponse> {
+  // Indirect-resource ordering: a missing source is 404 before authentication is resolved.
+  // The wire contract admits every positive safe integer, while the serial column is int4; avoid
+  // turning an out-of-domain-but-valid missing ID into a PostgreSQL cast error.
+  if (body.sourceAnnotationId > POSTGRES_INTEGER_MAX) {
+    throw new ApiError("NOT_FOUND", "Not found");
+  }
+  const [sourceLocator] = await db
+    .select({ projectId: annotations.projectId })
+    .from(annotations)
+    .where(eq(annotations.id, body.sourceAnnotationId))
+    .limit(1);
+  if (!sourceLocator) throw new ApiError("NOT_FOUND", "Not found");
+
+  const { project, session, writeCapability } =
+    await resolveWritableProjectOrThrow({ dbId: sourceLocator.projectId });
+  if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
+
+  return withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [source] = await tx
+      .select()
+      .from(annotations)
+      .where(
+        and(
+          eq(annotations.id, body.sourceAnnotationId),
+          eq(annotations.projectId, project.id),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!source) {
+      throw new ApiError("CONFLICT", SPLIT_STALE_CONFLICT_MESSAGE);
+    }
+
+    // page_number is int4 while the wire contract intentionally admits every positive safe
+    // integer. A stale out-of-domain snapshot is a conflict, not a PostgreSQL cast failure.
+    if (body.expectedSource.pageNumber > POSTGRES_INTEGER_MAX) {
+      throw new ApiError("CONFLICT", SPLIT_STALE_CONFLICT_MESSAGE);
+    }
+
+    const [exactSource] = await tx
+      .select({ id: annotations.id })
+      .from(annotations)
+      .where(splitSourceCasWhere(project.id, body))
+      .limit(1);
+    if (!exactSource) {
+      throw new ApiError("CONFLICT", SPLIT_STALE_CONFLICT_MESSAGE);
+    }
+
+    if (source.source !== "takeoff") {
+      throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+    }
+    const parsedArea = parseSplittableAreaData(source.data);
+    if (!parsedArea.ok) {
+      if (parsedArea.reason === "nonempty-holes") {
+        throw new ApiError("CONFLICT", SPLIT_HOLED_TARGET_MESSAGE);
+      }
+      if (parsedArea.reason === "unsupported-key") {
+        throw new ApiError("CONFLICT", SPLIT_UNSUPPORTED_AREA_DATA_MESSAGE);
+      }
+      throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+    }
+
+    const sourceVertices: Pt[] = parsedArea.data.vertices.map(({ x, y }) => ({
+      x,
+      y,
+    }));
+    const sourceGeometry = inspectSimpleSplitPolygon(sourceVertices);
+    if (
+      !sourceGeometry ||
+      !storedSplitBboxMatches(
+        [source.minX, source.minY, source.maxX, source.maxY],
+        sourceGeometry.bbox,
+      )
+    ) {
+      throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+    }
+
+    if (parsedArea.data.takeoffItemId > POSTGRES_INTEGER_MAX) {
+      throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+    }
+
+    const [item] = await tx
+      .select()
+      .from(takeoffItems)
+      .where(
+        and(
+          eq(takeoffItems.id, parsedArea.data.takeoffItemId),
+          eq(takeoffItems.projectId, project.id),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!item || item.shape !== "polygon") {
+      throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+    }
+
+    const split = splitPolygonByLine(
+      sourceVertices,
+      { x: body.lineA.x, y: body.lineA.y },
+      { x: body.lineB.x, y: body.lineB.y },
+    );
+    if (!split) throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+
+    const outputVertexLimit = SPLIT_ANNOTATION_MAX_SOURCE_VERTICES + 2;
+    const leftGeometry =
+      split.left.length <= outputVertexLimit
+        ? inspectSimpleSplitPolygon(split.left)
+        : null;
+    const rightGeometry =
+      split.right.length <= outputVertexLimit
+        ? inspectSimpleSplitPolygon(split.right)
+        : null;
+    if (
+      !leftGeometry ||
+      !rightGeometry ||
+      !splitAreasConserve(
+        sourceGeometry.area,
+        leftGeometry.area,
+        rightGeometry.area,
+      )
+    ) {
+      throw new ApiError("CONFLICT", SPLIT_INVALID_SOURCE_MESSAGE);
+    }
+
+    if (
+      !splitMeasurementsMatchGeometry(
+        body.measurements.leftAreaSqUnits,
+        body.measurements.rightAreaSqUnits,
+        leftGeometry.area,
+        rightGeometry.area,
+      )
+    ) {
+      throw new ApiError("CONFLICT", SPLIT_INVALID_MEASUREMENTS_MESSAGE);
+    }
+
+    const extensions = {
+      ...(parsedArea.data.csiCodes === undefined
+        ? {}
+        : { csiCodes: [...parsedArea.data.csiCodes] }),
+      ...(parsedArea.data.keywords === undefined
+        ? {}
+        : { keywords: [...parsedArea.data.keywords] }),
+    };
+    const leftData: AnnotationData = {
+      type: "area-polygon",
+      takeoffItemId: item.id,
+      color: item.color,
+      vertices: split.left.map(({ x, y }) => ({ x, y })),
+      areaSqUnits: body.measurements.leftAreaSqUnits,
+      unit: body.measurements.unit,
+      ...extensions,
+    };
+    const rightData: AnnotationData = {
+      type: "area-polygon",
+      takeoffItemId: item.id,
+      color: item.color,
+      vertices: split.right.map(({ x, y }) => ({ x, y })),
+      areaSqUnits: body.measurements.rightAreaSqUnits,
+      unit: body.measurements.unit,
+      ...extensions,
+    };
+
+    // The project/source locks serialize sanctioned writers. This complete physical CAS remains
+    // load-bearing defense against any writer that bypasses that protocol.
+    const [left] = await tx
+      .update(annotations)
+      .set({
+        minX: leftGeometry.bbox[0],
+        minY: leftGeometry.bbox[1],
+        maxX: leftGeometry.bbox[2],
+        maxY: leftGeometry.bbox[3],
+        data: leftData,
+        updatedAt: new Date(),
+      })
+      .where(splitSourceCasWhere(project.id, body))
+      .returning();
+    if (!left) throw new ApiError("CONFLICT", SPLIT_STALE_CONFLICT_MESSAGE);
+
+    const [right] = await tx
+      .insert(annotations)
+      .values({
+        projectId: project.id,
+        pageNumber: source.pageNumber,
+        name: item.name,
+        minX: rightGeometry.bbox[0],
+        minY: rightGeometry.bbox[1],
+        maxX: rightGeometry.bbox[2],
+        maxY: rightGeometry.bbox[3],
+        note: null,
+        source: "takeoff",
+        data: rightData,
+        threshold: null,
+        creatorId: session.user.dbId,
+      })
+      .returning();
+
+    return {
+      left: toClientAnnotation(left),
+      right: toClientAnnotation(right),
+    };
+  });
 }
 
 // ── PUT/DELETE /api/annotations/[id] ──────────────────────────────────────────────
 
 /** PUT /api/annotations/[id] — partial update + auto-CSI merge from the note. NO bbox validation
  *  (frozen). Returns {success, autoCsiCodes}. */
-export async function updateAnnotation(idParam: string, body: Record<string, unknown>) {
+export async function updateAnnotation(
+  idParam: string,
+  body: Record<string, unknown>,
+) {
   // [refactor jul9 P2-A C1] verifyAnnotationAccess now returns { annotation, project };
   // project.companyId feeds the CSI resolver for the auto-CSI detect below.
-  const { annotation, project, writeCapability } = await verifyAnnotationAccess(parseInt(idParam));
+  const { annotation, project, writeCapability } = await verifyAnnotationAccess(
+    parseInt(idParam),
+  );
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;
@@ -285,7 +574,12 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
   if (noteText.trim()) {
     // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
     const csiCtx = await getCompanyCsiContext(project.companyId);
-    autoCsiCodes = detectCsiCodes(noteText, undefined, csiCtx.config, csiCtx.db).map((c) => c.code);
+    autoCsiCodes = detectCsiCodes(
+      noteText,
+      undefined,
+      csiCtx.config,
+      csiCtx.db,
+    ).map((c) => c.code);
   }
 
   if (autoCsiCodes.length > 0) {
@@ -306,7 +600,12 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
     await tx
       .update(annotations)
       .set(updates)
-      .where(and(eq(annotations.id, annotation.id), eq(annotations.projectId, project.id)));
+      .where(
+        and(
+          eq(annotations.id, annotation.id),
+          eq(annotations.projectId, project.id),
+        ),
+      );
   });
 
   return { success: true, autoCsiCodes };
@@ -315,11 +614,18 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
 /** DELETE /api/annotations/[id] — removes the annotation row (annotation_group_members cascade). */
 export async function deleteAnnotation(idParam: string) {
   // [refactor jul9 P2-A C1] verifyAnnotationAccess now returns { annotation, project }.
-  const { annotation, project, writeCapability } = await verifyAnnotationAccess(parseInt(idParam));
+  const { annotation, project, writeCapability } = await verifyAnnotationAccess(
+    parseInt(idParam),
+  );
   await withProjectWrite(writeCapability, project.id, async (tx) => {
     await tx
       .delete(annotations)
-      .where(and(eq(annotations.id, annotation.id), eq(annotations.projectId, project.id)));
+      .where(
+        and(
+          eq(annotations.id, annotation.id),
+          eq(annotations.projectId, project.id),
+        ),
+      );
   });
   return { success: true as const };
 }
@@ -329,11 +635,18 @@ export async function deleteAnnotation(idParam: string) {
 /** POST /api/annotations/batch-delete — { projectId, annotationIds: number[] }. Single
  *  project-scoped DELETE (tenancy). Order (frozen): field validation → AUTH → delete. */
 export async function batchDeleteAnnotations(body: Record<string, unknown>) {
-  const { projectId, annotationIds } = body as { projectId?: unknown; annotationIds?: unknown };
+  const { projectId, annotationIds } = body as {
+    projectId?: unknown;
+    annotationIds?: unknown;
+  };
 
-  if (!projectId || typeof projectId !== "string") throw new ApiError("VALIDATION", "projectId required");
+  if (!projectId || typeof projectId !== "string")
+    throw new ApiError("VALIDATION", "projectId required");
   if (!Array.isArray(annotationIds) || annotationIds.length === 0) {
-    throw new ApiError("VALIDATION", "annotationIds required (non-empty array)");
+    throw new ApiError(
+      "VALIDATION",
+      "annotationIds required (non-empty array)",
+    );
   }
   if (annotationIds.some((id) => !Number.isInteger(id))) {
     throw new ApiError("VALIDATION", "annotationIds must be integers");
@@ -343,10 +656,17 @@ export async function batchDeleteAnnotations(body: Record<string, unknown>) {
   const writeCapability = assertProjectWritable(project);
 
   try {
-    const deleted = await withProjectWrite(writeCapability, project.id, (tx) => tx
-      .delete(annotations)
-      .where(and(eq(annotations.projectId, project.id), inArray(annotations.id, annotationIds as number[])))
-      .returning({ id: annotations.id }));
+    const deleted = await withProjectWrite(writeCapability, project.id, (tx) =>
+      tx
+        .delete(annotations)
+        .where(
+          and(
+            eq(annotations.projectId, project.id),
+            inArray(annotations.id, annotationIds as number[]),
+          ),
+        )
+        .returning({ id: annotations.id }),
+    );
 
     return {
       success: true,

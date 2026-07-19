@@ -6,6 +6,23 @@ describe("ParsedRegion deletion feature label", () => {
     expect(labelFor("DELETE", "/api/regions")).toBe("Delete Parsed Region");
     expect(labelFor("POST", "/api/regions")).toBeNull();
     expect(labelFor("DELETE", "/api/regions/promote")).toBeNull();
-    expect(ALL_FEATURE_LABELS.filter((label) => label === "Delete Parsed Region")).toHaveLength(1);
+    expect(
+      ALL_FEATURE_LABELS.filter((label) => label === "Delete Parsed Region"),
+    ).toHaveLength(1);
+  });
+});
+
+describe("atomic annotation split feature label", () => {
+  it("maps only the exact POST endpoint and exposes one stable label", () => {
+    expect(labelFor("POST", "/api/annotations/split")).toBe("Split Annotation");
+    expect(labelFor("GET", "/api/annotations/split")).toBeNull();
+    expect(labelFor("DELETE", "/api/annotations/split")).toBeNull();
+    expect(labelFor("POST", "/api/annotations/split/extra")).toBeNull();
+    expect(labelFor("DELETE", "/api/annotations/123")).toBe(
+      "Delete Annotation",
+    );
+    expect(
+      ALL_FEATURE_LABELS.filter((label) => label === "Split Annotation"),
+    ).toHaveLength(1);
   });
 });

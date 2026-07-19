@@ -10,6 +10,7 @@ import { useTakeoffItems } from "@/queries/useTakeoff";
 import { selectActiveToolKey } from "@/lib/active-tool-state";
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 import BucketFillAssignDialog from "./BucketFillAssignDialog";
+import SplitPreviewActions from "./SplitPreviewActions";
 
 interface DrawingPreviewLayerProps {
   width: number;
@@ -702,68 +703,14 @@ export default memo(function DrawingPreviewLayer({
           </button>
         </div>
       )}
-      {/* Split area Accept / Cancel buttons — at line midpoint */}
-      {activeToolKey === "split" && splitPreview && (() => {
-        const midX = ((splitPreview.lineA.x + splitPreview.lineB.x) / 2) * width;
-        const midY = ((splitPreview.lineA.y + splitPreview.lineB.y) / 2) * height;
-        return (
-          <div
-            style={{
-              position: "absolute",
-              left: `${midX - 58}px`,
-              top: `${midY + 14}px`,
-              display: "flex",
-              gap: "6px",
-              zIndex: 16,
-              transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
-              transformOrigin: "top left",
-            }}
-          >
-            <button
-              onPointerDown={() => invalidateToolTailAuthority()}
-              onKeyDown={() => invalidateToolTailAuthority()}
-              onClick={(e) => {
-                e.stopPropagation();
-                invalidateToolTailAuthority();
-                window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: "4px",
-                border: "none",
-                background: "#22c55e",
-                color: "#fff",
-                fontSize: "12px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Split
-            </button>
-            <button
-              onPointerDown={() => invalidateToolTailAuthority()}
-              onKeyDown={() => invalidateToolTailAuthority()}
-              onClick={(e) => {
-                e.stopPropagation();
-                invalidateToolTailAuthority();
-                useToolStore.getState().setSplitPreview(null);
-              }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: "4px",
-                border: "none",
-                background: "#ef4444",
-                color: "#fff",
-                fontSize: "12px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        );
-      })()}
+      {activeToolKey === "split" && splitPreview && (
+        <SplitPreviewActions
+          preview={splitPreview}
+          width={width}
+          height={height}
+          cssScale={cssScale}
+        />
+      )}
       {/* Split area error banner */}
       {activeToolKey === "split" && splitError && (
         <div

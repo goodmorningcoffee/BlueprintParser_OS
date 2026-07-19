@@ -40,7 +40,7 @@ test("the checked-in baseline is exact, canonical, and complete", () => {
     baseline.entries
       .filter((entry) => entry.severity === "warning")
       .reduce((total, entry) => total + entry.count, 0),
-    53,
+    52,
   );
 });
 

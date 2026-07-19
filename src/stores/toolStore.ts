@@ -79,6 +79,7 @@ export interface ToolStoreData {
     right: { x: number; y: number }[];
     lineA: { x: number; y: number };
     lineB: { x: number; y: number };
+    commitPending?: true; // Exact-owner durable admission; absent is retryable/ready.
   } | null;
   splitError: string | null;
 

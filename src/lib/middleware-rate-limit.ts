@@ -182,7 +182,16 @@ const RATE_RULES: RateRule[] = [
     windowMs: 60 * 60 * 1000,
     keyType: "user",
   },
-  // Keep batch-delete before exact annotation create so each owns its budget.
+  // Keep each annotation mutation in a separately named bucket. Exact matching
+  // prevents create, split, and batch-delete from consuming one another's quota.
+  {
+    pattern: "/api/annotations/split",
+    method: "POST",
+    limit: 200,
+    windowMs: 60 * 60 * 1000,
+    keyType: "user",
+    exact: true,
+  },
   {
     pattern: "/api/annotations/batch-delete",
     method: "POST",

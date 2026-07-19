@@ -81,6 +81,7 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
     endpoints: [
       { method: "GET", path: "/api/annotations", auth: "session", desc: "List annotations (YOLO + user) optionally filtered by page/class/source." },
       { method: "POST", path: "/api/annotations", auth: "session", desc: "Create a user markup or takeoff annotation." },
+      { method: "POST", path: "/api/annotations/split", auth: "session", desc: "Atomically replace one area takeoff polygon with its two server-validated split halves." },
       { method: "PUT", path: "/api/annotations/[id]", auth: "session", desc: "Edit annotation (name, notes, bbox, class)." },
       { method: "DELETE", path: "/api/annotations/[id]", auth: "session", desc: "Delete annotation." },
       { method: "GET", path: "/api/takeoff-groups", auth: "session", desc: "List takeoff groups (buckets for takeoff items)." },

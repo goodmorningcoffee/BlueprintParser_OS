@@ -20,7 +20,7 @@
     { "file": "src/app/project/[id]/csi-graph/page.tsx", "rule": "react-hooks/set-state-in-effect", "severity": "error", "count": 1 },
     { "file": "src/components/auth/LoginForm.tsx", "rule": "react/no-unescaped-entities", "severity": "error", "count": 1 },
     { "file": "src/components/dashboard/ProjectCard.tsx", "rule": "@next/next/no-img-element", "severity": "warning", "count": 1 },
-    { "file": "src/components/viewer/AnnotationOverlay.tsx", "rule": "react-hooks/exhaustive-deps", "severity": "warning", "count": 5 },
+    { "file": "src/components/viewer/AnnotationOverlay.tsx", "rule": "react-hooks/exhaustive-deps", "severity": "warning", "count": 4 },
     { "file": "src/components/viewer/AutoParseTab.tsx", "rule": "react-hooks/exhaustive-deps", "severity": "warning", "count": 2 },
     { "file": "src/components/viewer/AutoQtoTab.tsx", "rule": "react-hooks/exhaustive-deps", "severity": "warning", "count": 1 },
     { "file": "src/components/viewer/AutoQtoTab.tsx", "rule": "react-hooks/preserve-manual-memoization", "severity": "error", "count": 1 },

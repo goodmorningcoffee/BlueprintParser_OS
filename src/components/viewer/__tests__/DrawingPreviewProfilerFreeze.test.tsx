@@ -4,7 +4,7 @@
 
 import { Profiler, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { queryKeys } from "@/queries/queryKeys";
 import {
@@ -83,6 +83,135 @@ afterEach(() => {
 });
 
 describe("DrawingPreviewLayer active-tool render budget", () => {
+  it("renders an owned pending Split as non-cancelable disabled work", () => {
+    const readyPreview = {
+      targetAnnotationId: 44,
+      original: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+      ],
+      left: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.5, y: 0.1 },
+        { x: 0.5, y: 0.9 },
+      ],
+      right: [
+        { x: 0.5, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+      ],
+      lineA: { x: 0.5, y: 0.1 },
+      lineB: { x: 0.5, y: 0.9 },
+    };
+    act(() => useToolStore.setState({
+      activeTool: { kind: "split" },
+      splitLineA: readyPreview.lineA,
+      splitLineB: readyPreview.lineB,
+      splitPreview: {
+        ...readyPreview,
+        commitPending: true,
+      },
+    }));
+
+    const view = render(
+      <DrawingPreviewLayer width={100} height={100} cssScale={1} />,
+      { wrapper },
+    );
+
+    const split = view.getByRole("button", { name: "Splitting…" });
+    const cancel = view.getByRole("button", { name: "Cancel" });
+    expect((split as HTMLButtonElement).disabled).toBe(true);
+    expect((cancel as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("makes a ready Split button closure inert after a same-kind activation successor", () => {
+    const readyPreview = {
+      targetAnnotationId: 44,
+      original: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+      ],
+      left: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.5, y: 0.1 },
+        { x: 0.5, y: 0.9 },
+      ],
+      right: [
+        { x: 0.5, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+      ],
+      lineA: { x: 0.5, y: 0.1 },
+      lineB: { x: 0.5, y: 0.9 },
+    };
+    act(() => useToolStore.setState({
+      activeTool: { kind: "split" },
+      splitLineA: readyPreview.lineA,
+      splitLineB: readyPreview.lineB,
+      splitPreview: readyPreview,
+    }));
+    const renderedActivation = useToolStore.getState().activeTool;
+    const view = render(
+      <DrawingPreviewLayer width={100} height={100} cssScale={1} />,
+      { wrapper },
+    );
+    const split = view.getByRole("button", { name: "Split" });
+    const cancel = view.getByRole("button", { name: "Cancel" });
+    const dispatch = vi.spyOn(window, "dispatchEvent");
+
+    act(() => useToolStore.setState({ activeTool: { kind: "split" } }));
+    expect(useToolStore.getState().activeTool).not.toBe(renderedActivation);
+    fireEvent.click(cancel);
+    fireEvent.click(split);
+
+    expect(useToolStore.getState().splitPreview).toBe(readyPreview);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("makes ready Split buttons inert when either endpoint no longer owns the preview", () => {
+    const readyPreview = {
+      targetAnnotationId: 44,
+      original: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+      ],
+      left: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.5, y: 0.1 },
+        { x: 0.5, y: 0.9 },
+      ],
+      right: [
+        { x: 0.5, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+      ],
+      lineA: { x: 0.5, y: 0.1 },
+      lineB: { x: 0.5, y: 0.9 },
+    };
+    act(() => useToolStore.setState({
+      activeTool: { kind: "split" },
+      splitLineA: readyPreview.lineA,
+      splitLineB: readyPreview.lineB,
+      splitPreview: readyPreview,
+    }));
+    const view = render(
+      <DrawingPreviewLayer width={100} height={100} cssScale={1} />,
+      { wrapper },
+    );
+    const dispatch = vi.spyOn(window, "dispatchEvent");
+
+    act(() => useToolStore.setState({ splitLineB: { x: 0.6, y: 0.9 } }));
+    fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(view.getByRole("button", { name: "Split" }));
+
+    expect(useToolStore.getState().splitPreview).toBe(readyPreview);
+    expect(useToolStore.getState().splitLineB).not.toBe(readyPreview.lineB);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("ignores authority, operation, same-key, and dormant peers; draws one coordinate commit", async () => {
     let commits = 0;
     const view = render(

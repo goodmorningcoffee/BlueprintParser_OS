@@ -87,6 +87,29 @@ describe("findRateRule — G9 exact/prefix semantics", () => {
     expect(rule!.pattern).toBe("/api/annotations/batch-delete");
   });
 
+  it("annotation split has an isolated exact 200/user/hour rule", () => {
+    const split = findRateRule("/api/annotations/split", "POST");
+    expect(split).toMatchObject({
+      pattern: "/api/annotations/split",
+      method: "POST",
+      limit: 200,
+      windowMs: 60 * 60 * 1000,
+      keyType: "user",
+      exact: true,
+    });
+
+    expect(
+      findRateRule("/api/annotations/split/extra", "POST"),
+    ).toBeUndefined();
+    expect(findRateRule("/api/annotations/split", "GET")).toBeUndefined();
+    expect(findRateRule("/api/annotations", "POST")!.pattern).toBe(
+      "/api/annotations",
+    );
+    expect(findRateRule("/api/annotations/batch-delete", "POST")!.pattern).toBe(
+      "/api/annotations/batch-delete",
+    );
+  });
+
   it("an unrelated /api/annotations subpath POST falls through to the backstop", () => {
     expect(
       findRateRule("/api/annotations/123/whatever", "POST"),

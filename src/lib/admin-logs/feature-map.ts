@@ -34,6 +34,7 @@ const EXACT_MAP: Record<RouteKey, string> = {
   "POST /api/regions/promote": "Save Parsed Region",
   "DELETE /api/regions": "Delete Parsed Region",
   "POST /api/annotations": "Create Annotation",
+  "POST /api/annotations/split": "Split Annotation",
   "POST /api/markup": "Create Markup",
   "POST /api/takeoff-items": "Save Takeoff Item",
   "POST /api/takeoff-groups": "Create Takeoff Group",
@@ -56,18 +57,37 @@ const EXACT_MAP: Record<RouteKey, string> = {
  * Dynamic-segment prefixes. Any path that starts with the given prefix maps
  * to the label. Applied only if no exact EXACT_MAP key matches first.
  */
-const PREFIX_MAP: Array<{ method: string; prefix: string; label: string }> = [
+const PREFIX_MAP: Array<{
+  method: string;
+  prefix: string;
+  label: string;
+  segmentPattern?: RegExp;
+}> = [
   { method: "DELETE", prefix: "/api/projects/", label: "Delete Project" },
-  { method: "DELETE", prefix: "/api/annotations/", label: "Delete Annotation" },
-  { method: "DELETE", prefix: "/api/takeoff-items/", label: "Delete Takeoff Item" },
+  {
+    method: "DELETE",
+    prefix: "/api/annotations/",
+    label: "Delete Annotation",
+    segmentPattern: /^[1-9]\d*$/u,
+  },
+  {
+    method: "DELETE",
+    prefix: "/api/takeoff-items/",
+    label: "Delete Takeoff Item",
+  },
 ];
 
 export function labelFor(method: string, path: string): string | null {
   const upperMethod = method.toUpperCase();
   const key = `${upperMethod} ${path}` as RouteKey;
   if (key in EXACT_MAP) return EXACT_MAP[key];
-  for (const { method: m, prefix, label } of PREFIX_MAP) {
-    if (m === upperMethod && path.startsWith(prefix)) return label;
+  for (const { method: m, prefix, label, segmentPattern } of PREFIX_MAP) {
+    if (
+      m === upperMethod &&
+      path.startsWith(prefix) &&
+      (!segmentPattern || segmentPattern.test(path.slice(prefix.length)))
+    )
+      return label;
   }
   return null;
 }

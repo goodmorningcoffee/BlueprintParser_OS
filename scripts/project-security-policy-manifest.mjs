@@ -363,6 +363,13 @@ export const MUTATION_SURFACES = [
     ["src/server/services/annotations.ts", "createAnnotationSingle"],
   ]),
   mutation(
+    "annotations-split",
+    "/api/annotations/split",
+    "POST",
+    "shared-guard",
+    [["src/server/services/annotations.ts", "splitAnnotation"]],
+  ),
+  mutation(
     "annotations-update",
     "/api/annotations/[id]",
     "PUT",
