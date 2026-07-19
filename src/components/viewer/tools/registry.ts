@@ -23,8 +23,8 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // takeoffPolygon slots in AHEAD of takeoffLinear (§5 priority #4) — the same argument makes the
 // linear/count polygon-declines dead-but-honest; the five-way claim set is pairwise disjoint,
 // so registry order stays unobservable.
-// Split now owns the first interior slot; bucketFill later inserts after it and before
-// takeoffPolygon. keynotePick precedes parseRect so an active YOLO miss can eligible-decline into
+// Split owns the first interior slot; bucketFill follows it before takeoffPolygon. keynotePick
+// precedes parseRect so an active YOLO miss can eligible-decline into
 // the generic rectangle starter in the SAME dispatch. tagPick and symbolSearch now occupy their
 // exact middle slots; tagAdd now occupies its slot after symbolSearch. pointerGroup remains between
 // parseRect and markup.

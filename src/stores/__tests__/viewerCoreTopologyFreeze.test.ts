@@ -720,8 +720,8 @@ describe("P2.3 V2 split useNavigation topology", () => {
       { kind: "selector", member: "pageNumber" },
       { kind: "getState-direct", member: "pageNumber" },
       { kind: "getState-direct", member: "pageNumber" },
-      { kind: "getState-direct", member: "pageNumber" },
-      { kind: "getState-direct", member: "pageNumber" },
+      // BucketFill's two page-lifecycle snapshots moved with its controller;
+      // the direct controller topology net pins both capability-backed reads.
       // Markup save entry and post-publication snapshots close stale-render and
       // synchronous cache-notification page races without adding subscriptions.
       { kind: "getState-direct", member: "pageNumber" },
