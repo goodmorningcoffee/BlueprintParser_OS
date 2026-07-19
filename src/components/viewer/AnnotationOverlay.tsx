@@ -66,6 +66,7 @@ import { drawAreaPolygons } from "./render/areaPolygons";
 import { drawGroupRings } from "./render/groupRings";
 import { drawLinearPolylines } from "./render/linearPolylines";
 import { drawLlmHighlight } from "./render/llmHighlight";
+import { drawSymbolSearchResults } from "./render/symbolSearchResults";
 import { drawTableCellStructure } from "./render/tableCellStructure";
 import { drawTableTagViews } from "./render/tableTagViews";
 import { admitAnnotationSplit } from "./splitAcceptance";
@@ -676,34 +677,14 @@ export default memo(function AnnotationOverlay({
     // Drawing preview (BB rectangle, polygon, calibration) — rendered by DrawingPreviewLayer
 
     // Draw symbol search results on current page
-    if (symbolSearchResults) {
-      const pageMatches = symbolSearchResults.matches.filter(
-        (m) => m.pageNumber === pageNumber
-          && m.confidence >= symbolSearchConfidence
-          && !dismissedSymbolMatches.has(m.id)
-      );
-      for (const match of pageMatches) {
-        const [mx, my, mw, mh] = match.bbox;
-        const px = mx * width;
-        const py = my * height;
-        const pw = mw * width;
-        const ph = mh * height;
-
-        // Bright cyan fill + border
-        ctx.fillStyle = "rgba(34,211,238,0.15)";
-        ctx.fillRect(px, py, pw, ph);
-        ctx.strokeStyle = "#22d3ee";
-        ctx.lineWidth = 2.5;
-        ctx.setLineDash([]);
-        ctx.strokeRect(px, py, pw, ph);
-
-        // Confidence label
-        ctx.font = "bold 10px sans-serif";
-        ctx.fillStyle = "#22d3ee";
-        const confLabel = `${Math.round(match.confidence * 100)}%`;
-        ctx.fillText(confLabel, px + 2, py - 3);
-      }
-    }
+    drawSymbolSearchResults(ctx, {
+      symbolSearchResults,
+      pageNumber,
+      symbolSearchConfidence,
+      dismissedSymbolMatches,
+      width,
+      height,
+    });
 
     // Draw TATR cell structure overlays
     drawTableCellStructure(ctx, {

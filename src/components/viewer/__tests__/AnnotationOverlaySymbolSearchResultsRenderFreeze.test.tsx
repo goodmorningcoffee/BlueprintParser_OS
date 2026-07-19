@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// [refactor jul20 P3.3] Direct-parent executable freeze for the symbol-search result paint
-// stage. It locks the complete inline filtering/paint contract before a pure render-helper
-// extraction; the pre-existing result-only canvas-mount asymmetry is intentionally out of scope.
+// [refactor jul20 P3.3] Direct-parent executable freeze translated after the pure symbol-search
+// result render extraction. The three runtime cases retain the exact parent filtering/paint
+// contract; source oracles bind its single helper home and ordered AO call. The pre-existing
+// result-only canvas-mount asymmetry remains intentionally out of scope.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -484,12 +485,16 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const SYMBOL_SEARCH_RESULTS = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/symbolSearchResults.ts"),
+  "utf8",
+);
 
-function expectPreMoveOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("  // Draw annotations");
   const symbol = source.indexOf("    // Draw symbol search results on current page");
-  const condition = source.indexOf("    if (symbolSearchResults) {", symbol);
-  const cells = source.indexOf("    // Draw TATR cell structure overlays", condition);
+  const symbolCall = source.indexOf("drawSymbolSearchResults(ctx, {", symbol);
+  const cells = source.indexOf("    // Draw TATR cell structure overlays", symbolCall);
   const tableCellCall = source.indexOf("drawTableCellStructure(ctx, {", cells);
   const llmCall = source.indexOf("drawLlmHighlight(ctx, {", tableCellCall);
   const tableTagCall = source.indexOf("drawTableTagViews(ctx, {", llmCall);
@@ -502,8 +507,8 @@ function expectPreMoveOrder(source: string): void {
   );
   expect(annotations).toBeGreaterThan(-1);
   expect(symbol).toBeGreaterThan(annotations);
-  expect(condition).toBeGreaterThan(symbol);
-  expect(cells).toBeGreaterThan(condition);
+  expect(symbolCall).toBeGreaterThan(symbol);
+  expect(cells).toBeGreaterThan(symbolCall);
   expect(tableCellCall).toBeGreaterThan(cells);
   expect(llmCall).toBeGreaterThan(tableCellCall);
   expect(tableTagCall).toBeGreaterThan(llmCall);
@@ -513,12 +518,20 @@ function expectPreMoveOrder(source: string): void {
   expect(dependencies).toBeGreaterThan(groupCall);
 }
 
-describe("AnnotationOverlay symbol-search result direct-parent topology", () => {
-  it("pins the exact earlier driver, inline stage, next pure call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_943);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(83_649);
+describe("AnnotationOverlay symbol-search result post-move topology", () => {
+  it("pins the exact AO, import, earlier driver, pure call, next pure call, and dependencies", () => {
+    expect(count(AO, "\n")).toBe(1_924);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(82_942);
     expect(sha256(AO)).toBe(
-      "fd0b00d50616c589caabb6ff0c72b801162dcbabc5af43f17d706515532ea1f4",
+      "f1194c3c8bb90e57a3af38bdb363a0f061303c72c75d331976a27ad9a60ba5a9",
+    );
+
+    const symbolImport =
+      'import { drawSymbolSearchResults } from "./render/symbolSearchResults";\n';
+    expect(count(AO, symbolImport)).toBe(1);
+    expect(Buffer.byteLength(symbolImport, "utf8")).toBe(72);
+    expect(sha256(symbolImport)).toBe(
+      "2187e5902ee3c59b514cfad3b75dd45821d6c2995a20f12a5c69582e1cedf3bc",
     );
 
     const prefix = exactSlice(
@@ -532,22 +545,23 @@ describe("AnnotationOverlay symbol-search result direct-parent topology", () => 
       "432c946b6826c2e4c11ef93a5e03b0ae89a7a59fae16a995e25f94c8edae7a28",
     );
 
-    const symbolStage = exactSlice(
+    const symbolCall = exactSlice(
       AO,
       "    // Draw symbol search results on current page\n",
       "    // Draw TATR cell structure overlays\n",
     );
-    expect(count(symbolStage, "\n")).toBe(30);
-    expect(Buffer.byteLength(symbolStage, "utf8")).toBe(1_005);
-    expect(sha256(symbolStage)).toBe(
-      "2f642742785f487b0f5ea72717fe7fb8187829cf5d97056f7ebae55c815dc548",
+    expect(count(symbolCall, "\n")).toBe(10);
+    expect(Buffer.byteLength(symbolCall, "utf8")).toBe(226);
+    expect(sha256(symbolCall)).toBe(
+      "8e0f5bddbe341d94763a9f1ae2115de5aa4fb64aa315d242f04877a9ae32acef",
     );
-    expect(count(symbolStage, "symbolSearchResults.matches.filter(")).toBe(1);
-    expect(count(symbolStage, "m.pageNumber")).toBe(1);
-    expect(count(symbolStage, "m.confidence")).toBe(1);
-    expect(count(symbolStage, "match.confidence")).toBe(1);
-    expect(count(symbolStage, "dismissedSymbolMatches.has(m.id)")).toBe(1);
-    expect(count(symbolStage, "ctx.setLineDash([])")).toBe(1);
+    expect(count(symbolCall, "drawSymbolSearchResults(ctx, {")).toBe(1);
+    expect(symbolCall).toContain("symbolSearchResults,");
+    expect(symbolCall).toContain("pageNumber,");
+    expect(symbolCall).toContain("symbolSearchConfidence,");
+    expect(symbolCall).toContain("dismissedSymbolMatches,");
+    expect(symbolCall).toContain("width,");
+    expect(symbolCall).toContain("height,");
 
     const tableCellCall = exactSlice(
       AO,
@@ -571,34 +585,48 @@ describe("AnnotationOverlay symbol-search result direct-parent topology", () => 
     );
   });
 
-  it("keeps one ordered inline stage, no future helper, and biting source self-oracles", () => {
-    expectPreMoveOrder(AO);
+  it("keeps one ordered call, one pure helper, and biting source self-oracles", () => {
+    expectPostMoveOrder(AO);
     expect(count(AO, "    // Draw symbol search results on current page\n")).toBe(1);
-    expect(count(AO, 'import { drawSymbolSearchResults } from "./render/symbolSearchResults";')).toBe(0);
-    expect(count(AO, "drawSymbolSearchResults(ctx, {")).toBe(0);
+    expect(count(AO, 'import { drawSymbolSearchResults } from "./render/symbolSearchResults";')).toBe(1);
+    expect(count(AO, "drawSymbolSearchResults(ctx, {")).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/symbolSearchResults.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/symbolSearchResults.test.ts",
-    ))).toBe(false);
-    expect(() => expectPreMoveOrder(
-      AO.replace("    if (symbolSearchResults) {", "    if (missingSymbolSearchResults) {"),
+    ))).toBe(true);
+    expect(count(AO, "symbolSearchResults.matches.filter(")).toBe(0);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawSymbolSearchResults(ctx, {", "missingSymbolSearchResults(ctx, {"),
     )).toThrow();
 
-    const symbolStage = exactSlice(
+    const symbolCall = exactSlice(
       AO,
       "    // Draw symbol search results on current page\n",
       "    // Draw TATR cell structure overlays\n",
     );
     const reordered = AO
-      .replace(symbolStage, "")
+      .replace(symbolCall, "")
       .replace(
         "    // Draw active table/keynote tag views",
-        `${symbolStage}    // Draw active table/keynote tag views`,
+        `${symbolCall}    // Draw active table/keynote tag views`,
       );
-    expect(() => expectPreMoveOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(count(SYMBOL_SEARCH_RESULTS, "\n")).toBe(65);
+    expect(Buffer.byteLength(SYMBOL_SEARCH_RESULTS, "utf8")).toBe(1_913);
+    expect(sha256(SYMBOL_SEARCH_RESULTS)).toBe(
+      "54c421a50dab6b02595c0aaf16fc1e8cee038ce3d6eddd621d6bd6dd39c2dfcf",
+    );
+    expect(count(SYMBOL_SEARCH_RESULTS, "symbolSearchResults.matches.filter(")).toBe(1);
+    expect(count(SYMBOL_SEARCH_RESULTS, "m.pageNumber")).toBe(1);
+    expect(count(SYMBOL_SEARCH_RESULTS, "m.confidence")).toBe(1);
+    expect(count(SYMBOL_SEARCH_RESULTS, "match.confidence")).toBe(1);
+    expect(count(SYMBOL_SEARCH_RESULTS, "dismissedSymbolMatches.has(m.id)")).toBe(1);
+    expect(count(SYMBOL_SEARCH_RESULTS, "ctx.setLineDash([])")).toBe(1);
+    expect(SYMBOL_SEARCH_RESULTS).not.toMatch(/@\/(stores|queries)|fetch\(|persist|from "react"/i);
   });
 });

@@ -336,7 +336,8 @@ function sha256(value: string): string {
 function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const symbol = source.indexOf("    // Draw symbol search results");
-  const cells = source.indexOf("    // Draw TATR cell structure overlays");
+  const symbolCall = source.indexOf("drawSymbolSearchResults(ctx, {", symbol);
+  const cells = source.indexOf("    // Draw TATR cell structure overlays", symbolCall);
   const tableCellCall = source.indexOf("drawTableCellStructure(ctx, {", cells);
   const llm = source.indexOf("    // Draw LLM tool use highlight");
   const llmCall = source.indexOf("drawLlmHighlight(ctx, {", llm);
@@ -354,7 +355,8 @@ function expectPostMoveOrder(source: string): void {
   );
   expect(annotations).toBeGreaterThan(-1);
   expect(symbol).toBeGreaterThan(annotations);
-  expect(cells).toBeGreaterThan(symbol);
+  expect(symbolCall).toBeGreaterThan(symbol);
+  expect(cells).toBeGreaterThan(symbolCall);
   expect(tableCellCall).toBeGreaterThan(cells);
   expect(llm).toBeGreaterThan(tableCellCall);
   expect(llmCall).toBeGreaterThan(llm);
@@ -375,10 +377,10 @@ describe("AnnotationOverlay table/keynote tag-view post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw active table/keynote tag views\n",
     );
-    expect(count(prefix, "\n")).toBe(263);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(11_124);
+    expect(count(prefix, "\n")).toBe(243);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(10_345);
     expect(sha256(prefix)).toBe(
-      "78350ac1da8494a206e3e6c8a3f6f639f9cd45a516f0059741382aea7cc34337",
+      "4903df9dfc2a1b1475814654a7e24bd397829c5f780845b556d7b487db2862dc",
     );
 
     const tableTagCall = exactSlice(
