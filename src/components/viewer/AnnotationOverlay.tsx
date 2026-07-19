@@ -62,6 +62,7 @@ import { persistFetch, canPersist } from "@/lib/client-persist";
 import { captureProjectLifecycle } from "@/lib/project-lifecycle";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
+import { drawGroupRings } from "./render/groupRings";
 import { admitAnnotationSplit } from "./splitAcceptance";
 import { TOOL_STORE_CAPABILITIES } from "./tools/capabilities";
 import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
@@ -931,25 +932,12 @@ export default memo(function AnnotationOverlay({
     }
 
     // Group-membership outlines — one pass after all shape-specific loops.
-    // Uses ann.bbox so every annotation type (bbox / polygon / polyline /
-    // count-marker) gets a consistent ring. Inactive groups are filtered
-    // upstream in useMultiSelectInteraction (getGroupOutlineColor returns
-    // null for them).
-    for (const ann of pageAnnotations) {
-      const groupColor = multiSelect.getGroupOutlineColor(ann.id);
-      if (!groupColor) continue;
-      const [minX, minY, maxX, maxY] = ann.bbox;
-      const x = minX * width;
-      const y = minY * height;
-      const w = (maxX - minX) * width;
-      const h = (maxY - minY) * height;
-      ctx.save();
-      ctx.strokeStyle = groupColor;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 2]);
-      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
-      ctx.restore();
-    }
+    drawGroupRings(ctx, {
+      annotations: pageAnnotations,
+      width,
+      height,
+      getGroupOutlineColor: multiSelect.getGroupOutlineColor,
+    });
 
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
   }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure, showTableCellStructure, multiSelect]);

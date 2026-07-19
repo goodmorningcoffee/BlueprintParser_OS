@@ -7,9 +7,9 @@
 // the SHARED `seedAnnotationGroups` helper. The QueryClientProvider wrapper + publicId are in
 // place NOW (harmless pre-migration — chat/④ precedent) so the flip needs zero churn here.
 //
-// WHY THIS FILE MATTERS (SPEC §1.2/§7.3): this hook's SOLE importer is AnnotationOverlay
-// (:23/:159) — the CANVAS-SACRED draw loop. getGroupOutlineColor runs per-annotation inside the
-// outline pass (:807-821) and expandSelectionViaGroups drives marker-click sibling expansion.
+// WHY THIS FILE MATTERS (SPEC §1.2/§7.3): this hook's SOLE importer is AnnotationOverlay, whose
+// CANVAS-SACRED driver passes getGroupOutlineColor into the pure final group-ring helper.
+// expandSelectionViaGroups separately drives marker-click sibling expansion.
 // These cases pin the derived-index SEMANTICS the C2 `deriveGroupIndexes` must reproduce:
 // forward index (annId→groupIds: membership lookups) and reverse index (groupId→annIds: sibling
 // union) — the "pairs→Sets both directions" behavior, pinned through the hook because direct

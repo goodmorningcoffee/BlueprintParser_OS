@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 //
 // [refactor jul19 P3.3] Direct-parent executable freeze for the final group-membership ring paint
-// stage. This mounts the real AnnotationOverlay driver before render/groupRings.ts exists. The
-// extraction commit must keep this trace green and add a direct pure-module net; it may translate
-// only the parent-source topology describe at the bottom.
+// stage. It was born against the real inline AnnotationOverlay driver before render/groupRings.ts
+// existed; the pure extraction keeps the behavioral trace intact and translates only the explicitly
+// parent-source topology describe at the bottom.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -294,6 +294,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const GROUP_RINGS = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/groupRings.ts"),
+  "utf8",
+);
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -312,8 +316,29 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-describe("AnnotationOverlay group-ring direct-parent topology", () => {
-  it("binds the untouched earlier driver, exact legacy tail, and dependency line", () => {
+function expectPostMoveOrder(source: string): void {
+  const annotation = source.indexOf("    // Draw existing annotations");
+  const area = source.indexOf("    // Draw completed area polygons");
+  const linear = source.indexOf("    // Draw completed linear polylines");
+  const rings = source.indexOf("    // Group-membership outlines");
+  const call = source.indexOf("drawGroupRings(ctx, {", rings);
+  const preview = source.indexOf(
+    "    // Calibration + polygon preview — rendered by DrawingPreviewLayer",
+  );
+  const dependencies = source.indexOf(
+    "  }, [pageAnnotations, width, height, selectedId",
+  );
+  expect(annotation).toBeGreaterThan(-1);
+  expect(area).toBeGreaterThan(annotation);
+  expect(linear).toBeGreaterThan(area);
+  expect(rings).toBeGreaterThan(linear);
+  expect(call).toBeGreaterThan(rings);
+  expect(preview).toBeGreaterThan(call);
+  expect(dependencies).toBeGreaterThan(preview);
+}
+
+describe("AnnotationOverlay group-ring post-move topology", () => {
+  it("binds the untouched earlier driver, exact pure call, and dependency line", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
@@ -325,16 +350,19 @@ describe("AnnotationOverlay group-ring direct-parent topology", () => {
       "0aeebfb7aa93775e40467341edd958e38f9dc0a6413ee07982e59644b1cfc9e1",
     );
 
-    const groupTail = exactSlice(
+    const groupCall = exactSlice(
       AO,
       "    // Group-membership outlines",
       "    // Calibration + polygon preview",
     );
-    expect(count(groupTail, "\n")).toBe(21);
-    expect(Buffer.byteLength(groupTail, "utf8")).toBe(845);
-    expect(sha256(groupTail)).toBe(
-      "b0db6969bba355d8357dd1dca2f7af088a455dc166428ccb96cf636e0849ac6d",
+    expect(count(groupCall, "\n")).toBe(8);
+    expect(Buffer.byteLength(groupCall, "utf8")).toBe(238);
+    expect(sha256(groupCall)).toBe(
+      "a5d9158ff7e19f312880177fc7eed7be16d57e7054ee0a364340e674f6a4d652",
     );
+    expect(count(groupCall, "drawGroupRings(ctx, {")).toBe(1);
+    expect(groupCall).not.toContain("for (const ann of pageAnnotations)");
+    expect(groupCall).not.toContain("getGroupOutlineColor(ann.id)");
 
     const dependencyLine = exactSlice(
       AO,
@@ -347,24 +375,37 @@ describe("AnnotationOverlay group-ring direct-parent topology", () => {
     );
   });
 
-  it("keeps the ring loop final and render/groupRings absent before extraction", () => {
-    const annotation = AO.indexOf("    // Draw existing annotations");
-    const area = AO.indexOf("    // Draw completed area polygons");
-    const linear = AO.indexOf("    // Draw completed linear polylines");
-    const rings = AO.indexOf("    // Group-membership outlines");
-    const preview = AO.indexOf(
-      "    // Calibration + polygon preview — rendered by DrawingPreviewLayer",
+  it("keeps one final call, one pure type-only module, and a non-vacuous order oracle", () => {
+    expectPostMoveOrder(AO);
+    expect(count(AO, 'import { drawGroupRings } from "./render/groupRings";')).toBe(1);
+    expect(count(AO, "drawGroupRings(ctx, {")).toBe(1);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawGroupRings(ctx, {", "missingGroupRings(ctx, {"),
+    )).toThrow();
+    const groupStage = exactSlice(
+      AO,
+      "    // Group-membership outlines",
+      "    // Calibration + polygon preview",
     );
-    const dependencies = AO.indexOf(
-      "  }, [pageAnnotations, width, height, selectedId",
+    const reordered = AO
+      .replace(groupStage, "")
+      .replace(
+        "    // Draw completed linear polylines",
+        `${groupStage}    // Draw completed linear polylines`,
+      );
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(Buffer.byteLength(GROUP_RINGS, "utf8")).toBe(1_430);
+    expect(count(GROUP_RINGS, "\n")).toBe(44);
+    expect(sha256(GROUP_RINGS)).toBe(
+      "7b930be83dad0c217cdd9411cc07fcac8e2ade49360514887b8fbefaef93bd14",
     );
-    expect(annotation).toBeGreaterThan(-1);
-    expect(area).toBeGreaterThan(annotation);
-    expect(linear).toBeGreaterThan(area);
-    expect(rings).toBeGreaterThan(linear);
-    expect(preview).toBeGreaterThan(rings);
-    expect(dependencies).toBeGreaterThan(preview);
-    expect(count(AO, 'from "./render/groupRings"')).toBe(0);
-    expect(count(AO, "drawGroupRings(")).toBe(0);
+    expect(count(GROUP_RINGS, 'import type { ClientAnnotation } from "@/types";')).toBe(1);
+    for (const forbidden of [
+      "react", "useToolStore", "useUiStore", "useQueryClient", "fetch(",
+      "persistFetch", "AnnotationOverlay",
+    ]) {
+      expect(GROUP_RINGS).not.toContain(forbidden);
+    }
   });
 });

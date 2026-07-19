@@ -39,8 +39,8 @@
 // fetch and must never run — E5). window.alert IS frozen failure-path behavior here (contrast
 // ViewAllPanel's console-only channel — the split is pinned in part 2/3). QueryClientProvider is
 // in the wrapper NOW so the C3 flip needs zero churn (chat/④ precedent). jest-dom per file.
-// AnnotationOverlay is NEVER mounted (canvas — its read path rides the probe + C2 hook suite +
-// perf protocol).
+// AnnotationOverlay is NEVER mounted here: write/read-index semantics ride the probe + C2 hook
+// suite, while actual canvas ring emission now has AnnotationOverlayGroupRingsRenderFreeze.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import "@testing-library/jest-dom";

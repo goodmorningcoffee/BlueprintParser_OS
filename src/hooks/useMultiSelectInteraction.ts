@@ -36,7 +36,7 @@ export function useMultiSelectInteraction() {
   } = useAnnotationGroups();
 
   // O(1) lookup from groupId → color, built from the groups list.
-  // Drives the member-outline stroke in the overlay draw loop.
+  // Drives the final pure group-ring helper invoked by the overlay canvas driver.
   // Skips groups marked inactive so their members stay "grouped silently"
   // without the visual ring or select-all behavior.
   const groupIdToColor = useMemo(() => {
@@ -146,7 +146,7 @@ export function useMultiSelectInteraction() {
   /**
    * Returns the first-group color for the given annotation id, or null if
    * the annotation doesn't belong to any group with a color set.
-   * Powers the thin member-outline stroke in the draw loop.
+   * Powers the thin member-outline stroke in render/groupRings.
    */
   const getGroupOutlineColor = useCallback(
     (annotationId: number): string | null => {

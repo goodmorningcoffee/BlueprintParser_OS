@@ -1,8 +1,8 @@
 // @vitest-environment node
 //
 // [refactor jul18 P3 draw #5] Exact two-gate TATR canvas reachability seam. Normalizing only the
-// sanctioned inline predicates back to the accepted parent freezes every other draw-effect byte,
-// dependency, pass, and canvas gate while following AO's exact ratcheted architecture ceiling.
+// sanctioned inline predicates back to the accepted parent freezes the complete pre-group driver,
+// dependency, pass, and canvas gate; the companion group-ring suite pins the extracted final pass.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -62,12 +62,16 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("normalizes the whole draw effect to the exact accepted parent bytes", () => {
-    expect(count(DRAW, NEGATED)).toBe(1);
-    const normalized = DRAW.replace(NEGATED, "");
-    expect(Buffer.byteLength(normalized, "utf8")).toBe(21_678);
-    expect(sha256(normalized)).toBe(
-      "c474fa79180707320dddc0245dabb35d4553970fe49bfb6b57c8b95c06c24603",
+  it("keeps the complete pre-group driver byte-exact through the first pure extraction", () => {
+    const prefix = exactSlice(
+      AO,
+      "  // Draw annotations\n",
+      "    // Group-membership outlines",
+    );
+    expect(count(prefix, NEGATED)).toBe(1);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(20_544);
+    expect(sha256(prefix)).toBe(
+      "0aeebfb7aa93775e40467341edd958e38f9dc0a6413ee07982e59644b1cfc9e1",
     );
   });
 
@@ -80,7 +84,7 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps AnnotationOverlay at the exact 2,134-line architecture ceiling", () => {
-    expect(count(AO, "\n")).toBe(2_134);
+  it("keeps AnnotationOverlay at the exact 2,122-line architecture ceiling", () => {
+    expect(count(AO, "\n")).toBe(2_122);
   });
 });

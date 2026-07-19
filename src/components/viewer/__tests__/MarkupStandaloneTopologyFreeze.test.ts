@@ -275,7 +275,7 @@ describe("P3 standalone markup topology and finding dispositions", () => {
     );
   });
 
-  it("lowers the AO ceiling after the residual takeoff fallback cleanup", () => {
-    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2134);
+  it("keeps the ratcheted AO ceiling through the first P3.3 render extraction", () => {
+    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2122);
   });
 });

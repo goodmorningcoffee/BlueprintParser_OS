@@ -798,6 +798,6 @@ describe("pointerGroup post-lift source topology", () => {
     expect(createHash("sha256").update(MARKUP).digest("hex")).toBe(
       "b73291e6f81070d4d412eed13b329a6b2657d5986af8a3bb301aa92f4c5044d6",
     );
-    expect(AO.split("\n").length - 1).toBe(2_134);
+    expect(AO.split("\n").length - 1).toBe(2_122);
   });
 });
