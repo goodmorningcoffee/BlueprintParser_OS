@@ -1,6 +1,7 @@
-// [refactor jul19 P3.2] Split Area mousedown controller. This is a byte-for-semantics lift of
-// the two-click gesture only: preview acceptance, persistence, Enter/Escape, page cleanup, and
-// rendering remain shared AnnotationOverlay/DrawingPreviewLayer surfaces under ACCEPT-PARTIAL.
+// [refactor jul19 P3.2] Split Area mousedown controller. The two-click gesture landed first as a
+// byte-for-semantics lift; a separately frozen guard now rejects holed winning targets before the
+// preview. Acceptance, persistence, Enter/Escape, page cleanup, and rendering remain shared
+// AnnotationOverlay/DrawingPreviewLayer surfaces under ACCEPT-PARTIAL.
 //
 // Every matched press claims. In particular, preview-open and a lifecycle rejected after B are
 // terminal true; returning false would be masked by the overlay's generic active-tool tail while
@@ -14,6 +15,8 @@ import type { ToolController } from "./types";
 
 const NO_CANDIDATE_MESSAGE =
   "Line does not cross any area polygon in exactly 2 places";
+export const SPLIT_HOLED_TARGET_MESSAGE =
+  "Area polygons with holes cannot be split yet";
 
 export const splitController: ToolController = Object.freeze({
   kind: "split",
@@ -78,9 +81,14 @@ export const splitController: ToolController = Object.freeze({
     const hitAnnotation = polyAnnotations.find(
       (annotation) => annotation.id === best.id,
     )!;
+    const hitData = hitAnnotation.data as AreaPolygonData;
+    if ((hitData.holes?.length ?? 0) > 0) {
+      split.publishError(SPLIT_HOLED_TARGET_MESSAGE, 5000);
+      return true;
+    }
     split.setPreview({
       targetAnnotationId: best.id,
-      original: (hitAnnotation.data as AreaPolygonData).vertices,
+      original: hitData.vertices,
       left: best.left,
       right: best.right,
       lineA: toolAtDown.splitLineA,

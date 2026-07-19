@@ -52,6 +52,7 @@ const B_TAKEOFF_FILTER = 9801;
 const B_MARKUP_ID = 9802;
 const B_YOLO_TAG_ID = "successor-b-tag";
 const B_YOLO_FILTER = "successor-b-filter";
+const HOLED_TARGET_MESSAGE = "Area polygons with holes cannot be split yet";
 
 const SQUARE = [
   { x: 0.2, y: 0.2 },
@@ -468,6 +469,159 @@ describe("AnnotationOverlay paired project publications", () => {
 
     expect(admittedB).toBe(true);
     expect(useToolStore.getState().splitLineA).toEqual(B_POINT);
+  });
+
+  async function assertHoledAcceptFailsClosed(
+    authenticated: boolean,
+  ): Promise<void> {
+    if (authenticated) {
+      holdSuccessor = false;
+      const authenticatedA = openProject(queryClient, PUBLIC_ID, {
+        demo: false,
+      });
+      lifecycleHandles.push(authenticatedA);
+      expect((await authenticatedA.result).status).toBe("opened");
+      holdSuccessor = true;
+    }
+    const holeSentinel = [
+      { x: 0.35, y: 0.35 },
+      { x: 0.45, y: 0.35 },
+      { x: 0.45, y: 0.45 },
+      { x: 0.35, y: 0.45 },
+    ];
+    const unholedSource = areaAnnotation();
+    const holedSource = areaAnnotation({
+      data: {
+        type: "area-polygon",
+        takeoffItemId: ITEM_ID,
+        color: "#22c55e",
+        vertices: SQUARE,
+        holes: [{ vertices: holeSentinel }],
+        areaSqUnits: 32,
+        unit: "SF",
+      },
+    });
+    const lineA = { x: 0.1, y: 0.5 };
+    const lineB = { x: 0.9, y: 0.5 };
+    const preview = {
+      targetAnnotationId: unholedSource.id,
+      original: SQUARE,
+      left: [SQUARE[0], { x: 0.5, y: 0.2 }, { x: 0.5, y: 0.8 }, SQUARE[3]],
+      right: [{ x: 0.5, y: 0.2 }, SQUARE[1], SQUARE[2], { x: 0.5, y: 0.8 }],
+      lineA,
+      lineB,
+    };
+    seedAnnotations(queryClient, [unholedSource]);
+    seedTakeoff(queryClient, [takeoffItem("polygon")], []);
+    renderCanvas();
+    act(() => {
+      useToolStore.getState().setSplitAreaActive(true);
+      useToolStore.setState({
+        splitPreview: preview,
+        splitLineA: lineA,
+        splitLineB: lineB,
+      });
+    });
+    expect(readSeededAnnotations(queryClient)[0]).toBe(unholedSource);
+    const liveRows = [holedSource];
+    const timeout = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(() => 1 as unknown as ReturnType<typeof setTimeout>);
+    timeout.mockClear();
+    fetchMock.mockClear();
+
+    let rowsBeforeAccept: readonly ClientAnnotation[] = [];
+    act(() => {
+      // The preview's render capture remains unholed for this turn, while acceptSplit's
+      // synchronous cache bridge must observe the same-ID concurrent holes update.
+      seedAnnotations(queryClient, liveRows);
+      rowsBeforeAccept = readSeededAnnotations(queryClient);
+      timeout.mockClear();
+      fireEvent.keyDown(window, { key: "Enter" });
+    });
+
+    const rowsAfter = readSeededAnnotations(queryClient);
+    expect(rowsAfter).toBe(rowsBeforeAccept);
+    expect(rowsAfter[0]).toBe(rowsBeforeAccept[0]);
+    expect(
+      (rowsAfter[0]?.data as { holes?: { vertices: unknown }[] }).holes?.[0]
+        ?.vertices,
+    ).toBe(holeSentinel);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useToolStore.getState().splitPreview).toBe(preview);
+    expect(useToolStore.getState().splitLineA).toBe(lineA);
+    expect(useToolStore.getState().splitLineB).toBe(lineB);
+    expect(useToolStore.getState().splitError).toBe(HOLED_TARGET_MESSAGE);
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 5000);
+  }
+
+  it.each([
+    { label: "demo", authenticated: false },
+    { label: "persistable auth", authenticated: true },
+  ])(
+    "$label live holed split target rejects Accept before cache mutation or network",
+    ({ authenticated }) => assertHoledAcceptFailsClosed(authenticated),
+  );
+
+  it("an explicit empty holes array remains locally splittable on Accept", () => {
+    const source = areaAnnotation({
+      data: {
+        type: "area-polygon",
+        takeoffItemId: ITEM_ID,
+        color: "#22c55e",
+        vertices: SQUARE,
+        holes: [],
+        areaSqUnits: 36,
+        unit: "SF",
+      },
+    });
+    const lineA = { x: 0.1, y: 0.5 };
+    const lineB = { x: 0.9, y: 0.5 };
+    const left = [SQUARE[0], { x: 0.5, y: 0.2 }, { x: 0.5, y: 0.8 }, SQUARE[3]];
+    const right = [
+      { x: 0.5, y: 0.2 },
+      SQUARE[1],
+      SQUARE[2],
+      { x: 0.5, y: 0.8 },
+    ];
+    const preview = {
+      targetAnnotationId: source.id,
+      original: SQUARE,
+      left,
+      right,
+      lineA,
+      lineB,
+    };
+    seedAnnotations(queryClient, [source]);
+    seedTakeoff(queryClient, [takeoffItem("polygon")], []);
+    renderCanvas();
+    act(() => {
+      useToolStore.getState().setSplitAreaActive(true);
+      useToolStore.setState({
+        splitPreview: preview,
+        splitLineA: lineA,
+        splitLineB: lineB,
+      });
+    });
+    fetchMock.mockClear();
+
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    const rows = readSeededAnnotations(queryClient);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === source.id)?.data).toMatchObject({
+      vertices: left,
+    });
+    expect(rows.find((row) => row.id < 0)?.data).toMatchObject({
+      vertices: right,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useToolStore.getState()).toMatchObject({
+      splitPreview: null,
+      splitLineA: null,
+      splitLineB: null,
+      splitError: null,
+    });
   });
 
   it("second split click does not publish A's preview into successor B", () => {

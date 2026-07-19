@@ -10,6 +10,7 @@
 //   - multiple candidates are ordered by longest chord, and preview publication retains the exact
 //     render-captured annotation vertices plus press-captured line-A identity even if the live
 //     store is synchronously changed by the B publication.
+//   - a holed longest candidate is rejected after ranking without falling through or clearing A/B.
 //
 // The behavior rows remain the parent oracle; the final describe is now POST-move topology and
 // names the controller as the sole mousedown home in the exact 11-entry registry.
@@ -49,6 +50,7 @@ const PAGE = 1;
 const WIDTH = 200;
 const HEIGHT = 100;
 const MISS_MESSAGE = "Line does not cross any area polygon in exactly 2 places";
+const HOLED_TARGET_MESSAGE = "Area polygons with holes cannot be split yet";
 
 let queryClient: QueryClient;
 const parentMouseDown = vi.fn();
@@ -93,6 +95,7 @@ function canvasRect(width: number, height: number): DOMRect {
 function areaAnnotation(
   id: number,
   vertices: { x: number; y: number }[],
+  holes?: { vertices: { x: number; y: number }[] }[],
 ): ClientAnnotation {
   const xs = vertices.map((point) => point.x);
   const ys = vertices.map((point) => point.y);
@@ -108,6 +111,7 @@ function areaAnnotation(
       takeoffItemId: 31,
       color: "#22c55e",
       vertices,
+      ...(holes === undefined ? {} : { holes }),
       areaSqUnits: 1,
       unit: "SF",
     },
@@ -460,6 +464,49 @@ describe("split gesture freeze (real overlay, production mousedown)", () => {
     });
     expect(cancelled).toHaveBeenCalledTimes(1);
   });
+
+  it("W5: a holed longest target fails closed without falling through or clearing A/B", async () => {
+    const shorterVertices = [
+      { x: 0.1, y: 0.4 },
+      { x: 0.25, y: 0.4 },
+      { x: 0.25, y: 0.6 },
+      { x: 0.1, y: 0.6 },
+    ];
+    const holedWinnerVertices = [
+      { x: 0.3, y: 0.2 },
+      { x: 0.9, y: 0.2 },
+      { x: 0.9, y: 0.8 },
+      { x: 0.3, y: 0.8 },
+    ];
+    const holeSentinel = [
+      { x: 0.5, y: 0.4 },
+      { x: 0.7, y: 0.4 },
+      { x: 0.7, y: 0.6 },
+      { x: 0.5, y: 0.6 },
+    ];
+    seedSplitState([
+      areaAnnotation(301, shorterVertices),
+      areaAnnotation(302, holedWinnerVertices, [{ vertices: holeSentinel }]),
+    ]);
+    const canvas = await mountCanvas();
+    const capturedA = { x: 0.05, y: 0.5 };
+    act(() => {
+      useToolStore.getState().setSplitLineEndpoint("a", capturedA);
+    });
+    const timeout = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(() => 1 as unknown as ReturnType<typeof setTimeout>);
+    timeout.mockClear();
+
+    press(canvas, mouseDownEvent(190, 50));
+
+    expect(useToolStore.getState().splitLineA).toBe(capturedA);
+    expect(useToolStore.getState().splitLineB).toEqual({ x: 0.95, y: 0.5 });
+    expect(useToolStore.getState().splitPreview).toBeNull();
+    expect(useToolStore.getState().splitError).toBe(HOLED_TARGET_MESSAGE);
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 5000);
+    expect(parentMouseDown).not.toHaveBeenCalled();
+  });
 });
 
 describe("split seam topology pins (POST-move: controller is the sole mousedown home)", () => {
@@ -522,10 +569,8 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
     expect(TOOLS).toHaveLength(11);
   });
 
-  it("pins the untouched acceptSplit composite and sacred dependency block", () => {
-    const acceptStart = AO.indexOf(
-      "  /** Accept a pending Split Area preview",
-    );
+  it("pins the hole-guarded acceptSplit composite and sacred dependency block", () => {
+    const acceptStart = AO.indexOf("  /** Accept a pending Split Area preview");
     const acceptEnd = AO.indexOf(
       "  /** Save the current in-progress polyline",
       acceptStart,
@@ -534,9 +579,9 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
     expect(acceptEnd).toBeGreaterThan(acceptStart);
     // Exclude only the blank separator immediately before the next owned callback docblock.
     const acceptSplit = AO.slice(acceptStart, acceptEnd - 1);
-    expect(Buffer.byteLength(acceptSplit, "utf8")).toBe(4911);
+    expect(Buffer.byteLength(acceptSplit, "utf8")).toBe(5079);
     expect(sha256(acceptSplit)).toBe(
-      "05cc7ec9e47949ae8c63895d1eb94b8e87db2080f6f1f5e53b357cb8d7bb9611",
+      "6f47246e2da40dd30f8f1631326c262617b77daba5f2bbc742248d3e9ae03e5d",
     );
 
     const callbackStart = AO.indexOf("  const handleMouseDown = useCallback(");

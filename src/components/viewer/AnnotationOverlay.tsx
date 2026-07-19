@@ -72,6 +72,7 @@ import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
 import { TOOL_STORE_CAPABILITIES } from "./tools/capabilities";
 import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
+import { SPLIT_HOLED_TARGET_MESSAGE } from "./tools/split";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useAnnotationDragMachine } from "./useAnnotationDragMachine";
@@ -1206,7 +1207,12 @@ export default memo(function AnnotationOverlay({
       useToolStore.getState().setSplitLineEndpoint("a", null as unknown as { x: number; y: number });
       return;
     }
-    const parentItem = currentItems.find((t) => t.id === (target.data as AreaPolygonData).takeoffItemId);
+    const targetData = target.data as AreaPolygonData;
+    if ((targetData.holes?.length ?? 0) > 0) {
+      publishTransientSplitError(SPLIT_HOLED_TARGET_MESSAGE, 5000);
+      return;
+    }
+    const parentItem = currentItems.find((t) => t.id === targetData.takeoffItemId);
     if (!parentItem) {
       useToolStore.getState().setSplitPreview(null);
       return;

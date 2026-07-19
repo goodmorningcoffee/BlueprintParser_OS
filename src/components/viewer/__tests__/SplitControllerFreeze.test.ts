@@ -2,8 +2,8 @@
 //
 // [refactor jul19 P3.2] Direct contract for the mechanically extracted Split mousedown
 // controller. The parent real-overlay freeze proves browser integration; this file makes the
-// controller-only claim values, staged capability guards, exact effect order, and registry stop
-// boundary observable after the legacy AO branch has gone away.
+// controller-only claim values, staged capability guards, exact effect order, holed-target
+// fail-closed policy, and registry stop boundary observable after the legacy AO branch has gone.
 
 import { readFileSync } from "node:fs";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -33,6 +33,7 @@ type SplitCapability = NonNullable<ToolContext["split"]>;
 type SplitPreview = NonNullable<ToolStoreState["splitPreview"]>;
 
 const MISS_MESSAGE = "Line does not cross any area polygon in exactly 2 places";
+const HOLED_TARGET_MESSAGE = "Area polygons with holes cannot be split yet";
 
 let fetchProbe: ReturnType<typeof vi.fn>;
 
@@ -465,6 +466,144 @@ describe("splitController second-click result arms", () => {
     expectForbiddenEffectsCold(storeRead, latest);
   });
 
+  it("rejects the longest holed target without falling through to a shorter polygon", () => {
+    const shorterVertices = Object.freeze([
+      { x: 0.1, y: 0.4 },
+      { x: 0.25, y: 0.4 },
+      { x: 0.25, y: 0.6 },
+      { x: 0.1, y: 0.6 },
+    ]) as unknown as { x: number; y: number }[];
+    const holedWinnerVertices = Object.freeze([
+      { x: 0.3, y: 0.2 },
+      { x: 0.9, y: 0.2 },
+      { x: 0.9, y: 0.8 },
+      { x: 0.3, y: 0.8 },
+    ]) as unknown as { x: number; y: number }[];
+    const holeSentinel = Object.freeze([
+      { x: 0.5, y: 0.4 },
+      { x: 0.7, y: 0.4 },
+      { x: 0.7, y: 0.6 },
+      { x: 0.5, y: 0.6 },
+    ]) as unknown as { x: number; y: number }[];
+    const annotations = Object.freeze([
+      areaAnnotation(301, shorterVertices),
+      areaAnnotation(302, holedWinnerVertices, {
+        data: Object.freeze({
+          type: "area-polygon",
+          takeoffItemId: 41,
+          color: "#22c55e",
+          vertices: holedWinnerVertices,
+          holes: Object.freeze([Object.freeze({ vertices: holeSentinel })]),
+          areaSqUnits: 1,
+          unit: "SF",
+        }),
+      }),
+    ]);
+    const capturedA = Object.freeze({ x: 0.05, y: 0.5 });
+    const token = claimToolTailAuthority({ witness: "holed-winner" });
+    const latest = installLatestSentinels();
+    const journal: Journal = [];
+    const { context, split, storeRead, canAdoptProjectLifecycle } = contextFor({
+      state: toolState({ splitLineA: capturedA }),
+      position: Object.freeze({ x: 190, y: 50 }),
+      journal,
+      token,
+      annotations,
+    });
+    const event = eventFor(journal, token);
+
+    expect(splitController.onMouseDown(event, context)).toBe(true);
+
+    expect(journal).toEqual([
+      "stop:tail-owned",
+      "line:b:0.95,0.5:tail-retired",
+      "canAdopt",
+      `error:${HOLED_TARGET_MESSAGE}:5000`,
+    ]);
+    expect(split.setLineEndpoint).toHaveBeenCalledExactlyOnceWith("b", {
+      x: 0.95,
+      y: 0.5,
+    });
+    expect(split.publishError).toHaveBeenCalledExactlyOnceWith(
+      HOLED_TARGET_MESSAGE,
+      5000,
+    );
+    expect(split.setPreview).not.toHaveBeenCalled();
+    expect(canAdoptProjectLifecycle).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expectForbiddenEffectsCold(storeRead, latest);
+  });
+
+  it("accepts the longest empty-holes target despite a shorter holed candidate", () => {
+    const shorterHoledVertices = Object.freeze([
+      { x: 0.05, y: 0.4 },
+      { x: 0.15, y: 0.4 },
+      { x: 0.15, y: 0.6 },
+      { x: 0.05, y: 0.6 },
+    ]) as unknown as { x: number; y: number }[];
+    const vertices = Object.freeze([
+      { x: 0.2, y: 0.2 },
+      { x: 0.8, y: 0.2 },
+      { x: 0.8, y: 0.8 },
+      { x: 0.2, y: 0.8 },
+    ]) as unknown as { x: number; y: number }[];
+    const annotations = Object.freeze([
+      areaAnnotation(400, shorterHoledVertices, {
+        data: Object.freeze({
+          type: "area-polygon",
+          takeoffItemId: 41,
+          color: "#22c55e",
+          vertices: shorterHoledVertices,
+          holes: Object.freeze([
+            Object.freeze({
+              vertices: Object.freeze([
+                { x: 0.08, y: 0.45 },
+                { x: 0.12, y: 0.45 },
+                { x: 0.1, y: 0.55 },
+              ]),
+            }),
+          ]),
+          areaSqUnits: 1,
+          unit: "SF",
+        }),
+      }),
+      areaAnnotation(401, vertices, {
+        data: Object.freeze({
+          type: "area-polygon",
+          takeoffItemId: 41,
+          color: "#22c55e",
+          vertices,
+          holes: Object.freeze([]),
+          areaSqUnits: 1,
+          unit: "SF",
+        }),
+      }),
+    ]);
+    const token = claimToolTailAuthority({ witness: "empty-holes" });
+    const latest = installLatestSentinels();
+    const journal: Journal = [];
+    const { context, split, storeRead } = contextFor({
+      state: toolState({
+        splitLineA: Object.freeze({ x: 0.05, y: 0.5 }),
+      }),
+      position: Object.freeze({ x: 190, y: 50 }),
+      journal,
+      token,
+      annotations,
+    });
+
+    expect(splitController.onMouseDown(eventFor(journal, token), context)).toBe(
+      true,
+    );
+
+    expect(split.setPreview).toHaveBeenCalledTimes(1);
+    expect(split.setPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ targetAnnotationId: 401, original: vertices }),
+    );
+    expect(split.publishError).not.toHaveBeenCalled();
+    expectForbiddenEffectsCold(storeRead, latest);
+  });
+
   it("success selects the longest valid candidate and publishes the exact captured payload", () => {
     const smallVertices = Object.freeze([
       { x: 0.1, y: 0.4 },
@@ -688,7 +827,7 @@ describe("splitController literal-claim and ownership source policy", () => {
     ts.ScriptKind.TS,
   );
 
-  it("keeps all five direct exits as literal true claims", () => {
+  it("keeps all six direct exits as literal true claims", () => {
     const object = controllerObject(source);
     const method = object.properties.find(
       (property): property is ts.MethodDeclaration =>
@@ -697,9 +836,9 @@ describe("splitController literal-claim and ownership source policy", () => {
     );
     if (!method) throw new Error("Expected splitController.onMouseDown method");
     const returns = directReturns(method);
-    expect(returns).toHaveLength(5);
+    expect(returns).toHaveLength(6);
     expect(returns.map((statement) => statement.expression?.kind)).toEqual(
-      Array(5).fill(ts.SyntaxKind.TrueKeyword),
+      Array(6).fill(ts.SyntaxKind.TrueKeyword),
     );
   });
 
