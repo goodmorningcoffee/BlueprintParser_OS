@@ -520,10 +520,10 @@ function expectPostMoveOrder(source: string): void {
 
 describe("AnnotationOverlay symbol-search result post-move topology", () => {
   it("pins the exact AO, import, earlier driver, pure call, next pure call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_899);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(81_661);
+    expect(count(AO, "\n")).toBe(1_732);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(74_787);
     expect(sha256(AO)).toBe(
-      "38b1de62c29a5c31d078ca9e696e3b9c5afc4f997aa81842a38d971830b4a093",
+      "734e7d5ffdc2002fdd176b46b04b3bf0b0b98ae6a0839799ab279c6bfa7530f4",
     );
 
     const symbolImport =
@@ -539,10 +539,10 @@ describe("AnnotationOverlay symbol-search result post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw symbol search results on current page\n",
     );
-    expect(count(prefix, "\n")).toBe(189);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(8_342);
+    expect(count(prefix, "\n")).toBe(91);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(3_449);
     expect(sha256(prefix)).toBe(
-      "0a1e402bc9c15daa0f360ad7ac47ac858afe7f3adbaf7fbc1eb14b73ac6c6497",
+      "5cd1b04a9f6adc2e77c38f51a86ddba3635a13be876edf68b4613ad550df4e3a",
     );
 
     const symbolCall = exactSlice(

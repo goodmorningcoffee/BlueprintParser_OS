@@ -502,10 +502,10 @@ describe("AnnotationOverlay linear-polyline post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw completed linear polylines",
     );
-    expect(count(prefix, "\n")).toBe(236);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(9_331);
+    expect(count(prefix, "\n")).toBe(138);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(4_438);
     expect(sha256(prefix)).toBe(
-      "71b30178505626a5b4a29b414cde99a377de638201971a4df8c07d4c2252f555",
+      "419d6c9ef1904752bf635ca601e1453c5d8c854c8fab0d5a2288e3e4d8d63842",
     );
 
     const linearCall = exactSlice(

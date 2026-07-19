@@ -589,10 +589,10 @@ function expectPostMoveOrder(source: string): void {
 
 describe("AnnotationOverlay active free-floating tag-instance post-move topology", () => {
   it("pins AO, import, upstream precompute/annotations, pure call, downstream calls, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_899);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(81_661);
+    expect(count(AO, "\n")).toBe(1_732);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(74_787);
     expect(sha256(AO)).toBe(
-      "38b1de62c29a5c31d078ca9e696e3b9c5afc4f997aa81842a38d971830b4a093",
+      "734e7d5ffdc2002fdd176b46b04b3bf0b0b98ae6a0839799ab279c6bfa7530f4",
     );
 
     const helperImport =
@@ -615,17 +615,17 @@ describe("AnnotationOverlay active free-floating tag-instance post-move topology
     );
 
     const annotations = exactSlice(AO, "    // Draw existing annotations\n", ACTIVE_HEADER);
-    expect(count(annotations, "\n")).toBe(114);
-    expect(Buffer.byteLength(annotations, "utf8")).toBe(5_310);
+    expect(count(annotations, "\n")).toBe(16);
+    expect(Buffer.byteLength(annotations, "utf8")).toBe(417);
     expect(sha256(annotations)).toBe(
-      "1d4853418bc3cb71e8469c5a9394868a13f94722c60d423eea49bdd64a67e694",
+      "2422f753908674c7df08da0eda338df772b825cffceceea815cc1b98750ad80c",
     );
 
     const prefix = exactSlice(AO, "  // Draw annotations\n", ACTIVE_HEADER);
-    expect(count(prefix, "\n")).toBe(171);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(7_775);
+    expect(count(prefix, "\n")).toBe(73);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(2_882);
     expect(sha256(prefix)).toBe(
-      "df206ef09f7950d04f92e885d81290c17f78d265027447711f0b003fe839b2d0",
+      "52783886b2b6694ae0c0f0abffe9dc3ff633fa6256dd30118ac542d5c810ea83",
     );
 
     const stage = exactSlice(AO, ACTIVE_HEADER, VISIBLE_HEADER);

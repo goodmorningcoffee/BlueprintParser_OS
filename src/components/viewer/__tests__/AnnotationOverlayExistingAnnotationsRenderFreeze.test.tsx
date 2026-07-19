@@ -727,21 +727,25 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const EXISTING_ANNOTATIONS = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/existingAnnotations.ts"),
+  "utf8",
+);
 const LABEL_HEADER = "/** Assign colors by unique label order — each unique label gets next color in palette */\n";
 const COUNT_START = "function drawCountMarker(\n";
 const SNAPSHOT_START = "function readCanvasGestureSnapshot(): CanvasGestureSnapshot {\n";
+const HELPER_RENDER_HEADER = "/**\n * Draw existing count markers or bbox/label annotations in source-row order.\n";
 const EXISTING_HEADER = "    // Draw existing annotations\n";
 const ACTIVE_HEADER =
   "    // ─── Draw free-floating active tag instances (annotationId = -1, not in annotation loop) ───\n";
 const VISIBLE_HEADER =
   "    // ─── Draw visible tag instances (not the active tag) ───\n";
 
-function expectPreMoveOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const precompute = source.indexOf("    // ─── YOLO Tag highlighting: compute which annotations");
   const existing = source.indexOf(EXISTING_HEADER, precompute);
-  const loop = source.indexOf("    for (const ann of pageAnnotations) {", existing);
-  const countCall = source.indexOf("drawCountMarker(ctx, ann, width, height", loop);
-  const active = source.indexOf(ACTIVE_HEADER, countCall);
+  const existingCall = source.indexOf("drawExistingAnnotations(ctx, {", existing);
+  const active = source.indexOf(ACTIVE_HEADER, existingCall);
   const activeCall = source.indexOf("drawActiveTagInstances(ctx, {", active);
   const visible = source.indexOf(VISIBLE_HEADER, activeCall);
   const dependencies = source.indexOf(
@@ -750,34 +754,41 @@ function expectPreMoveOrder(source: string): void {
   );
   expect(precompute).toBeGreaterThan(-1);
   expect(existing).toBeGreaterThan(precompute);
-  expect(loop).toBeGreaterThan(existing);
-  expect(countCall).toBeGreaterThan(loop);
-  expect(active).toBeGreaterThan(countCall);
+  expect(existingCall).toBeGreaterThan(existing);
+  expect(active).toBeGreaterThan(existingCall);
   expect(activeCall).toBeGreaterThan(active);
   expect(visible).toBeGreaterThan(activeCall);
   expect(dependencies).toBeGreaterThan(visible);
 }
 
-describe("AnnotationOverlay existing-annotation pre-move topology", () => {
-  it("pins AO, captive label support, top-level count renderer, inline stage, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_899);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(81_661);
+describe("AnnotationOverlay existing-annotation post-move topology", () => {
+  it("pins AO, captive label support, helper import/body, ordered call, and dependencies", () => {
+    expect(count(AO, "\n")).toBe(1_732);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(74_787);
     expect(sha256(AO)).toBe(
-      "38b1de62c29a5c31d078ca9e696e3b9c5afc4f997aa81842a38d971830b4a093",
+      "734e7d5ffdc2002fdd176b46b04b3bf0b0b98ae6a0839799ab279c6bfa7530f4",
     );
 
-    const labelSupport = exactSlice(AO, LABEL_HEADER, COUNT_START);
+    const helperImport =
+      'import { drawExistingAnnotations } from "./render/existingAnnotations";\n';
+    expect(count(AO, helperImport)).toBe(1);
+    expect(Buffer.byteLength(helperImport, "utf8")).toBe(72);
+    expect(sha256(helperImport)).toBe(
+      "d7e86e808d0b09a887cf53677600b2929b9dfe846697af373e622275697d4621",
+    );
+
+    const labelSupport = exactSlice(AO, LABEL_HEADER, SNAPSHOT_START);
     expect(count(labelSupport, "\n")).toBe(10);
     expect(Buffer.byteLength(labelSupport, "utf8")).toBe(421);
     expect(sha256(labelSupport)).toBe(
       "9f045030a8885275fb67c3cee196d80263db25db281b426b94181a0f095ee905",
     );
 
-    const countMarker = exactSlice(AO, COUNT_START, SNAPSHOT_START);
+    const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
     expect(count(countMarker, "\n")).toBe(70);
-    expect(Buffer.byteLength(countMarker, "utf8")).toBe(2_036);
+    expect(Buffer.byteLength(countMarker, "utf8")).toBe(2_055);
     expect(sha256(countMarker)).toBe(
-      "a1f9b8a431425c1af61b0344977db76b5d629034f243abb2dc86f1971ce8b683",
+      "e21bc361481e4c6309f51250f664b1decb031991cc8156d306cef6fb133e56ac",
     );
 
     const activeSupport = exactSlice(
@@ -792,10 +803,16 @@ describe("AnnotationOverlay existing-annotation pre-move topology", () => {
     );
 
     const stage = exactSlice(AO, EXISTING_HEADER, ACTIVE_HEADER);
-    expect(count(stage, "\n")).toBe(114);
-    expect(Buffer.byteLength(stage, "utf8")).toBe(5_310);
+    expect(count(stage, "\n")).toBe(16);
+    expect(Buffer.byteLength(stage, "utf8")).toBe(417);
     expect(sha256(stage)).toBe(
-      "1d4853418bc3cb71e8469c5a9394868a13f94722c60d423eea49bdd64a67e694",
+      "2422f753908674c7df08da0eda338df772b825cffceceea815cc1b98750ad80c",
+    );
+
+    expect(count(EXISTING_ANNOTATIONS, "\n")).toBe(238);
+    expect(Buffer.byteLength(EXISTING_ANNOTATIONS, "utf8")).toBe(8_744);
+    expect(sha256(EXISTING_ANNOTATIONS)).toBe(
+      "2a92805207d46f2df5fa951cc8e996dba5c06f14e6dca75adab466cab31c40ed",
     );
 
     const dependencies = exactSlice(
@@ -812,28 +829,34 @@ describe("AnnotationOverlay existing-annotation pre-move topology", () => {
   });
 
   it("keeps the five shapes, live bridge/coercive lookup, selection order, and biting stage order", () => {
-    expectPreMoveOrder(AO);
-    const labelSupport = exactSlice(AO, LABEL_HEADER, COUNT_START);
-    const countMarker = exactSlice(AO, COUNT_START, SNAPSHOT_START);
+    expectPostMoveOrder(AO);
+    const labelSupport = exactSlice(AO, LABEL_HEADER, SNAPSHOT_START);
+    const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
     const stage = exactSlice(AO, EXISTING_HEADER, ACTIVE_HEADER);
 
     expect(count(AO, "const labelColorMap = new Map<string, string>();")).toBe(1);
     expect(count(AO, "function labelColor(name: string): string {")).toBe(1);
     expect(count(labelSupport, "TWENTY_COLORS[labelColorMap.size % TWENTY_COLORS.length]")).toBe(1);
-    expect(count(AO, COUNT_START.trim())).toBe(1);
-    expect(AO.indexOf(COUNT_START)).toBeLessThan(AO.indexOf("export default memo(function AnnotationOverlay"));
-    expect(count(stage, "for (const ann of pageAnnotations)")).toBe(1);
-    expect(count(stage, "drawCountMarker(ctx, ann, width, height")).toBe(1);
-    expect(count(stage, "const color = labelColor(ann.name);")).toBe(1);
-    expect(count(stage, "readTakeoffItems(qc, publicId)")).toBe(1);
-    expect(stage).toContain("t.id === itemId || String(t.id) === String(itemId)");
-    expect(stage).toContain("ann.id === selectedId || multiSelect.isSelected(ann.id)");
-    expect(stage).toContain("const [minX, minY, maxX, maxY] = ann.bbox;");
-    expect(stage).toContain("const w = (maxX - minX) * width;");
-    expect(stage).toContain("activeTag && ann.source === \"yolo\" && !isTagMatch");
-    expect(stage).toContain("symbolSearchResults !== null");
-    expect(stage).toContain("if (!isAreaPolygon)");
-    expect(stage).toContain('const isUserSource = ann.source === "user";');
+    expect(count(AO, COUNT_START.trim())).toBe(0);
+    expect(count(EXISTING_ANNOTATIONS, COUNT_START.trim())).toBe(1);
+    expect(count(stage, "drawExistingAnnotations(ctx, {")).toBe(1);
+    expect(stage).toContain("annotations: pageAnnotations,");
+    expect(stage).toContain("selection: multiSelect,");
+    expect(stage).toContain("activeTagAnnotationIds: activeTagAnnIds,");
+    expect(stage).toContain("getLabelColor: labelColor,");
+    expect(stage).toContain("getTakeoffItems: () => readTakeoffItems(qc, publicId),");
+    expect(count(EXISTING_ANNOTATIONS, "for (const ann of annotations)")).toBe(1);
+    expect(count(EXISTING_ANNOTATIONS, "drawCountMarker(ctx, ann, width, height")).toBe(1);
+    expect(count(EXISTING_ANNOTATIONS, "const color = getLabelColor(ann.name);")).toBe(1);
+    expect(count(EXISTING_ANNOTATIONS, "getTakeoffItems()")).toBe(1);
+    expect(EXISTING_ANNOTATIONS).toContain("t.id === itemId || String(t.id) === String(itemId)");
+    expect(EXISTING_ANNOTATIONS).toContain("ann.id === selectedId || selection.isSelected(ann.id)");
+    expect(EXISTING_ANNOTATIONS).toContain("const [minX, minY, maxX, maxY] = ann.bbox;");
+    expect(EXISTING_ANNOTATIONS).toContain("const w = (maxX - minX) * width;");
+    expect(EXISTING_ANNOTATIONS).toContain("activeTag && ann.source === \"yolo\" && !isTagMatch");
+    expect(EXISTING_ANNOTATIONS).toContain("symbolSearchResults !== null");
+    expect(EXISTING_ANNOTATIONS).toContain("if (!isAreaPolygon)");
+    expect(EXISTING_ANNOTATIONS).toContain('const isUserSource = ann.source === "user";');
     for (const shape of ["circle", "square", "diamond", "triangle", "cross"]) {
       expect(count(countMarker, `case "${shape}"`)).toBe(1);
     }
@@ -841,24 +864,24 @@ describe("AnnotationOverlay existing-annotation pre-move topology", () => {
     expect(count(countMarker, "ctx.restore();")).toBe(1);
     expect(count(countMarker, "const r = (markerSize || 10) / (cssScale || 1);")).toBe(1);
 
+    expect(EXISTING_ANNOTATIONS).not.toMatch(
+      /@\/(stores|queries)|fetch\(|persist|from "react"|labelColorMap/i,
+    );
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/existingAnnotations.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/existingAnnotations.test.ts",
-    ))).toBe(false);
+    ))).toBe(true);
 
-    expect(() => expectPreMoveOrder(
-      AO.replace("drawCountMarker(ctx, ann, width, height", "missingCountMarker(ctx, ann, width, height"),
-    )).toThrow();
-    expect(() => expectPreMoveOrder(
-      AO.replace("    for (const ann of pageAnnotations) {", "    for (const ann of [...pageAnnotations].reverse()) {"),
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawExistingAnnotations(ctx, {", "missingExistingAnnotations(ctx, {"),
     )).toThrow();
     const reordered = AO
       .replace(stage, "")
       .replace(VISIBLE_HEADER, `${stage}${VISIBLE_HEADER}`);
-    expect(() => expectPreMoveOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
   });
 });

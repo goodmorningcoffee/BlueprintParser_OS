@@ -239,13 +239,13 @@ const ROUTE_METHOD_EXCEPTION_BASELINE = {
 };
 
 const AS_ANY_BASELINE = {
-  expectedFiles: 43,
+  expectedFiles: 44,
   expectedOccurrences: 142,
   approved: [
     { path: "src/app/(dashboard)/home/page.tsx", max: 2 },
     { path: "src/app/api/demo/chat/route.ts", max: 1 },
     { path: "src/app/docs/sections/12-for-llms.tsx", max: 1 },
-    { path: "src/components/viewer/AnnotationOverlay.tsx", max: 9 },
+    { path: "src/components/viewer/AnnotationOverlay.tsx", max: 6 },
     { path: "src/components/viewer/AreaTab.tsx", max: 6 },
     { path: "src/components/viewer/AutoQtoTab.tsx", max: 3 },
     { path: "src/components/viewer/CountTab.tsx", max: 4 },
@@ -263,6 +263,7 @@ const AS_ANY_BASELINE = {
     { path: "src/components/viewer/TakeoffPanel.tsx", max: 6 },
     { path: "src/components/viewer/TextAnnotationOverlay.tsx", max: 1 },
     { path: "src/components/viewer/ViewerToolbar.tsx", max: 2 },
+    { path: "src/components/viewer/render/existingAnnotations.ts", max: 3 },
     { path: "src/components/viewer/tools/pointerGroup.ts", max: 7 },
     { path: "src/components/viewer/tools/tagPick.ts", max: 1 },
     { path: "src/hooks/useChunkLoader.ts", max: 1 },
@@ -298,7 +299,7 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/components/viewer/AnnotationOverlay.tsx",
-      maxLines: 1899,
+      maxLines: 1732,
       reason: "viewer-hot-exception",
     },
     {
