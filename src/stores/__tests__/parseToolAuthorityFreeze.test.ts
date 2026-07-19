@@ -453,6 +453,7 @@ describe("later user tool intent revokes parse completion writes", () => {
       area: readFileSync("src/components/viewer/AreaTab.tsx", "utf8"),
       bucketDialog: readFileSync("src/components/viewer/BucketFillAssignDialog.tsx", "utf8"),
       drawingPreview: readFileSync("src/components/viewer/DrawingPreviewLayer.tsx", "utf8"),
+      splitActions: readFileSync("src/components/viewer/SplitPreviewActions.tsx", "utf8"),
       symbolSearch: readFileSync("src/components/viewer/SymbolSearchPanel.tsx", "utf8"),
       takeoff: readFileSync("src/components/viewer/TakeoffPanel.tsx", "utf8"),
     };
@@ -472,7 +473,7 @@ describe("later user tool intent revokes parse completion writes", () => {
 
     for (const [name, source, expected] of [
       ["AreaTab tool/tuning controls", sources.area, 7],
-      ["DrawingPreview accept/cancel/done/exit", sources.drawingPreview, 6],
+      ["DrawingPreview non-Split continuation controls", sources.drawingPreview, 4],
       ["Takeoff undo/redo", sources.takeoff, 2],
     ] as const) {
       expect(
@@ -484,6 +485,28 @@ describe("later user tool intent revokes parse completion writes", () => {
         `${name} keyboard admission`,
       ).toHaveLength(expected);
     }
+    expect(sources.drawingPreview.match(/<SplitPreviewActions\b/gu)).toHaveLength(1);
+    expect(sources.drawingPreview).toMatch(
+      /<SplitPreviewActions\s+preview=\{splitPreview\}\s+width=\{width\}\s+height=\{height\}\s+cssScale=\{cssScale\}\s+\/>/u,
+    );
+    expect(sources.splitActions.match(/onPointerDown=\{claimReadyTail\}/gu)).toHaveLength(2);
+    expect(sources.splitActions.match(/onKeyDown=\{claimReadyTail\}/gu)).toHaveLength(2);
+    expect(sources.splitActions).toMatch(
+      /const claimReadyTail = \(\) => \{\s*if \(!commitPending && ownsReadyPreview\(\)\) invalidateToolTailAuthority\(\);\s*\};/u,
+    );
+    const splitOwner = sourceSlice(
+      "src/components/viewer/SplitPreviewActions.tsx",
+      "  const ownsReadyPreview = () => {",
+      "  const claimReadyTail = () => {",
+    );
+    for (const guard of [
+      "live.activeTool === renderedActivation",
+      'live.activeTool?.kind === "split"',
+      "live.splitPreview === preview",
+      "live.splitPreview.commitPending !== true",
+      "live.splitLineA === preview.lineA",
+      "live.splitLineB === preview.lineB",
+    ]) expect(splitOwner).toContain(guard);
     for (const [name, source] of Object.entries(sources)) {
       expect(source, `${name} uses only the generic global Tool slot`)
         .not.toContain("invalidateParseToolAuthority");

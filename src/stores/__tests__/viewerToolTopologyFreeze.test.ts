@@ -14,6 +14,7 @@ const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 const UI_STORE_FILE = "src/stores/uiStore.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const DRAWING_PREVIEW = "src/components/viewer/DrawingPreviewLayer.tsx";
+const SPLIT_PREVIEW_ACTIONS = "src/components/viewer/SplitPreviewActions.tsx";
 const YOLO_FACADE = "src/queries/useYoloTags.ts";
 const ACTIVE_TOOL_STATE_MODULE = "@/lib/active-tool-state";
 
@@ -192,7 +193,7 @@ const PREVIEW_TOOL_PRIMITIVES = [
 ] as const;
 
 const PREVIEW_IMPERATIVE_TOOL_READS = [
-  "setBucketFillActive", "setBucketFillBarrierMode", "setBucketFillPreview", "setSplitPreview",
+  "setBucketFillActive", "setBucketFillBarrierMode", "setBucketFillPreview",
 ] as const;
 
 const textCache = new Map<string, string>();
@@ -1020,6 +1021,22 @@ describe("P2.3 T2 sacred canvas subscription topology", () => {
       .map((access) => access.member)
       .sort();
     expect(imperative).toEqual([...PREVIEW_IMPERATIVE_TOOL_READS].sort());
+  });
+
+  it("pins the subscription-free Split action leaf and its exact imperative owner reads", () => {
+    expect(textOf(DRAWING_PREVIEW).match(/<SplitPreviewActions\b/gu)).toHaveLength(1);
+    const source = parse(SPLIT_PREVIEW_ACTIONS);
+    expect(primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER)).toEqual([]);
+    expect(storeMemberAccesses(source, ACTIVE_TOOL_OWNER, TOOL_MEMBERS)).toEqual([
+      { kind: "getState-direct", member: "activeTool" },
+      { kind: "setState", member: "splitPreview" },
+      { kind: "getState-alias", member: "activeTool" },
+      { kind: "getState-alias", member: "activeTool" },
+      { kind: "getState-alias", member: "splitPreview" },
+      { kind: "getState-alias", member: "splitPreview" },
+      { kind: "getState-alias", member: "splitLineA" },
+      { kind: "getState-alias", member: "splitLineB" },
+    ]);
   });
 });
 

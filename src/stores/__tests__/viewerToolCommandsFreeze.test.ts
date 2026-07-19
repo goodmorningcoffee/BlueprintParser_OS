@@ -880,8 +880,15 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     }
 
     const escapeBlock = escapeIf.thenStatement;
+    expect(compact(escapeBlock.statements[0], source)).toBe(
+      "constsplitAtEscape=useToolStore.getState();",
+    );
+    expect(compact(escapeBlock.statements[1], source)).toBe(
+      'if(splitAtEscape.activeTool?.kind==="split"&&splitAtEscape.splitPreview?.commitPending===true)return;',
+    );
     const snapshotDeclarations = escapeBlock.statements.filter(ts.isVariableStatement);
     expect(snapshotDeclarations.map((statement) => compact(statement, source))).toEqual([
+      "constsplitAtEscape=useToolStore.getState();",
       "constexpectedActiveTool=useToolStore.getState().activeTool;",
       "consttool=useToolStore.getState();",
       "constactiveTool=expectedActiveTool;",

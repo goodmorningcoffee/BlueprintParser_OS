@@ -406,6 +406,7 @@ describe("AT2 one exact global tool-tail authority", () => {
       "src/components/viewer/LinearTab.tsx:consumeToolTailAuthority",
       "src/components/viewer/LinearTab.tsx:invalidateToolTailAuthority",
       "src/components/viewer/LinearTab.tsx:ownsToolTailAuthority",
+      "src/components/viewer/SplitPreviewActions.tsx:invalidateToolTailAuthority",
       "src/components/viewer/SymbolSearchPanel.tsx:claimLatestToolOperation",
       "src/components/viewer/SymbolSearchPanel.tsx:invalidateLatestToolOperation",
       "src/components/viewer/SymbolSearchPanel.tsx:invalidateToolTailAuthority",
