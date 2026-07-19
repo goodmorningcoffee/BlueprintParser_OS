@@ -173,10 +173,12 @@ describe("P3.1 tool registry scaffolding", () => {
   // dead-but-honest; the five-way claim set is pairwise disjoint, so order stays unobservable.
   // [refactor jul18 P3.2] Sixth/seventh registrations land atomically: keynotePick MUST precede
   // parseRect so an eligible pick miss delegates within the same lazy context; a hit consumes.
-  // Eighth registration: symbolSearch takes its locked slot between them. Its symbolTemplate
+  // Eighth registration: symbolSearch took its locked slot between them. Its symbolTemplate
   // eligibility is disjoint, so keynote miss delegation still reaches parseRect unchanged.
-  it("exports one exact frozen registry with symbolSearch between keynotePick and parseRect", () => {
-    expect(TOOLS).toHaveLength(8);
+  // Ninth registration: tagPick inserts immediately after keynotePick and before symbolSearch;
+  // all tagPick presses claim, while keynotePick's eligible miss still reaches parseRect.
+  it("exports one exact frozen registry with keynotePick then tagPick, symbolSearch, parseRect", () => {
+    expect(TOOLS).toHaveLength(9);
     expect(Object.isFrozen(TOOLS)).toBe(true);
     expect(TOOLS.map((tool) => tool.kind)).toEqual([
       "calibration",
@@ -184,6 +186,7 @@ describe("P3.1 tool registry scaffolding", () => {
       "takeoffLinear",
       "takeoffCount",
       "keynotePick",
+      "tagPick",
       "symbolSearch",
       "parseRect",
       "markup",
@@ -200,8 +203,9 @@ describe("P3.1 tool registry scaffolding", () => {
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
     // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
-    // EIGHT registered controllers (calibration, the three takeoffPlacement controllers, both
-    // parse units, and symbolSearch need their activations; markup needs mode "markup").
+    // NINE registered controllers (calibration, the three takeoffPlacement controllers, the
+    // three parse/pick units, and symbolSearch need their activations; markup needs mode
+    // "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;

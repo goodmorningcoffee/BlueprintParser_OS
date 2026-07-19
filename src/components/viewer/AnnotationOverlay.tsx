@@ -49,7 +49,6 @@ import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
-import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { captureCanvasGestureLease, matchesCanvasGestureLease, selectActiveToolKey, type CanvasGestureLease, type CanvasGestureSnapshot } from "@/lib/active-tool-state";
 import {
   cancelToolTailExact,
@@ -1501,6 +1500,10 @@ export default memo(function AnnotationOverlay({
           pageAnnotations,
           deferredDrawing: { start: startDeferredDrawing },
           keynotePick: { active: isKeynoteYoloPicking },
+          tagPick: {
+            scanControllerRef: tagScanControllerRef,
+            setPickingMode: setYoloTagPickingMode,
+          },
           mutations: { annotations: { persistCreate } },
           transientError: { publish: publishTransientBucketFillError },
           takeoffItems,
@@ -1776,60 +1779,6 @@ export default memo(function AnnotationOverlay({
       // ─── Drawing/picking modes: must come BEFORE pointer block ─────
       // The pointer block always returns, so these would be unreachable after it.
 
-      // YOLO Tag picking
-      if (activeTool?.kind === "tagPick") {
-        const clickNormX = pos.x / width;
-        const clickNormY = pos.y / height;
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "yolo") continue;
-          const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
-          if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
-            e.stopPropagation();
-            const model = (ann as any).data?.modelName as string || "unknown";
-            const store = useToolStore.getState();
-            const session = useSessionStore.getState();
-            store.setYoloTagPickingMode(false);
-
-            // Trigger class scan — request all unique texts inside this class.
-            const pid = session.publicId;
-            const yoloClass = ann.name;
-            const yoloModel = model;
-            if (!pid) return;
-            tagScanControllerRef.current?.abort();
-            const controller = new AbortController();
-            tagScanControllerRef.current = controller;
-            requestMapTagsBatch(
-              pid,
-              { action: "scanClass", yoloClass, yoloModel },
-              { signal: controller.signal },
-            )
-              .then((result) => {
-                if (!result.ok) throw new Error(`HTTP ${result.status}`);
-                return result.data;
-              })
-              .then(({ texts }) => {
-                if (tagScanControllerRef.current !== controller || controller.signal.aborted) return;
-                if (useSessionStore.getState().publicId !== pid) return;
-                if (!canAdoptProjectLifecycle()) return;
-                useToolStore.getState().setTagScanResults({
-                  yoloClass,
-                  yoloModel,
-                  texts: texts || [],
-                });
-              })
-              .catch((err) => {
-                if ((err as Error).name === "AbortError") return;
-                if (tagScanControllerRef.current !== controller) return;
-                if (!canAdoptProjectLifecycle()) return;
-                console.error("[YOLO_TAG] Class scan failed:", err);
-              });
-            return;
-          }
-        }
-        setYoloTagPickingMode(false);
-        return;
-      }
-
       // Tag Add owns its exact tag payload for the complete deferred rectangle.
       if (activeTool?.kind === "tagAdd") {
         e.stopPropagation();
@@ -1837,9 +1786,9 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // [refactor jul18 P3.2] keynotePick hit/miss routing and generic parseRect deferred starts
-      // plus symbolSearch starts are claimed at the registry seam. Conditional subscriptions,
-      // filtering, and complete drawing settlement stay in this component.
+      // [refactor jul18 P3.2] keynotePick + tagPick hit/miss routing, generic parseRect deferred
+      // starts, and symbolSearch starts are claimed at the registry seam. Conditional
+      // subscriptions, filtering, request identity, and complete drawing settlement stay local.
 
       // Every non-null specialized owner suppresses base pointer/group/markup fallthrough.
       if (activeTool !== null) return;

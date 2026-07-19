@@ -176,7 +176,7 @@ describe("symbolSearch real registry integration", () => {
     const index = TOOLS.indexOf(symbolSearchController);
     expect(index).toBeGreaterThan(0);
     expect(TOOLS[index]).toBe(symbolSearchController);
-    expect(TOOLS[index - 1].kind).toBe("keynotePick");
+    expect(TOOLS[index - 1].kind).toBe("tagPick");
     expect(TOOLS[index + 1].kind).toBe("parseRect");
 
     const { context, deferredDrawing, position } = contextFor({ startResult: false });

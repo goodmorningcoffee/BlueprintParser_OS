@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-// [refactor jul11 P2.4 B3a] RED regression net for AnnotationOverlay's scanClass transport.
+// [refactor jul11 P2.4 B3a; jul18 P3.2 tagPick] Regression net for the tagPick controller's
+// scanClass transport, whose mounted-overlay capability retains component-local request identity.
 //
 // The scan result is project-agnostic tool state. A late project-A response must not repopulate it
 // after reset installs project B, and an older scan in one project must not overwrite a newer scan.
@@ -229,7 +230,7 @@ beforeEach(() => {
         json: async () => ({ groups: [], memberships: [] }),
       } as Response);
     }
-    throw new Error(`unexpected AnnotationOverlay scan request: ${String(url)}`);
+    throw new Error(`unexpected tagPick scan request: ${String(url)}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(noopContext());
@@ -268,7 +269,7 @@ async function activateLifecycle(demo: boolean) {
   return handle;
 }
 
-describe("AnnotationOverlay scanClass request ownership", () => {
+describe("tagPick scanClass request ownership", () => {
   it("publishes select-region completion as drawing close -> region -> idle step -> tool move", () => {
     act(() => {
       useToolStore.setState({ activeTool: null, mode: "pointer" });

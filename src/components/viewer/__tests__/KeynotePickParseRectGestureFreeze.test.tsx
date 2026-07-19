@@ -462,7 +462,9 @@ describe("keynotePick + parseRect seam topology pins (post-move)", () => {
     expect(count(MOUSEDOWN, 'if (activeTool?.kind === "parseRect")')).toBe(0);
     expect(count(AO, "setKeynoteManualInputsForUser")).toBe(0);
     expect(count(AO, "keynotePick: { active: isKeynoteYoloPicking },")).toBe(1);
-    expect(AO).toContain("keynotePick hit/miss routing and generic parseRect deferred starts");
+    expect(AO).toContain(
+      "keynotePick + tagPick hit/miss routing, generic parseRect deferred",
+    );
   });
 
   it("pins the two controllers as the sole homes of the exact claim/decline seam", () => {

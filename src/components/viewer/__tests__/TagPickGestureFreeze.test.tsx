@@ -512,7 +512,7 @@ describe("tagPick gesture freeze (real overlay, parent-green)", () => {
   });
 });
 
-describe("tagPick seam topology pins (pre-move)", () => {
+describe("tagPick seam topology pins (post-move)", () => {
   const root = process.cwd();
   const overlayPath = join(root, "src/components/viewer/AnnotationOverlay.tsx");
   const registryPath = join(root, "src/components/viewer/tools/registry.ts");
@@ -522,6 +522,7 @@ describe("tagPick seam topology pins (pre-move)", () => {
   const AO = readFileSync(overlayPath, "utf8");
   const REGISTRY = readFileSync(registryPath, "utf8");
   const TYPES = readFileSync(typesPath, "utf8");
+  const CONTROLLER = readFileSync(controllerPath, "utf8");
   const TOOL_STORE = readFileSync(toolStorePath, "utf8");
   const mouseDownStart = AO.indexOf("const handleMouseDown = useCallback(");
   const mouseMoveStart = AO.indexOf("const handleMouseMove = useCallback(");
@@ -531,31 +532,42 @@ describe("tagPick seam topology pins (pre-move)", () => {
   const sha256 = (value: string): string =>
     createHash("sha256").update(value).digest("hex");
 
-  it("pins the exact legacy branch and adjacent tagAdd as the sole current homes", () => {
+  it("pins the legacy branch and transport absent, with the controller as their sole home", () => {
     expect(mouseDownStart).toBeGreaterThan(-1);
     expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
-    expect(existsSync(controllerPath)).toBe(false);
-    expect(count(MOUSEDOWN, "// YOLO Tag picking")).toBe(1);
-    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "tagPick")')).toBe(1);
-    const branchStart = MOUSEDOWN.indexOf("      // YOLO Tag picking");
-    const branchEnd = MOUSEDOWN.indexOf(
-      "      // Tag Add owns its exact tag payload",
-      branchStart,
+    expect(existsSync(controllerPath)).toBe(true);
+    expect(count(MOUSEDOWN, "// YOLO Tag picking")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "tagPick")')).toBe(0);
+    expect(AO).not.toContain(
+      'import { requestMapTagsBatch } from "@/lib/client-map-tags";',
     );
-    expect(branchStart).toBeGreaterThan(-1);
-    expect(branchEnd).toBeGreaterThan(branchStart);
-    const branch = MOUSEDOWN.slice(branchStart, branchEnd);
-    expect(sha256(branch)).toBe(
-      "1b895a23e2425fecd9affbf05a30da16a2d4c52e13c4f3898938f560d5fa8ce3",
+    expect(count(AO, "requestMapTagsBatch")).toBe(0);
+    expect(count(AO, "startTagScan")).toBe(0);
+
+    expect(count(CONTROLLER, 'kind: "tagPick"')).toBe(1);
+    expect(count(CONTROLLER, 'state.activeTool?.kind === "tagPick"')).toBe(1);
+    expect(count(CONTROLLER, 'press.toolAtDown.activeTool?.kind === "tagPick"')).toBe(1);
+    expect(count(CONTROLLER, "for (const annotation of pageAnnotations)")).toBe(1);
+    expect(count(CONTROLLER, 'annotation.source !== "yolo"')).toBe(1);
+    expect(CONTROLLER).toContain(
+      "clickNormX >= minX && clickNormX <= maxX &&\n" +
+      "        clickNormY >= minY && clickNormY <= maxY",
     );
-    expect(branch).toContain("clickNormX >= aMinX && clickNormX <= aMaxX");
-    expect(branch).toContain("clickNormY >= aMinY && clickNormY <= aMaxY");
-    expect(branch).not.toContain("preventDefault");
-    expect(branch).not.toContain("invalidateToolTailAuthority");
+    expect(count(CONTROLLER, "event.stopPropagation();")).toBe(1);
+    expect(count(CONTROLLER, "startTagScan(annotation, yoloModel, context, tagPick);")).toBe(1);
+    expect(count(CONTROLLER, "tagPick.setPickingMode(false);")).toBe(1);
+    expect(count(CONTROLLER, "return true;")).toBe(2);
+    expect(CONTROLLER).not.toContain("preventDefault");
+    expect(CONTROLLER).not.toContain("event.button");
+
+    expect(CONTROLLER).toContain(
+      'import { requestMapTagsBatch } from "@/lib/client-map-tags";',
+    );
+    expect(count(CONTROLLER, "requestMapTagsBatch")).toBe(2); // import + sole call
+    expect(count(CONTROLLER, "function startTagScan(")).toBe(1);
 
     const tagAddStart = MOUSEDOWN.indexOf(
       "      // Tag Add owns its exact tag payload",
-      branchEnd,
     );
     const tagAddEnd = MOUSEDOWN.indexOf(
       "      // [refactor jul18 P3.2]",
@@ -567,14 +579,25 @@ describe("tagPick seam topology pins (pre-move)", () => {
     );
   });
 
-  it("pins controller/registry/context absence and the exact retained dependency contract", () => {
-    expect(REGISTRY).not.toContain('import { tagPickController } from "./tagPick";');
+  it("pins registry placement, raw component ref/setter wiring, and retained dependencies", () => {
+    expect(REGISTRY).toContain('import { tagPickController } from "./tagPick";');
     expect(REGISTRY).toContain(
-      "keynotePickController,\n    symbolSearchController,\n    parseRectController,",
+      "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n    parseRectController,",
     );
-    expect(TYPES).not.toContain("readonly tagPick?:");
-    expect(AO).toContain('import { requestMapTagsBatch } from "@/lib/client-map-tags";');
-    expect(count(AO, "tagScanControllerRef")).toBe(7);
+    expect(TYPES).toContain(
+      "  readonly tagPick?: Readonly<{\n" +
+      "    scanControllerRef: { current: AbortController | null };\n" +
+      '    setPickingMode: ToolStoreState["setYoloTagPickingMode"];\n' +
+      "  }>;",
+    );
+    expect(AO).toContain(
+      "          tagPick: {\n" +
+      "            scanControllerRef: tagScanControllerRef,\n" +
+      "            setPickingMode: setYoloTagPickingMode,\n" +
+      "          },",
+    );
+    // Declaration + lifecycle cleanup/read/write + factory handoff: the journal stays mounted.
+    expect(count(AO, "tagScanControllerRef")).toBe(4);
 
     const callbackStart = AO.indexOf("  const handleMouseDown = useCallback(");
     const callbackEnd = AO.indexOf("\n  );", callbackStart);
@@ -605,7 +628,10 @@ describe("tagPick seam topology pins (pre-move)", () => {
     expect(action.indexOf("invalidateToolTailAuthority();")).toBeLessThan(
       action.indexOf("set((state) =>"),
     );
-    expect(count(MOUSEDOWN, "store.setYoloTagPickingMode(false);")).toBe(1);
-    expect(count(MOUSEDOWN, "setYoloTagPickingMode(false);")).toBe(2);
+    expect(CONTROLLER).not.toContain("invalidateToolTailAuthority");
+    expect(CONTROLLER).not.toContain("@/lib/parse-tool-authority");
+    expect(count(CONTROLLER, "store.setYoloTagPickingMode(false);")).toBe(1);
+    expect(count(CONTROLLER, "tagPick.setPickingMode(false);")).toBe(1);
+    expect(count(MOUSEDOWN, "setYoloTagPickingMode(false);")).toBe(0);
   });
 });

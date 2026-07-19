@@ -57,7 +57,8 @@ export interface ToolStoreCapabilities {
  *   block's drag/resize/delete paths are their first movers); they are hook-returned and NOT in
  *   the dep array, so their sourcing (deps-churn vs stale-closure vs ref) must be decided at that
  *   extraction on correctness grounds.
- * - updateYoloTag RE-OPENS at tagPick/tagAdd under the same rule.
+ * - updateYoloTag RE-OPENS at tagAdd under the same rule; tagPick proved that it needs no
+ *   annotation mutation capability.
  */
 export interface ToolMutationCapabilities {
   readonly annotations: Readonly<Pick<UseAnnotationsResult, "persistCreate">>;
@@ -122,6 +123,16 @@ export interface ToolContext {
    */
   readonly keynotePick?: Readonly<{
     active: boolean;
+  }>;
+  /**
+   * [refactor jul18 P3.2 tagPick] Component-owned scan request journal plus the exact subscribed
+   * picker action. The ref object itself crosses the seam so request identity remains local to
+   * this mounted overlay; only the outer capability properties are readonly (`current` must stay
+   * mutable). Both members are already captured by the legacy handler, so wiring is dep-neutral.
+   */
+  readonly tagPick?: Readonly<{
+    scanControllerRef: { current: AbortController | null };
+    setPickingMode: ToolStoreState["setYoloTagPickingMode"];
   }>;
   /**
    * [refactor jul17 P3.2 takeoffCount] Capabilities PROVEN by the takeoffCount controller,

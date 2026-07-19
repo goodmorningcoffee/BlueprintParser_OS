@@ -239,13 +239,13 @@ const ROUTE_METHOD_EXCEPTION_BASELINE = {
 };
 
 const AS_ANY_BASELINE = {
-  expectedFiles: 41,
+  expectedFiles: 42,
   expectedOccurrences: 144,
   approved: [
     { path: "src/app/(dashboard)/home/page.tsx", max: 2 },
     { path: "src/app/api/demo/chat/route.ts", max: 1 },
     { path: "src/app/docs/sections/12-for-llms.tsx", max: 1 },
-    { path: "src/components/viewer/AnnotationOverlay.tsx", max: 19 },
+    { path: "src/components/viewer/AnnotationOverlay.tsx", max: 18 },
     { path: "src/components/viewer/AreaTab.tsx", max: 6 },
     { path: "src/components/viewer/AutoQtoTab.tsx", max: 3 },
     { path: "src/components/viewer/CountTab.tsx", max: 4 },
@@ -263,6 +263,7 @@ const AS_ANY_BASELINE = {
     { path: "src/components/viewer/TakeoffPanel.tsx", max: 6 },
     { path: "src/components/viewer/TextAnnotationOverlay.tsx", max: 1 },
     { path: "src/components/viewer/ViewerToolbar.tsx", max: 2 },
+    { path: "src/components/viewer/tools/tagPick.ts", max: 1 },
     { path: "src/hooks/useChunkLoader.ts", max: 1 },
     { path: "src/lib/context-builder.ts", max: 4 },
     { path: "src/lib/csi-spatial-refresh-target.ts", max: 3 },
@@ -296,7 +297,7 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/components/viewer/AnnotationOverlay.tsx",
-      maxLines: 2833,
+      maxLines: 2782,
       reason: "viewer-hot-exception",
     },
     {

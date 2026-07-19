@@ -383,12 +383,12 @@ describe("symbolSearch seam topology pins (post-move)", () => {
   it("pins exact registry placement and the retained starter/factory/dependency contract", () => {
     expect(REGISTRY).toContain('import { symbolSearchController } from "./symbolSearch";');
     expect(REGISTRY).toContain(
-      "keynotePickController,\n    symbolSearchController,\n    parseRectController,",
+      "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n    parseRectController,",
     );
     expect(count(AO, "const startDeferredDrawing = useCallback(")).toBe(1);
     expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
     expect(AO).toContain(
-      "plus symbolSearch starts are claimed at the registry seam",
+      "starts, and symbolSearch starts are claimed at the registry seam",
     );
 
     const callbackStart = AO.indexOf("  const handleMouseDown = useCallback(");

@@ -314,12 +314,16 @@ describe("later user tool intent revokes parse completion writes", () => {
     // same dep-neutrality rule (savePolygon was already in the 37-entry array).
     // [refactor jul18 P3.2 keynotePick] The exact render-derived picking boolean joins as one
     // narrow projection; isKeynoteYoloPicking was already in the same 37-entry array.
+    // [refactor jul18 P3.2 tagPick] The component-local request journal and subscribed picker
+    // action join as one narrow capability. Both identifiers were already captured by the legacy
+    // handler, so the sacred dependency list remains byte-identical.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected}," +
         "annotationDrag:{beginBBox:(annotation,corner)=>beginAnnotationDrag(annotation,{kind:\"bbox\",resizeCorner:corner,dragOffset:{x:0,y:0}},),}," +
         "pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
         "keynotePick:{active:isKeynoteYoloPicking}," +
+        "tagPick:{scanControllerRef:tagScanControllerRef,setPickingMode:setYoloTagPickingMode,}," +
         "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
         "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline,savePolygon},}))){return;}",
     );

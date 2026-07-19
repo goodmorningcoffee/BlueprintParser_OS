@@ -300,12 +300,6 @@ const EXPECTED_COMMAND_HELPER_SITE: Site = {
 
 const EXPECTED_MAP_TRANSPORT_SITES: MapSite[] = [
   {
-    file: "src/components/viewer/AnnotationOverlay.tsx",
-    owner: "handleMouseDown",
-    transport: "@/lib/client-map-tags.requestMapTagsBatch",
-    projectExpression: "pid",
-  },
-  {
     file: "src/components/viewer/AutoQtoTab.tsx",
     owner: "MappingStep",
     transport: "@/lib/client-map-tags.requestMapTagsBatch",
@@ -335,6 +329,12 @@ const EXPECTED_MAP_TRANSPORT_SITES: MapSite[] = [
     transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "target.publicId",
   },
+  {
+    file: "src/components/viewer/tools/tagPick.ts",
+    owner: "startTagScan",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
+    projectExpression: "pid",
+  },
 ];
 
 const EXPECTED_LOW_LEVEL_MAP_TRANSPORT_SITE: MapSite = {
@@ -345,12 +345,12 @@ const EXPECTED_LOW_LEVEL_MAP_TRANSPORT_SITE: MapSite = {
 };
 
 const EXPECTED_MAP_TRANSPORT_IMPORT_FILES = [
-  "src/components/viewer/AnnotationOverlay.tsx",
   "src/components/viewer/AutoQtoTab.tsx",
   "src/components/viewer/KeynoteItem.tsx",
   "src/components/viewer/KeynotePanel.tsx",
   "src/components/viewer/ParsedTableItem.tsx",
   "src/components/viewer/TableParsePanel.tsx",
+  "src/components/viewer/tools/tagPick.ts",
 ] as const;
 
 type MapTransportArguments = {
@@ -361,14 +361,6 @@ type MapTransportArguments = {
 };
 
 const EXPECTED_MAP_TRANSPORT_ARGUMENTS: Record<string, MapTransportArguments> = {
-  "src/components/viewer/AnnotationOverlay.tsx:handleMouseDown": {
-    project: "pid",
-    request: {
-      action: '"scanClass"', yoloClass: "yoloClass", yoloModel: "yoloModel",
-    },
-    options: { signal: "controller.signal" },
-    awaited: false,
-  },
   "src/components/viewer/AutoQtoTab.tsx:MappingStep": {
     project: "input.publicId",
     request: { __expression: "input.request" },
@@ -421,6 +413,14 @@ const EXPECTED_MAP_TRANSPORT_ARGUMENTS: Record<string, MapTransportArguments> = 
     },
     options: { signal: "controller.signal" },
     awaited: true,
+  },
+  "src/components/viewer/tools/tagPick.ts:startTagScan": {
+    project: "pid",
+    request: {
+      action: '"scanClass"', yoloClass: "yoloClass", yoloModel: "yoloModel",
+    },
+    options: { signal: "controller.signal" },
+    awaited: false,
   },
 };
 
@@ -1226,7 +1226,7 @@ describe("P2.4 C3 parse client-I/O topology", () => {
     expect(keyBuilder).toContain("reactKey:`${base}:${occurrence}`");
   });
 
-  it("pins six typed map callers, zero raw component fetches, and one low-level fetch", () => {
+  it("pins six typed map callers, including the tagPick helper owner, zero raw component fetches, and one low-level fetch", () => {
     const mapCalls = allCalls.filter((record) => record.endpoint?.pattern === MAP_TAGS_ENDPOINT);
     expect(sortedMapSites(mapCalls.filter((record) => record.file !== MAP_TRANSPORT_FILE)))
       .toEqual([]);
@@ -1648,7 +1648,8 @@ describe("P2.4 C3 parse client-I/O topology", () => {
   // Migration discipline at the completed C3 boundary:
   // - the first manifests stay atomically fixed at twelve `@/queries/parsedRegions` calls with
   //   zero component promoteParsedRegion/raw endpoint calls;
-  // - the six-owner map manifest stays atomically fixed at `requestMapTagsBatch`, with zero raw
-  //   component fetches. Do not weaken these assertions to accept a union of old and new phases;
+  // - the six-owner map manifest stays atomically fixed at `requestMapTagsBatch`; tagPick's
+  //   request is owned by its named controller helper, with zero raw component fetches. Do not
+  //   weaken these assertions to accept a union of old and new phases;
   //   such a union would let a partial migration ship while appearing green.
 });

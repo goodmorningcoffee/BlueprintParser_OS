@@ -444,6 +444,12 @@ describe("AT2 one exact global tool-tail authority", () => {
     expect(borrowers).not.toContain(
       "src/components/viewer/tools/parseRect.ts:invalidateToolTailAuthority",
     );
+    // [refactor jul18 P3.2 tagPick] Hit and miss deactivate through the canonical tool-store
+    // action, which already retires tail authority before publication. A direct controller
+    // invalidation would duplicate cancellation and must not enter the closed borrower roster.
+    expect(borrowers).not.toContain(
+      "src/components/viewer/tools/tagPick.ts:invalidateToolTailAuthority",
+    );
 
     expect(newAuthorityBorrowers("src/lib/borrower-mutant.ts", `
       import {
