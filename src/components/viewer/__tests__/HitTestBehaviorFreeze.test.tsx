@@ -333,7 +333,7 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     // areaCalc no longer exports the ray cast; AO no longer imports it from there
     expect(AREACALC).not.toContain("export function pointInPolygon(");
     expect(AO).toContain(
-      'import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";',
+      'import { computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";',
     );
   });
 

@@ -5,7 +5,7 @@
 // translate only the explicitly parent-source topology assertions at the bottom.
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,7 +72,7 @@ function areaData(
 
 function annotation(
   id: number,
-  data: AreaPolygonData | Record<string, unknown> | null,
+  data: ClientAnnotation["data"],
   source: ClientAnnotation["source"] = "takeoff",
 ): ClientAnnotation {
   return {
@@ -441,6 +441,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const AREA_POLYGONS = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/areaPolygons.ts"),
+  "utf8",
+);
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -459,10 +463,10 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function expectParentOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const area = source.indexOf("    // Draw completed area polygons");
-  const areaLoop = source.indexOf("for (const ann of pageAnnotations)", area);
+  const areaCall = source.indexOf("drawAreaPolygons(ctx, {", area);
   const linear = source.indexOf("    // Draw completed linear polylines");
   const linearCall = source.indexOf("drawLinearPolylines(ctx, {", linear);
   const groups = source.indexOf("    // Group-membership outlines");
@@ -475,8 +479,8 @@ function expectParentOrder(source: string): void {
   );
   expect(annotations).toBeGreaterThan(-1);
   expect(area).toBeGreaterThan(annotations);
-  expect(areaLoop).toBeGreaterThan(area);
-  expect(linear).toBeGreaterThan(areaLoop);
+  expect(areaCall).toBeGreaterThan(area);
+  expect(linear).toBeGreaterThan(areaCall);
   expect(linearCall).toBeGreaterThan(linear);
   expect(groups).toBeGreaterThan(linearCall);
   expect(groupCall).toBeGreaterThan(groups);
@@ -484,8 +488,8 @@ function expectParentOrder(source: string): void {
   expect(dependencies).toBeGreaterThan(preview);
 }
 
-describe("AnnotationOverlay area-polygon direct-parent topology", () => {
-  it("pins the exact earlier driver, inline stage, later handoffs, and dependencies", () => {
+describe("AnnotationOverlay area-polygon post-move topology", () => {
+  it("binds the exact earlier driver, pure call, later handoffs, and dependencies", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
@@ -497,20 +501,19 @@ describe("AnnotationOverlay area-polygon direct-parent topology", () => {
       "9550f78166e7ee7f34ced1098b5663c779cf8eb998157855f9a7080dc192496f",
     );
 
-    const areaStage = exactSlice(
+    const areaCall = exactSlice(
       AO,
       "    // Draw completed area polygons\n",
       "    // Draw completed linear polylines\n",
     );
-    expect(count(areaStage, "\n")).toBe(83);
-    expect(Buffer.byteLength(areaStage, "utf8")).toBe(3_409);
-    expect(sha256(areaStage)).toBe(
-      "5efaaa2009e921d1fbfb9a40c0ea4afe7e107d0a68f0591bde00cd0745d46122",
+    expect(count(areaCall, "\n")).toBe(10);
+    expect(Buffer.byteLength(areaCall, "utf8")).toBe(212);
+    expect(sha256(areaCall)).toBe(
+      "ff9a020a5000bb1777ef679c41dd4d6fb3eac8ed2af2b86a0e1f0a57e1039519",
     );
-    expect(count(areaStage, "for (const ann of pageAnnotations)")).toBe(1);
-    expect(count(areaStage, "polygonCentroid(data.vertices)")).toBe(1);
-    expect(count(areaStage, 'ctx.fill("evenodd")')).toBe(1);
-    expect(count(areaStage, "multiSelect.isSelected(ann.id)")).toBe(1);
+    expect(count(areaCall, "drawAreaPolygons(ctx, {")).toBe(1);
+    expect(areaCall).toContain("selection: multiSelect,");
+    expect(areaCall).not.toContain("for (const ann of pageAnnotations)");
 
     const linearCall = exactSlice(
       AO,
@@ -543,28 +546,58 @@ describe("AnnotationOverlay area-polygon direct-parent topology", () => {
     );
   });
 
-  it("keeps one ordered inline stage and biting source self-oracles", () => {
-    expectParentOrder(AO);
+  it("keeps one ordered call, one pure module, and biting source self-oracles", () => {
+    expectPostMoveOrder(AO);
     expect(count(AO, "    // Draw completed area polygons\n")).toBe(1);
-    expect(count(AO, 'import { polygonCentroid, computeRealArea')).toBe(1);
-    expect(() => expectParentOrder(
-      AO.replace(
-        "    // Draw completed area polygons\n    for (const ann of pageAnnotations)",
-        "    // Draw completed area polygons\n    for (const ann of missingPageAnnotations)",
-      ),
+    expect(count(
+      AO,
+      'import { drawAreaPolygons } from "./render/areaPolygons";',
+    )).toBe(1);
+    expect(count(AO, "drawAreaPolygons(ctx, {")).toBe(1);
+    expect(existsSync(join(
+      process.cwd(),
+      "src/components/viewer/render/areaPolygons.ts",
+    ))).toBe(true);
+    expect(existsSync(join(
+      process.cwd(),
+      "src/components/viewer/render/__tests__/areaPolygons.test.ts",
+    ))).toBe(true);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawAreaPolygons(ctx, {", "missingAreaPolygons(ctx, {"),
     )).toThrow();
 
-    const areaStage = exactSlice(
+    const areaCall = exactSlice(
       AO,
       "    // Draw completed area polygons\n",
       "    // Draw completed linear polylines\n",
     );
     const reordered = AO
-      .replace(areaStage, "")
+      .replace(areaCall, "")
       .replace(
         "    // Group-membership outlines",
-        `${areaStage}    // Group-membership outlines`,
+        `${areaCall}    // Group-membership outlines`,
       );
-    expect(() => expectParentOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(Buffer.byteLength(AREA_POLYGONS, "utf8")).toBe(4_098);
+    expect(count(AREA_POLYGONS, "\n")).toBe(114);
+    expect(sha256(AREA_POLYGONS)).toBe(
+      "3f1d469bbd10d709485a920d7b7f1138a0ef3b21f34e6012b5ed400a08685ab0",
+    );
+    expect(count(
+      AREA_POLYGONS,
+      'import { polygonCentroid } from "@/lib/areaCalc";',
+    )).toBe(1);
+    expect(count(
+      AREA_POLYGONS,
+      'import type { AreaPolygonData, ClientAnnotation } from "@/types";',
+    )).toBe(1);
+    for (const forbidden of [
+      "react", "useToolStore", "useUiStore", "useQueryClient", "fetch(",
+      "persistFetch", "AnnotationOverlay", "drawLinearPolylines", "drawGroupRings",
+      "setLineDash(", "as any", ".bbox",
+    ]) {
+      expect(AREA_POLYGONS).not.toContain(forbidden);
+    }
   });
 });
