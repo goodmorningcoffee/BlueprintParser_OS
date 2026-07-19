@@ -275,7 +275,7 @@ describe("P3 standalone markup topology and finding dispositions", () => {
     );
   });
 
-  it("keeps the ratcheted AO ceiling through the first three P3.3 render extractions", () => {
-    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2014);
+  it("keeps the ratcheted AO ceiling through the first four P3.3 render extractions", () => {
+    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(1982);
   });
 });

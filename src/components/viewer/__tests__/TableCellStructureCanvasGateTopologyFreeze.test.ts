@@ -2,7 +2,7 @@
 //
 // [refactor jul18 P3 draw #5] Exact two-gate TATR canvas reachability seam. Normalizing only the
 // sanctioned inline predicates back to the accepted parent freezes the complete pre-linear driver,
-// dependency, pass, and canvas gate; companion suites pin both extracted final stages.
+// dependency, pass, and canvas gate; companion suites pin all extracted final stages.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -62,17 +62,17 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps the complete pre-linear driver byte-exact through three pure extractions", () => {
+  it("keeps the complete pre-linear driver byte-exact through four pure extractions", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
       "    // Draw completed linear polylines",
     );
     expect(count(prefix, NEGATED)).toBe(1);
-    expect(count(prefix, "\n")).toBe(357);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(15_507);
+    expect(count(prefix, "\n")).toBe(324);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(13_701);
     expect(sha256(prefix)).toBe(
-      "e8d653e45920f6d6d36e82ffedcc86888e88cc5a7d52d59308d8ff37d7125e1c",
+      "59ff78fe79ceafa5275b12cba82246c86519f2ec1231c10a72807e233fd0f9f8",
     );
   });
 
@@ -85,7 +85,7 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps AnnotationOverlay at the exact 2,014-line architecture ceiling", () => {
-    expect(count(AO, "\n")).toBe(2_014);
+  it("keeps AnnotationOverlay at the exact 1,982-line architecture ceiling", () => {
+    expect(count(AO, "\n")).toBe(1_982);
   });
 });

@@ -311,6 +311,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const TABLE_TAG_VIEWS = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/tableTagViews.ts"),
+  "utf8",
+);
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -329,13 +333,13 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function expectParentOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const symbol = source.indexOf("    // Draw symbol search results");
   const cells = source.indexOf("    // Draw TATR cell structure overlays");
   const llm = source.indexOf("    // Draw LLM tool use highlight");
-  const tableTags = source.indexOf("    // ─── Table/Keynote tag views");
-  const viewLoop = source.indexOf("for (const view of Object.values(tableTagViews))", tableTags);
+  const tableTags = source.indexOf("    // Draw active table/keynote tag views");
+  const tableTagCall = source.indexOf("drawTableTagViews(ctx, {", tableTags);
   const area = source.indexOf("    // Draw completed area polygons");
   const areaCall = source.indexOf("drawAreaPolygons(ctx, {", area);
   const linearCall = source.indexOf("drawLinearPolylines(ctx, {", areaCall);
@@ -351,8 +355,8 @@ function expectParentOrder(source: string): void {
   expect(cells).toBeGreaterThan(symbol);
   expect(llm).toBeGreaterThan(cells);
   expect(tableTags).toBeGreaterThan(llm);
-  expect(viewLoop).toBeGreaterThan(tableTags);
-  expect(area).toBeGreaterThan(viewLoop);
+  expect(tableTagCall).toBeGreaterThan(tableTags);
+  expect(area).toBeGreaterThan(tableTagCall);
   expect(areaCall).toBeGreaterThan(area);
   expect(linearCall).toBeGreaterThan(areaCall);
   expect(groupCall).toBeGreaterThan(linearCall);
@@ -360,12 +364,12 @@ function expectParentOrder(source: string): void {
   expect(dependencies).toBeGreaterThan(preview);
 }
 
-describe("AnnotationOverlay table/keynote tag-view direct-parent topology", () => {
-  it("pins the exact earlier driver, inline stage, downstream calls, and dependencies", () => {
+describe("AnnotationOverlay table/keynote tag-view post-move topology", () => {
+  it("pins the exact earlier driver, pure call, downstream calls, and dependencies", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
-      "    // ─── Table/Keynote tag views (eye icon toggle) ───\n",
+      "    // Draw active table/keynote tag views\n",
     );
     expect(count(prefix, "\n")).toBe(304);
     expect(Buffer.byteLength(prefix, "utf8")).toBe(13_292);
@@ -373,20 +377,20 @@ describe("AnnotationOverlay table/keynote tag-view direct-parent topology", () =
       "b8d274313dc83cbc96fd85917a9352f9a25b6aab42b38d2df17f1f9d8239e918",
     );
 
-    const tableTagStage = exactSlice(
+    const tableTagCall = exactSlice(
       AO,
-      "    // ─── Table/Keynote tag views (eye icon toggle) ───\n",
+      "    // Draw active table/keynote tag views\n",
       "    // Draw completed area polygons\n",
     );
-    expect(count(tableTagStage, "\n")).toBe(43);
-    expect(Buffer.byteLength(tableTagStage, "utf8")).toBe(2_003);
-    expect(sha256(tableTagStage)).toBe(
-      "961904701eb78aa1cd019418b1ec28ee907ea3fa830fb7c563a4c155169011f1",
+    expect(count(tableTagCall, "\n")).toBe(10);
+    expect(Buffer.byteLength(tableTagCall, "utf8")).toBe(197);
+    expect(sha256(tableTagCall)).toBe(
+      "9d795296d3f2b132067b9842f592d528eb63ac4064125e69c60ae364a87ec538",
     );
-    expect(count(tableTagStage, "Object.keys(activeTableTagViews)")).toBe(1);
-    expect(count(tableTagStage, "Object.values(tableTagViews)")).toBe(1);
-    expect(count(tableTagStage, "tagTextIndex.get(")).toBe(1);
-    expect(count(tableTagStage, "pageTagInstances.get(")).toBe(1);
+    expect(count(tableTagCall, "drawTableTagViews(ctx, {")).toBe(1);
+    expect(tableTagCall).toContain("activeTableTagViews,");
+    expect(tableTagCall).toContain("tagTextIndex,");
+    expect(tableTagCall).toContain("pageTagInstances,");
 
     const areaCall = exactSlice(
       AO,
@@ -409,37 +413,48 @@ describe("AnnotationOverlay table/keynote tag-view direct-parent topology", () =
     );
   });
 
-  it("keeps one ordered inline stage, no future helper, and biting source self-oracles", () => {
-    expectParentOrder(AO);
-    expect(count(AO, "    // ─── Table/Keynote tag views (eye icon toggle) ───\n")).toBe(1);
-    expect(count(AO, 'import { drawTableTagViews } from "./render/tableTagViews";')).toBe(0);
-    expect(count(AO, "drawTableTagViews(ctx, {")).toBe(0);
+  it("keeps one ordered call, one pure module, and biting source self-oracles", () => {
+    expectPostMoveOrder(AO);
+    expect(count(AO, "    // Draw active table/keynote tag views\n")).toBe(1);
+    expect(count(AO, 'import { drawTableTagViews } from "./render/tableTagViews";')).toBe(1);
+    expect(count(AO, "drawTableTagViews(ctx, {")).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/tableTagViews.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/tableTagViews.test.ts",
-    ))).toBe(false);
-    expect(() => expectParentOrder(
-      AO.replace(
-        "for (const view of Object.values(tableTagViews))",
-        "for (const view of Object.values(missingTableTagViews))",
-      ),
+    ))).toBe(true);
+    expect(count(AO, "Object.keys(activeTableTagViews)")).toBe(1);
+    expect(AO).toContain("&& Object.keys(activeTableTagViews).length === 0");
+    expect(count(AO, "Object.values(tableTagViews)")).toBe(0);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawTableTagViews(ctx, {", "missingTableTagViews(ctx, {"),
     )).toThrow();
 
-    const tableTagStage = exactSlice(
+    const tableTagCall = exactSlice(
       AO,
-      "    // ─── Table/Keynote tag views (eye icon toggle) ───\n",
+      "    // Draw active table/keynote tag views\n",
       "    // Draw completed area polygons\n",
     );
     const reordered = AO
-      .replace(tableTagStage, "")
+      .replace(tableTagCall, "")
       .replace(
         "    // Draw completed linear polylines",
-        `${tableTagStage}    // Draw completed linear polylines`,
+        `${tableTagCall}    // Draw completed linear polylines`,
       );
-    expect(() => expectParentOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(Buffer.byteLength(TABLE_TAG_VIEWS, "utf8")).toBe(2_993);
+    expect(count(TABLE_TAG_VIEWS, "\n")).toBe(83);
+    expect(sha256(TABLE_TAG_VIEWS)).toBe(
+      "28effa506fd63d955aa939d3a3ae021f6a896ee846f6206a70062610e44531a9",
+    );
+    expect(count(TABLE_TAG_VIEWS, "Object.keys(activeTableTagViews)")).toBe(1);
+    expect(count(TABLE_TAG_VIEWS, "Object.values(tableTagViews)")).toBe(1);
+    expect(count(TABLE_TAG_VIEWS, "tagTextIndex.get(")).toBe(1);
+    expect(count(TABLE_TAG_VIEWS, "pageTagInstances.get(")).toBe(1);
+    expect(TABLE_TAG_VIEWS).not.toMatch(/@\/(stores|queries)|fetch\(|persist/i);
   });
 });
