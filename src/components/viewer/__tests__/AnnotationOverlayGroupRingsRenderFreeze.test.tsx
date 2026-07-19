@@ -1,0 +1,370 @@
+// @vitest-environment jsdom
+//
+// [refactor jul19 P3.3] Direct-parent executable freeze for the final group-membership ring paint
+// stage. This mounts the real AnnotationOverlay driver before render/groupRings.ts exists. The
+// extraction commit must keep this trace green and add a direct pure-module net; it may translate
+// only the parent-source topology describe at the bottom.
+
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
+import { queryKeys } from "@/queries/queryKeys";
+import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
+import { seedAnnotations } from "@/test/seed-annotations";
+import { seedTakeoff } from "@/test/seed-takeoff";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
+import type {
+  AnnotationGroup,
+  AnnotationGroupMembership,
+  ClientAnnotation,
+  LinearPolylineData,
+} from "@/types";
+
+vi.mock("../DrawingPreviewLayer", () => ({ default: () => null }));
+vi.mock("../MarkupDialog", () => ({ default: () => null }));
+
+import AnnotationOverlay from "../AnnotationOverlay";
+
+const PUBLIC_ID = "group-rings-render-freeze";
+const PROJECT_DB_ID = 1_933;
+const WIDTH = 200;
+const HEIGHT = 100;
+
+type CanvasTraceEntry =
+  | [kind: "call", method: string, ...args: unknown[]]
+  | [kind: "set", property: string, value: unknown];
+
+type CanvasRecord = {
+  trace: CanvasTraceEntry[];
+  context: CanvasRenderingContext2D;
+  stackDepth: () => number;
+};
+
+let queryClient: QueryClient;
+let canvasRecords: WeakMap<HTMLCanvasElement, CanvasRecord>;
+
+function wrapper({ children }: { children: ReactNode }) {
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
+function group(
+  id: number,
+  color: string,
+  isActive: boolean,
+): AnnotationGroup {
+  return {
+    id,
+    projectId: PROJECT_DB_ID,
+    name: `Group ${id}`,
+    csiCode: null,
+    notes: null,
+    color,
+    isActive,
+    createdBy: null,
+    createdAt: null,
+    updatedAt: null,
+  };
+}
+
+function membership(
+  annotationId: number,
+  groupId: number,
+): AnnotationGroupMembership {
+  return { annotationId, groupId };
+}
+
+function createCanvasRecord(): CanvasRecord {
+  const trace: CanvasTraceEntry[] = [];
+  const state = new Map<string, unknown>();
+  const stack: Map<string, unknown>[] = [];
+  const generatedMethods = new Map<string, (...args: unknown[]) => unknown>();
+  const target: Record<PropertyKey, unknown> = {
+    measureText: (text: string) => {
+      trace.push(["call", "measureText", text]);
+      return { width: 0 };
+    },
+    save: () => {
+      trace.push(["call", "save"]);
+      stack.push(new Map(state));
+    },
+    restore: () => {
+      trace.push(["call", "restore"]);
+      const restored = stack.pop();
+      if (!restored) return;
+      state.clear();
+      for (const [property, value] of restored) state.set(property, value);
+    },
+  };
+  const context = new Proxy(target, {
+    get(object, property, receiver) {
+      if (Reflect.has(object, property)) return Reflect.get(object, property, receiver);
+      if (typeof property !== "string") return undefined;
+      let method = generatedMethods.get(property);
+      if (!method) {
+        method = (...args: unknown[]) => {
+          trace.push(["call", property, ...args]);
+        };
+        generatedMethods.set(property, method);
+      }
+      return method;
+    },
+    set(object, property, value, receiver) {
+      if (typeof property === "string") {
+        trace.push(["set", property, value]);
+        state.set(property, value);
+      }
+      return Reflect.set(object, property, value, receiver);
+    },
+  }) as unknown as CanvasRenderingContext2D;
+  return { trace, context, stackDepth: () => stack.length };
+}
+
+function lastIndexOfCall(
+  trace: CanvasTraceEntry[],
+  method: string,
+): number {
+  for (let index = trace.length - 1; index >= 0; index -= 1) {
+    const entry = trace[index];
+    if (entry[0] === "call" && entry[1] === method) return index;
+  }
+  return -1;
+}
+
+beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  canvasRecords = new WeakMap();
+  vi.stubGlobal("devicePixelRatio", 1);
+  vi.stubGlobal("fetch", vi.fn((url: unknown) => {
+    throw new Error(`Unexpected fetch in group-rings render freeze: ${String(url)}`);
+  }));
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
+    function (this: HTMLCanvasElement, contextId: string) {
+      if (contextId !== "2d") return null;
+      let record = canvasRecords.get(this);
+      if (!record) {
+        record = createCanvasRecord();
+        canvasRecords.set(this, record);
+      }
+      return record.context;
+    } as typeof HTMLCanvasElement.prototype.getContext,
+  );
+
+  resetProjectData();
+  setViewerStoreStateForTest({
+    projectId: PROJECT_DB_ID,
+    publicId: PUBLIC_ID,
+    isDemo: true,
+    pageNumber: 1,
+    numPages: 2,
+    mode: "pointer",
+    tempPanMode: false,
+    activeTool: null,
+    _drawing: false,
+    _drawStart: { x: 0, y: 0 },
+    _drawEnd: { x: 0, y: 0 },
+    _mousePos: null,
+    selectedAnnotationIds: new Set<number>(),
+    hiddenAnnotationIds: new Set<number>(),
+    activeTableTagViews: {},
+    llmHighlight: null,
+    showDetections: false,
+    tableCellStructure: null,
+    showTableCellStructure: false,
+  });
+
+  const annotations: ClientAnnotation[] = [
+    {
+      id: 101,
+      pageNumber: 1,
+      name: "Grouped box",
+      bbox: [0.125, 0.25, 0.375, 0.75],
+      note: null,
+      source: "user",
+      data: null,
+    },
+    {
+      id: 102,
+      pageNumber: 1,
+      name: "Inactive group box",
+      bbox: [0.25, 0.125, 0.5, 0.375],
+      note: null,
+      source: "user",
+      data: null,
+    },
+    {
+      id: 103,
+      pageNumber: 1,
+      name: "Grouped linear",
+      bbox: [0.5, 0.25, 0.875, 0.75],
+      note: null,
+      source: "takeoff",
+      data: {
+        type: "linear-polyline",
+        takeoffItemId: 17,
+        color: "#a855f7",
+        vertices: [
+          { x: 0.5, y: 0.25 },
+          { x: 0.875, y: 0.75 },
+        ],
+        totalLength: 12,
+        unit: "LF",
+        segmentLengths: [12],
+      } satisfies LinearPolylineData,
+    },
+  ];
+  seedAnnotations(queryClient, annotations);
+  seedAnnotationGroups(
+    queryClient,
+    [
+      group(1, "#ef4444", true),
+      group(2, "#22c55e", false),
+      group(3, "#22d3ee", true),
+    ],
+    [membership(101, 1), membership(102, 2), membership(103, 3)],
+  );
+  seedTakeoff(queryClient, [], []);
+  seedYoloTagsFromBootstrap(queryClient, PUBLIC_ID, { yoloTags: [] });
+  queryClient.setQueryData(queryKeys.pagesWindow.active(PUBLIC_ID), {
+    ...EMPTY_ACTIVE_PAGE_WINDOW,
+    loadedRange: { from: 1, to: 2 },
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  queryClient.clear();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("AnnotationOverlay group-membership ring render freeze", () => {
+  it("keeps the final ring pass ordered, min/max projected, and state-isolated per colored row", () => {
+    const { container } = render(
+      <AnnotationOverlay width={WIDTH} height={HEIGHT} cssScale={1} />,
+      { wrapper },
+    );
+    const canvases = [...container.querySelectorAll("canvas")];
+    expect(canvases).toHaveLength(1);
+    const record = canvasRecords.get(canvases[0]);
+    if (!record) throw new Error("Expected AnnotationOverlay to acquire a 2D context");
+
+    const clearIndex = lastIndexOfCall(record.trace, "clearRect");
+    expect(clearIndex).toBeGreaterThan(-1);
+    const latestDraw = record.trace.slice(clearIndex + 1);
+    const expectedRingSuffix: CanvasTraceEntry[] = [
+      ["call", "save"],
+      ["set", "strokeStyle", "#ef4444"],
+      ["set", "lineWidth", 1.5],
+      ["call", "setLineDash", [4, 2]],
+      ["call", "strokeRect", 23, 23, 54, 54],
+      ["call", "restore"],
+      ["call", "save"],
+      ["set", "strokeStyle", "#22d3ee"],
+      ["set", "lineWidth", 1.5],
+      ["call", "setLineDash", [4, 2]],
+      ["call", "strokeRect", 98, 23, 79, 54],
+      ["call", "restore"],
+    ];
+
+    expect(latestDraw.slice(-expectedRingSuffix.length)).toEqual(expectedRingSuffix);
+    expect(latestDraw).not.toContainEqual([
+      "call", "strokeRect", 48, 10.5, 54, 29,
+    ]);
+    const polylineLabel = latestDraw.findIndex((entry) =>
+      entry[0] === "call" &&
+      entry[1] === "fillText" &&
+      entry[2] === "12 LF" &&
+      entry[3] === 185 &&
+      entry[4] === 80
+    );
+    expect(polylineLabel).toBeGreaterThan(-1);
+    expect(polylineLabel).toBeLessThan(latestDraw.length - expectedRingSuffix.length);
+    expect(record.stackDepth()).toBe(0);
+  });
+});
+
+const AO = readFileSync(
+  join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
+  "utf8",
+);
+
+function count(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+function exactSlice(source: string, startAnchor: string, endAnchor: string): string {
+  expect(count(source, startAnchor)).toBe(1);
+  expect(count(source, endAnchor)).toBe(1);
+  const start = source.indexOf(startAnchor);
+  const end = source.indexOf(endAnchor, start + startAnchor.length);
+  expect(end).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+describe("AnnotationOverlay group-ring direct-parent topology", () => {
+  it("binds the untouched earlier driver, exact legacy tail, and dependency line", () => {
+    const prefix = exactSlice(
+      AO,
+      "  // Draw annotations\n",
+      "    // Group-membership outlines",
+    );
+    expect(count(prefix, "\n")).toBe(477);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(20_544);
+    expect(sha256(prefix)).toBe(
+      "0aeebfb7aa93775e40467341edd958e38f9dc0a6413ee07982e59644b1cfc9e1",
+    );
+
+    const groupTail = exactSlice(
+      AO,
+      "    // Group-membership outlines",
+      "    // Calibration + polygon preview",
+    );
+    expect(count(groupTail, "\n")).toBe(21);
+    expect(Buffer.byteLength(groupTail, "utf8")).toBe(845);
+    expect(sha256(groupTail)).toBe(
+      "b0db6969bba355d8357dd1dca2f7af088a455dc166428ccb96cf636e0849ac6d",
+    );
+
+    const dependencyLine = exactSlice(
+      AO,
+      "  }, [pageAnnotations, width, height, selectedId",
+      "\n\n  const getPos",
+    );
+    expect(Buffer.byteLength(dependencyLine, "utf8")).toBe(292);
+    expect(sha256(dependencyLine)).toBe(
+      "d202ed55c17f2ca65dcd43c3d4bb01b2588776589fa4ff415688f5b10b93d948",
+    );
+  });
+
+  it("keeps the ring loop final and render/groupRings absent before extraction", () => {
+    const annotation = AO.indexOf("    // Draw existing annotations");
+    const area = AO.indexOf("    // Draw completed area polygons");
+    const linear = AO.indexOf("    // Draw completed linear polylines");
+    const rings = AO.indexOf("    // Group-membership outlines");
+    const preview = AO.indexOf(
+      "    // Calibration + polygon preview — rendered by DrawingPreviewLayer",
+    );
+    const dependencies = AO.indexOf(
+      "  }, [pageAnnotations, width, height, selectedId",
+    );
+    expect(annotation).toBeGreaterThan(-1);
+    expect(area).toBeGreaterThan(annotation);
+    expect(linear).toBeGreaterThan(area);
+    expect(rings).toBeGreaterThan(linear);
+    expect(preview).toBeGreaterThan(rings);
+    expect(dependencies).toBeGreaterThan(preview);
+    expect(count(AO, 'from "./render/groupRings"')).toBe(0);
+    expect(count(AO, "drawGroupRings(")).toBe(0);
+  });
+});
