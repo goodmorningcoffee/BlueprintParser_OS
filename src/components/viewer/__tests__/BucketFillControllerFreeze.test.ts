@@ -1097,7 +1097,7 @@ describe("BucketFill controller POST-move source and topology", () => {
     expect(AO).not.toContain("ownsLatestToolOperation");
     expect(count(AO, "readTextractForPage")).toBe(0);
     expect(count(POINTER, "readTextractForPage")).toBe(2);
-    expect(AO.split("\n").length - 1).toBe(2122);
+    expect(AO.split("\n").length - 1).toBe(2086);
   });
 
   it("pins BucketFill's exact registry slot immediately after Split", () => {

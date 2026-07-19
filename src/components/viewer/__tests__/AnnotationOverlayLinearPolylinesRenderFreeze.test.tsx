@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
 // [refactor jul19 P3.3] Direct-parent executable freeze for the completed linear-polyline paint
-// stage. This mounts the real AnnotationOverlay driver before render/linearPolylines.ts exists.
-// The production move must retain this trace and may translate only the source-topology section.
+// stage. It was born against the real inline AnnotationOverlay driver; the extraction keeps the
+// behavioral trace intact and translates only the source-topology section.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -432,6 +432,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const LINEAR_POLYLINES = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/linearPolylines.ts"),
+  "utf8",
+);
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -450,10 +454,11 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function expectParentOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const area = source.indexOf("    // Draw completed area polygons");
   const linear = source.indexOf("    // Draw completed linear polylines");
+  const linearCall = source.indexOf("drawLinearPolylines(ctx, {", linear);
   const groups = source.indexOf("    // Group-membership outlines");
   const groupCall = source.indexOf("drawGroupRings(ctx, {", groups);
   const preview = source.indexOf(
@@ -465,14 +470,15 @@ function expectParentOrder(source: string): void {
   expect(annotations).toBeGreaterThan(-1);
   expect(area).toBeGreaterThan(annotations);
   expect(linear).toBeGreaterThan(area);
-  expect(groups).toBeGreaterThan(linear);
+  expect(linearCall).toBeGreaterThan(linear);
+  expect(groups).toBeGreaterThan(linearCall);
   expect(groupCall).toBeGreaterThan(groups);
   expect(preview).toBeGreaterThan(groupCall);
   expect(dependencies).toBeGreaterThan(preview);
 }
 
-describe("AnnotationOverlay linear-polyline direct-parent topology", () => {
-  it("binds the exact earlier driver, linear slice, group handoff, and dependencies", () => {
+describe("AnnotationOverlay linear-polyline post-move topology", () => {
+  it("binds the exact earlier driver, pure call, group handoff, and dependencies", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
@@ -484,16 +490,21 @@ describe("AnnotationOverlay linear-polyline direct-parent topology", () => {
       "d7e777e5dbaf2c183548354bf7e52e93d842b3b454eee848cc9fe6eb550fa52b",
     );
 
-    const linear = exactSlice(
+    const linearCall = exactSlice(
       AO,
       "    // Draw completed linear polylines\n",
       "    // Group-membership outlines",
     );
-    expect(count(linear, "\n")).toBe(47);
-    expect(Buffer.byteLength(linear, "utf8")).toBe(1_840);
-    expect(sha256(linear)).toBe(
-      "161ef4b571ef78b34b4e91ba5392e457daab77fa212074168d6068451e0d68f8",
+    expect(count(linearCall, "\n")).toBe(10);
+    expect(Buffer.byteLength(linearCall, "utf8")).toBe(262);
+    expect(sha256(linearCall)).toBe(
+      "7f429ca3625531a90078894ab264ad5071ab00ddd54fcc867bccbcbf7464b299",
     );
+    expect(count(linearCall, "drawLinearPolylines(ctx, {")).toBe(1);
+    expect(linearCall).toContain(
+      "isSelected: (annotationId) => multiSelect.isSelected(annotationId),",
+    );
+    expect(linearCall).not.toContain("for (const ann of pageAnnotations)");
 
     const groupCall = exactSlice(
       AO,
@@ -516,30 +527,52 @@ describe("AnnotationOverlay linear-polyline direct-parent topology", () => {
     );
   });
 
-  it("keeps the inline stage between area and groups with no future module present", () => {
-    expectParentOrder(AO);
-    expect(count(AO, 'from "./render/linearPolylines"')).toBe(0);
-    expect(count(AO, "drawLinearPolylines(")).toBe(0);
+  it("keeps one ordered call, one pure type-only module, and biting self-oracles", () => {
+    expectPostMoveOrder(AO);
+    expect(count(
+      AO,
+      'import { drawLinearPolylines } from "./render/linearPolylines";',
+    )).toBe(1);
+    expect(count(AO, "drawLinearPolylines(ctx, {")).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/linearPolylines.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/linearPolylines.test.ts",
-    ))).toBe(false);
+    ))).toBe(true);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawLinearPolylines(ctx, {", "missingLinearPolylines(ctx, {"),
+    )).toThrow();
 
-    const linear = exactSlice(
+    const linearCall = exactSlice(
       AO,
       "    // Draw completed linear polylines\n",
       "    // Group-membership outlines",
     );
     const reordered = AO
-      .replace(linear, "")
+      .replace(linearCall, "")
       .replace(
         "    // Calibration + polygon preview",
-        `${linear}    // Calibration + polygon preview`,
+        `${linearCall}    // Calibration + polygon preview`,
       );
-    expect(() => expectParentOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(Buffer.byteLength(LINEAR_POLYLINES, "utf8")).toBe(2_469);
+    expect(count(LINEAR_POLYLINES, "\n")).toBe(73);
+    expect(sha256(LINEAR_POLYLINES)).toBe(
+      "6b68c8ba307390a574a5708bbb0cca9b4132b6ece8149723aa6f294a67d687ca",
+    );
+    expect(count(
+      LINEAR_POLYLINES,
+      'import type { ClientAnnotation, LinearPolylineData } from "@/types";',
+    )).toBe(1);
+    for (const forbidden of [
+      "react", "useToolStore", "useUiStore", "useQueryClient", "fetch(",
+      "persistFetch", "AnnotationOverlay", "setLineDash(", "closePath(",
+    ]) {
+      expect(LINEAR_POLYLINES).not.toContain(forbidden);
+    }
   });
 });
