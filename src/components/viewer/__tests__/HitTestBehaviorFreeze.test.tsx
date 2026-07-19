@@ -313,9 +313,12 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     join(process.cwd(), "src/components/viewer/hitTest.ts"),
     "utf8",
   );
-  // [refactor jul16 P3.2 markup] The markup controller extraction moved ONE bbox call site, ONE
-  // handle call site, and ONE corner enumeration out of the overlay into tools/markup.ts; the
-  // totals below are pinned ACROSS both files so a lost/duplicated call site still fails.
+  // PointerGroup owns the two precise/bbox/handle call sites formerly in AO; Markup owns its
+  // independent bbox/handle pair. Totals are pinned across all production homes.
+  const POINTER_CTRL = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/pointerGroup.ts"),
+    "utf8",
+  );
   const MARKUP_CTRL = readFileSync(
     join(process.cwd(), "src/components/viewer/tools/markup.ts"),
     "utf8",
@@ -323,11 +326,10 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
   const squish = (s: string): string => s.replace(/\s+/g, " ").trim();
 
-  it("pins the pure dependency-free hitTest leaf and the rewired AO imports", () => {
+  it("pins the pure dependency-free hitTest leaf and rewired controller imports", () => {
     expect(HITTEST).not.toMatch(/^import /m); // no imports at all: pure leaf
-    expect(AO).toContain(
-      'import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";',
-    );
+    expect(AO).not.toContain('from "./hitTest"');
+    expect(POINTER_CTRL).toContain('from "../hitTest"');
     // areaCalc no longer exports the ray cast; AO no longer imports it from there
     expect(AREACALC).not.toContain("export function pointInPolygon(");
     expect(AO).toContain(
@@ -336,22 +338,28 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
   });
 
   it("pins helper call counts 2 withHoles / 2 polyline / 2+1 bbox / 2+1 handle", () => {
-    expect(count(AO, "pointInPolygonWithHoles(")).toBe(2); // double-click + single area loop
-    expect(count(AO, "pointNearPolyline(")).toBe(2); // double-click + single line loop
-    expect(count(AO, "pointInNormalizedBbox(")).toBe(2); // double-click else + generic bbox loop
-    expect(count(AO, "pointInHandle(")).toBe(2); // vertices + pointer corners
+    expect(count(AO, "pointInPolygonWithHoles(")).toBe(0);
+    expect(count(AO, "pointNearPolyline(")).toBe(0);
+    expect(count(AO, "pointInNormalizedBbox(")).toBe(0);
+    expect(count(AO, "pointInHandle(")).toBe(0);
+    expect(count(POINTER_CTRL, "pointInPolygonWithHoles(")).toBe(2);
+    expect(count(POINTER_CTRL, "pointNearPolyline(")).toBe(2);
+    expect(count(POINTER_CTRL, "pointInNormalizedBbox(")).toBe(2);
+    expect(count(POINTER_CTRL, "pointInHandle(")).toBe(2);
     expect(count(MARKUP_CTRL, "pointInNormalizedBbox(")).toBe(1); // markup select (moved P3.2)
     expect(count(MARKUP_CTRL, "pointInHandle(")).toBe(1); // markup corners (moved P3.2)
   });
 
   it("pins the old inline math ABSENT from the targeted branches", () => {
-    expect(count(AO, "pointInPolygon(clickNorm")).toBe(0);
-    expect(count(AO, "if (dist2 < 8) { hit = true; break; }")).toBe(0);
-    expect(count(AO, "const threshold = 8; // pixels")).toBe(0);
-    expect(count(AO, "if (dist < threshold) { hit = true; break; }")).toBe(0);
-    expect(count(AO, "pos.x <= ax + (maxX - minX) * width")).toBe(0);
-    expect(count(AO, "ax + aw")).toBe(0);
-    expect(count(AO, "< HANDLE && Math.abs(")).toBe(0);
+    for (const source of [AO, POINTER_CTRL]) {
+      expect(count(source, "pointInPolygon(clickNorm")).toBe(0);
+      expect(count(source, "if (dist2 < 8) { hit = true; break; }")).toBe(0);
+      expect(count(source, "const threshold = 8; // pixels")).toBe(0);
+      expect(count(source, "if (dist < threshold) { hit = true; break; }")).toBe(0);
+      expect(count(source, "pos.x <= ax + (maxX - minX) * width")).toBe(0);
+      expect(count(source, "ax + aw")).toBe(0);
+      expect(count(source, "< HANDLE && Math.abs(")).toBe(0);
+    }
   });
 
   it("pins ZERO residual mousedown Math.sqrt sites (all three moved to controllers)", () => {
@@ -364,7 +372,7 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
   });
 
   it("pins the corner handle enumeration order tl -> tr -> bl -> br at both sites", () => {
-    expect(count(AO, "tl: { x: minX * width, y: minY * height },")).toBe(1); // pointer block
+    expect(count(POINTER_CTRL, "tl: { x: minX * width, y: minY * height },")).toBe(1);
     expect(count(MARKUP_CTRL, "tl: { x: minX * width, y: minY * height },")).toBe(1); // markup (moved P3.2)
   });
 
@@ -372,30 +380,33 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     // Review probe B: a width/height transposition at any scale-taking call site passes the
     // square-canvas witnesses and the bare count pins. These full-string pins close that hole;
     // the non-square Layer C witness (d) provides the behavior-level backstop.
-    expect(count(AO, "pointInPolygonWithHoles(clickNorm, data.vertices, data.holes)")).toBe(2);
-    expect(count(AO, "pointNearPolyline(pos, data.vertices, width, height)")).toBe(2);
-    expect(count(AO, "pointInNormalizedBbox(pos, ann.bbox, width, height)")).toBe(2);
-    expect(count(AO, "pointInHandle(pos, corner, HANDLE)")).toBe(1);
-    expect(count(AO, "pointInHandle(pos, { x: vx, y: vy }, HANDLE)")).toBe(1);
+    expect(count(POINTER_CTRL, "pointInPolygonWithHoles(clickNorm, data.vertices, data.holes)")).toBe(2);
+    expect(count(POINTER_CTRL, "pointNearPolyline(pos, data.vertices, width, height)")).toBe(2);
+    expect(count(POINTER_CTRL, "pointInNormalizedBbox(pos, ann.bbox, width, height)")).toBe(2);
+    expect(count(POINTER_CTRL, "pointInHandle(pos, corner, HANDLE)")).toBe(1);
+    expect(count(POINTER_CTRL, "pointInHandle(pos, { x: vertexX, y: vertexY }, HANDLE)")).toBe(1);
     // The moved markup sites keep the same (width, height) scale-argument order.
     expect(count(MARKUP_CTRL, "pointInNormalizedBbox(position, ann.bbox, width, height)")).toBe(1);
     expect(count(MARKUP_CTRL, "pointInHandle(position, corner, HANDLE)")).toBe(1);
   });
 
   it("pins the distinct double-click (one else-if loop) vs single-click (three ordered loops) shape", () => {
-    const idxDouble = AO.indexOf("// Double-click: universal annotation filter");
-    const idxArea = AO.indexOf("// Check area polygons first");
-    const idxLine = AO.indexOf("// Check linear polylines (point-near-line test)");
-    const idxBbox = AO.indexOf("// Check annotations (bbox-based) — select and start drag");
+    const idxDouble = POINTER_CTRL.indexOf("// Double-click: universal annotation filter");
+    const idxArea = POINTER_CTRL.indexOf("// Check area polygons first");
+    const idxLine = POINTER_CTRL.indexOf("// Check linear polylines (point-near-line test)");
+    const idxBbox = POINTER_CTRL.indexOf("// Check annotations (bbox-based) — select and start drag");
     expect(idxDouble).toBeGreaterThan(-1);
     // Single-click order: area -> linear -> generic bbox, three SEPARATE loops.
     expect(idxArea).toBeGreaterThan(idxDouble);
     expect(idxLine).toBeGreaterThan(idxArea);
     expect(idxBbox).toBeGreaterThan(idxLine);
     // Double-click is one loop with an else-if chain (shape-exclusive).
-    const dblBlock = AO.slice(idxDouble, idxArea);
+    const dblBlock = POINTER_CTRL.slice(idxDouble, idxArea);
     expect(count(dblBlock, "for (const ann of pageAnnotations)")).toBe(1);
-    expect(dblBlock).toContain('} else if (ann.source === "takeoff" && (ann.data as any)?.type === "linear-polyline") {');
+    expect(squish(dblBlock)).toContain(
+      '} else if ( ann.source === "takeoff" && ' +
+      '(ann.data as any)?.type === "linear-polyline" ) {',
+    );
     expect(dblBlock).toContain("if (!hit) continue;");
   });
 

@@ -13,7 +13,7 @@
 //   - a holed longest candidate is rejected after ranking without falling through or clearing A/B.
 //
 // The behavior rows remain the parent oracle; the final describe is now POST-move topology and
-// names the controller as the sole mousedown home in the exact 12-entry registry.
+// names the controller as the sole mousedown home in the current ordered registry.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -548,7 +548,7 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
     expect(CONTROLLER).toContain(MISS_MESSAGE);
   });
 
-  it("pins Split immediately before BucketFill in the exact 12-controller registry", () => {
+  it("pins Split immediately before BucketFill in the exact 13-controller registry", () => {
     expect(REGISTRY).toContain('import { splitController } from "./split";');
     expect(REGISTRY).toContain(
       'import { bucketFillController } from "./bucketFill";',
@@ -569,9 +569,10 @@ describe("split seam topology pins (POST-move: controller is the sole mousedown 
       "symbolSearch",
       "tagAdd",
       "parseRect",
+      "pointerGroup",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(12);
+    expect(TOOLS).toHaveLength(13);
   });
 
   it("pins the atomic acceptSplit terminal and sacred mousedown dependency block", () => {

@@ -1054,6 +1054,10 @@ describe("BucketFill controller POST-move source and topology", () => {
     "src/components/viewer/tools/bucketFill.ts",
     "utf8",
   );
+  const POINTER = readFileSync(
+    "src/components/viewer/tools/pointerGroup.ts",
+    "utf8",
+  );
   const REGISTRY = readFileSync(
     "src/components/viewer/tools/registry.ts",
     "utf8",
@@ -1091,8 +1095,9 @@ describe("BucketFill controller POST-move source and topology", () => {
     expect(AO).not.toContain("readAnnotations");
     expect(AO).not.toContain("claimLatestToolOperation");
     expect(AO).not.toContain("ownsLatestToolOperation");
-    expect(count(AO, "readTextractForPage")).toBe(2);
-    expect(AO.split("\n").length - 1).toBe(2455);
+    expect(count(AO, "readTextractForPage")).toBe(0);
+    expect(count(POINTER, "readTextractForPage")).toBe(2);
+    expect(AO.split("\n").length - 1).toBe(2153);
   });
 
   it("pins exact registration 12 immediately after Split", () => {
@@ -1114,9 +1119,10 @@ describe("BucketFill controller POST-move source and topology", () => {
       "symbolSearch",
       "tagAdd",
       "parseRect",
+      "pointerGroup",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(12);
+    expect(TOOLS).toHaveLength(13);
   });
 
   it("pins the narrow capability and dependency-neutral AO wiring", () => {

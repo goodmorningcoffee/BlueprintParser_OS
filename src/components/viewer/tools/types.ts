@@ -2,12 +2,18 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { UseAnnotationsResult } from "@/queries/useAnnotations";
-import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
+import type {
+  ClientAnnotation,
+  ClientTakeoffItem,
+  KeynoteShapeData,
+  YoloTag,
+} from "@/types";
 import type { ParseFlowState } from "@/stores/parseFlowStore";
 import type { SessionState } from "@/stores/sessionStore";
 import type { ToolStoreState } from "@/stores/toolStore";
 import type { UiState } from "@/stores/uiStore";
 import type { ViewerCoreState } from "@/stores/viewerCoreStore";
+import type { AnnotationDragOperation } from "../useAnnotationDragMachine";
 
 // [refactor jul15 P3.1] Controller identity is deliberately separate from ActiveTool.kind.
 // The activation union has eight owners; takeoff, the parseRect keynote-pick split, and base
@@ -54,10 +60,9 @@ export interface ToolStoreCapabilities {
  * takeoffCount is the sole raw-mutation caller in the legacy mousedown and it calls ONLY
  * persistCreate — which is already in the 37-entry mousedown dependency array, so the wiring is
  * dep-neutral. The speculative P3.1 members are deliberately dropped, each with a re-open note:
- * - addAnnotation / removeAnnotation / updateAnnotation RE-OPEN at pointerGroup (the pointer
- *   block's drag/resize/delete paths are their first movers); they are hook-returned and NOT in
- *   the dep array, so their sourcing (deps-churn vs stale-closure vs ref) must be decided at that
- *   extraction on correctness grounds.
+ * - addAnnotation / removeAnnotation / updateAnnotation were RE-OPENED and resolved at
+ *   pointerGroup without widening this capability: delete remains behind the captured
+ *   deleteSelected composite and drag mutation remains behind the annotation-drag machine.
  * - updateYoloTag remains in shared TagAdd mouseup under ACCEPT-PARTIAL; its capability decision
  *   RE-OPENS only when that lifecycle axis moves (P3.4/BUILD-AXIS). TagPick needs no annotation
  *   mutation capability.
@@ -110,6 +115,10 @@ export interface ToolContext {
   }>;
   /** Component-owned drag journal; proven by markup's selected-corner start path. */
   readonly annotationDrag?: Readonly<{
+    begin: (
+      annotation: ClientAnnotation,
+      operation: AnnotationDragOperation,
+    ) => boolean;
     beginBBox: (annotation: ClientAnnotation, resizeCorner: string) => boolean;
   }>;
   readonly pageAnnotations?: readonly ClientAnnotation[];
@@ -198,6 +207,54 @@ export interface ToolContext {
     addPolygonVertex: ToolStoreState["addPolygonVertex"];
     saveLinearPolyline: () => void;
     savePolygon: () => void;
+  }>;
+  /**
+   * [refactor jul19 P3.2 PointerGroup] Exact render-captured projections and component-local
+   * commands proven by the base Pointer/Group mousedown board. Query authority is included for
+   * handler-time observer-free PI/Textract reads; it is deliberately distinct from BucketFill's
+   * semantic cache capability. Every changing factory value was already represented by the
+   * sacred 37-entry callback dependency block; setters and refs are stable.
+   */
+  readonly pointerGroup?: Readonly<{
+    queryClient: QueryClient;
+    tableCellStructure: ParseFlowState["tableCellStructure"];
+    showTableCellStructure: boolean;
+    toggleCellHighlight: ParseFlowState["toggleCellHighlight"];
+    pageKeynotes: readonly KeynoteShapeData[];
+    yoloTags: readonly YoloTag[];
+    multiSelect: Readonly<{
+      handleAnnotationClick: (
+        id: number,
+        event: Pick<ReactMouseEvent, "shiftKey" | "metaKey" | "ctrlKey">,
+      ) => Readonly<{ handled: boolean }>;
+      expandSelectionViaGroups: (id: number) => void;
+      clearSelection: () => void;
+    }>;
+    ui: Readonly<Pick<UiState,
+      | "setSearch"
+      | "setAnnotationFilter"
+      | "setTakeoffFilter"
+      | "setKeynoteFilter"
+      | "setActiveYoloTagId"
+      | "setYoloTagFilter"
+    >>;
+    dragUi: Readonly<{
+      setDraggingVertex: (
+        handle: Readonly<{ annId: number; idx: number }> | null,
+      ) => void;
+      setDragOffset: (offset: Readonly<{ x: number; y: number }>) => void;
+    }>;
+    markupEdit: Readonly<{
+      canvasRef: Readonly<{ current: HTMLCanvasElement | null }>;
+      nameInputRef: Readonly<{ current: HTMLInputElement | null }>;
+      setPendingMarkup: (
+        bbox: [number, number, number, number] | null,
+      ) => void;
+      setMarkupName: (value: string) => void;
+      setMarkupNote: (value: string) => void;
+      setMarkupCsi: (value: string) => void;
+      setEditingAnnotationId: (id: number | null) => void;
+    }>;
   }>;
 }
 

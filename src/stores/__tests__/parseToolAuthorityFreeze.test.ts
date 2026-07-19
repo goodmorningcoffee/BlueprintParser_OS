@@ -321,11 +321,18 @@ describe("later user tool intent revokes parse completion writes", () => {
     // publisher join as one narrow group; all three were already in the same dependency block.
     // [refactor jul19 P3.2 BucketFill] Observer-free query authority, exact render DB identity,
     // and the captured barrier composite join dep-neutrally from the same frozen block.
+    // [refactor jul19 P3.2 PointerGroup] Generic drag admission and the captured table, keynote,
+    // tag, multi-select, UI, local-mirror, and markup-edit projections join dep-neutrally; the
+    // dedicated query client preserves fresh observer-free PI/Textract reads.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected}," +
-        "annotationDrag:{beginBBox:(annotation,corner)=>beginAnnotationDrag(annotation,{kind:\"bbox\",resizeCorner:corner,dragOffset:{x:0,y:0}},),}," +
-        "pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
+        "annotationDrag:{begin:beginAnnotationDrag,beginBBox:(annotation,corner)=>beginAnnotationDrag(annotation,{kind:\"bbox\",resizeCorner:corner,dragOffset:{x:0,y:0}},),}," +
+        "pageAnnotations,pointerGroup:{queryClient:qc,tableCellStructure,showTableCellStructure,toggleCellHighlight,pageKeynotes,yoloTags," +
+        "multiSelect:{handleAnnotationClick:multiSelect.handleAnnotationClick,expandSelectionViaGroups:multiSelect.expandSelectionViaGroups,clearSelection:multiSelect.clearSelection,}," +
+        "ui:{setSearch,setAnnotationFilter,setTakeoffFilter,setKeynoteFilter,setActiveYoloTagId,setYoloTagFilter,}," +
+        "dragUi:{setDraggingVertex,setDragOffset},markupEdit:{canvasRef,nameInputRef,setPendingMarkup,setMarkupName,setMarkupNote,setMarkupCsi,setEditingAnnotationId,},}," +
+        "deferredDrawing:{start:startDeferredDrawing}," +
         "keynotePick:{active:isKeynoteYoloPicking}," +
         "tagPick:{scanControllerRef:tagScanControllerRef,setPickingMode:setYoloTagPickingMode,}," +
         "split:{setLineEndpoint:setSplitLineEndpoint,setPreview:setSplitPreview,publishError:publishTransientSplitError,}," +

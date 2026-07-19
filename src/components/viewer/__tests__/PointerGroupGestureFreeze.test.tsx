@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 //
 // [refactor jul19 P3.2] Parent-green executable freeze for the Pointer/Group mousedown board.
-// This file lands before tools/pointerGroup.ts exists. Behavior describes enter through the real
-// AnnotationOverlay handler; the final describe pins the exact PRE extraction topology. During
-// the pure lift only that PRE describe is translated. The real-overlay rows stay unchanged.
+// This file landed before tools/pointerGroup.ts existed. Behavior enters through the real
+// AnnotationOverlay handler; the final describe now pins the translated POST extraction topology.
+// The real-overlay rows remain unchanged from the parent freeze.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -1548,7 +1548,7 @@ describe("Pointer/Group empty-canvas ownership and shared lasso settlement", () 
   });
 });
 
-describe("Pointer/Group PRE extraction topology", () => {
+describe("Pointer/Group POST extraction topology", () => {
   const root = process.cwd();
   const aoPath = join(root, "src/components/viewer/AnnotationOverlay.tsx");
   const pointerPath = join(root, "src/components/viewer/tools/pointerGroup.ts");
@@ -1556,6 +1556,7 @@ describe("Pointer/Group PRE extraction topology", () => {
   const typesPath = join(root, "src/components/viewer/tools/types.ts");
   const markupPath = join(root, "src/components/viewer/tools/markup.ts");
   const AO = readFileSync(aoPath, "utf8");
+  const POINTER = readFileSync(pointerPath, "utf8");
   const REGISTRY = readFileSync(registryPath, "utf8");
   const TYPES = readFileSync(typesPath, "utf8");
   const MARKUP = readFileSync(markupPath, "utf8");
@@ -1563,31 +1564,33 @@ describe("Pointer/Group PRE extraction topology", () => {
     haystack.split(needle).length - 1;
   const sha256 = (value: string): string =>
     createHash("sha256").update(value, "utf8").digest("hex");
-  const startAnchor = "      // Pointer mode (and Group mode";
-  const endAnchor = "      // [refactor jul16 P3.2] The markup mousedown blocks";
-  const start = AO.indexOf(startAnchor);
-  const end = AO.indexOf(endAnchor);
-  const SLICE = AO.slice(start, end);
-
-  it("pins the exact parent AO and marker-defined Pointer/Group slice", () => {
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    expect(Buffer.byteLength(AO, "utf8")).toBeGreaterThan(0);
-    expect(count(AO, "\n")).toBe(2_455);
-    expect(sha256(AO)).toBe(
-      "d96515838b125e4d20ccca71bc5c5179f5c5f5cfb098de9c297d65d2d4eefa6e",
-    );
-    expect(Buffer.byteLength(SLICE, "utf8")).toBe(15_617);
-    expect(count(SLICE, "\n")).toBe(327);
-    expect(sha256(SLICE)).toBe(
-      "fd0b1e5c54a1c808e365ec34b7e15903d5c013f78ac727c69867ea7aac6c2dee",
-    );
-    expect(AO.slice(end, end + endAnchor.length)).toBe(endAnchor);
+  const parentProvenance = Object.freeze({
+    aoSha256: "d96515838b125e4d20ccca71bc5c5179f5c5f5cfb098de9c297d65d2d4eefa6e",
+    sliceBytes: 15_617,
+    sliceNewlines: 327,
+    sliceSha256: "fd0b1e5c54a1c808e365ec34b7e15903d5c013f78ac727c69867ea7aac6c2dee",
   });
 
-  it("pins controller/capability absence and the exact 12-controller destination slot", () => {
-    expect(existsSync(pointerPath)).toBe(false);
-    expect(REGISTRY).not.toContain('from "./pointerGroup"');
+  it("retains exact parent provenance while removing the legacy AO home", () => {
+    expect(POINTER).toContain(`Parent provenance: AO SHA-256 ${parentProvenance.aoSha256};`);
+    expect(POINTER).toContain(
+      `marker slice ${parentProvenance.sliceBytes.toLocaleString("en-US")} bytes / ` +
+      `${parentProvenance.sliceNewlines} newlines / SHA-256`,
+    );
+    expect(POINTER).toContain(`${parentProvenance.sliceSha256}.`);
+    expect(existsSync(pointerPath)).toBe(true);
+    expect(AO).not.toContain("// Pointer mode (and Group mode");
+    expect(AO).not.toContain("// TATR cell click:");
+    expect(AO).not.toContain("// Double-click: universal annotation filter");
+    expect(AO).toContain(
+      "// Pointer/Group mousedown is claimed by pointerGroupController at the registry seam.",
+    );
+    expect(count(AO, "\n")).toBeLessThan(2_455);
+    expect(Buffer.byteLength(POINTER, "utf8")).toBeGreaterThan(parentProvenance.sliceBytes);
+  });
+
+  it("pins the controller capability and exact 13-controller destination slot", () => {
+    expect(REGISTRY).toContain('from "./pointerGroup"');
     expect(TOOLS.map((controller) => controller.kind)).toEqual([
       "calibration",
       "split",
@@ -1600,62 +1603,79 @@ describe("Pointer/Group PRE extraction topology", () => {
       "symbolSearch",
       "tagAdd",
       "parseRect",
+      "pointerGroup",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(12);
-    expect(REGISTRY).toContain("    parseRectController,\n    markupController,");
+    expect(TOOLS).toHaveLength(13);
+    expect(REGISTRY).toContain(
+      "    parseRectController,\n    pointerGroupController,\n    markupController,",
+    );
     expect(TYPES).toContain('| "pointerGroup"');
-    expect(TYPES).not.toContain("readonly pointerGroup?: Readonly<{");
+    expect(TYPES).toContain("readonly pointerGroup?: Readonly<{");
     const dragStart = TYPES.indexOf("  readonly annotationDrag?: Readonly<{");
     const dragEnd = TYPES.indexOf("  readonly pageAnnotations?", dragStart);
     const dragCapability = TYPES.slice(dragStart, dragEnd);
     expect(dragCapability).toContain("beginBBox:");
-    expect(dragCapability).not.toMatch(/\bbegin:\s*\(/);
+    expect(dragCapability).toMatch(/\bbegin:\s*\(/);
+    expect(AO).toContain("begin: beginAnnotationDrag,");
+    expect(AO).toContain("pointerGroup: {");
   });
 
-  it("pins common invalidation immediately before the board and exact S1-S7 order", () => {
+  it("pins residual common invalidation and the controller's exact S1-S7 transposition", () => {
     const prelude =
       "      // Every non-null specialized owner suppresses base pointer/group/markup fallthrough.\n" +
       "      if (activeTool !== null) return;\n" +
       "      invalidateToolTailAuthority();\n\n";
-    expect(AO.slice(start - prelude.length, start)).toBe(prelude);
-    expect(AO.indexOf("dispatchToolMouseDown(TOOLS", 0)).toBeLessThan(start);
-    expect(count(SLICE, "invalidateToolTailAuthority();")).toBe(0);
+    const residual = AO.indexOf(
+      "      // Pointer/Group mousedown is claimed by pointerGroupController",
+    );
+    expect(AO.slice(residual - prelude.length, residual)).toBe(prelude);
+    expect(AO.indexOf("dispatchToolMouseDown(TOOLS", 0)).toBeLessThan(residual);
+    expect(count(POINTER, "invalidateToolTailAuthority();")).toBe(1);
+    expect(POINTER.indexOf("invalidateToolTailAuthority();")).toBeGreaterThan(
+      POINTER.indexOf("pointerGroup capabilities"),
+    );
 
     const anchors = [
       "// TATR cell click:",
       "// Double-click: universal annotation filter",
-      "// If an annotation is already selected, check corners for resize",
+      "// If an annotation is already selected, check corners for resize.",
       "// Check area polygons first (point-in-polygon test).",
-      "// Check linear polylines (point-near-line test)",
-      "// Check annotations (bbox-based) — select and start drag",
-      "// Check keynotes",
+      "// Check linear polylines (point-near-line test).",
+      "// Check annotations (bbox-based) — select and start drag.",
+      "// Check keynotes.",
       "// Clicked empty space — deselect, OR start a lasso in Group mode.",
     ];
     let previous = -1;
     for (const anchor of anchors) {
-      const index = SLICE.indexOf(anchor);
+      const index = POINTER.indexOf(anchor);
       expect(index, anchor).toBeGreaterThan(previous);
       previous = index;
     }
+    expect(POINTER).not.toContain("return false;");
   });
 
   it("pins exact detail, geometry, publication, stop, and empty-press source policies", () => {
-    expect(count(SLICE, "e.detail === 2")).toBe(2);
-    expect(count(SLICE, "e.stopPropagation();")).toBe(11);
-    expect(SLICE).not.toContain("preventDefault");
-    expect(SLICE).not.toMatch(/e\.button\s*[!=<]/);
-    expect(count(SLICE, "pointInPolygonWithHoles(")).toBe(2);
-    expect(count(SLICE, "pointNearPolyline(")).toBe(2);
-    expect(count(SLICE, "pointInNormalizedBbox(")).toBe(2);
-    expect(count(SLICE, "pointInHandle(")).toBe(2);
-    expect(SLICE).toContain("if (!beginAnnotationDrag(selAnn, { kind: \"vertex\", vertexIndex: i })) return;");
-    expect(SLICE).toContain("resizeCorner: key,\n                    dragOffset: { x: 0, y: 0 } })) return;");
-    expect(SLICE).toContain("const { handled } = multiSelect.handleAnnotationClick(ann.id, e);\n            if (!canAdoptProjectLifecycle()) return;\n            if (handled) return;");
-    expect(SLICE).toContain("multiSelect.expandSelectionViaGroups(ann.id);\n            if (!canAdoptProjectLifecycle()) return;");
-    expect(SLICE).toContain("startDeferredDrawing(pos, false);");
-    expect(SLICE).toContain("setSelectedId(null);\n        multiSelect.clearSelection();\n        return;");
-    expect(SLICE).toContain("setTimeout(() => nameInputRef.current?.focus(), 50);");
+    expect(count(POINTER, "event.detail === 2")).toBe(2);
+    expect(count(POINTER, "event.stopPropagation();")).toBe(11);
+    expect(POINTER).not.toContain("preventDefault");
+    expect(POINTER).not.toMatch(/event\.button\s*[!=<]/);
+    expect(count(POINTER, "pointInPolygonWithHoles(")).toBe(2);
+    expect(count(POINTER, "pointNearPolyline(")).toBe(2);
+    expect(count(POINTER, "pointInNormalizedBbox(")).toBe(2);
+    expect(count(POINTER, "pointInHandle(")).toBe(2);
+    expect(POINTER).toContain("if (!annotationDrag.begin(selectedAnnotation, {");
+    expect(POINTER).toContain("dragUi.setDraggingVertex({ annId: selectedAnnotation.id, idx: index });");
+    expect(POINTER).toContain("selection.setResizeCorner(key);\n              selection.setDragging(true);");
+    expect(POINTER).toContain("const { handled } = multiSelect.handleAnnotationClick(ann.id, event);");
+    expect(POINTER).toContain("multiSelect.expandSelectionViaGroups(ann.id);");
+    expect(POINTER).toContain("deferredDrawing.start(pos, false);");
+    expect(POINTER).toContain(
+      "selection.setSelectedId(null);\n    multiSelect.clearSelection();\n    return true;",
+    );
+    expect(POINTER).toContain(
+      "setTimeout(() => markupEdit.nameInputRef.current?.focus(), 50);",
+    );
   });
 
   it("pins raw 37-entry dependencies and retains independent Markup/K12 provenance", () => {

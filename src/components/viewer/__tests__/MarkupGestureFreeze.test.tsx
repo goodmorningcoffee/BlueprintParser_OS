@@ -22,7 +22,7 @@
 //       UNTOUCHED legacy mouseup into pendingMarkup → MarkupDialog → saveMarkup's optimistic
 //       cache row carrying the exact anisotropically-normalized bbox; sub-1% gestures abandon.
 // NOTE: the markup label bar is the SIMPLE variant (no pencil zone, no text measurement) —
-// deliberately distinct from the pointer block's rich label logic, which stays in the overlay.
+// deliberately distinct from the pointerGroup controller's rich label logic.
 //
 // The final describe pins the PRE-move source topology; the extraction commit rewrites ONLY that
 // describe to the post-move topology (blocks absent, controller file is the sole home, factory
@@ -358,6 +358,10 @@ describe("markup seam topology pins (post-move: controller registered, blocks ex
     join(process.cwd(), "src/components/viewer/tools/markup.ts"),
     "utf8",
   );
+  const POINTER = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/pointerGroup.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
   it("pins the markup blocks fully extracted from the overlay", () => {
@@ -365,11 +369,14 @@ describe("markup seam topology pins (post-move: controller registered, blocks ex
     expect(count(AO, 'if (toolAtDown.mode !== "markup") return;')).toBe(0);
     // The factory carries the original trio plus the exact component-owned drag admission.
     expect(count(AO, "selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },")).toBe(1);
+    expect(count(AO, "annotationDrag: {\n            begin: beginAnnotationDrag,")).toBe(1);
     expect(count(AO, "beginBBox: (annotation, corner) => beginAnnotationDrag(")).toBe(1);
     expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
-    // The pointer block's rich label logic (pencil + text measurement) stays in the overlay.
-    expect(count(AO, "// Pencil icon clicked — edit markup")).toBe(1);
-    expect(count(AO, "deleteSelected();")).toBe(1);
+    // The distinct rich Pointer label moves only to PointerGroup.
+    expect(count(AO, "// Pencil icon clicked — edit markup")).toBe(0);
+    expect(count(POINTER, "// Pencil icon clicked — edit markup")).toBe(1);
+    expect(count(AO, "deleteSelected();")).toBe(0);
+    expect(count(POINTER, "selection.deleteSelected();")).toBe(1);
   });
 
   it("pins the controller as the sole home of the markup gesture", () => {

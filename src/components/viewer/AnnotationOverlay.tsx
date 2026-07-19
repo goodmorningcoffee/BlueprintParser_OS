@@ -11,11 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { commitAnnotationSplit } from "@/queries/annotationSplit";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
 import { enrichMarkupEditFromResponse, isCurrentMarkupEdit, publishMarkupEdit, retireMarkupEdit, rollbackMarkupEdit, useAnnotations } from "@/queries/useAnnotations";
-import { readTextractForPage } from "@/queries/textractCache";
-import {
-  readPageIntelligence,
-  useKeynotesForPage,
-} from "@/queries/usePageWindow";
+import { useKeynotesForPage } from "@/queries/usePageWindow";
 import {
   readYoloTags,
   useYoloTagActions,
@@ -40,7 +36,6 @@ import {
   addGuidedNotesRowForUser,
   addTableParseColumnForUser,
   addTableParseRowForUser,
-  focusParsedTableRegionInCatalog,
   setKeynoteParseStepWithTool,
   setNotesParseStepWithTool,
   setSpecParseStepWithTool,
@@ -62,8 +57,6 @@ import {
   releaseToolTailCancellation,
 } from "@/lib/parse-tool-authority";
 import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
-// [refactor jul15 P3.1½] hit-test predicates extracted to the pure geometry leaf; math unchanged.
-import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import { captureProjectLifecycle } from "@/lib/project-lifecycle";
@@ -1367,8 +1360,6 @@ export default memo(function AnnotationOverlay({
     setDragging, setResizeCorner, setDraggingVertex, setSelectedId,
   });
 
-  const HANDLE = 8; // corner handle size in pixels
-
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (!canAdoptProjectLifecycle()) return;
@@ -1401,11 +1392,43 @@ export default memo(function AnnotationOverlay({
           canAdoptProjectLifecycle,
           selection: { selectedId, setSelectedId, setResizeCorner, setDragging, deleteSelected },
           annotationDrag: {
+            begin: beginAnnotationDrag,
             beginBBox: (annotation, corner) => beginAnnotationDrag(
               annotation, { kind: "bbox", resizeCorner: corner, dragOffset: { x: 0, y: 0 } },
             ),
           },
           pageAnnotations,
+          pointerGroup: {
+            queryClient: qc,
+            tableCellStructure,
+            showTableCellStructure,
+            toggleCellHighlight,
+            pageKeynotes,
+            yoloTags,
+            multiSelect: {
+              handleAnnotationClick: multiSelect.handleAnnotationClick,
+              expandSelectionViaGroups: multiSelect.expandSelectionViaGroups,
+              clearSelection: multiSelect.clearSelection,
+            },
+            ui: {
+              setSearch,
+              setAnnotationFilter,
+              setTakeoffFilter,
+              setKeynoteFilter,
+              setActiveYoloTagId,
+              setYoloTagFilter,
+            },
+            dragUi: { setDraggingVertex, setDragOffset },
+            markupEdit: {
+              canvasRef,
+              nameInputRef,
+              setPendingMarkup,
+              setMarkupName,
+              setMarkupNote,
+              setMarkupCsi,
+              setEditingAnnotationId,
+            },
+          },
           deferredDrawing: { start: startDeferredDrawing },
           keynotePick: { active: isKeynoteYoloPicking },
           tagPick: {
@@ -1461,333 +1484,8 @@ export default memo(function AnnotationOverlay({
       if (activeTool !== null) return;
       invalidateToolTailAuthority();
 
-      // Pointer mode (and Group mode, which shares most interactions but adds
-      // shift-click multi-select + empty-canvas lasso): select, delete, move,
-      // resize annotations + click keynotes. The Group-specific branches are
-      // (a) the multiSelect.handleAnnotationClick call inside the bbox-hit
-      // loop below, and (b) the empty-canvas "mode === 'group'" lasso-start
-      // at the bottom of this block.
-      if (toolAtDown.mode === "pointer" || toolAtDown.mode === "group") {
-        // TATR cell click: single click = search by text, double click = toggle highlight.
-        // Gated on showTableCellStructure so the user can disable cell-level
-        // interaction without losing the underlying data.
-        if (tableCellStructure && tableCellStructure.pageNumber === pageNumber && showTableCellStructure) {
-          const normX = pos.x / width;
-          const normY = pos.y / height;
-          for (const cell of tableCellStructure.cells) {
-            if (normX >= cell.bbox[0] && normX <= cell.bbox[2] && normY >= cell.bbox[1] && normY <= cell.bbox[3]) {
-              if (e.detail === 2) {
-                toggleCellHighlight(cell.row, cell.col);
-              } else if (cell.text) {
-                setSearch(cell.text);
-              }
-              return;
-            }
-          }
-        }
-
-        // Double-click: universal annotation filter — filter pages + search + highlights
-        if (e.detail === 2) {
-          for (const ann of pageAnnotations) {
-            // Hit test — check area polygons with point-in-polygon, linear polylines with point-near-line, others with bbox
-            let hit = false;
-            if (ann.source === "takeoff" && (ann.data as any)?.type === "area-polygon") {
-              const data = ann.data as unknown as AreaPolygonData;
-              const clickNorm = { x: pos.x / width, y: pos.y / height };
-              // Clicking inside a hole (courtyard) should NOT select the polygon
-              hit = pointInPolygonWithHoles(clickNorm, data.vertices, data.holes);
-            } else if (ann.source === "takeoff" && (ann.data as any)?.type === "linear-polyline") {
-              const data = ann.data as unknown as LinearPolylineData;
-              hit = pointNearPolyline(pos, data.vertices, width, height);
-            } else {
-              hit = pointInNormalizedBbox(pos, ann.bbox, width, height);
-            }
-            if (!hit) continue;
-            e.stopPropagation();
-
-            const store = useUiStore.getState();
-            const currentSearch = store.searchQuery;
-            const isToggleOff = currentSearch.toLowerCase() === ann.name.toLowerCase();
-
-            if (ann.source === "user") {
-              // User markup: filter + open TextPanel → Markups tab
-              if (isToggleOff) {
-                setSearch("");
-                if (!canAdoptProjectLifecycle()) return;
-                setAnnotationFilter(null);
-                if (!canAdoptProjectLifecycle()) return;
-                store.setActiveMarkupId(null);
-              } else {
-                setSearch(ann.name);
-                if (!canAdoptProjectLifecycle()) return;
-                setAnnotationFilter(ann.name);
-                if (!canAdoptProjectLifecycle()) return;
-                store.setActiveMarkupId(ann.id);
-                if (!canAdoptProjectLifecycle()) return;
-                store.setTextPanelTab("markups");
-                if (!canAdoptProjectLifecycle()) return;
-                if (!store.showTextPanel) store.toggleTextPanel();
-              }
-            } else if (ann.source === "takeoff") {
-              // QTO marker: filter by takeoff item
-              const itemId = (ann.data as any)?.takeoffItemId;
-              const item = takeoffItems.find((t) => t.id === itemId);
-              const itemName = item?.name || ann.name;
-              if (isToggleOff || currentSearch.toLowerCase() === itemName.toLowerCase()) {
-                setSearch("");
-                if (!canAdoptProjectLifecycle()) return;
-                setTakeoffFilter(null);
-              } else {
-                setSearch(itemName);
-                if (!canAdoptProjectLifecycle()) return;
-                setTakeoffFilter(itemId);
-              }
-            } else {
-              // YOLO or other: annotation name filter
-              if (isToggleOff) {
-                setSearch("");
-                if (!canAdoptProjectLifecycle()) return;
-                setAnnotationFilter(null);
-              } else {
-                setSearch(ann.name);
-                if (!canAdoptProjectLifecycle()) return;
-                setAnnotationFilter(ann.name);
-              }
-            }
-            return;
-          }
-          // No annotation hit — try parsed table region hit-test
-          const pIntel = readPageIntelligence(qc, publicId, pageNumber) as any;
-          if (pIntel?.parsedRegions) {
-            const nrmX = pos.x / width;
-            const nrmY = pos.y / height;
-            for (const region of pIntel.parsedRegions) {
-              if (!region.bbox || region.type !== "schedule") continue;
-              const [rMinX, rMinY, rMaxX, rMaxY] = region.bbox;
-              if (nrmX >= rMinX && nrmX <= rMaxX && nrmY >= rMinY && nrmY <= rMaxY) {
-                e.stopPropagation();
-                // Parsed-region navigation is a stored-tab/new-flow handoff. Keep the canvas hot
-                // path subscription-free while publishing UI first and one terminal Parse patch.
-                focusParsedTableRegionInCatalog(region.id);
-                return;
-              }
-            }
-          }
-
-          // No parsed region hit — try OCR word fallback
-          // Double-click OCR fallback is also action-only and must see the live replacement without
-          // subscribing the canvas to Textract cache updates.
-          const pageWords = readTextractForPage(qc, publicId, pageNumber)?.words;
-          if (pageWords) {
-            const normX = pos.x / width;
-            const normY = pos.y / height;
-            for (const word of pageWords) {
-              const [left, top, w, h] = word.bbox;
-              if (normX >= left && normX <= left + w && normY >= top && normY <= top + h) {
-                const sq = useUiStore.getState().searchQuery;
-                if (e.shiftKey && sq) {
-                  // Shift+double-click: append word to search (multi-word selection)
-                  const existing = sq.toLowerCase().split(/\s+/);
-                  const newWord = word.text.toLowerCase();
-                  if (existing.includes(newWord)) {
-                    // Remove word if already in search
-                    const filtered = existing.filter((w) => w !== newWord);
-                    setSearch(filtered.join(" "));
-                  } else {
-                    setSearch(sq + " " + word.text);
-                  }
-                } else if (sq.toLowerCase() === word.text.toLowerCase()) {
-                  setSearch("");
-                } else {
-                  setSearch(word.text);
-                }
-                e.stopPropagation();
-                return;
-              }
-            }
-          }
-          return;
-        }
-
-        // If an annotation is already selected, check corners for resize
-        if (selectedId !== null) {
-          const selAnn = pageAnnotations.find((a) => a.id === selectedId);
-          if (selAnn) {
-            const [minX, minY, maxX, maxY] = selAnn.bbox;
-            // Skip corner-resize detection for area polygons. The resize
-            // handler only updates ann.bbox (not data.vertices), so dragging
-            // a corner visually moves an invisible bbox without reshaping
-            // the polygon — dead functionality. The label + delete "x" click
-            // handler below still runs so delete/edit keep working.
-            const selIsAreaPolygon = selAnn.source === "takeoff"
-              && (selAnn.data as any)?.type === "area-polygon";
-
-            // Vertex drag for selected area polygons (Bug 2). Runs BEFORE
-            // any other click handling so pointer-down near a vertex claims
-            // the click and enters drag mode. Uses the same HANDLE size as
-            // bbox corner handles.
-            if (selIsAreaPolygon) {
-              const polyData = selAnn.data as unknown as AreaPolygonData;
-              for (let i = 0; i < polyData.vertices.length; i++) {
-                const vx = polyData.vertices[i].x * width;
-                const vy = polyData.vertices[i].y * height;
-                if (pointInHandle(pos, { x: vx, y: vy }, HANDLE)) {
-                  e.stopPropagation();
-                  if (!beginAnnotationDrag(selAnn, { kind: "vertex", vertexIndex: i })) return;
-                  const handle = { annId: selAnn.id, idx: i };
-                  setDraggingVertex(handle);
-                  setDragging(true);
-                  return;
-                }
-              }
-            }
-
-            if (!selIsAreaPolygon) {
-              const corners = {
-                tl: { x: minX * width, y: minY * height },
-                tr: { x: maxX * width, y: minY * height },
-                bl: { x: minX * width, y: maxY * height },
-                br: { x: maxX * width, y: maxY * height },
-              };
-
-              // Check if clicking a corner handle for resize
-              for (const [key, corner] of Object.entries(corners)) {
-                if (pointInHandle(pos, corner, HANDLE)) {
-                  e.stopPropagation();
-                  if (!beginAnnotationDrag(selAnn, { kind: "bbox", resizeCorner: key,
-                    dragOffset: { x: 0, y: 0 } })) return;
-                  setResizeCorner(key);
-                  setDragging(true);
-                  return;
-                }
-              }
-            }
-
-            // Check label bar area for pencil (edit) or x (delete) click
-            const ax = minX * width;
-            const ay = minY * height;
-            if (pos.y >= ay - 18 && pos.y <= ay && pos.x >= ax) {
-              const fontSize = Math.max(10, Math.min(13, (maxY - minY) * height * 0.3));
-              const tempCanvas = canvasRef.current;
-              const tempCtx = tempCanvas?.getContext("2d");
-              if (tempCtx) {
-                tempCtx.font = `bold ${fontSize}px sans-serif`;
-                const textW = tempCtx.measureText(selAnn.name).width;
-                const iconStart = ax + textW + 8;
-                const isUserSource = selAnn.source === "user";
-
-                if (isUserSource && pos.x >= iconStart && pos.x < iconStart + 16) {
-                  // Pencil icon clicked — edit markup
-                  e.stopPropagation();
-                  setPendingMarkup(selAnn.bbox as [number, number, number, number]);
-                  setMarkupName(selAnn.name);
-                  setMarkupNote(selAnn.note || "");
-                  const existingCsi = (selAnn.data as { csiCodes?: string[] } | null)?.csiCodes?.[0] ?? "";
-                  setMarkupCsi(existingCsi);
-                  setEditingAnnotationId(selAnn.id);
-                  setTimeout(() => nameInputRef.current?.focus(), 50);
-                  return;
-                }
-                const xStart = isUserSource ? iconStart + 16 : iconStart;
-                if (pos.x >= xStart) {
-                  // Delete "x" clicked
-                  e.stopPropagation();
-                  deleteSelected();
-                  return;
-                }
-              }
-            }
-          }
-        }
-        // Check area polygons first (point-in-polygon test).
-        // A click inside a hole (courtyard cutout) falls through to whatever
-        // is underneath — matches the visual since holes render as cutouts.
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "takeoff" || (ann.data as any)?.type !== "area-polygon") continue;
-          const data = ann.data as unknown as AreaPolygonData;
-          const clickNorm = { x: pos.x / width, y: pos.y / height };
-          if (pointInPolygonWithHoles(clickNorm, data.vertices, data.holes)) {
-            e.stopPropagation();
-            setSelectedId(ann.id);
-            return;
-          }
-        }
-        // Check linear polylines (point-near-line test)
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "takeoff" || (ann.data as any)?.type !== "linear-polyline") continue;
-          const data = ann.data as unknown as LinearPolylineData;
-          if (pointNearPolyline(pos, data.vertices, width, height)) {
-            e.stopPropagation();
-            setSelectedId(ann.id);
-            return;
-          }
-        }
-        // Check annotations (bbox-based) — select and start drag
-        for (const ann of pageAnnotations) {
-          const [minX, minY] = ann.bbox;
-          const ax = minX * width;
-          const ay = minY * height;
-          if (pointInNormalizedBbox(pos, ann.bbox, width, height)) {
-            e.stopPropagation();
-            // Multi-select layer decides first. In group mode OR pointer mode
-            // with a modifier key, this toggles the annotation in the set and
-            // skips the default drag/yolo-tag path. Otherwise we fall through
-            // to single-select + drag-to-move as before.
-            const { handled } = multiSelect.handleAnnotationClick(ann.id, e);
-            if (!canAdoptProjectLifecycle()) return;
-            if (handled) return;
-            // Plain click on a grouped annotation → expand to group siblings.
-            // Hook no-ops when ann isn't in any active group.
-            multiSelect.expandSelectionViaGroups(ann.id);
-            if (!canAdoptProjectLifecycle()) return;
-            setSelectedId(ann.id);
-            setSearch(ann.name);
-            if (!canAdoptProjectLifecycle()) return;
-            // If this YOLO annotation matches a known tag, activate it
-            if (ann.source === "yolo") {
-              const matchingTag = yoloTags.find((t) =>
-                t.instances.some((inst) => inst.annotationId === ann.id && inst.pageNumber === pageNumber)
-              );
-              if (matchingTag) {
-                setActiveYoloTagId(matchingTag.id);
-                if (!canAdoptProjectLifecycle()) return;
-                setYoloTagFilter(matchingTag.id);
-                if (!canAdoptProjectLifecycle()) return;
-              }
-            }
-            const nextDragOffset = { x: pos.x - ax, y: pos.y - ay };
-            if (!beginAnnotationDrag(ann, { kind: "bbox", resizeCorner: null,
-              dragOffset: nextDragOffset })) return;
-            setDragging(true);
-            setResizeCorner(null);
-            setDragOffset(nextDragOffset);
-            return;
-          }
-        }
-        // Check keynotes
-        const clickX = pos.x / width;
-        const clickY = pos.y / height;
-        for (const keynote of pageKeynotes) {
-          const [left, top, right, bottom] = keynote.bbox;
-          if (clickX >= left && clickX <= right && clickY >= top && clickY <= bottom) {
-            e.stopPropagation();
-            setKeynoteFilter({ shape: keynote.shape, text: keynote.text });
-            if (!canAdoptProjectLifecycle()) return;
-            if (keynote.text) setSearch(keynote.text);
-            return;
-          }
-        }
-        // Clicked empty space — deselect, OR start a lasso in Group mode.
-        if (toolAtDown.mode === "group") {
-          startDeferredDrawing(pos, false);
-          // Don't clear the selection here — the lasso is additive.
-          return;
-        }
-        setSelectedId(null);
-        multiSelect.clearSelection();
-        return;
-      }
-
+      // Pointer/Group mousedown is claimed by pointerGroupController at the registry seam.
+      // Shared move/up, lasso finalization, keyboard, render, and dialog owners remain local.
       // [refactor jul16 P3.2] The markup mousedown blocks (selected corner-resize + label-bar
       // delete, annotation select, empty-canvas deferred-draw start) live in tools/markup.ts now,
       // claimed at the registry seam. Presses reaching this tail are mode "move"/non-markup

@@ -5,6 +5,7 @@ import { calibrationController } from "./calibration";
 import { keynotePickController } from "./keynotePick";
 import { markupController } from "./markup";
 import { parseRectController } from "./parseRect";
+import { pointerGroupController } from "./pointerGroup";
 import { splitController } from "./split";
 import { symbolSearchController } from "./symbolSearch";
 import { tagAddController } from "./tagAdd";
@@ -26,8 +27,8 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // Split owns the first interior slot; bucketFill follows it before takeoffPolygon. keynotePick
 // precedes parseRect so an active YOLO miss can eligible-decline into
 // the generic rectangle starter in the SAME dispatch. tagPick and symbolSearch now occupy their
-// exact middle slots; tagAdd now occupies its slot after symbolSearch. pointerGroup remains between
-// parseRect and markup.
+// exact middle slots; tagAdd now occupies its slot after symbolSearch. PointerGroup owns the final
+// interior slot between parseRect and the permanent markup tail.
 export const TOOLS = Object.freeze(
   [
     calibrationController,
@@ -41,6 +42,7 @@ export const TOOLS = Object.freeze(
     symbolSearchController,
     tagAddController,
     parseRectController,
+    pointerGroupController,
     markupController,
   ] as const,
 ) satisfies readonly ToolController[];

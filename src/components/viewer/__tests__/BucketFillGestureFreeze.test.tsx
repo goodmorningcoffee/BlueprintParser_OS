@@ -749,6 +749,10 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     "src/components/viewer/tools/bucketFill.ts",
   );
   const CONTROLLER = readFileSync(controllerPath, "utf8");
+  const POINTER = readFileSync(
+    join(process.cwd(), "src/components/viewer/tools/pointerGroup.ts"),
+    "utf8",
+  );
   const mouseDownStart = AO.indexOf("  const handleMouseDown = useCallback(");
   const mouseMoveStart = AO.indexOf("  const handleMouseMove = useCallback(");
   const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
@@ -772,7 +776,7 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     expect(count(CONTROLLER, 'fetch("/api/bucket-fill"')).toBe(1);
     expect(count(CONTROLLER, "return true;")).toBe(7);
     expect(CONTROLLER.match(/\n/g)).toHaveLength(278);
-    expect(AO.match(/\n/g)).toHaveLength(2455);
+    expect(AO.match(/\n/g)).toHaveLength(2153);
   });
 
   it("pins explicit barrier invalidation and fresh-operation publication order", () => {
@@ -810,7 +814,7 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     );
   });
 
-  it("pins the exact 12-controller registry and Bucket destination slot", () => {
+  it("pins the exact 13-controller registry and Bucket destination slot", () => {
     expect(REGISTRY).toContain('import { bucketFillController } from "./bucketFill";');
     expect(TOOLS.map((controller) => controller.kind)).toEqual([
       "calibration",
@@ -824,9 +828,10 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
       "symbolSearch",
       "tagAdd",
       "parseRect",
+      "pointerGroup",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(12);
+    expect(TOOLS).toHaveLength(13);
     expect(REGISTRY).toContain(
       "    calibrationController,\n    splitController,\n    bucketFillController,\n" +
         "    takeoffPolygonController,",
@@ -845,7 +850,8 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     expect(CONTROLLER).toContain(
       'ownsLatestToolOperation("bucketFill", bucketToken)',
     );
-    expect(count(AO, "readTextractForPage(")).toBe(1);
+    expect(count(AO, "readTextractForPage(")).toBe(0);
+    expect(count(POINTER, "readTextractForPage(")).toBe(1);
     expect(count(CONTROLLER, "readTextractForPage(")).toBe(1);
     expect(AO).not.toContain("claimLatestToolOperation,");
     expect(AO).not.toContain("ownsLatestToolOperation,");

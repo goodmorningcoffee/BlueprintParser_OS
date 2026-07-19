@@ -72,7 +72,10 @@ function contextFor(options: {
     deleteSelected: vi.fn(),
   };
   const deferredDrawing = { start: vi.fn(() => true) };
-  const annotationDrag = { beginBBox: vi.fn(() => true) };
+  const annotationDrag = {
+    begin: vi.fn(() => true),
+    beginBBox: vi.fn(() => true),
+  };
   const context: ToolContext = {
     press,
     page,
