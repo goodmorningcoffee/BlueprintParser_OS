@@ -492,13 +492,17 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const VISIBLE_TAG_INSTANCES = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/visibleTagInstances.ts"),
+  "utf8",
+);
 
-function expectPreMoveOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const active = source.indexOf("    // ─── Draw free-floating active tag instances");
   const visible = source.indexOf("    // ─── Draw visible tag instances (not the active tag) ───");
-  const loop = source.indexOf("    for (const vi of visibleTagInstances) {", visible);
-  const symbol = source.indexOf("    // Draw symbol search results on current page", loop);
+  const visibleCall = source.indexOf("drawVisibleTagInstances(ctx, {", visible);
+  const symbol = source.indexOf("    // Draw symbol search results on current page", visibleCall);
   const symbolCall = source.indexOf("drawSymbolSearchResults(ctx, {", symbol);
   const cells = source.indexOf("drawTableCellStructure(ctx, {", symbolCall);
   const llm = source.indexOf("drawLlmHighlight(ctx, {", cells);
@@ -513,8 +517,8 @@ function expectPreMoveOrder(source: string): void {
   expect(annotations).toBeGreaterThan(-1);
   expect(active).toBeGreaterThan(annotations);
   expect(visible).toBeGreaterThan(active);
-  expect(loop).toBeGreaterThan(visible);
-  expect(symbol).toBeGreaterThan(loop);
+  expect(visibleCall).toBeGreaterThan(visible);
+  expect(symbol).toBeGreaterThan(visibleCall);
   expect(symbolCall).toBeGreaterThan(symbol);
   expect(cells).toBeGreaterThan(symbolCall);
   expect(llm).toBeGreaterThan(cells);
@@ -525,12 +529,20 @@ function expectPreMoveOrder(source: string): void {
   expect(dependencies).toBeGreaterThan(group);
 }
 
-describe("AnnotationOverlay visible tag-instance direct-parent topology", () => {
-  it("pins AO, upstream builder/prefix, inline stage, bridge, downstream call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_924);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(82_942);
+describe("AnnotationOverlay visible tag-instance post-move topology", () => {
+  it("pins AO, import, upstream builder/prefix, pure call, bridge, downstream call, and dependencies", () => {
+    expect(count(AO, "\n")).toBe(1_916);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(82_490);
     expect(sha256(AO)).toBe(
-      "f1194c3c8bb90e57a3af38bdb363a0f061303c72c75d331976a27ad9a60ba5a9",
+      "bd76f50cb7da5ff9ccbc92b0f0b4a3d5db7f16d8d411571d191dab2b21c7e3ca",
+    );
+
+    const helperImport =
+      'import { drawVisibleTagInstances } from "./render/visibleTagInstances";\n';
+    expect(count(AO, helperImport)).toBe(1);
+    expect(Buffer.byteLength(helperImport, "utf8")).toBe(72);
+    expect(sha256(helperImport)).toBe(
+      "d48affa9d69a3996721d35e2a00da7a816a951ea8e35408bf6999f0e46d45441",
     );
 
     const builder = exactSlice(
@@ -560,17 +572,21 @@ describe("AnnotationOverlay visible tag-instance direct-parent topology", () => 
       "    // ─── Draw visible tag instances (not the active tag) ───\n",
       "    // Draw in-progress rectangle (markup or table parse or symbol search)\n",
     );
-    expect(count(stage, "\n")).toBe(16);
-    expect(Buffer.byteLength(stage, "utf8")).toBe(697);
+    expect(count(stage, "\n")).toBe(7);
+    expect(Buffer.byteLength(stage, "utf8")).toBe(173);
     expect(sha256(stage)).toBe(
-      "73d05249b60d642e5294a0e6db4e230ae0c50b8d88e30db9335a8223af7afdda",
+      "fabe47c339e0a7168096a5cd677a4fb9d488bfaf9a7cb1d89e127ae2c00e419f",
     );
     const semanticStage = stage.slice(0, -1);
-    expect(count(semanticStage, "\n")).toBe(15);
-    expect(Buffer.byteLength(semanticStage, "utf8")).toBe(696);
+    expect(count(semanticStage, "\n")).toBe(6);
+    expect(Buffer.byteLength(semanticStage, "utf8")).toBe(172);
     expect(sha256(semanticStage)).toBe(
-      "a8978ca3ee78d49b090c69cd8591c88f5961c1173ee6cc1e641468a4d96c1850",
+      "1bae9675c5992abe8ec8eb8ad6b248e908bc48f9dcce866506e4dda55f2d542d",
     );
+    expect(count(stage, "drawVisibleTagInstances(ctx, {")).toBe(1);
+    expect(stage).toContain("visibleTagInstances,");
+    expect(stage).toContain("width,");
+    expect(stage).toContain("height,");
 
     const bridge = exactSlice(
       AO,
@@ -605,29 +621,26 @@ describe("AnnotationOverlay visible tag-instance direct-parent topology", () => 
     );
   });
 
-  it("keeps the one ordered inline loop, future helper absence, and biting source oracles", () => {
-    expectPreMoveOrder(AO);
+  it("keeps one ordered call, one pure helper, and biting source oracles", () => {
+    expectPostMoveOrder(AO);
     const header = "    // ─── Draw visible tag instances (not the active tag) ───\n";
     const loop = "    for (const vi of visibleTagInstances) {";
     expect(count(AO, header)).toBe(1);
-    expect(count(AO, loop)).toBe(1);
-    expect(count(AO, "vi.tier === \"low\"")).toBe(2);
-    expect(count(AO, "ctx.setLineDash(")).toBe(2);
-    expect(AO).toContain('ctx.setLineDash(vi.tier === "low" ? [2, 4] : [4, 3]);');
-    expect(AO).toContain("ctx.setLineDash([]);");
-    expect(count(AO, 'import { drawVisibleTagInstances } from "./render/visibleTagInstances";')).toBe(0);
-    expect(count(AO, "drawVisibleTagInstances(ctx, {")).toBe(0);
+    expect(count(AO, loop)).toBe(0);
+    expect(count(AO, "vi.tier === \"low\"")).toBe(0);
+    expect(count(AO, 'import { drawVisibleTagInstances } from "./render/visibleTagInstances";')).toBe(1);
+    expect(count(AO, "drawVisibleTagInstances(ctx, {")).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/visibleTagInstances.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/visibleTagInstances.test.ts",
-    ))).toBe(false);
+    ))).toBe(true);
 
-    expect(() => expectPreMoveOrder(
-      AO.replace(loop, "    for (const vi of missingVisibleTagInstances) {"),
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawVisibleTagInstances(ctx, {", "missingVisibleTagInstances(ctx, {"),
     )).toThrow();
     const stage = exactSlice(
       AO,
@@ -640,6 +653,22 @@ describe("AnnotationOverlay visible tag-instance direct-parent topology", () => 
         "    // Draw TATR cell structure overlays",
         `${stage}    // Draw TATR cell structure overlays`,
       );
-    expect(() => expectPreMoveOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(count(VISIBLE_TAG_INSTANCES, "\n")).toBe(36);
+    expect(Buffer.byteLength(VISIBLE_TAG_INSTANCES, "utf8")).toBe(1_268);
+    expect(sha256(VISIBLE_TAG_INSTANCES)).toBe(
+      "be0fed58bea56d8eaf6ca519043de2f40c8e9c4052cbbaf4e7c22a7c420ee5f8",
+    );
+    expect(count(VISIBLE_TAG_INSTANCES, loop.trim())).toBe(1);
+    expect(count(VISIBLE_TAG_INSTANCES, 'vi.tier === "low"')).toBe(2);
+    expect(count(VISIBLE_TAG_INSTANCES, "ctx.setLineDash(")).toBe(2);
+    expect(VISIBLE_TAG_INSTANCES).toContain(
+      'ctx.setLineDash(vi.tier === "low" ? [2, 4] : [4, 3]);',
+    );
+    expect(VISIBLE_TAG_INSTANCES).toContain("ctx.setLineDash([]);");
+    expect(VISIBLE_TAG_INSTANCES).not.toMatch(
+      /@\/(stores|queries)|fetch\(|persist|from "react"/i,
+    );
   });
 });

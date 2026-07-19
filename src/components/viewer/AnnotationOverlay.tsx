@@ -69,6 +69,7 @@ import { drawLlmHighlight } from "./render/llmHighlight";
 import { drawSymbolSearchResults } from "./render/symbolSearchResults";
 import { drawTableCellStructure } from "./render/tableCellStructure";
 import { drawTableTagViews } from "./render/tableTagViews";
+import { drawVisibleTagInstances } from "./render/visibleTagInstances";
 import { admitAnnotationSplit } from "./splitAcceptance";
 import { TOOL_STORE_CAPABILITIES } from "./tools/capabilities";
 import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
@@ -658,20 +659,11 @@ export default memo(function AnnotationOverlay({
     }
 
     // ─── Draw visible tag instances (not the active tag) ───
-    for (const vi of visibleTagInstances) {
-      const [bMinX, bMinY, bMaxX, bMaxY] = vi.bbox;
-      const vx = bMinX * width;
-      const vy = bMinY * height;
-      const vw = (bMaxX - bMinX) * width;
-      const vh = (bMaxY - bMinY) * height;
-      ctx.strokeStyle = vi.color;
-      ctx.lineWidth = vi.tier === "low" ? 1 : 1.5;
-      // Low-tier instances get a tighter dash to visually distinguish audit-flagged
-      // matches from normal hits. Medium + high share the standard dash.
-      ctx.setLineDash(vi.tier === "low" ? [2, 4] : [4, 3]);
-      ctx.strokeRect(vx, vy, vw, vh);
-      ctx.setLineDash([]);
-    }
+    drawVisibleTagInstances(ctx, {
+      visibleTagInstances,
+      width,
+      height,
+    });
 
     // Draw in-progress rectangle (markup or table parse or symbol search)
     // Drawing preview (BB rectangle, polygon, calibration) — rendered by DrawingPreviewLayer

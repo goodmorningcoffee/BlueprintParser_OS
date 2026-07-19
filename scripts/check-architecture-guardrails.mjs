@@ -298,7 +298,7 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/components/viewer/AnnotationOverlay.tsx",
-      maxLines: 1924,
+      maxLines: 1916,
       reason: "viewer-hot-exception",
     },
     {
