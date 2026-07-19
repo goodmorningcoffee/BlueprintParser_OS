@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 //
-// [refactor jul19 P3.2] Parent-green executable freeze for the legacy BucketFill mousedown
-// branch. This file lands before the controller lift and exercises AnnotationOverlay's real event
-// path. The final describe is deliberately PRE-move topology and must be transformed to POST-move
-// ownership in the pure-lift commit.
+// [refactor jul19 P3.2] Accepted-parent and post-move executable freeze for the BucketFill
+// mousedown path. It exercises AnnotationOverlay's real event seam, including synchronous
+// lifecycle retirement, while the final describe pins the controller's POST-move ownership.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -29,6 +28,7 @@ import {
   registerToolTailCancellation,
 } from "@/lib/parse-tool-authority";
 import { resetProjectData } from "@/stores/viewerCommands";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useToolStore } from "@/stores/toolStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { seedTextract } from "@/test/seed-textract";
@@ -329,6 +329,40 @@ describe("BucketFill gesture freeze (real overlay, production mousedown)", () =>
       barrierPendingPoint: null,
       bucketFillBarriers: barriers,
     });
+  });
+
+  it("R1: lifecycle retirement between the overlay prelude and Bucket entry stays effect-cold", async () => {
+    seedBucketState();
+    const canvas = await mountCanvas();
+    const globalToken = claimToolTailAuthority({ witness: "stale-entry-global" });
+    const laneToken = claimLatestToolOperation("bucketFill", {
+      witness: "stale-entry-lane",
+    });
+    let retired = false;
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (!previous._drawing || state._drawing) return;
+      retired = true;
+      useSessionStore.setState({ isDemo: false });
+    });
+    act(() => useToolStore.setState({ _drawing: true }));
+    const event = mouseDownEvent();
+
+    press(canvas, event);
+    unsubscribe();
+
+    expect(retired).toBe(true);
+    expect(parentMouseDown).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(false);
+    expect(ownsToolTailAuthority(globalToken)).toBe(true);
+    expect(ownsLatestToolOperation("bucketFill", laneToken)).toBe(true);
+    expect(useToolStore.getState()).toMatchObject({
+      bucketFillLoading: false,
+      bucketFillPreview: null,
+      bucketFillError: null,
+    });
+    expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+    expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("W1: a non-primary first barrier point stops, invalidates, then normalizes width and height independently", async () => {
@@ -736,8 +770,8 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     ).toBe(1);
     expect(count(CONTROLLER, "clientBucketFill(")).toBe(1);
     expect(count(CONTROLLER, 'fetch("/api/bucket-fill"')).toBe(1);
-    expect(count(CONTROLLER, "return true;")).toBe(6);
-    expect(CONTROLLER.match(/\n/g)).toHaveLength(253);
+    expect(count(CONTROLLER, "return true;")).toBe(7);
+    expect(CONTROLLER.match(/\n/g)).toHaveLength(278);
     expect(AO.match(/\n/g)).toHaveLength(2455);
   });
 

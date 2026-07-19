@@ -1,8 +1,8 @@
-// [refactor jul19 P3.2] BucketFill mousedown controller. This is a mechanical lift of the
-// accepted-parent AnnotationOverlay branch: barrier drawing, captured collision inputs, exact
-// global/lane ownership, worker-first transport, server fallback, and terminal publications remain
-// byte-for-semantics. Preview preparation, assignment, keyboard, rendering, and cleanup remain on
-// their shared ACCEPT-PARTIAL surfaces.
+// [refactor jul19 P3.2] BucketFill mousedown controller. Accepted-parent barrier drawing,
+// collision snapshots, worker/server transport, and terminal publications remain mechanically
+// lifted; the separately frozen lifecycle-entry and exact loading-abandon repairs guard their
+// synchronous publication seams. Preview preparation, assignment, keyboard, rendering, and
+// cleanup remain on their shared ACCEPT-PARTIAL surfaces.
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
 import { apiErrorMessage } from "@/lib/client-persist";
 import {
@@ -27,6 +27,9 @@ export const bucketFillController: ToolController = Object.freeze({
   wantsEvents: (state) => state.activeTool?.kind === "bucketFill",
   matches: (press) => press.toolAtDown.activeTool?.kind === "bucketFill",
   onMouseDown(event, context) {
+    // The overlay has an outer lifecycle guard, but its pre-dispatch cleanup is a synchronous
+    // publication boundary. Recheck at the matched owner before propagation or any Bucket effect.
+    if (!context.canAdoptProjectLifecycle()) return true;
     const { toolAtDown: bfState, position } = context.press;
     event.stopPropagation();
     const normX = position.x / context.page.width;
@@ -75,13 +78,8 @@ export const bucketFillController: ToolController = Object.freeze({
     const bucketPublicId = context.page.publicId;
     const bucketPageNumber = context.page.number;
     const queryClient = bucketFill.queryClient;
-    claimToolTailAuthority(bucketToken);
-    claimLatestToolOperation("bucketFill", bucketToken);
-    // A competing global intent defeats this result tail. Its exact queued cancellation may
-    // still clear A's spinner while preserving a newer Bucket B (which rotates the lane).
-    registerToolTailCancellation(bucketToken, () => {
+    const clearCapturedBucketFillPublication = () => {
       if (
-        !ownsLatestToolOperation("bucketFill", bucketToken) ||
         context.stores.session.getState().projectId !== bucketProjectDbId ||
         context.stores.session.getState().publicId !== bucketPublicId ||
         context.stores.viewerCore.getState().pageNumber !== bucketPageNumber
@@ -93,6 +91,14 @@ export const bucketFillController: ToolController = Object.freeze({
           ? { bucketFillLoading: false, bucketFillError: null }
           : state,
       );
+    };
+    claimToolTailAuthority(bucketToken);
+    claimLatestToolOperation("bucketFill", bucketToken);
+    // A competing global intent defeats this result tail. Its exact queued cancellation may
+    // still clear A's spinner while preserving a newer Bucket B (which rotates the lane).
+    registerToolTailCancellation(bucketToken, () => {
+      if (!ownsLatestToolOperation("bucketFill", bucketToken)) return;
+      clearCapturedBucketFillPublication();
     });
     useToolStore.setState({
       bucketFillLoading: true,
@@ -112,7 +118,26 @@ export const bucketFillController: ToolController = Object.freeze({
         context.stores.viewerCore.getState().pageNumber === bucketPageNumber
       );
     };
-    if (!ownsBucketFill()) return true;
+    if (!ownsBucketFill()) {
+      // A loading subscriber may retire this invocation synchronously. Retire only A: a newer
+      // Bucket lane suppresses A's cleanup publication, while an unrelated global tail may remain
+      // current and A's exact captured loading/error destination is cleared directly.
+      const ownsBucketFillLane = ownsLatestToolOperation(
+        "bucketFill",
+        bucketToken,
+      );
+      if (ownsBucketFillLane) invalidateLatestToolOperation("bucketFill");
+      releaseToolTailCancellation(bucketToken);
+      if (ownsToolTailAuthority(bucketToken)) {
+        consumeToolTailAuthority(
+          bucketToken,
+          ownsBucketFillLane ? clearCapturedBucketFillPublication : () => {},
+        );
+      } else if (ownsBucketFillLane) {
+        clearCapturedBucketFillPublication();
+      }
+      return true;
+    }
 
     const consumeBucketFill = (publish: () => void): boolean => {
       if (!ownsBucketFill()) return false;

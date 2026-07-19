@@ -1,9 +1,9 @@
 // @vitest-environment node
 //
-// [refactor jul19 P3.2] Direct contract for the mechanically extracted BucketFill mousedown
-// controller. The real-overlay parent freeze owns browser integration; this net makes the
-// controller's literal claims, staged capability boundary, transport asymmetry, continuation
-// conjunction, and post-move topology independently observable.
+// [refactor jul19 P3.2] Direct contract for the extracted and separately repaired BucketFill
+// mousedown controller. The real-overlay freeze owns browser integration; this net makes lifecycle
+// entry, loading abandonment, literal claims, staged capability boundaries, transport asymmetry,
+// continuation ownership, and post-move topology independently observable.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -373,6 +373,33 @@ describe("bucketFillController identity, eligibility, and claim boundary", () =>
     expect(event.stopPropagation).toHaveBeenCalledTimes(1);
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
+
+  it("claims a stale matched press terminal before propagation, capability, authority, or transport", () => {
+    const journal: string[] = [];
+    const global = claimToolTailAuthority({ witness: "stale-entry-global" });
+    const lane = claimLatestToolOperation("bucketFill", {
+      witness: "stale-entry-lane",
+    });
+    const state = syntheticState();
+    const context = syntheticContext({
+      state,
+      journal,
+      includeBucket: false,
+      canAdopt: false,
+    });
+    const event = eventFor(journal);
+
+    expect(bucketFillController.onMouseDown(event, context)).toBe(true);
+
+    expect(journal).toEqual(["canAdopt"]);
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(ownsToolTailAuthority(global)).toBe(true);
+    expect(ownsLatestToolOperation("bucketFill", lane)).toBe(true);
+    expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+    expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("bucketFillController staged capability and barrier partitions", () => {
@@ -397,11 +424,12 @@ describe("bucketFillController staged capability and barrier partitions", () => 
     expect(bucketFillController.onMouseDown(event, context)).toBe(true);
 
     expect(journal).toEqual([
+      "canAdopt",
       "stop",
       "pending:0.3,0.7:global-retired:lane-retired",
     ]);
     expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(context.canAdoptProjectLifecycle).not.toHaveBeenCalled();
+    expect(context.canAdoptProjectLifecycle).toHaveBeenCalledTimes(1);
     expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -430,6 +458,7 @@ describe("bucketFillController staged capability and barrier partitions", () => 
     expect(bucketFillController.onMouseDown(event, context)).toBe(true);
 
     expect(journal).toEqual([
+      "canAdopt",
       "stop",
       "barrier:0.11,0.22,0.3,0.7",
       "canAdopt",
@@ -444,18 +473,56 @@ describe("bucketFillController staged capability and barrier partitions", () => 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("fences a stale barrier completion before invalidation, capability, append, or clear", () => {
+    const journal: string[] = [];
+    const global = claimToolTailAuthority({ witness: "stale-barrier-global" });
+    const lane = claimLatestToolOperation("bucketFill", {
+      witness: "stale-barrier-lane",
+    });
+    const pending = Object.freeze({ x: 0.11, y: 0.22 });
+    const state = syntheticState({
+      bucketFillBarrierMode: true,
+      barrierPendingPoint: pending,
+    }, journal);
+    const context = syntheticContext({
+      state,
+      journal,
+      includeBucket: false,
+      canAdopt: false,
+    });
+    const event = eventFor(journal);
+
+    expect(bucketFillController.onMouseDown(event, context)).toBe(true);
+
+    expect(journal).toEqual(["canAdopt"]);
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+    expect(state.setBarrierPendingPoint).not.toHaveBeenCalled();
+    expect(ownsToolTailAuthority(global)).toBe(true);
+    expect(ownsLatestToolOperation("bucketFill", lane)).toBe(true);
+    expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+    expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("a rejected post-append lifecycle still returns true and retains the pending point", () => {
     const journal: string[] = [];
     const state = syntheticState({
       bucketFillBarrierMode: true,
       barrierPendingPoint: Object.freeze({ x: 0.11, y: 0.22 }),
     }, journal);
-    const context = syntheticContext({ state, journal, canAdopt: false });
+    const context = syntheticContext({ state, journal });
+    let checks = 0;
+    vi.mocked(context.canAdoptProjectLifecycle).mockImplementation(() => {
+      journal.push("canAdopt");
+      checks += 1;
+      return checks === 1;
+    });
 
     expect(bucketFillController.onMouseDown(eventFor(journal), context)).toBe(
       true,
     );
     expect(journal).toEqual([
+      "canAdopt",
       "stop",
       "barrier:0.11,0.22,0.3,0.7",
       "canAdopt",
@@ -504,7 +571,7 @@ describe("bucketFillController staged capability and barrier partitions", () => 
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(ownsToolTailAuthority(global)).toBe(true);
     expect(ownsLatestToolOperation("bucketFill", lane)).toBe(true);
-    expect(context.canAdoptProjectLifecycle).not.toHaveBeenCalled();
+    expect(context.canAdoptProjectLifecycle).toHaveBeenCalledTimes(1);
     expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
     expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -529,7 +596,7 @@ describe("bucketFillController staged capability and barrier partitions", () => 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("an immediate rejected owner remains terminal and cache/transport cold", () => {
+  it("a live-context stale entry remains terminal and cache/transport cold", () => {
     const fixture = seedLiveController({ canAdopt: false });
     const cacheRead = vi.spyOn(queryClient, "getQueryData");
     const event = eventFor();
@@ -538,7 +605,9 @@ describe("bucketFillController staged capability and barrier partitions", () => 
       bucketFillController.onMouseDown(event, fixture.context),
     ).toBe(true);
 
-    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+    expect(fixture.lifecycle).toHaveBeenCalledTimes(1);
+    expect(useToolStore.getState().bucketFillLoading).toBe(false);
     expect(cacheRead).not.toHaveBeenCalled();
     expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
     expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
@@ -715,6 +784,172 @@ describe("bucketFillController exact worker/server transports and terminals", ()
     timer?.();
     expect(useToolStore.getState().bucketFillError).toBeNull();
   });
+});
+
+describe("bucketFillController immediate loading abandonment", () => {
+  it("retires lifecycle-lost A and clears its loading/error before cache or transport", () => {
+    const fixture = seedLiveController();
+    const journal: string[] = [];
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (state.bucketFillLoading && !previous.bucketFillLoading) {
+        journal.push("loading");
+        fixture.setCanAdopt(false);
+        useToolStore.setState({ bucketFillError: "retired-A" });
+      } else if (previous.bucketFillLoading && !state.bucketFillLoading) {
+        journal.push(`cleanup:${state.bucketFillError ?? "null"}`);
+      }
+    });
+
+    expect(
+      bucketFillController.onMouseDown(eventFor(), fixture.context),
+    ).toBe(true);
+    unsubscribe();
+
+    expect(journal).toEqual(["loading", "cleanup:null"]);
+    expect(fixture.lifecycle).toHaveBeenCalledTimes(2);
+    expect(useToolStore.getState()).toMatchObject({
+      bucketFillLoading: false,
+      bucketFillError: null,
+      bucketFillPreview: null,
+    });
+    expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+    expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clears A directly while preserving an unrelated replacement global tail", async () => {
+    const fixture = seedLiveController();
+    const successorToken = { witness: "replacement-global" };
+    const successorCancellation = vi.fn();
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (!state.bucketFillLoading || previous.bucketFillLoading) return;
+      claimToolTailAuthority(successorToken);
+      registerToolTailCancellation(successorToken, successorCancellation);
+      useToolStore.setState({ bucketFillError: "retired-A" });
+    });
+
+    expect(
+      bucketFillController.onMouseDown(eventFor(), fixture.context),
+    ).toBe(true);
+    unsubscribe();
+
+    expect(ownsToolTailAuthority(successorToken)).toBe(true);
+    expect(useToolStore.getState()).toMatchObject({
+      bucketFillLoading: false,
+      bucketFillError: null,
+    });
+    expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+    expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    invalidateToolTailAuthority();
+    await flushTail();
+    expect(successorCancellation).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a full same-kind successor B installed during A's loading publication", async () => {
+    const fixture = seedLiveController();
+    const successorToken = { witness: "replacement-bucket" };
+    const successorActivation = { kind: "bucketFill" as const };
+    const successorPreview = {
+      vertices: POLYGON.map((vertex) => ({ ...vertex })),
+      method: "successor-B",
+    };
+    const successorCancellation = vi.fn();
+    let installed = 0;
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (!state.bucketFillLoading || previous.bucketFillLoading) return;
+      installed += 1;
+      claimToolTailAuthority(successorToken);
+      claimLatestToolOperation("bucketFill", successorToken);
+      registerToolTailCancellation(successorToken, successorCancellation);
+      useToolStore.setState({
+        activeTool: successorActivation,
+        bucketFillLoading: true,
+        bucketFillError: "successor-B",
+        bucketFillPreview: successorPreview,
+      });
+    });
+
+    expect(
+      bucketFillController.onMouseDown(eventFor(), fixture.context),
+    ).toBe(true);
+    unsubscribe();
+    await flushTail();
+
+    const state = useToolStore.getState();
+    expect(installed).toBe(1);
+    expect(state.activeTool).toBe(successorActivation);
+    expect(state.bucketFillLoading).toBe(true);
+    expect(state.bucketFillError).toBe("successor-B");
+    expect(state.bucketFillPreview).toBe(successorPreview);
+    expect(ownsToolTailAuthority(successorToken)).toBe(true);
+    expect(ownsLatestToolOperation("bucketFill", successorToken)).toBe(true);
+    expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+    expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    invalidateToolTailAuthority();
+    await flushTail();
+    expect(successorCancellation).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "Bucket lane",
+      () => claimLatestToolOperation("bucketFill", { witness: "replacement-lane" }),
+    ],
+    [
+      "activation identity",
+      () => useToolStore.setState({ activeTool: { kind: "bucketFill" } }),
+    ],
+    [
+      "project DB id",
+      () => useSessionStore.setState({ projectId: PROJECT_DB_ID + 1 }),
+    ],
+    [
+      "public id",
+      () => useSessionStore.setState({ publicId: `${PUBLIC_ID}-replacement` }),
+    ],
+    [
+      "page",
+      () => useViewerCoreStore.setState({ pageNumber: PAGE + 1 }),
+    ],
+  ] as const)(
+    "does not clear successor state when only %s changes during loading",
+    (_label, installSuccessorIdentity) => {
+      const fixture = seedLiveController();
+      let installedSuccessorIdentity: unknown;
+      const unsubscribe = useToolStore.subscribe((state, previous) => {
+        if (!state.bucketFillLoading || previous.bucketFillLoading) return;
+        installedSuccessorIdentity = installSuccessorIdentity();
+        useToolStore.setState({
+          bucketFillLoading: true,
+          bucketFillError: "successor-state",
+        });
+      });
+
+      expect(
+        bucketFillController.onMouseDown(eventFor(), fixture.context),
+      ).toBe(true);
+      unsubscribe();
+
+      expect(useToolStore.getState()).toMatchObject({
+        bucketFillLoading: true,
+        bucketFillError: "successor-state",
+      });
+      if (_label === "Bucket lane") {
+        expect(installedSuccessorIdentity).toBeTypeOf("object");
+        expect(ownsLatestToolOperation(
+          "bucketFill",
+          installedSuccessorIdentity as object,
+        )).toBe(true);
+      }
+      expect(bucketClient.findPageCanvas).not.toHaveBeenCalled();
+      expect(bucketClient.clientBucketFill).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("bucketFillController continuation conjunction", () => {
@@ -911,8 +1146,23 @@ describe("BucketFill controller POST-move source and topology", () => {
     );
   });
 
-  it("pins authority/publication order and all six continuation conjuncts", () => {
+  it("pins entry, authority/publication/abandon order, and all seven continuation conjuncts", () => {
+    const entryFence = CONTROLLER.indexOf(
+      "if (!context.canAdoptProjectLifecycle()) return true;",
+    );
+    const pressSnapshot = CONTROLLER.indexOf(
+      "const { toolAtDown: bfState, position } = context.press;",
+    );
+    const propagation = CONTROLLER.indexOf("event.stopPropagation();");
+    const barrierInvalidation = CONTROLLER.indexOf(
+      "invalidateToolTailAuthority();",
+      propagation,
+    );
     const token = CONTROLLER.indexOf("const bucketToken = {}");
+    const cleanup = CONTROLLER.indexOf(
+      "const clearCapturedBucketFillPublication = () => {",
+      token,
+    );
     const globalClaim = CONTROLLER.indexOf(
       "claimToolTailAuthority(bucketToken)",
       token,
@@ -927,20 +1177,31 @@ describe("BucketFill controller POST-move source and topology", () => {
     );
     const loading = CONTROLLER.indexOf("bucketFillLoading: true", registration);
     const immediateFence = CONTROLLER.indexOf(
-      "if (!ownsBucketFill()) return true;",
+      "if (!ownsBucketFill()) {",
       loading,
+    );
+    const consumeHelper = CONTROLLER.indexOf(
+      "const consumeBucketFill = (publish: () => void): boolean => {",
+      immediateFence,
     );
     const collisionRead = CONTROLLER.indexOf(
       "readAnnotations(queryClient, bucketPublicId)",
       loading,
     );
+    expect(entryFence).toBeGreaterThan(-1);
+    expect(entryFence).toBeLessThan(pressSnapshot);
+    expect(pressSnapshot).toBeLessThan(propagation);
+    expect(propagation).toBeLessThan(barrierInvalidation);
     expect(token).toBeGreaterThan(-1);
+    expect(token).toBeLessThan(cleanup);
+    expect(cleanup).toBeLessThan(globalClaim);
     expect(token).toBeLessThan(globalClaim);
     expect(globalClaim).toBeLessThan(laneClaim);
     expect(laneClaim).toBeLessThan(registration);
     expect(registration).toBeLessThan(loading);
     expect(loading).toBeLessThan(immediateFence);
-    expect(immediateFence).toBeLessThan(collisionRead);
+    expect(immediateFence).toBeLessThan(consumeHelper);
+    expect(consumeHelper).toBeLessThan(collisionRead);
     expect(CONTROLLER).toContain(
       "invalidateToolTailAuthority();\n      invalidateLatestToolOperation(\"bucketFill\");",
     );
@@ -958,21 +1219,58 @@ describe("BucketFill controller POST-move source and topology", () => {
     ]) {
       expect(CONTROLLER, guard).toContain(guard);
     }
-    expect(CONTROLLER.indexOf("releaseToolTailCancellation(bucketToken)"))
-      .toBeLessThan(
-        CONTROLLER.indexOf("consumeToolTailAuthority(bucketToken, publish)"),
-      );
+    const abandon = CONTROLLER.slice(immediateFence, consumeHelper);
+    const laneProbe = abandon.indexOf("const ownsBucketFillLane");
+    const laneRetire = abandon.indexOf(
+      'if (ownsBucketFillLane) invalidateLatestToolOperation("bucketFill");',
+    );
+    const cancellationRelease = abandon.indexOf(
+      "releaseToolTailCancellation(bucketToken);",
+    );
+    const globalProbe = abandon.indexOf(
+      "if (ownsToolTailAuthority(bucketToken))",
+    );
+    const globalConsume = abandon.indexOf("consumeToolTailAuthority(");
+    const terminal = abandon.lastIndexOf("return true;");
+    expect(laneProbe).toBeGreaterThan(-1);
+    expect(laneProbe).toBeLessThan(laneRetire);
+    expect(laneRetire).toBeLessThan(cancellationRelease);
+    expect(cancellationRelease).toBeLessThan(globalProbe);
+    expect(globalProbe).toBeLessThan(globalConsume);
+    expect(globalConsume).toBeLessThan(terminal);
+    expect(abandon).not.toContain("invalidateToolTailAuthority()");
+    expect(abandon).toContain(
+      "if (ownsToolTailAuthority(bucketToken)) {\n" +
+        "        consumeToolTailAuthority(\n          bucketToken,\n" +
+        "          ownsBucketFillLane ? clearCapturedBucketFillPublication : () => {},\n" +
+        "        );\n      } else if (ownsBucketFillLane) {\n" +
+        "        clearCapturedBucketFillPublication();\n      }",
+    );
+
+    const terminalRelease = CONTROLLER.indexOf(
+      "releaseToolTailCancellation(bucketToken)",
+      consumeHelper,
+    );
+    const terminalConsume = CONTROLLER.indexOf(
+      "consumeToolTailAuthority(bucketToken, publish)",
+      consumeHelper,
+    );
+    expect(terminalRelease).toBeLessThan(terminalConsume);
     expect(count(CONTROLLER, "useToolStore.setState(")).toBe(5);
 
     const cancellation = CONTROLLER.slice(registration, loading);
-    for (const guard of [
+    expect(cancellation).toContain(
       'ownsLatestToolOperation("bucketFill", bucketToken)',
+    );
+    expect(cancellation).toContain("clearCapturedBucketFillPublication()");
+    const cleanupBody = CONTROLLER.slice(cleanup, globalClaim);
+    for (const guard of [
       "context.stores.session.getState().projectId !== bucketProjectDbId",
       "context.stores.session.getState().publicId !== bucketPublicId",
       "context.stores.viewerCore.getState().pageNumber !== bucketPageNumber",
       "state.activeTool === bucketActivation",
     ]) {
-      expect(cancellation, guard).toContain(guard);
+      expect(cleanupBody, guard).toContain(guard);
     }
     expect(CONTROLLER).toContain(
       "const bucketPublicId = context.page.publicId;",
