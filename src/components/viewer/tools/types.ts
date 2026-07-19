@@ -104,7 +104,7 @@ export interface ToolContext {
    * factory always wires all three. Dep-neutral by construction: selectedId / pageAnnotations /
    * startDeferredDrawing were already in the 37-entry mousedown dependency array; the three
    * setters are stable useState setters; deleteSelected is the same per-render closure the legacy
-   * handler already captured (its definition stays in the overlay — the pointer block calls it).
+   * handler already captured (its definition stays in the overlay; pointerGroupController calls it).
    */
   readonly selection?: Readonly<{
     selectedId: number | null;

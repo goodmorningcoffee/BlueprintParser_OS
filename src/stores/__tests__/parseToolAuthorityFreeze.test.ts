@@ -302,7 +302,7 @@ describe("later user tool intent revokes parse completion writes", () => {
     // [refactor jul16 P3.2 markup] The factory gained the markup-proven capabilities: selection
     // (five handler-closure members), the memoized pageAnnotations, and the deferred-drawing
     // starter — all dep-neutral (already in the 37-entry array, stable setters, or the same
-    // per-render deleteSelected closure the pointer block captures).
+    // per-render deleteSelected closure now passed to pointerGroupController).
     // [refactor jul17 P3.2 takeoffCount] Plus the takeoffCount-proven capabilities: the narrowed
     // persistCreate mutations slice, the transient-error publisher, and the component takeoffItems
     // array — all three identifiers already in the 37-entry dependency array.
