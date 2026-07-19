@@ -191,7 +191,7 @@ describe("TagAdd gesture freeze (real overlay)", () => {
     expect(useToolStore.getState()._drawing).toBe(false);
   });
 
-  it("declines a different live takeoff owner before its silent legacy return", async () => {
+  it("declines a different live takeoff owner before the common non-null-owner guard", async () => {
     seedOverlay([tag(TAG_A, [{ ...existingInstance, pageNumber: PAGE_NUMBER }])]);
     const canvas = await mountCanvas();
     act(() => useToolStore.getState().setActiveTakeoffItemId(999_999));

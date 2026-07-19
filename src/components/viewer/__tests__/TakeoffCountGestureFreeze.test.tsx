@@ -468,10 +468,10 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     ).toBe(0);
 
     const dispatch = handler.indexOf("dispatchToolMouseDown(");
-    const drawingPickingBoundary =
-      "// ─── Drawing/picking modes: must come BEFORE pointer block ─────";
-    expect(count(handler, drawingPickingBoundary)).toBe(1);
-    const boundary = handler.indexOf(drawingPickingBoundary);
+    const postDispatchBoundary =
+      "// ─── Specialized owners have already dispatched ───────────────";
+    expect(count(handler, postDispatchBoundary)).toBe(1);
+    const boundary = handler.indexOf(postDispatchBoundary);
     const ownerGuard = handler.indexOf("if (activeTool !== null) return;", boundary);
     const residualInvalidate = handler.indexOf("invalidateToolTailAuthority();", ownerGuard);
     expect(dispatch).toBeGreaterThan(-1);

@@ -1100,7 +1100,7 @@ describe("BucketFill controller POST-move source and topology", () => {
     expect(AO.split("\n").length - 1).toBe(2134);
   });
 
-  it("pins exact registration 12 immediately after Split", () => {
+  it("pins BucketFill's exact registry slot immediately after Split", () => {
     expect(REGISTRY).toContain(
       'import { bucketFillController } from "./bucketFill";',
     );

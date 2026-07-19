@@ -1377,7 +1377,7 @@ export default memo(function AnnotationOverlay({
       // The markup-proven capabilities (selection / pageAnnotations / deferredDrawing) are
       // dep-neutral too: selectedId, pageAnnotations, and startDeferredDrawing are already in the
       // dependency array; the setters are stable; deleteSelected is the same per-render closure
-      // this handler already captured for the pointer block's delete-x.
+      // this handler already captured for pointerGroupController's delete-x path.
       // [refactor jul17 P3.2] The takeoffCount-proven capabilities (mutations.persistCreate /
       // transientError / takeoffItems) are equally dep-neutral: all three identifiers were
       // already in the dependency array for the legacy count branch. The takeoffLinear-proven
@@ -1454,8 +1454,8 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // ─── Drawing/picking modes: must come BEFORE pointer block ─────
-      // The pointer block always returns, so these would be unreachable after it.
+      // ─── Specialized owners have already dispatched ───────────────
+      // The shared non-null guard below prevents specialized-to-base fallthrough.
 
       // [refactor jul18 P3.2] keynotePick + tagPick hit/miss routing, generic parseRect deferred
       // starts, and symbolSearch + tagAdd starts are claimed at the registry seam. Conditional
