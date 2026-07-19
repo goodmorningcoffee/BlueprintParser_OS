@@ -33,12 +33,12 @@
 //       the bare-fallback ternary branch is direct-net territory (commit 2), not overlay
 //       territory;
 //   (5) the polygon/linear identities stay SINGLE-EXECUTION contrasts (one vertex, one
-//       invalidation, one stop) — post-move these witness that the controller's eligible-DECLINE
-//       re-enters the surviving legacy branch without doubling the prelude.
+//       invalidation, one stop) — post-move these witness that the upstream shape owner claims
+//       before count and no fallback path duplicates the prelude.
 //
-// The final describe pins the PRE-move source topology; the extraction commit rewrites ONLY that
-// describe to the post-move topology (count identity absent from the overlay, controller file is
-// the sole home, factory carries the takeoffItems/mutations/transientError capabilities).
+// The final describe now pins the post-cleanup topology: the count controller is the sole gesture
+// home, the factory still carries its capabilities, and the shared non-null-owner guard follows
+// registry dispatch without a duplicate takeoffPlacement fallback.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -454,36 +454,30 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
     expect(count(AO, "\n          takeoffItems,")).toBe(1); // factory field; dep-array entry is mid-line
   });
 
-  it("pins the surviving legacy branch: resolution, silent return, prelude, terminal claim only", () => {
-    const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
-    expect(branch).toBeGreaterThan(-1);
-    // [refactor jul18 P3.2] keynotePick/parseRect, tagPick, and Tag Add moved out. The exact
-    // surviving drawing/picking boundary is now the non-vacuous end of this legacy branch.
+  it("pins the fallback skeleton absent and the surviving non-null-owner guard order", () => {
+    const start = AO.indexOf("const handleMouseDown = useCallback(");
+    const end = AO.indexOf("const handleMouseMove = useCallback(", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const handler = AO.slice(start, end);
+
+    expect(count(handler, "// Takeoff placement mode")).toBe(0);
+    expect(count(handler, 'if (activeTool?.kind === "takeoffPlacement") {')).toBe(0);
+    expect(
+      count(handler, "takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId)"),
+    ).toBe(0);
+
+    const dispatch = handler.indexOf("dispatchToolMouseDown(");
     const drawingPickingBoundary =
       "// ─── Drawing/picking modes: must come BEFORE pointer block ─────";
-    expect(count(AO, drawingPickingBoundary)).toBe(1);
-    const end = AO.indexOf(drawingPickingBoundary, branch);
-    expect(end).toBeGreaterThan(branch);
-    const slice = AO.slice(branch, end);
-    const resolution = slice.indexOf("takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId)");
-    const silentReturn = slice.indexOf("if (!activeItem) return;");
-    const invalidate = slice.indexOf("invalidateToolTailAuthority();");
-    const stop = slice.indexOf("e.stopPropagation();");
-    // [refactor jul17 P3.2] The polygon identity moved to tools/takeoffPolygon.ts (fifth
-    // registration) — the LAST identity out. The branch keeps the !activeItem silent return
-    // (its only reachable path) plus the prelude + terminal return as the always-claims
-    // contract for the residual (unreachable) partition (TAKEOFF_POLYGON_IMPL/RECON_CENSUS.md
-    // §2, option a).
-    const polygon = slice.indexOf('if (activeItem.shape === "polygon") {');
-    const linear = slice.indexOf('if (activeItem.shape === "linear") {');
-    const residual = slice.indexOf("All three takeoff identities live behind the registry seam");
-    expect(resolution).toBeGreaterThan(-1);
-    expect(silentReturn).toBeGreaterThan(resolution);
-    expect(invalidate).toBeGreaterThan(silentReturn);
-    expect(stop).toBeGreaterThan(invalidate);
-    expect(polygon).toBe(-1); // extracted — the overlay no longer discriminates polygon
-    expect(linear).toBe(-1); // extracted — the overlay no longer discriminates linear
-    expect(residual).toBeGreaterThan(stop); // the unreachable-partition comment + terminal return
+    expect(count(handler, drawingPickingBoundary)).toBe(1);
+    const boundary = handler.indexOf(drawingPickingBoundary);
+    const ownerGuard = handler.indexOf("if (activeTool !== null) return;", boundary);
+    const residualInvalidate = handler.indexOf("invalidateToolTailAuthority();", ownerGuard);
+    expect(dispatch).toBeGreaterThan(-1);
+    expect(boundary).toBeGreaterThan(dispatch);
+    expect(ownerGuard).toBeGreaterThan(boundary);
+    expect(residualInvalidate).toBeGreaterThan(ownerGuard);
   });
 
   it("pins the controller as the sole home of the count gesture", () => {

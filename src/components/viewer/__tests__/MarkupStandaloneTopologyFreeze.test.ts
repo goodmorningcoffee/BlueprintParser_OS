@@ -275,7 +275,7 @@ describe("P3 standalone markup topology and finding dispositions", () => {
     );
   });
 
-  it("lowers the AO ceiling after the PointerGroup lift", () => {
-    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2153);
+  it("lowers the AO ceiling after the residual takeoff fallback cleanup", () => {
+    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2134);
   });
 });

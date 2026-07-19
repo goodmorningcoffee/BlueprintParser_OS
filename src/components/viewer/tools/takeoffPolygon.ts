@@ -1,8 +1,8 @@
 // [refactor jul17 P3.2] Takeoff polygon tool controller — the FIFTH registered controller and
 // the THIRD eligible-decline controller. Byte-for-semantics lift of the POLYGON identity of the
 // legacy takeoffPlacement mousedown branch (pre-move AO:1762-1790 at parent 7413d9e) — the LAST
-// identity in that branch; the surviving skeleton keeps only the !activeItem silent return plus
-// the always-claims contract (TAKEOFF_POLYGON_IMPL/RECON_CENSUS.md §2, branch-collapse option a).
+// identity extracted from that branch. After registration 13, the separately proven residual
+// skeleton was removed; null/stale ownership now converges on the common non-null-owner guard.
 //
 // matches() is kind-only eligibility (takeoffItems is COMPONENT data, so the resolution cannot
 // happen in matches), and onMouseDown resolves activeItem and DECLINES — return false with ZERO
@@ -51,9 +51,8 @@ export const takeoffPolygonController: ToolController = Object.freeze({
     // Mirrors pre-move AO:1757. Same render-closure staleness as legacy: the capability carries
     // the component array (D1-class one-macrotask refresh lag, sanctioned).
     const activeItem = takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId);
-    // ELIGIBLE-DECLINE, zero side effects: the surviving legacy branch owns the silent
-    // !activeItem return; linear claims at takeoffLinear and count shapes at takeoffCount,
-    // both behind this slot.
+    // ELIGIBLE-DECLINE, zero side effects: null/stale items flow through the trio to the common
+    // non-null-owner guard; linear and count claim behind this slot.
     if (!activeItem) return false;
     if (activeItem.shape !== "polygon") return false;
     if (!takeoffDrawing) {
@@ -92,8 +91,8 @@ export const takeoffPolygonController: ToolController = Object.freeze({
         takeoffDrawing.addPolygonVertex({ x: normX, y: normY });
       }
     }
-    // Unconditional claim on every arm: a polygon press must NEVER fall through to legacy — the
-    // surviving branch would re-run the prelude (double-invalidate/double-stop).
+    // Unconditional claim on every arm: the controller is the sole resolved-polygon owner and must
+    // terminate registry traversal after its prelude/work, before the common owner guard.
     return true;
   },
 } satisfies ToolController);

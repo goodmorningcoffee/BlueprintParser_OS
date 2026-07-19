@@ -10,8 +10,8 @@
 //      four capabilities only after the count identity claims the press);
 //   3. the ELIGIBLE-DECLINE contract — the registry's first: !activeItem / polygon / linear
 //      return FALSE with ZERO side effects (no stopPropagation, no tail invalidation, no
-//      capability call); polygon/linear normally claim upstream, while only !activeItem reaches
-//      the inert legacy skeleton and returns before its prelude;
+//      capability call); polygon/linear normally claim upstream, while !activeItem remains
+//      effect-cold through the trio and reaches the common non-null-owner guard;
 //   4. select-before-place: strict <14 anisotropic center distance, takeoff-source-only
 //      transparency, pageAnnotations array order; the select path claims TRUE without
 //      persistCreate;

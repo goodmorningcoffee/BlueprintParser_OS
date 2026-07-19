@@ -9,7 +9,8 @@
 // (activeTakeoffItemId lives in the press, but takeoffItems is COMPONENT data, so resolution
 // cannot happen in matches), and onMouseDown retains honest zero-side-effect declines for
 // !activeItem / polygon / linear. The polygon/linear controllers normally claim those identities
-// earlier in registry order; only an unresolved item reaches the inert legacy skeleton.
+// earlier in registry order; an unresolved item remains effect-cold through the trio and reaches
+// AnnotationOverlay's common non-null-owner guard.
 //
 // Reordering note (census, decline-before-side-effects proof): legacy ran the prelude BEFORE the
 // shape checks; this controller checks shape BEFORE the prelude. The reordered steps are two pure
@@ -44,8 +45,8 @@ export const takeoffCountController: ToolController = Object.freeze({
     // cache read.
     const activeItem = takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId);
     // ELIGIBLE-DECLINE, zero side effects (contract §4.2): polygon/linear are normally claimed by
-    // earlier controllers, but these direct partition checks remain ordering-robust. Only the
-    // silent !activeItem decline reaches the inert legacy skeleton.
+    // earlier controllers, but these direct partition checks remain ordering-robust. A silent
+    // !activeItem decline flows to the common non-null-owner guard with no fallback effects.
     if (!activeItem) return false;
     if (activeItem.shape === "polygon" || activeItem.shape === "linear") return false;
 

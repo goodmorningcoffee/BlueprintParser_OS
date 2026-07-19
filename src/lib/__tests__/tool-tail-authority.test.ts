@@ -435,8 +435,8 @@ describe("AT2 one exact global tool-tail authority", () => {
       // Its preview-open terminal remains deliberately cold and retains the current tail owner.
       "src/components/viewer/tools/split.ts:invalidateToolTailAuthority",
       // [refactor jul17 P3.2] The takeoffCount controller inherited the takeoffPlacement branch
-      // prelude's invalidation for claimed count presses (pre-move AO:1750 semantics); declined
-      // presses invalidate in the surviving legacy branch instead, never in both.
+      // prelude's invalidation for claimed count presses (pre-move AO:1750 semantics); declines
+      // stay effect-cold and converge on the common non-null-owner guard.
       "src/components/viewer/tools/takeoffCount.ts:invalidateToolTailAuthority",
       // [refactor jul17 P3.2] The takeoffLinear controller inherited the same branch prelude for
       // claimed linear presses (pre-move AO:1756 semantics); its declines are zero-side-effect,

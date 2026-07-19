@@ -1454,25 +1454,6 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Takeoff placement mode
-      if (activeTool?.kind === "takeoffPlacement") {
-        const activeItem = takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId);
-        if (!activeItem) return;
-        invalidateToolTailAuthority();
-        e.stopPropagation();
-
-        // [refactor jul17 P3.2] All three takeoff identities live behind the registry seam now:
-        // count (existing-marker select loop + clamped-bbox placement) in tools/takeoffCount.ts,
-        // linear (strict-<10 last-vertex finish snap into saveLinearPolyline) in
-        // tools/takeoffLinear.ts, and polygon (strict-<15 FIRST-vertex close snap into
-        // savePolygon) in tools/takeoffPolygon.ts — every resolvable shape claims upstream, so
-        // the only press that reaches this branch is !activeItem, which returned silently above
-        // BEFORE the prelude. The prelude + this terminal return stay as the branch's
-        // always-claims contract for any residual (currently unreachable) shape partition
-        // (TAKEOFF_POLYGON_IMPL/RECON_CENSUS.md §2, option a; collapse is a P3-review candidate).
-        return;
-      }
-
       // ─── Drawing/picking modes: must come BEFORE pointer block ─────
       // The pointer block always returns, so these would be unreachable after it.
 

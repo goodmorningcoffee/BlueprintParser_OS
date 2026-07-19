@@ -261,12 +261,12 @@ describe("later user tool intent revokes parse completion writes", () => {
   it("rejects stale canvas targets before coordinates and claims only accepted branch work", () => {
     const source = readFileSync("src/components/viewer/AnnotationOverlay.tsx", "utf8");
     const start = source.indexOf("const handleMouseDown = useCallback(");
-    // [refactor jul19 P3.2] Split and BucketFill joined Calibration behind the registry. The
-    // residual takeoff prelude is now the first surviving legacy branch after the shared seam.
-    const firstBranch = source.indexOf("// Takeoff placement mode", start);
+    // [refactor jul19 P3.2] Every mousedown owner now dispatches behind the registry. The common
+    // non-null-owner guard is the stable end marker for the admitted gesture prefix.
+    const firstSharedTailGuard = source.indexOf("if (activeTool !== null) return;", start);
     expect(start).toBeGreaterThan(-1);
-    expect(firstBranch).toBeGreaterThan(start);
-    const gesturePrefix = source.slice(start, firstBranch);
+    expect(firstSharedTailGuard).toBeGreaterThan(start);
+    const gesturePrefix = source.slice(start, firstSharedTailGuard);
     const lifecycleGuard = gesturePrefix.indexOf("if (!canAdoptProjectLifecycle()) return");
     const cancel = gesturePrefix.indexOf("cancelDeferredDrawing()");
     const projectGuard = gesturePrefix.indexOf("useSessionStore.getState().publicId");

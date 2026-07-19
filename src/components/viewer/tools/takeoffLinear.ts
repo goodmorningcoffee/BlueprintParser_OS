@@ -51,9 +51,8 @@ export const takeoffLinearController: ToolController = Object.freeze({
     // Mirrors pre-move AO:1754. Same render-closure staleness as legacy: the capability carries
     // the component array (D1-class one-macrotask refresh lag, sanctioned — census §4).
     const activeItem = takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId);
-    // ELIGIBLE-DECLINE, zero side effects (contract §4.2): the surviving legacy branch owns the
-    // silent !activeItem return and the polygon identity; count shapes claim at the takeoffCount
-    // controller behind this slot.
+    // ELIGIBLE-DECLINE, zero side effects (contract §4.2): null/stale items flow through the trio
+    // to the common non-null-owner guard; polygon claims upstream and count claims behind this slot.
     if (!activeItem) return false;
     if (activeItem.shape !== "linear") return false;
     if (!takeoffDrawing) {
@@ -92,8 +91,8 @@ export const takeoffLinearController: ToolController = Object.freeze({
         takeoffDrawing.addPolygonVertex({ x: normX, y: normY });
       }
     }
-    // Unconditional claim on every arm: a linear press must NEVER fall through to legacy — the
-    // surviving branch would re-run the prelude (double-invalidate/double-stop).
+    // Unconditional claim on every arm: the controller is the sole resolved-linear owner and must
+    // terminate registry traversal after its prelude/work, before the common owner guard.
     return true;
   },
 } satisfies ToolController);
