@@ -342,6 +342,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const TABLE_CELL_STRUCTURE = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/tableCellStructure.ts"),
+  "utf8",
+);
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -360,14 +364,11 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function expectParentOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const symbol = source.indexOf("    // Draw symbol search results");
   const cells = source.indexOf("    // Draw TATR cell structure overlays");
-  const condition = source.indexOf(
-    "if (tableCellStructure && tableCellStructure.pageNumber === pageNumber && showTableCellStructure)",
-    cells,
-  );
+  const tableCellCall = source.indexOf("drawTableCellStructure(ctx, {", cells);
   const llm = source.indexOf("    // Draw LLM tool use highlight");
   const llmCall = source.indexOf("drawLlmHighlight(ctx, {", llm);
   const tableTagCall = source.indexOf("drawTableTagViews(ctx, {", llmCall);
@@ -383,8 +384,8 @@ function expectParentOrder(source: string): void {
   expect(annotations).toBeGreaterThan(-1);
   expect(symbol).toBeGreaterThan(annotations);
   expect(cells).toBeGreaterThan(symbol);
-  expect(condition).toBeGreaterThan(cells);
-  expect(llm).toBeGreaterThan(condition);
+  expect(tableCellCall).toBeGreaterThan(cells);
+  expect(llm).toBeGreaterThan(tableCellCall);
   expect(llmCall).toBeGreaterThan(llm);
   expect(tableTagCall).toBeGreaterThan(llmCall);
   expect(areaCall).toBeGreaterThan(tableTagCall);
@@ -394,8 +395,8 @@ function expectParentOrder(source: string): void {
   expect(dependencies).toBeGreaterThan(preview);
 }
 
-describe("AnnotationOverlay TATR table-cell structure direct-parent topology", () => {
-  it("pins the exact earlier driver, inline stage, next pure call, and dependencies", () => {
+describe("AnnotationOverlay TATR table-cell structure post-move topology", () => {
+  it("pins the exact earlier driver, pure call, next pure call, and dependencies", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
@@ -407,22 +408,19 @@ describe("AnnotationOverlay TATR table-cell structure direct-parent topology", (
       "cd4320f39dd6b1a25ab5effddc3d2f2c748b6a1e6db02110d8e0e6880a55fc41",
     );
 
-    const tableCellStage = exactSlice(
+    const tableCellCall = exactSlice(
       AO,
       "    // Draw TATR cell structure overlays\n",
       "    // Draw LLM tool use highlight (pulsing dashed cyan rectangle)\n",
     );
-    expect(count(tableCellStage, "\n")).toBe(36);
-    expect(Buffer.byteLength(tableCellStage, "utf8")).toBe(1_648);
-    expect(sha256(tableCellStage)).toBe(
-      "195760dd8b259a7c5abb36c6f8414148bfcac967205e6cc4b8ebc3c9be44ac20",
+    expect(count(tableCellCall, "\n")).toBe(9);
+    expect(Buffer.byteLength(tableCellCall, "utf8")).toBe(185);
+    expect(sha256(tableCellCall)).toBe(
+      "bbf04c7d2f0a259dbba5025079669f6678690e1cbee067d9e69c06029c519616",
     );
-    expect(count(tableCellStage, "tableCellStructure.pageNumber")).toBe(1);
-    expect(count(tableCellStage, "for (const cell of tableCellStructure.cells)")).toBe(1);
-    expect(count(tableCellStage, "cell.highlighted")).toBe(1);
-    expect(count(tableCellStage, "cell.type")).toBe(2);
-    expect(count(tableCellStage, "ctx.fillRect(")).toBe(3);
-    expect(count(tableCellStage, "ctx.strokeRect(")).toBe(1);
+    expect(count(tableCellCall, "drawTableCellStructure(ctx, {")).toBe(1);
+    expect(tableCellCall).toContain("tableCellStructure,");
+    expect(tableCellCall).toContain("showTableCellStructure,");
 
     const llmCall = exactSlice(
       AO,
@@ -446,37 +444,48 @@ describe("AnnotationOverlay TATR table-cell structure direct-parent topology", (
     );
   });
 
-  it("keeps one ordered inline stage, no future helper, and biting source self-oracles", () => {
-    expectParentOrder(AO);
+  it("keeps one ordered call, one pure module, and biting source self-oracles", () => {
+    expectPostMoveOrder(AO);
     expect(count(AO, "    // Draw TATR cell structure overlays\n")).toBe(1);
-    expect(count(AO, 'import { drawTableCellStructure } from "./render/tableCellStructure";')).toBe(0);
-    expect(count(AO, "drawTableCellStructure(ctx, {")).toBe(0);
+    expect(count(AO, 'import { drawTableCellStructure } from "./render/tableCellStructure";')).toBe(1);
+    expect(count(AO, "drawTableCellStructure(ctx, {")).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/tableCellStructure.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/tableCellStructure.test.ts",
-    ))).toBe(false);
-    expect(() => expectParentOrder(
-      AO.replace(
-        "if (tableCellStructure && tableCellStructure.pageNumber === pageNumber && showTableCellStructure)",
-        "if (tableCellStructure && missingStructure.pageNumber === pageNumber && showTableCellStructure)",
-      ),
+    ))).toBe(true);
+    expect(count(AO, "tableCellStructure.pageNumber === pageNumber")).toBe(0);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawTableCellStructure(ctx, {", "missingTableCellStructure(ctx, {"),
     )).toThrow();
 
-    const tableCellStage = exactSlice(
+    const tableCellCall = exactSlice(
       AO,
       "    // Draw TATR cell structure overlays\n",
       "    // Draw LLM tool use highlight (pulsing dashed cyan rectangle)\n",
     );
     const reordered = AO
-      .replace(tableCellStage, "")
+      .replace(tableCellCall, "")
       .replace(
         "    // Draw active table/keynote tag views",
-        `${tableCellStage}    // Draw active table/keynote tag views`,
+        `${tableCellCall}    // Draw active table/keynote tag views`,
       );
-    expect(() => expectParentOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(Buffer.byteLength(TABLE_CELL_STRUCTURE, "utf8")).toBe(2_446);
+    expect(count(TABLE_CELL_STRUCTURE, "\n")).toBe(69);
+    expect(sha256(TABLE_CELL_STRUCTURE)).toBe(
+      "1f416ce4abf20d4c7010ffd095a4c2644dfdf2ae72e4de24566314c08cb1f4e9",
+    );
+    expect(count(TABLE_CELL_STRUCTURE, "tableCellStructure.pageNumber")).toBe(1);
+    expect(count(TABLE_CELL_STRUCTURE, "for (const cell of tableCellStructure.cells)")).toBe(1);
+    expect(count(TABLE_CELL_STRUCTURE, "cell.highlighted")).toBe(1);
+    expect(count(TABLE_CELL_STRUCTURE, "cell.type")).toBe(2);
+    expect(count(TABLE_CELL_STRUCTURE, "ctx.fillRect(")).toBe(3);
+    expect(count(TABLE_CELL_STRUCTURE, "ctx.strokeRect(")).toBe(1);
+    expect(TABLE_CELL_STRUCTURE).not.toMatch(/@\/(stores|queries)|fetch\(|persist/i);
   });
 });
