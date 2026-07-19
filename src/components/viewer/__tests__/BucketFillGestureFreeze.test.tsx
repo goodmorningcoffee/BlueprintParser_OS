@@ -776,7 +776,7 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     expect(count(CONTROLLER, 'fetch("/api/bucket-fill"')).toBe(1);
     expect(count(CONTROLLER, "return true;")).toBe(7);
     expect(CONTROLLER.match(/\n/g)).toHaveLength(278);
-    expect(AO.match(/\n/g)).toHaveLength(1982);
+    expect(AO.match(/\n/g)).toHaveLength(1969);
   });
 
   it("pins explicit barrier invalidation and fresh-operation publication order", () => {

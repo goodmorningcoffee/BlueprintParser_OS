@@ -318,6 +318,8 @@ function sha256(value: string): string {
 
 function expectPostMoveOrder(source: string): void {
   const annotation = source.indexOf("    // Draw existing annotations");
+  const llm = source.indexOf("    // Draw LLM tool use highlight");
+  const llmCall = source.indexOf("drawLlmHighlight(ctx, {", llm);
   const tableTags = source.indexOf("    // Draw active table/keynote tag views");
   const tableTagCall = source.indexOf("drawTableTagViews(ctx, {", tableTags);
   const area = source.indexOf("    // Draw completed area polygons");
@@ -333,7 +335,9 @@ function expectPostMoveOrder(source: string): void {
     "  }, [pageAnnotations, width, height, selectedId",
   );
   expect(annotation).toBeGreaterThan(-1);
-  expect(tableTags).toBeGreaterThan(annotation);
+  expect(llm).toBeGreaterThan(annotation);
+  expect(llmCall).toBeGreaterThan(llm);
+  expect(tableTags).toBeGreaterThan(llmCall);
   expect(tableTagCall).toBeGreaterThan(tableTags);
   expect(area).toBeGreaterThan(tableTagCall);
   expect(areaCall).toBeGreaterThan(area);
@@ -352,10 +356,10 @@ describe("AnnotationOverlay group-ring post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw completed linear polylines",
     );
-    expect(count(prefix, "\n")).toBe(324);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(13_701);
+    expect(count(prefix, "\n")).toBe(310);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(12_996);
     expect(sha256(prefix)).toBe(
-      "59ff78fe79ceafa5275b12cba82246c86519f2ec1231c10a72807e233fd0f9f8",
+      "4ec181d3a755160e8a614645e03d86d249a17ca1a43d4520ad998a07f652803c",
     );
 
     const linearCall = exactSlice(

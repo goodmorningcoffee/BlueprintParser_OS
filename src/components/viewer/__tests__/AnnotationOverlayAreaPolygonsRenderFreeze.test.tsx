@@ -465,6 +465,8 @@ function sha256(value: string): string {
 
 function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
+  const llm = source.indexOf("    // Draw LLM tool use highlight");
+  const llmCall = source.indexOf("drawLlmHighlight(ctx, {", llm);
   const tableTags = source.indexOf("    // Draw active table/keynote tag views");
   const tableTagCall = source.indexOf("drawTableTagViews(ctx, {", tableTags);
   const area = source.indexOf("    // Draw completed area polygons");
@@ -480,7 +482,9 @@ function expectPostMoveOrder(source: string): void {
     "  }, [pageAnnotations, width, height, selectedId",
   );
   expect(annotations).toBeGreaterThan(-1);
-  expect(tableTags).toBeGreaterThan(annotations);
+  expect(llm).toBeGreaterThan(annotations);
+  expect(llmCall).toBeGreaterThan(llm);
+  expect(tableTags).toBeGreaterThan(llmCall);
   expect(tableTagCall).toBeGreaterThan(tableTags);
   expect(area).toBeGreaterThan(tableTagCall);
   expect(areaCall).toBeGreaterThan(area);
@@ -499,10 +503,10 @@ describe("AnnotationOverlay area-polygon post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw completed area polygons\n",
     );
-    expect(count(prefix, "\n")).toBe(314);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(13_489);
+    expect(count(prefix, "\n")).toBe(300);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(12_784);
     expect(sha256(prefix)).toBe(
-      "be1e7cda3a0bab1b1e838ebd9fd963b9537ff1b6250d4dcd9307e26928020215",
+      "7d3c4c91f2c03ff479723c143cd4394cc77b05a526e2140cab0b0ffde2721114",
     );
 
     const areaCall = exactSlice(

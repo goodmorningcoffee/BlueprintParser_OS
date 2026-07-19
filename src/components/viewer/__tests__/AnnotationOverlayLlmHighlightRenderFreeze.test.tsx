@@ -281,6 +281,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const LLM_HIGHLIGHT = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/llmHighlight.ts"),
+  "utf8",
+);
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -299,15 +303,12 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function expectParentOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const symbol = source.indexOf("    // Draw symbol search results");
   const cells = source.indexOf("    // Draw TATR cell structure overlays");
   const llm = source.indexOf("    // Draw LLM tool use highlight");
-  const condition = source.indexOf(
-    "if (llmHighlight && llmHighlight.pageNumber === pageNumber)",
-    llm,
-  );
+  const llmCall = source.indexOf("drawLlmHighlight(ctx, {", llm);
   const tableTags = source.indexOf("    // Draw active table/keynote tag views");
   const tableTagCall = source.indexOf("drawTableTagViews(ctx, {", tableTags);
   const areaCall = source.indexOf("drawAreaPolygons(ctx, {", tableTagCall);
@@ -323,8 +324,8 @@ function expectParentOrder(source: string): void {
   expect(symbol).toBeGreaterThan(annotations);
   expect(cells).toBeGreaterThan(symbol);
   expect(llm).toBeGreaterThan(cells);
-  expect(condition).toBeGreaterThan(llm);
-  expect(tableTags).toBeGreaterThan(condition);
+  expect(llmCall).toBeGreaterThan(llm);
+  expect(tableTags).toBeGreaterThan(llmCall);
   expect(tableTagCall).toBeGreaterThan(tableTags);
   expect(areaCall).toBeGreaterThan(tableTagCall);
   expect(linearCall).toBeGreaterThan(areaCall);
@@ -333,8 +334,8 @@ function expectParentOrder(source: string): void {
   expect(dependencies).toBeGreaterThan(preview);
 }
 
-describe("AnnotationOverlay LLM highlight direct-parent topology", () => {
-  it("pins the exact earlier driver, inline stage, next pure call, and dependencies", () => {
+describe("AnnotationOverlay LLM highlight post-move topology", () => {
+  it("pins the exact earlier driver, pure call, next pure call, and dependencies", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
@@ -346,19 +347,19 @@ describe("AnnotationOverlay LLM highlight direct-parent topology", () => {
       "0490967c4dc9cd8afc16cb5b53331413b28d88d08bfa9a9f3b3447cc3c75e8f6",
     );
 
-    const llmStage = exactSlice(
+    const llmCall = exactSlice(
       AO,
       "    // Draw LLM tool use highlight (pulsing dashed cyan rectangle)\n",
       "    // Draw active table/keynote tag views\n",
     );
-    expect(count(llmStage, "\n")).toBe(22);
-    expect(Buffer.byteLength(llmStage, "utf8")).toBe(874);
-    expect(sha256(llmStage)).toBe(
-      "9ab3b60cea9a6e1e7ececf1ad4cc6b0c1d5014cd51ab08ad7d3c8e8ae252237e",
+    expect(count(llmCall, "\n")).toBe(8);
+    expect(Buffer.byteLength(llmCall, "utf8")).toBe(169);
+    expect(sha256(llmCall)).toBe(
+      "3d5f59330e3bde3c1adcf6a57a69669a2959d09e8e2d759daf461da3769c0686",
     );
-    expect(count(llmStage, "llmHighlight.pageNumber")).toBe(1);
-    expect(count(llmStage, "llmHighlight.bbox")).toBe(1);
-    expect(count(llmStage, "llmHighlight.label")).toBe(3);
+    expect(count(llmCall, "drawLlmHighlight(ctx, {")).toBe(1);
+    expect(llmCall).toContain("llmHighlight,");
+    expect(llmCall).toContain("pageNumber,");
 
     const tableTagCall = exactSlice(
       AO,
@@ -382,37 +383,46 @@ describe("AnnotationOverlay LLM highlight direct-parent topology", () => {
     );
   });
 
-  it("keeps one ordered inline stage, no future helper, and biting source self-oracles", () => {
-    expectParentOrder(AO);
+  it("keeps one ordered call, one pure module, and biting source self-oracles", () => {
+    expectPostMoveOrder(AO);
     expect(count(AO, "    // Draw LLM tool use highlight (pulsing dashed cyan rectangle)\n")).toBe(1);
-    expect(count(AO, 'import { drawLlmHighlight } from "./render/llmHighlight";')).toBe(0);
-    expect(count(AO, "drawLlmHighlight(ctx, {")).toBe(0);
+    expect(count(AO, 'import { drawLlmHighlight } from "./render/llmHighlight";')).toBe(1);
+    expect(count(AO, "drawLlmHighlight(ctx, {")).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/llmHighlight.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/llmHighlight.test.ts",
-    ))).toBe(false);
-    expect(() => expectParentOrder(
-      AO.replace(
-        "if (llmHighlight && llmHighlight.pageNumber === pageNumber)",
-        "if (llmHighlight && missingHighlight.pageNumber === pageNumber)",
-      ),
+    ))).toBe(true);
+    expect(count(AO, "llmHighlight.pageNumber === pageNumber")).toBe(0);
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawLlmHighlight(ctx, {", "missingLlmHighlight(ctx, {"),
     )).toThrow();
 
-    const llmStage = exactSlice(
+    const llmCall = exactSlice(
       AO,
       "    // Draw LLM tool use highlight (pulsing dashed cyan rectangle)\n",
       "    // Draw active table/keynote tag views\n",
     );
     const reordered = AO
-      .replace(llmStage, "")
+      .replace(llmCall, "")
       .replace(
         "    // Draw completed area polygons",
-        `${llmStage}    // Draw completed area polygons`,
+        `${llmCall}    // Draw completed area polygons`,
       );
-    expect(() => expectParentOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(Buffer.byteLength(LLM_HIGHLIGHT, "utf8")).toBe(1_432);
+    expect(count(LLM_HIGHLIGHT, "\n")).toBe(48);
+    expect(sha256(LLM_HIGHLIGHT)).toBe(
+      "31d320f2f4d2d8f5bf1849db04a4b25d5c3f699917321f172c643eb8aa7ac7ae",
+    );
+    expect(count(LLM_HIGHLIGHT, "llmHighlight.pageNumber")).toBe(1);
+    expect(count(LLM_HIGHLIGHT, "llmHighlight.bbox")).toBe(1);
+    expect(count(LLM_HIGHLIGHT, "llmHighlight.label")).toBe(3);
+    expect(count(LLM_HIGHLIGHT, "ctx.setLineDash(")).toBe(2);
+    expect(LLM_HIGHLIGHT).not.toMatch(/@\/(stores|queries)|fetch\(|persist/i);
   });
 });
