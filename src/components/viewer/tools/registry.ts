@@ -5,6 +5,7 @@ import { keynotePickController } from "./keynotePick";
 import { markupController } from "./markup";
 import { parseRectController } from "./parseRect";
 import { symbolSearchController } from "./symbolSearch";
+import { tagAddController } from "./tagAdd";
 import { tagPickController } from "./tagPick";
 import { takeoffCountController } from "./takeoffCount";
 import { takeoffLinearController } from "./takeoffLinear";
@@ -23,7 +24,7 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // The interior stays §5-ordered as later controllers land: split/bucketFill slot in BEFORE
 // takeoffPolygon. keynotePick precedes parseRect so an active YOLO miss can eligible-decline into
 // the generic rectangle starter in the SAME dispatch. tagPick and symbolSearch now occupy their
-// exact middle slots; tagAdd will insert after symbolSearch. pointerGroup remains between
+// exact middle slots; tagAdd now occupies its slot after symbolSearch. pointerGroup remains between
 // parseRect and markup.
 export const TOOLS = Object.freeze(
   [
@@ -34,6 +35,7 @@ export const TOOLS = Object.freeze(
     keynotePickController,
     tagPickController,
     symbolSearchController,
+    tagAddController,
     parseRectController,
     markupController,
   ] as const,

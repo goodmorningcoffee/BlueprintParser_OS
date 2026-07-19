@@ -457,12 +457,12 @@ describe("takeoff count seam topology pins (post-move: controller registered, co
   it("pins the surviving legacy branch: resolution, silent return, prelude, terminal claim only", () => {
     const branch = AO.indexOf('if (activeTool?.kind === "takeoffPlacement") {');
     expect(branch).toBeGreaterThan(-1);
-    // [refactor jul18 P3.2] keynotePick/parseRect and then tagPick moved out. Tag Add is now the
-    // next surviving legacy mousedown branch, so its exact guard comment is the non-vacuous end.
-    const tagAddGuard =
-      "// Tag Add owns its exact tag payload for the complete deferred rectangle.";
-    expect(count(AO, tagAddGuard)).toBe(1);
-    const end = AO.indexOf(tagAddGuard, branch);
+    // [refactor jul18 P3.2] keynotePick/parseRect, tagPick, and Tag Add moved out. The exact
+    // surviving drawing/picking boundary is now the non-vacuous end of this legacy branch.
+    const drawingPickingBoundary =
+      "// ─── Drawing/picking modes: must come BEFORE pointer block ─────";
+    expect(count(AO, drawingPickingBoundary)).toBe(1);
+    const end = AO.indexOf(drawingPickingBoundary, branch);
     expect(end).toBeGreaterThan(branch);
     const slice = AO.slice(branch, end);
     const resolution = slice.indexOf("takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId)");

@@ -1779,15 +1779,8 @@ export default memo(function AnnotationOverlay({
       // ─── Drawing/picking modes: must come BEFORE pointer block ─────
       // The pointer block always returns, so these would be unreachable after it.
 
-      // Tag Add owns its exact tag payload for the complete deferred rectangle.
-      if (activeTool?.kind === "tagAdd") {
-        e.stopPropagation();
-        startDeferredDrawing(pos);
-        return;
-      }
-
       // [refactor jul18 P3.2] keynotePick + tagPick hit/miss routing, generic parseRect deferred
-      // starts, and symbolSearch starts are claimed at the registry seam. Conditional
+      // starts, and symbolSearch + tagAdd starts are claimed at the registry seam. Conditional
       // subscriptions, filtering, request identity, and complete drawing settlement stay local.
 
       // Every non-null specialized owner suppresses base pointer/group/markup fallthrough.

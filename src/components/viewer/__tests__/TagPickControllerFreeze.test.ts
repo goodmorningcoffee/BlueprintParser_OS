@@ -762,14 +762,15 @@ describe("tagPickController request settlement", () => {
 });
 
 describe("tagPick real registry integration and topology", () => {
-  it("occupies keynotePick -> tagPick -> symbolSearch -> parseRect exactly", () => {
+  it("occupies keynotePick -> tagPick -> symbolSearch -> tagAdd -> parseRect exactly", () => {
     const index = TOOLS.indexOf(tagPickController);
     expect(index).toBeGreaterThan(0);
     expect(TOOLS[index]).toBe(tagPickController);
-    expect(TOOLS.slice(index - 1, index + 3).map((tool) => tool.kind)).toEqual([
+    expect(TOOLS.slice(index - 1, index + 4).map((tool) => tool.kind)).toEqual([
       "keynotePick",
       "tagPick",
       "symbolSearch",
+      "tagAdd",
       "parseRect",
     ]);
   });

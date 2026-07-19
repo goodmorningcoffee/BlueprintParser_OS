@@ -177,7 +177,8 @@ describe("symbolSearch real registry integration", () => {
     expect(index).toBeGreaterThan(0);
     expect(TOOLS[index]).toBe(symbolSearchController);
     expect(TOOLS[index - 1].kind).toBe("tagPick");
-    expect(TOOLS[index + 1].kind).toBe("parseRect");
+    expect(TOOLS[index + 1].kind).toBe("tagAdd");
+    expect(TOOLS[index + 2].kind).toBe("parseRect");
 
     const { context, deferredDrawing, position } = contextFor({ startResult: false });
     const createContext = vi.fn(() => context);

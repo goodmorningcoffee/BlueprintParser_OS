@@ -177,8 +177,10 @@ describe("P3.1 tool registry scaffolding", () => {
   // eligibility is disjoint, so keynote miss delegation still reaches parseRect unchanged.
   // Ninth registration: tagPick inserts immediately after keynotePick and before symbolSearch;
   // all tagPick presses claim, while keynotePick's eligible miss still reaches parseRect.
-  it("exports one exact frozen registry with keynotePick then tagPick, symbolSearch, parseRect", () => {
-    expect(TOOLS).toHaveLength(9);
+  // Tenth registration: tagAdd inserts after symbolSearch and before parseRect. Its eligibility is
+  // disjoint and every eligible press claims, including when deferred admission rejects.
+  it("exports one exact frozen registry with tagPick, symbolSearch, tagAdd, then parseRect", () => {
+    expect(TOOLS).toHaveLength(10);
     expect(Object.isFrozen(TOOLS)).toBe(true);
     expect(TOOLS.map((tool) => tool.kind)).toEqual([
       "calibration",
@@ -188,6 +190,7 @@ describe("P3.1 tool registry scaffolding", () => {
       "keynotePick",
       "tagPick",
       "symbolSearch",
+      "tagAdd",
       "parseRect",
       "markup",
     ]);
@@ -203,9 +206,8 @@ describe("P3.1 tool registry scaffolding", () => {
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
     // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
-    // NINE registered controllers (calibration, the three takeoffPlacement controllers, the
-    // three parse/pick units, and symbolSearch need their activations; markup needs mode
-    // "markup").
+    // TEN registered controllers (calibration, the three takeoffPlacement controllers, and the
+    // five parse/pick/deferred units need their activations; markup needs mode "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;

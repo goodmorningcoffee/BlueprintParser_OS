@@ -90,6 +90,6 @@ describe("P3 standalone markup topology and finding dispositions", () => {
   });
 
   it("retains the current AO ceiling before and after the repair", () => {
-    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2782);
+    expect(AO.split("\n").length - 1).toBeLessThanOrEqual(2775);
   });
 });

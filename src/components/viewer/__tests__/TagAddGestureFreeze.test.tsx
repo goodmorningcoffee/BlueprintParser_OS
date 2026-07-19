@@ -181,7 +181,7 @@ describe("TagAdd gesture freeze (real overlay)", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not start TagAdd drawing for an inactive empty-canvas press", async () => {
+  it("does not start TagAdd drawing for an inactive empty-point press", async () => {
     seedOverlay([tag(TAG_A, [{ ...existingInstance, pageNumber: PAGE_NUMBER }])]);
     const canvas = await mountCanvas();
 
@@ -189,6 +189,21 @@ describe("TagAdd gesture freeze (real overlay)", () => {
 
     expect(parentMouseDown).toHaveBeenCalledTimes(1);
     expect(useToolStore.getState()._drawing).toBe(false);
+  });
+
+  it("declines a different live takeoff owner before its silent legacy return", async () => {
+    seedOverlay([tag(TAG_A, [{ ...existingInstance, pageNumber: PAGE_NUMBER }])]);
+    const canvas = await mountCanvas();
+    act(() => useToolStore.getState().setActiveTakeoffItemId(999_999));
+    await waitFor(() => {
+      expect(useToolStore.getState().activeTool).toEqual({ kind: "takeoffPlacement" });
+    });
+
+    expect(press(canvas, 190, 95)).toBe(true);
+
+    expect(parentMouseDown).toHaveBeenCalledTimes(1);
+    expect(useToolStore.getState()._drawing).toBe(false);
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "takeoffPlacement" });
   });
 
   it("stops before exact start publications and reverse-settles the captured tag", async () => {
@@ -355,13 +370,14 @@ describe("TagAdd gesture freeze (real overlay)", () => {
   });
 });
 
-describe("TagAdd seam topology pins (pre-move)", () => {
+describe("TagAdd seam topology pins (post-move)", () => {
   const root = process.cwd();
   const overlayPath = join(root, "src/components/viewer/AnnotationOverlay.tsx");
   const registryPath = join(root, "src/components/viewer/tools/registry.ts");
   const controllerPath = join(root, "src/components/viewer/tools/tagAdd.ts");
   const AO = readFileSync(overlayPath, "utf8");
   const REGISTRY = readFileSync(registryPath, "utf8");
+  const CONTROLLER = readFileSync(controllerPath, "utf8");
   const mouseDownStart = AO.indexOf("const handleMouseDown = useCallback(");
   const mouseMoveStart = AO.indexOf("const handleMouseMove = useCallback(");
   const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
@@ -370,39 +386,29 @@ describe("TagAdd seam topology pins (pre-move)", () => {
   const sha256 = (value: string): string =>
     createHash("sha256").update(value).digest("hex");
 
-  it("pins the exact legacy branch as the sole mousedown home", () => {
+  it("pins the legacy branch absent and the controller as the sole mousedown home", () => {
     expect(mouseDownStart).toBeGreaterThan(-1);
     expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
-    expect(existsSync(controllerPath)).toBe(false);
-    const tagAddStart = MOUSEDOWN.indexOf(
-      "      // Tag Add owns its exact tag payload",
-    );
-    const tagAddEnd = MOUSEDOWN.indexOf(
-      "      // [refactor jul18 P3.2]",
-      tagAddStart,
-    );
-    expect(tagAddStart).toBeGreaterThan(-1);
-    expect(tagAddEnd).toBeGreaterThan(tagAddStart);
-    const branch = MOUSEDOWN.slice(tagAddStart, tagAddEnd);
-    expect(sha256(branch)).toBe(
-      "8aa12bde214622075f634826e0eb221e649113fe53676a91bb94afc461cb9f8d",
-    );
-    expect(count(branch, 'if (activeTool?.kind === "tagAdd")')).toBe(1);
-    expect(count(branch, "e.stopPropagation();")).toBe(1);
-    expect(count(branch, "startDeferredDrawing(pos);")).toBe(1);
-    expect(count(branch, "return;")).toBe(1);
-    expect(branch).not.toContain("preventDefault");
-    expect(branch).not.toContain("e.button");
+    expect(existsSync(controllerPath)).toBe(true);
+    expect(count(MOUSEDOWN, "// Tag Add owns its exact tag payload")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "tagAdd")')).toBe(0);
+    expect(count(CONTROLLER, 'kind: "tagAdd"')).toBe(1);
+    expect(count(CONTROLLER, 'state.activeTool?.kind === "tagAdd"')).toBe(1);
+    expect(count(CONTROLLER, 'press.toolAtDown.activeTool?.kind === "tagAdd"')).toBe(1);
+    expect(count(CONTROLLER, "event.stopPropagation();")).toBe(1);
+    expect(count(CONTROLLER, "deferredDrawing.start(context.press.position);")).toBe(1);
+    expect(CONTROLLER).not.toContain("preventDefault");
+    expect(CONTROLLER).not.toContain("event.button");
   });
 
-  it("pins controller absence, exact nine-tool priority, and shared capability ownership", () => {
-    expect(REGISTRY).not.toContain('import { tagAddController } from "./tagAdd";');
-    expect(REGISTRY).not.toContain("    tagAddController,");
+  it("pins controller registration, exact ten-tool priority, and shared capability ownership", () => {
+    expect(REGISTRY).toContain('import { tagAddController } from "./tagAdd";');
     expect(REGISTRY).toContain(
-      "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n    parseRectController,",
+      "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n" +
+      "    tagAddController,\n    parseRectController,",
     );
     const entries = REGISTRY.match(/^    \w+Controller,$/gm) ?? [];
-    expect(entries).toHaveLength(9);
+    expect(entries).toHaveLength(10);
     expect(count(AO, "const startDeferredDrawing = useCallback(")).toBe(1);
     expect(count(AO, "deferredDrawing: { start: startDeferredDrawing },")).toBe(1);
 

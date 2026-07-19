@@ -518,20 +518,19 @@ describe("tagPick seam topology pins (post-move)", () => {
   const registryPath = join(root, "src/components/viewer/tools/registry.ts");
   const typesPath = join(root, "src/components/viewer/tools/types.ts");
   const controllerPath = join(root, "src/components/viewer/tools/tagPick.ts");
+  const tagAddControllerPath = join(root, "src/components/viewer/tools/tagAdd.ts");
   const toolStorePath = join(root, "src/stores/toolStore.ts");
   const AO = readFileSync(overlayPath, "utf8");
   const REGISTRY = readFileSync(registryPath, "utf8");
   const TYPES = readFileSync(typesPath, "utf8");
   const CONTROLLER = readFileSync(controllerPath, "utf8");
+  const TAG_ADD_CONTROLLER = readFileSync(tagAddControllerPath, "utf8");
   const TOOL_STORE = readFileSync(toolStorePath, "utf8");
   const mouseDownStart = AO.indexOf("const handleMouseDown = useCallback(");
   const mouseMoveStart = AO.indexOf("const handleMouseMove = useCallback(");
   const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
   const count = (haystack: string, needle: string): number =>
     haystack.split(needle).length - 1;
-  const sha256 = (value: string): string =>
-    createHash("sha256").update(value).digest("hex");
-
   it("pins the legacy branch and transport absent, with the controller as their sole home", () => {
     expect(mouseDownStart).toBeGreaterThan(-1);
     expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
@@ -566,23 +565,18 @@ describe("tagPick seam topology pins (post-move)", () => {
     expect(count(CONTROLLER, "requestMapTagsBatch")).toBe(2); // import + sole call
     expect(count(CONTROLLER, "function startTagScan(")).toBe(1);
 
-    const tagAddStart = MOUSEDOWN.indexOf(
-      "      // Tag Add owns its exact tag payload",
-    );
-    const tagAddEnd = MOUSEDOWN.indexOf(
-      "      // [refactor jul18 P3.2]",
-      tagAddStart,
-    );
-    expect(tagAddEnd).toBeGreaterThan(tagAddStart);
-    expect(sha256(MOUSEDOWN.slice(tagAddStart, tagAddEnd))).toBe(
-      "8aa12bde214622075f634826e0eb221e649113fe53676a91bb94afc461cb9f8d",
-    );
+    expect(count(MOUSEDOWN, "// Tag Add owns its exact tag payload")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "tagAdd")')).toBe(0);
+    expect(existsSync(tagAddControllerPath)).toBe(true);
+    expect(count(TAG_ADD_CONTROLLER, 'kind: "tagAdd"')).toBe(1);
+    expect(count(TAG_ADD_CONTROLLER, 'press.toolAtDown.activeTool?.kind === "tagAdd"')).toBe(1);
   });
 
   it("pins registry placement, raw component ref/setter wiring, and retained dependencies", () => {
     expect(REGISTRY).toContain('import { tagPickController } from "./tagPick";');
     expect(REGISTRY).toContain(
-      "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n    parseRectController,",
+      "keynotePickController,\n    tagPickController,\n    symbolSearchController,\n" +
+      "    tagAddController,\n    parseRectController,",
     );
     expect(TYPES).toContain(
       "  readonly tagPick?: Readonly<{\n" +

@@ -57,8 +57,9 @@ export interface ToolStoreCapabilities {
  *   block's drag/resize/delete paths are their first movers); they are hook-returned and NOT in
  *   the dep array, so their sourcing (deps-churn vs stale-closure vs ref) must be decided at that
  *   extraction on correctness grounds.
- * - updateYoloTag RE-OPENS at tagAdd under the same rule; tagPick proved that it needs no
- *   annotation mutation capability.
+ * - updateYoloTag remains in shared TagAdd mouseup under ACCEPT-PARTIAL; its capability decision
+ *   RE-OPENS only when that lifecycle axis moves (P3.4/BUILD-AXIS). TagPick needs no annotation
+ *   mutation capability.
  */
 export interface ToolMutationCapabilities {
   readonly annotations: Readonly<Pick<UseAnnotationsResult, "persistCreate">>;
