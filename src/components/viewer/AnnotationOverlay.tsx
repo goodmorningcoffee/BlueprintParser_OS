@@ -62,6 +62,7 @@ import { persistFetch, canPersist } from "@/lib/client-persist";
 import { captureProjectLifecycle } from "@/lib/project-lifecycle";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
+import { drawActiveTagInstances } from "./render/activeTagInstances";
 import { drawAreaPolygons } from "./render/areaPolygons";
 import { drawGroupRings } from "./render/groupRings";
 import { drawLinearPolylines } from "./render/linearPolylines";
@@ -633,30 +634,12 @@ export default memo(function AnnotationOverlay({
     }
 
     // ─── Draw free-floating active tag instances (annotationId = -1, not in annotation loop) ───
-    if (activeTag) {
-      const activeTagPageInsts = pageTagInstances.get(activeTag.id) || [];
-      for (const inst of activeTagPageInsts) {
-        if (inst.annotationId !== -1) continue;
-        const [bMinX, bMinY, bMaxX, bMaxY] = inst.bbox;
-        const fx = bMinX * width;
-        const fy = bMinY * height;
-        const fw = (bMaxX - bMinX) * width;
-        const fh = (bMaxY - bMinY) * height;
-        ctx.fillStyle = "#ff00ff40"; // magenta fill
-        ctx.fillRect(fx, fy, fw, fh);
-        ctx.strokeStyle = activeTag.color || "#22d3ee";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(fx, fy, fw, fh);
-        // Label
-        const tagLabel = activeTag.name || activeTag.tagText;
-        ctx.font = "bold 11px sans-serif";
-        const tlw = ctx.measureText(tagLabel).width;
-        ctx.fillStyle = (activeTag.color || "#22d3ee") + "dd";
-        ctx.fillRect(fx, fy + fh + 1, tlw + 6, 14);
-        ctx.fillStyle = "#000";
-        ctx.fillText(tagLabel, fx + 3, fy + fh + 12);
-      }
-    }
+    drawActiveTagInstances(ctx, {
+      activeTag,
+      pageTagInstances,
+      width,
+      height,
+    });
 
     // ─── Draw visible tag instances (not the active tag) ───
     drawVisibleTagInstances(ctx, {

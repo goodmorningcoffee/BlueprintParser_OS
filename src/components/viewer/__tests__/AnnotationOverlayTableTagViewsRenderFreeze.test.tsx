@@ -377,10 +377,10 @@ describe("AnnotationOverlay table/keynote tag-view post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw active table/keynote tag views\n",
     );
-    expect(count(prefix, "\n")).toBe(234);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(9_821);
+    expect(count(prefix, "\n")).toBe(216);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(8_922);
     expect(sha256(prefix)).toBe(
-      "98b9ff40968b0d5a23f8fa16486f1a4fe0523a8c61d56696cf7e5d9066af6c45",
+      "c7e39f50a7324dac50bca7f990cc189a9a617ead2056075a93df9a2bf1aacf79",
     );
 
     const tableTagCall = exactSlice(

@@ -62,17 +62,17 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps the complete pre-linear driver byte-exact through eight pure extractions", () => {
+  it("keeps the complete pre-linear driver byte-exact through nine pure extractions", () => {
     const prefix = exactSlice(
       AO,
       "  // Draw annotations\n",
       "    // Draw completed linear polylines",
     );
     expect(count(prefix, NEGATED)).toBe(1);
-    expect(count(prefix, "\n")).toBe(254);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(10_230);
+    expect(count(prefix, "\n")).toBe(236);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(9_331);
     expect(sha256(prefix)).toBe(
-      "b95a9bb2c52e72ca305a7637c5a5040699dcbbb1c1e7b8cccfdf8c8d7f52e76b",
+      "71b30178505626a5b4a29b414cde99a377de638201971a4df8c07d4c2252f555",
     );
   });
 
@@ -85,7 +85,7 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps AnnotationOverlay at the exact 1,916-line architecture ceiling", () => {
-    expect(count(AO, "\n")).toBe(1_916);
+  it("keeps AnnotationOverlay at the exact 1,899-line architecture ceiling", () => {
+    expect(count(AO, "\n")).toBe(1_899);
   });
 });

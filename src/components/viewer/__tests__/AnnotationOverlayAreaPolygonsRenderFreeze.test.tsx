@@ -511,10 +511,10 @@ describe("AnnotationOverlay area-polygon post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw completed area polygons\n",
     );
-    expect(count(prefix, "\n")).toBe(244);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(10_018);
+    expect(count(prefix, "\n")).toBe(226);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(9_119);
     expect(sha256(prefix)).toBe(
-      "6bc6af7ddf7262cde4672d392cf31fe0dcfbad86d649da738e395106602df2f1",
+      "ab7bfb714d96873e2c816966dca2618b32bde791a817ccfa7abbb11d5b62153e",
     );
 
     const areaCall = exactSlice(

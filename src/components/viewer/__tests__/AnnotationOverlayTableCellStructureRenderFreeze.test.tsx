@@ -404,10 +404,10 @@ describe("AnnotationOverlay TATR table-cell structure post-move topology", () =>
       "  // Draw annotations\n",
       "    // Draw TATR cell structure overlays\n",
     );
-    expect(count(prefix, "\n")).toBe(217);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(9_467);
+    expect(count(prefix, "\n")).toBe(199);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(8_568);
     expect(sha256(prefix)).toBe(
-      "c8bdd7a9dac6925bfeb2eae8d35367375986fb833a600042edd94adcb98cccb6",
+      "626930ac18a13d009ec049d990d187dac166432fe0940c593061c9ad22579bdc",
     );
 
     const tableCellCall = exactSlice(

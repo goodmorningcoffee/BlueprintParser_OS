@@ -345,10 +345,10 @@ describe("AnnotationOverlay LLM highlight post-move topology", () => {
       "  // Draw annotations\n",
       "    // Draw LLM tool use highlight (pulsing dashed cyan rectangle)\n",
     );
-    expect(count(prefix, "\n")).toBe(226);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(9_652);
+    expect(count(prefix, "\n")).toBe(208);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(8_753);
     expect(sha256(prefix)).toBe(
-      "58cb3f607be6eef304f476c7476a22aa8ab52e1071421b92d8ef9b952fe5da58",
+      "389c1dd53396b38d943d8252d7dc4841e70dbdacad7aca1151653ccb1ede72c4",
     );
 
     const llmCall = exactSlice(

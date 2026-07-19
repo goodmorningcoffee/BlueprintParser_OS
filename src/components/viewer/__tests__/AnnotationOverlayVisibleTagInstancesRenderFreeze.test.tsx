@@ -531,10 +531,10 @@ function expectPostMoveOrder(source: string): void {
 
 describe("AnnotationOverlay visible tag-instance post-move topology", () => {
   it("pins AO, import, upstream builder/prefix, pure call, bridge, downstream call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_916);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(82_490);
+    expect(count(AO, "\n")).toBe(1_899);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(81_661);
     expect(sha256(AO)).toBe(
-      "bd76f50cb7da5ff9ccbc92b0f0b4a3d5db7f16d8d411571d191dab2b21c7e3ca",
+      "38b1de62c29a5c31d078ca9e696e3b9c5afc4f997aa81842a38d971830b4a093",
     );
 
     const helperImport =
@@ -561,10 +561,10 @@ describe("AnnotationOverlay visible tag-instance post-move topology", () => {
       "  // Draw annotations\n",
       "    // ─── Draw visible tag instances (not the active tag) ───\n",
     );
-    expect(count(prefix, "\n")).toBe(197);
-    expect(Buffer.byteLength(prefix, "utf8")).toBe(8_896);
+    expect(count(prefix, "\n")).toBe(179);
+    expect(Buffer.byteLength(prefix, "utf8")).toBe(7_997);
     expect(sha256(prefix)).toBe(
-      "9284f3e9e37530bd134fdb6e18bae507c31f0a7d95a84bfcbcb418639f8856f0",
+      "e8549f7505d1000b8cc2d4db2761bf95b22c79fb6ce12efb52729dd145450479",
     );
 
     const stage = exactSlice(

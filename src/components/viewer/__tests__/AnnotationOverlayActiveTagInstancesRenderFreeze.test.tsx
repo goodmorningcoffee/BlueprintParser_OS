@@ -553,6 +553,10 @@ const AO = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const ACTIVE_TAG_INSTANCES = readFileSync(
+  join(process.cwd(), "src/components/viewer/render/activeTagInstances.ts"),
+  "utf8",
+);
 
 const ACTIVE_HEADER =
   "    // ─── Draw free-floating active tag instances (annotationId = -1, not in annotation loop) ───\n";
@@ -561,16 +565,11 @@ const VISIBLE_HEADER =
 const SYMBOL_HEADER = "    // Draw symbol search results on current page\n";
 const STRICT_REJECT = "        if (inst.annotationId !== -1) continue;";
 
-function expectParentOrder(source: string): void {
+function expectPostMoveOrder(source: string): void {
   const annotations = source.indexOf("    // Draw existing annotations");
   const active = source.indexOf(ACTIVE_HEADER);
-  const lookup = source.indexOf(
-    "      const activeTagPageInsts = pageTagInstances.get(activeTag.id) || [];",
-    active,
-  );
-  const loop = source.indexOf("      for (const inst of activeTagPageInsts) {", lookup);
-  const strictReject = source.indexOf(STRICT_REJECT, loop);
-  const visible = source.indexOf(VISIBLE_HEADER, strictReject);
+  const activeCall = source.indexOf("drawActiveTagInstances(ctx, {", active);
+  const visible = source.indexOf(VISIBLE_HEADER, activeCall);
   const visibleCall = source.indexOf("drawVisibleTagInstances(ctx, {", visible);
   const symbol = source.indexOf(SYMBOL_HEADER, visibleCall);
   const symbolCall = source.indexOf("drawSymbolSearchResults(ctx, {", symbol);
@@ -580,22 +579,28 @@ function expectParentOrder(source: string): void {
   );
   expect(annotations).toBeGreaterThan(-1);
   expect(active).toBeGreaterThan(annotations);
-  expect(lookup).toBeGreaterThan(active);
-  expect(loop).toBeGreaterThan(lookup);
-  expect(strictReject).toBeGreaterThan(loop);
-  expect(visible).toBeGreaterThan(strictReject);
+  expect(activeCall).toBeGreaterThan(active);
+  expect(visible).toBeGreaterThan(activeCall);
   expect(visibleCall).toBeGreaterThan(visible);
   expect(symbol).toBeGreaterThan(visibleCall);
   expect(symbolCall).toBeGreaterThan(symbol);
   expect(dependencies).toBeGreaterThan(symbolCall);
 }
 
-describe("AnnotationOverlay active free-floating tag-instance direct-parent topology", () => {
-  it("pins AO, upstream precompute/annotations, inline stage, downstream calls, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_916);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(82_490);
+describe("AnnotationOverlay active free-floating tag-instance post-move topology", () => {
+  it("pins AO, import, upstream precompute/annotations, pure call, downstream calls, and dependencies", () => {
+    expect(count(AO, "\n")).toBe(1_899);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(81_661);
     expect(sha256(AO)).toBe(
-      "bd76f50cb7da5ff9ccbc92b0f0b4a3d5db7f16d8d411571d191dab2b21c7e3ca",
+      "38b1de62c29a5c31d078ca9e696e3b9c5afc4f997aa81842a38d971830b4a093",
+    );
+
+    const helperImport =
+      'import { drawActiveTagInstances } from "./render/activeTagInstances";\n';
+    expect(count(AO, helperImport)).toBe(1);
+    expect(Buffer.byteLength(helperImport, "utf8")).toBe(70);
+    expect(sha256(helperImport)).toBe(
+      "9bd0a9e34d4b1a3fd5ae0ad333f3c56e29654524a1f155fc0b85cbb01c66042b",
     );
 
     const activePrecompute = exactSlice(
@@ -624,17 +629,22 @@ describe("AnnotationOverlay active free-floating tag-instance direct-parent topo
     );
 
     const stage = exactSlice(AO, ACTIVE_HEADER, VISIBLE_HEADER);
-    expect(count(stage, "\n")).toBe(26);
-    expect(Buffer.byteLength(stage, "utf8")).toBe(1_121);
+    expect(count(stage, "\n")).toBe(8);
+    expect(Buffer.byteLength(stage, "utf8")).toBe(222);
     expect(sha256(stage)).toBe(
-      "d1d369e8e3a72995985809cda99ccbe2f111fd94e18bb9d9ddc22ea3aa6f8d26",
+      "4bc245eb6de44ef4520bf79bf03c325ed2d6bfcf869b096340a5e6b23b6b0f6e",
     );
     const semanticStage = stage.slice(0, -1);
-    expect(count(semanticStage, "\n")).toBe(25);
-    expect(Buffer.byteLength(semanticStage, "utf8")).toBe(1_120);
+    expect(count(semanticStage, "\n")).toBe(7);
+    expect(Buffer.byteLength(semanticStage, "utf8")).toBe(221);
     expect(sha256(semanticStage)).toBe(
-      "104f34072c3cb60a26dcbce3399922e9e3c18dd277f98275f1f58e3c875d8090",
+      "0c751f4d2a664f965da4da071d84e23b1a375b9004e611a97b19d73efa22d4b0",
     );
+    expect(count(stage, "drawActiveTagInstances(ctx, {")).toBe(1);
+    expect(stage).toContain("activeTag,");
+    expect(stage).toContain("pageTagInstances,");
+    expect(stage).toContain("width,");
+    expect(stage).toContain("height,");
 
     const visibleCall = exactSlice(
       AO,
@@ -669,44 +679,50 @@ describe("AnnotationOverlay active free-floating tag-instance direct-parent topo
     );
   });
 
-  it("keeps the exact inline ownership and exposes missing, loosened, or reordered stages", () => {
-    expectParentOrder(AO);
+  it("keeps one ordered call, one pure helper, and biting source oracles", () => {
+    expectPostMoveOrder(AO);
     const stage = exactSlice(AO, ACTIVE_HEADER, VISIBLE_HEADER);
     const lookup = "const activeTagPageInsts = pageTagInstances.get(activeTag.id) || [];";
 
     expect(count(AO, ACTIVE_HEADER)).toBe(1);
-    expect(count(AO, lookup)).toBe(2);
-    expect(count(stage, lookup)).toBe(1);
-    expect(count(stage, STRICT_REJECT.trim())).toBe(1);
-    expect(count(stage, "activeTag.color")).toBe(2);
-    expect(count(stage, "activeTag.name")).toBe(1);
-    expect(count(stage, "activeTag.tagText")).toBe(1);
-    expect(count(stage, "ctx.fillRect(")).toBe(2);
-    expect(count(stage, "ctx.strokeRect(")).toBe(1);
-    expect(count(stage, "ctx.measureText(")).toBe(1);
-    expect(count(stage, "ctx.fillText(")).toBe(1);
-    expect(stage).not.toContain("ctx.save(");
-    expect(stage).not.toContain("ctx.restore(");
-    expect(stage).not.toContain("ctx.setLineDash(");
-    expect(stage).not.toContain("ctx.globalAlpha");
-    expect(count(AO, "drawActiveTagInstances(ctx, {")).toBe(0);
-    expect(count(AO, 'from "./render/activeTagInstances"')).toBe(0);
+    expect(count(AO, lookup)).toBe(1);
+    expect(count(stage, "drawActiveTagInstances(ctx, {")).toBe(1);
+    expect(count(AO, STRICT_REJECT.trim())).toBe(0);
+    expect(count(AO, "drawActiveTagInstances(ctx, {")).toBe(1);
+    expect(count(AO, 'from "./render/activeTagInstances"')).toBe(1);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/activeTagInstances.ts",
-    ))).toBe(false);
+    ))).toBe(true);
     expect(existsSync(join(
       process.cwd(),
       "src/components/viewer/render/__tests__/activeTagInstances.test.ts",
-    ))).toBe(false);
+    ))).toBe(true);
 
-    expect(() => expectParentOrder(AO.replace(stage, ""))).toThrow();
-    expect(() => expectParentOrder(
-      AO.replace(STRICT_REJECT, "        if (inst.annotationId < 0) continue;"),
+    expect(() => expectPostMoveOrder(
+      AO.replace("drawActiveTagInstances(ctx, {", "missingActiveTagInstances(ctx, {"),
     )).toThrow();
     const reordered = AO
       .replace(stage, "")
       .replace(SYMBOL_HEADER, `${stage}${SYMBOL_HEADER}`);
-    expect(() => expectParentOrder(reordered)).toThrow();
+    expect(() => expectPostMoveOrder(reordered)).toThrow();
+
+    expect(count(ACTIVE_TAG_INSTANCES, "\n")).toBe(62);
+    expect(Buffer.byteLength(ACTIVE_TAG_INSTANCES, "utf8")).toBe(1_922);
+    expect(sha256(ACTIVE_TAG_INSTANCES)).toBe(
+      "fb4150c4aeb521d7d28ff3934ea85e1bfcc883c81e7cb380953b9a3bedc7033e",
+    );
+    expect(count(ACTIVE_TAG_INSTANCES, lookup)).toBe(1);
+    expect(count(ACTIVE_TAG_INSTANCES, STRICT_REJECT.trim())).toBe(1);
+    expect(count(ACTIVE_TAG_INSTANCES, "activeTag.color")).toBe(2);
+    expect(count(ACTIVE_TAG_INSTANCES, "activeTag.name")).toBe(1);
+    expect(count(ACTIVE_TAG_INSTANCES, "activeTag.tagText")).toBe(1);
+    expect(count(ACTIVE_TAG_INSTANCES, "ctx.fillRect(")).toBe(2);
+    expect(count(ACTIVE_TAG_INSTANCES, "ctx.strokeRect(")).toBe(1);
+    expect(count(ACTIVE_TAG_INSTANCES, "ctx.measureText(")).toBe(1);
+    expect(count(ACTIVE_TAG_INSTANCES, "ctx.fillText(")).toBe(1);
+    expect(ACTIVE_TAG_INSTANCES).not.toMatch(
+      /ctx\.(save|restore|setLineDash)|ctx\.globalAlpha|@\/(stores|queries)|fetch\(|persist|from "react"/i,
+    );
   });
 });
