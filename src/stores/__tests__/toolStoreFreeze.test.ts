@@ -467,6 +467,7 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
 
   it("setBucketFillActive preserves its asymmetric true/false write sets", () => {
     const barriers = [BARRIER];
+    const pendingPoint = { x: 0.23, y: 0.67 };
     const undo = [ANNOTATION];
     useToolStore.setState({
       mode: "markup",
@@ -479,6 +480,7 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
       bucketFillPendingPolygon: PENDING_POLYGON,
       bucketFillBarriers: barriers,
       bucketFillBarrierMode: true,
+      barrierPendingPoint: pendingPoint,
       splitLineA: { x: 0.1, y: 0.2 },
       splitLineB: { x: 0.7, y: 0.8 },
       splitPreview: SPLIT_PREVIEW,
@@ -486,7 +488,13 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
       takeoffUndoStack: undo,
     });
     const beforeTrue = useToolStore.getState();
+    const actionsBeforeTrue = pickToolActions(beforeTrue);
+    let truePublications = 0;
+    const unsubscribeTrue = useToolStore.subscribe(() => {
+      truePublications += 1;
+    });
     beforeTrue.setBucketFillActive(true);
+    unsubscribeTrue();
     const afterTrue = useToolStore.getState();
 
     expect(changedToolKeys(beforeTrue, afterTrue)).toEqual(sorted([
@@ -497,6 +505,7 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
       "bucketFillLoading",
       "bucketFillError",
       "bucketFillBarrierMode",
+      "barrierPendingPoint",
       "bucketFillPendingPolygon",
       "splitLineA",
       "splitLineB",
@@ -504,9 +513,17 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
       "splitError",
     ]));
     expect(afterTrue.activeTool).toEqual({ kind: "bucketFill" });
+    expect(afterTrue.activeTool).not.toBe(beforeTrue.activeTool);
+    expect(afterTrue.barrierPendingPoint).toBeNull();
+    expect(truePublications).toBe(1);
     expect(afterTrue.bucketFillBarriers).toBe(barriers);
     expect(afterTrue.activeTakeoffItemId).toBe(91);
     expect(afterTrue.takeoffUndoStack).toBe(undo);
+    for (const key of TOOL_ACTION_KEYS) {
+      expect(afterTrue[key], `true must retain action ${key}`).toBe(
+        actionsBeforeTrue[key],
+      );
+    }
 
     restoreToolOwner();
     useToolStore.setState({
@@ -519,9 +536,16 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
       bucketFillPendingPolygon: PENDING_POLYGON,
       bucketFillBarriers: barriers,
       bucketFillBarrierMode: true,
+      barrierPendingPoint: pendingPoint,
     });
     const beforeFalse = useToolStore.getState();
+    const actionsBeforeFalse = pickToolActions(beforeFalse);
+    let falsePublications = 0;
+    const unsubscribeFalse = useToolStore.subscribe(() => {
+      falsePublications += 1;
+    });
     beforeFalse.setBucketFillActive(false);
+    unsubscribeFalse();
     const afterFalse = useToolStore.getState();
 
     expect(changedToolKeys(beforeFalse, afterFalse)).toEqual(sorted([
@@ -532,17 +556,68 @@ describe("flat toolStore AT2 — compound destinations and exclusions", () => {
       "bucketFillPendingPolygon",
       "bucketFillBarriers",
       "bucketFillBarrierMode",
+      "barrierPendingPoint",
     ]));
     expect(afterFalse.mode).toBe("markup");
     expect(afterFalse.activeTool).toEqual({ kind: "takeoffPlacement" });
+    expect(afterFalse.activeTool).not.toBe(beforeFalse.activeTool);
     expect(afterFalse.bucketFillBarriers).toEqual([]);
     expect(afterFalse.bucketFillBarriers).not.toBe(barriers);
+    expect(afterFalse.barrierPendingPoint).toBeNull();
+    expect(falsePublications).toBe(1);
+    for (const key of TOOL_ACTION_KEYS) {
+      expect(afterFalse[key], `false must retain action ${key}`).toBe(
+        actionsBeforeFalse[key],
+      );
+    }
 
     const unrelated = { kind: "tagPick" } as const;
-    useToolStore.setState({ activeTool: unrelated });
+    useToolStore.setState({
+      activeTool: unrelated,
+      barrierPendingPoint: pendingPoint,
+    });
     useToolStore.getState().setBucketFillActive(false);
     expect(useToolStore.getState().activeTool).toBe(unrelated);
+    expect(useToolStore.getState().barrierPendingPoint).toBeNull();
   });
+
+  it.each([true, false])(
+    "setBucketFillActive(%s) cannot erase a reentrant successor barrier point",
+    (active) => {
+      const stalePoint = { x: 0.13, y: 0.24 };
+      const successorPoint = { x: 0.76, y: 0.85 };
+      useToolStore.setState({
+        activeTool: active ? { kind: "symbolTemplate" } : { kind: "bucketFill" },
+        activeTakeoffItemId: 91,
+        barrierPendingPoint: stalePoint,
+      });
+      let installed = 0;
+      const publications: Array<{
+        activeTool: ToolState["activeTool"];
+        point: ToolState["barrierPendingPoint"];
+      }> = [];
+      const unsubscribe = useToolStore.subscribe((state, previous) => {
+        publications.push({
+          activeTool: state.activeTool,
+          point: state.barrierPendingPoint,
+        });
+        if (state.activeTool === previous.activeTool) return;
+        expect(state.barrierPendingPoint).toBeNull();
+        installed += 1;
+        state.setBarrierPendingPoint(successorPoint);
+      });
+
+      useToolStore.getState().setBucketFillActive(active);
+      unsubscribe();
+
+      expect(installed).toBe(1);
+      expect(publications).toHaveLength(2);
+      expect(publications[0]?.point).toBeNull();
+      expect(publications[1]?.point).toBe(successorPoint);
+      expect(publications[1]?.activeTool).toBe(publications[0]?.activeTool);
+      expect(useToolStore.getState().barrierPendingPoint).toBe(successorPoint);
+    },
+  );
 
   it("setSplitAreaActive preserves its asymmetric true/false write sets", () => {
     const pending = PENDING_POLYGON;

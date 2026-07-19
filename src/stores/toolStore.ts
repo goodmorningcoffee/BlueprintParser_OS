@@ -332,7 +332,7 @@ export const useToolStore = create<ToolStoreState>((set) => ({
       bucketFillPreview: null,
       bucketFillLoading: false,
       bucketFillError: null,
-      bucketFillBarrierMode: false,
+      bucketFillBarrierMode: false, barrierPendingPoint: null,
       bucketFillPendingPolygon: null,
       ...(active
         ? {
