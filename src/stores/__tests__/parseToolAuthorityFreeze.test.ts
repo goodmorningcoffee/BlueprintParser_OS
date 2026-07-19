@@ -261,9 +261,9 @@ describe("later user tool intent revokes parse completion writes", () => {
   it("rejects stale canvas targets before coordinates and claims only accepted branch work", () => {
     const source = readFileSync("src/components/viewer/AnnotationOverlay.tsx", "utf8");
     const start = source.indexOf("const handleMouseDown = useCallback(");
-    // [refactor jul16 P3.2] First legacy branch after the seam is now Split (calibration moved
-    // behind the registry).
-    const firstBranch = source.indexOf("// Split Area mode", start);
+    // [refactor jul19 P3.2] Split joined Calibration behind the registry. Bucket Fill is now the
+    // first surviving legacy branch after the shared admission/context seam.
+    const firstBranch = source.indexOf("// Bucket fill mode", start);
     expect(start).toBeGreaterThan(-1);
     expect(firstBranch).toBeGreaterThan(start);
     const gesturePrefix = source.slice(start, firstBranch);
@@ -317,6 +317,8 @@ describe("later user tool intent revokes parse completion writes", () => {
     // [refactor jul18 P3.2 tagPick] The component-local request journal and subscribed picker
     // action join as one narrow capability. Both identifiers were already captured by the legacy
     // handler, so the sacred dependency list remains byte-identical.
+    // [refactor jul19 P3.2 Split] The subscribed endpoint/preview actions and exact Split error
+    // publisher join as one narrow group; all three were already in the same dependency block.
     expect(compactPrefix).toContain(
       "if(dispatchToolMouseDown(TOOLS,e,press,()=>({press,page:{publicId,number:pageNumber,width,height},stores:TOOL_STORE_CAPABILITIES,canAdoptProjectLifecycle," +
         "selection:{selectedId,setSelectedId,setResizeCorner,setDragging,deleteSelected}," +
@@ -324,6 +326,7 @@ describe("later user tool intent revokes parse completion writes", () => {
         "pageAnnotations,deferredDrawing:{start:startDeferredDrawing}," +
         "keynotePick:{active:isKeynoteYoloPicking}," +
         "tagPick:{scanControllerRef:tagScanControllerRef,setPickingMode:setYoloTagPickingMode,}," +
+        "split:{setLineEndpoint:setSplitLineEndpoint,setPreview:setSplitPreview,publishError:publishTransientSplitError,}," +
         "mutations:{annotations:{persistCreate}},transientError:{publish:publishTransientBucketFillError},takeoffItems," +
         "takeoffDrawing:{setPolygonDrawingMode,addPolygonVertex,saveLinearPolyline,savePolygon},}))){return;}",
     );

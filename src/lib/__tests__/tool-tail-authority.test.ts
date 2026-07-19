@@ -418,6 +418,9 @@ describe("AT2 one exact global tool-tail authority", () => {
       // [refactor jul16 P3.2] The markup controller inherited the overlay's pre-dispatch
       // invalidation for claimed markup-mode presses (pre-move AO:1957 semantics).
       "src/components/viewer/tools/markup.ts:invalidateToolTailAuthority",
+      // [refactor jul19 P3.2] Split inherited the legacy branch's first/second-click invalidation.
+      // Its preview-open terminal remains deliberately cold and retains the current tail owner.
+      "src/components/viewer/tools/split.ts:invalidateToolTailAuthority",
       // [refactor jul17 P3.2] The takeoffCount controller inherited the takeoffPlacement branch
       // prelude's invalidation for claimed count presses (pre-move AO:1750 semantics); declined
       // presses invalidate in the surviving legacy branch instead, never in both.

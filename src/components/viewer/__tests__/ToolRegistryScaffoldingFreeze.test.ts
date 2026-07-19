@@ -179,11 +179,14 @@ describe("P3.1 tool registry scaffolding", () => {
   // all tagPick presses claim, while keynotePick's eligible miss still reaches parseRect.
   // Tenth registration: tagAdd inserts after symbolSearch and before parseRect. Its eligibility is
   // disjoint and every eligible press claims, including when deferred admission rejects.
-  it("exports one exact frozen registry with tagPick, symbolSearch, tagAdd, then parseRect", () => {
-    expect(TOOLS).toHaveLength(10);
+  // Eleventh registration: Split takes the first interior runtime slot immediately after
+  // Calibration. Every matched Split arm claims, so it cannot perturb any later controller.
+  it("exports one exact frozen registry with Split second and markup last", () => {
+    expect(TOOLS).toHaveLength(11);
     expect(Object.isFrozen(TOOLS)).toBe(true);
     expect(TOOLS.map((tool) => tool.kind)).toEqual([
       "calibration",
+      "split",
       "takeoffPolygon",
       "takeoffLinear",
       "takeoffCount",
@@ -206,8 +209,8 @@ describe("P3.1 tool registry scaffolding", () => {
 
   it("real-registry dispatch with a non-eligible press falls through without building context", () => {
     // [refactor jul16 P3.2] mode "move" + activeTool null keeps this press non-eligible for all
-    // TEN registered controllers (calibration, the three takeoffPlacement controllers, and the
-    // five parse/pick/deferred units need their activations; markup needs mode "markup").
+    // ELEVEN registered controllers (calibration, Split, the three takeoffPlacement controllers,
+    // and the five parse/pick/deferred units need their activations; markup needs mode "markup").
     const nullPress = Object.freeze({
       toolAtDown: { activeTool: null, mode: "move" },
     }) as unknown as ToolPressSnapshot;

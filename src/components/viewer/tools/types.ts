@@ -136,6 +136,17 @@ export interface ToolContext {
     setPickingMode: ToolStoreState["setYoloTagPickingMode"];
   }>;
   /**
+   * [refactor jul19 P3.2 Split] Exact subscribed endpoint/preview commands plus Split's own
+   * two-argument transient-error publisher. Optional so the preview-open terminal can stay lean
+   * and synthetic contexts for other controllers need not wire Split-only commands. Every member
+   * was already captured by the legacy mousedown callback, so the factory remains dep-neutral.
+   */
+  readonly split?: Readonly<{
+    setLineEndpoint: ToolStoreState["setSplitLineEndpoint"];
+    setPreview: ToolStoreState["setSplitPreview"];
+    publishError: (message: string, delayMs?: number) => void;
+  }>;
+  /**
    * [refactor jul17 P3.2 takeoffCount] Capabilities PROVEN by the takeoffCount controller,
    * optional-typed like the markup trio; the overlay factory always wires both. Dep-neutral by
    * construction: takeoffItems and publishTransientBucketFillError are already in the 37-entry

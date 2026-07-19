@@ -65,7 +65,6 @@ import {
 import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
 // [refactor jul15 P3.1½] hit-test predicates extracted to the pure geometry leaf; math unchanged.
 import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";
-import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
 import { persistFetch, canPersist , apiErrorMessage } from "@/lib/client-persist";
@@ -1504,63 +1503,17 @@ export default memo(function AnnotationOverlay({
             scanControllerRef: tagScanControllerRef,
             setPickingMode: setYoloTagPickingMode,
           },
+          split: {
+            setLineEndpoint: setSplitLineEndpoint,
+            setPreview: setSplitPreview,
+            publishError: publishTransientSplitError,
+          },
           mutations: { annotations: { persistCreate } },
           transientError: { publish: publishTransientBucketFillError },
           takeoffItems,
           takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline, savePolygon },
         }))
       ) {
-        return;
-      }
-
-      // Split Area mode — 2-click auto-detect (line A, line B → auto-find polygon)
-      if (activeTool?.kind === "split") {
-        e.stopPropagation();
-        const normX = pos.x / width;
-        const normY = pos.y / height;
-
-        if (toolAtDown.splitPreview) return; // preview showing — commit via Accept/Cancel buttons
-
-        if (!toolAtDown.splitLineA) {
-          invalidateToolTailAuthority();
-          setSplitLineEndpoint("a", { x: normX, y: normY });
-          return;
-        }
-
-        // Second click: set B and immediately auto-detect which polygon to split
-        invalidateToolTailAuthority();
-        const pointB = { x: normX, y: normY };
-        setSplitLineEndpoint("b", pointB);
-        if (!canAdoptProjectLifecycle()) return;
-
-        const polyAnnotations = pageAnnotations.filter(
-          (a) => a.source === "takeoff" && (a.data as AreaPolygonData)?.type === "area-polygon"
-        );
-        const candidates = findSplittablePolygons(
-          toolAtDown.splitLineA,
-          pointB,
-          polyAnnotations.map((a) => ({ id: a.id, vertices: (a.data as AreaPolygonData).vertices }))
-        );
-
-        if (candidates.length === 0) {
-          publishTransientSplitError(
-            "Line does not cross any area polygon in exactly 2 places",
-            3500,
-          );
-          return;
-        }
-
-        // Longest chord wins (most overlap = intended target)
-        const best = candidates[0];
-        const hitAnn = polyAnnotations.find((a) => a.id === best.id)!;
-        setSplitPreview({
-          targetAnnotationId: best.id,
-          original: (hitAnn.data as AreaPolygonData).vertices,
-          left: best.left,
-          right: best.right,
-          lineA: toolAtDown.splitLineA,
-          lineB: pointB,
-        });
         return;
       }
 

@@ -11,8 +11,8 @@
 //     render-captured annotation vertices plus press-captured line-A identity even if the live
 //     store is synchronously changed by the B publication.
 //
-// The final describe is intentionally PRE-move topology. The extraction commit should rewrite
-// only those topology expectations to name the new controller and 11-entry registry.
+// The behavior rows remain the parent oracle; the final describe is now POST-move topology and
+// names the controller as the sole mousedown home in the exact 11-entry registry.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -462,7 +462,7 @@ describe("split gesture freeze (real overlay, production mousedown)", () => {
   });
 });
 
-describe("split seam topology pins (PRE-move: legacy branch, no controller)", () => {
+describe("split seam topology pins (POST-move: controller is the sole mousedown home)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
@@ -475,39 +475,40 @@ describe("split seam topology pins (PRE-move: legacy branch, no controller)", ()
     process.cwd(),
     "src/components/viewer/tools/split.ts",
   );
-  const branchStart = AO.indexOf("// Split Area mode");
-  const branchEnd = AO.indexOf("// Bucket fill mode", branchStart);
-  const exactLines = (start: number, end: number): string =>
-    `${AO.split("\n")
-      .slice(start - 1, end)
-      .join("\n")}\n`;
-  const branch = exactLines(1516, 1565);
+  const CONTROLLER = readFileSync(splitControllerPath, "utf8");
+  const mouseDownStart = AO.indexOf("  const handleMouseDown = useCallback(");
+  const mouseMoveStart = AO.indexOf("  const handleMouseMove = useCallback(");
+  const MOUSEDOWN = AO.slice(mouseDownStart, mouseMoveStart);
+  const count = (haystack: string, needle: string): number =>
+    haystack.split(needle).length - 1;
   const sha256 = (value: string): string =>
     createHash("sha256").update(value).digest("hex");
 
-  it("pins the complete Split mousedown identity inside AnnotationOverlay", () => {
-    expect(branchStart).toBeGreaterThan(-1);
-    expect(branchEnd).toBeGreaterThan(branchStart);
-    expect(branch).toContain('if (activeTool?.kind === "split") {');
-    expect(branch).toContain("if (toolAtDown.splitPreview) return;");
-    expect(branch).toContain("invalidateToolTailAuthority();");
-    expect(branch).toContain('setSplitLineEndpoint("a"');
-    expect(branch).toContain('setSplitLineEndpoint("b"');
-    expect(branch).toContain("findSplittablePolygons(");
-    expect(branch).toContain("const best = candidates[0];");
-    expect(branch).toContain("setSplitPreview({");
-    expect(branch).toContain(MISS_MESSAGE);
-    expect(Buffer.byteLength(branch, "utf8")).toBe(1809);
-    expect(sha256(branch)).toBe(
-      "3f425b9917204b80ca7b2bf1df3fe4dd829caaac16bd09d9d7757ef5cb79fe4d",
-    );
+  it("pins the legacy branch absent and the controller as the sole mousedown home", () => {
+    expect(mouseDownStart).toBeGreaterThan(-1);
+    expect(mouseMoveStart).toBeGreaterThan(mouseDownStart);
+    expect(existsSync(splitControllerPath)).toBe(true);
+    expect(count(MOUSEDOWN, "// Split Area mode")).toBe(0);
+    expect(count(MOUSEDOWN, 'if (activeTool?.kind === "split")')).toBe(0);
+    expect(count(MOUSEDOWN, "findSplittablePolygons(")).toBe(0);
+    expect(count(CONTROLLER, 'kind: "split"')).toBe(1);
+    expect(count(CONTROLLER, 'state.activeTool?.kind === "split"')).toBe(1);
+    expect(
+      count(CONTROLLER, 'press.toolAtDown.activeTool?.kind === "split"'),
+    ).toBe(1);
+    expect(count(CONTROLLER, "findSplittablePolygons(")).toBe(1);
+    expect(count(CONTROLLER, "const best = candidates[0];")).toBe(1);
+    expect(CONTROLLER).toContain(MISS_MESSAGE);
   });
 
-  it("pins no Split controller and the exact 10-controller live registry", () => {
-    expect(existsSync(splitControllerPath)).toBe(false);
-    expect(REGISTRY).not.toContain('from "./split"');
+  it("pins Split immediately after Calibration in the exact 11-controller registry", () => {
+    expect(REGISTRY).toContain('import { splitController } from "./split";');
+    expect(REGISTRY).toContain(
+      "    calibrationController,\n    splitController,\n    takeoffPolygonController,",
+    );
     expect(TOOLS.map((controller) => controller.kind)).toEqual([
       "calibration",
+      "split",
       "takeoffPolygon",
       "takeoffLinear",
       "takeoffCount",
@@ -518,18 +519,21 @@ describe("split seam topology pins (PRE-move: legacy branch, no controller)", ()
       "parseRect",
       "markup",
     ]);
-    expect(TOOLS).toHaveLength(10);
+    expect(TOOLS).toHaveLength(11);
   });
 
   it("pins the untouched acceptSplit composite and sacred dependency block", () => {
-    const acceptStart = AO.indexOf("  const acceptSplit = useCallback(");
+    const acceptStart = AO.indexOf(
+      "  /** Accept a pending Split Area preview",
+    );
     const acceptEnd = AO.indexOf(
       "  /** Save the current in-progress polyline",
       acceptStart,
     );
     expect(acceptStart).toBeGreaterThan(-1);
     expect(acceptEnd).toBeGreaterThan(acceptStart);
-    const acceptSplit = exactLines(1192, 1308);
+    // Exclude only the blank separator immediately before the next owned callback docblock.
+    const acceptSplit = AO.slice(acceptStart, acceptEnd - 1);
     expect(Buffer.byteLength(acceptSplit, "utf8")).toBe(4911);
     expect(sha256(acceptSplit)).toBe(
       "05cc7ec9e47949ae8c63895d1eb94b8e87db2080f6f1f5e53b357cb8d7bb9611",

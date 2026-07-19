@@ -4,6 +4,7 @@ import { calibrationController } from "./calibration";
 import { keynotePickController } from "./keynotePick";
 import { markupController } from "./markup";
 import { parseRectController } from "./parseRect";
+import { splitController } from "./split";
 import { symbolSearchController } from "./symbolSearch";
 import { tagAddController } from "./tagAdd";
 import { tagPickController } from "./tagPick";
@@ -21,7 +22,7 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 // takeoffPolygon slots in AHEAD of takeoffLinear (§5 priority #4) — the same argument makes the
 // linear/count polygon-declines dead-but-honest; the five-way claim set is pairwise disjoint,
 // so registry order stays unobservable.
-// The interior stays §5-ordered as later controllers land: split/bucketFill slot in BEFORE
+// Split now owns the first interior slot; bucketFill later inserts after it and before
 // takeoffPolygon. keynotePick precedes parseRect so an active YOLO miss can eligible-decline into
 // the generic rectangle starter in the SAME dispatch. tagPick and symbolSearch now occupy their
 // exact middle slots; tagAdd now occupies its slot after symbolSearch. pointerGroup remains between
@@ -29,6 +30,7 @@ import type { ToolContext, ToolController, ToolPressSnapshot } from "./types";
 export const TOOLS = Object.freeze(
   [
     calibrationController,
+    splitController,
     takeoffPolygonController,
     takeoffLinearController,
     takeoffCountController,
