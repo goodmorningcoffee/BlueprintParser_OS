@@ -42,6 +42,12 @@ const PARSE_OWNER_FILE = "src/stores/parseFlowStore.ts";
 const CELL_STRUCTURE_HOOK_FILE = "src/hooks/useTableCellStructureOperation.ts";
 const CELL_STRUCTURE_HOOK_MODULE = "@/hooks/useTableCellStructureOperation";
 const CELL_STRUCTURE_ENDPOINT = "/api/table-structure";
+const POINTER_GROUP_FILE = "src/components/viewer/tools/pointerGroup.ts";
+const EXPECTED_NON_PARSE_BEGIN_CALLS = [
+  'annotationDrag.begin(selectedAnnotation,{kind:"vertex",vertexIndex:index,})',
+  'annotationDrag.begin(selectedAnnotation,{kind:"bbox",resizeCorner:key,dragOffset:{x:0,y:0},})',
+  'annotationDrag.begin(ann,{kind:"bbox",resizeCorner:null,dragOffset:nextDragOffset,})',
+] as const;
 
 const EXPECTED_ROOTS = [
   { kind: "table", path: "src/hooks/useTableCellStructureOperation.ts", owner: "detect", policy: "reject" },
@@ -550,6 +556,7 @@ function analyzeSource(path: string, sourceText: string): AuthorityAnalysis {
   const source = parse(path, sourceText);
   const violations: string[] = [];
   const operationBindings: OperationBinding[] = [];
+  const nonParseBeginCalls: string[] = [];
   const callees = collectHookCallees(path, source);
 
   for (const call of descendants(source, ts.isCallExpression).filter((candidate) =>
@@ -662,6 +669,18 @@ function analyzeSource(path: string, sourceText: string): AuthorityAnalysis {
     }
     if (method !== "begin" && method !== "finish") continue;
     if (!receiverBinding) {
+      const fingerprint = directCall?.getText(source).replace(/\s+/g, "");
+      if (
+        method === "begin" &&
+        path === POINTER_GROUP_FILE &&
+        fingerprint !== undefined &&
+        EXPECTED_NON_PARSE_BEGIN_CALLS.includes(
+          fingerprint as (typeof EXPECTED_NON_PARSE_BEGIN_CALLS)[number],
+        )
+      ) {
+        nonParseBeginCalls.push(fingerprint);
+        continue;
+      }
       violations.push(`${path}:${staticOwner(member)}:rogue-${method}-receiver`);
       continue;
     }
@@ -705,6 +724,13 @@ function analyzeSource(path: string, sourceText: string): AuthorityAnalysis {
       owner: staticOwner(directCall),
       policy: "reject",
     });
+  }
+
+  if (
+    path === POINTER_GROUP_FILE &&
+    JSON.stringify(nonParseBeginCalls) !== JSON.stringify(EXPECTED_NON_PARSE_BEGIN_CALLS)
+  ) {
+    violations.push(`${path}:<module>:non-parse-begin-topology`);
   }
 
   return {
@@ -1908,6 +1934,16 @@ describe("P2.4 A2e exact cross-family operation authority close", () => {
     )]]);
     expect(authorityAnalysis(directOwner).violations).toContain(
       `${tablePath}:handleDone:direct-beginParseOperation`,
+    );
+
+    const pointer = PRODUCTION_SOURCES.get(POINTER_GROUP_FILE)!;
+    const missingNonParseBegin = new Map([[POINTER_GROUP_FILE, replaceOnce(
+      pointer,
+      "annotationDrag.begin(ann, {",
+      "annotationDrag.admit(ann, {",
+    )]]);
+    expect(authorityAnalysis(missingNonParseBegin).violations).toContain(
+      `${POINTER_GROUP_FILE}:<module>:non-parse-begin-topology`,
     );
   });
 
