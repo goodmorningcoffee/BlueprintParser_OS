@@ -769,6 +769,25 @@ describe("drawExistingAnnotations", () => {
     )).toHaveLength(7);
   });
 
+  it("attempts shorthand and named count colors through legacy alpha concatenation and parseInt darkening", () => {
+    const record = recordingContext();
+
+    draw(record.context, [
+      countAnnotation({ id: 1, color: "#abc" }),
+      countAnnotation({ id: 2, color: "red" }),
+    ]);
+
+    expect(record.trace.filter((entry) =>
+      entry[0] === "set"
+      && (entry[1] === "fillStyle" || entry[1] === "strokeStyle")
+    )).toEqual([
+      ["set", "fillStyle", "#abccc"],
+      ["set", "strokeStyle", "rgb(0, 7, 131)"],
+      ["set", "fillStyle", "redcc"],
+      ["set", "strokeStyle", "rgb(0, 0, 165)"],
+    ]);
+  });
+
   it("keeps markerSize and cssScale || fallbacks, including zero and negative values", () => {
     const zeroRecord = recordingContext();
     draw(zeroRecord.context, [countAnnotation({ id: 1 })], {
