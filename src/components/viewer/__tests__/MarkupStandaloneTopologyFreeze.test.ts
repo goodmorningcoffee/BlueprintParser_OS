@@ -254,9 +254,9 @@ describe("P3 standalone markup topology and finding dispositions", () => {
     expect(POINTER).toContain(
       "setTimeout(() => markupEdit.nameInputRef.current?.focus(), 50);",
     );
-    expect(Buffer.byteLength(MARKUP, "utf8")).toBe(4543);
+    expect(Buffer.byteLength(MARKUP, "utf8")).toBe(4566);
     expect(sha256(MARKUP)).toBe(
-      "b73291e6f81070d4d412eed13b329a6b2657d5986af8a3bb301aa92f4c5044d6",
+      "344d304e3b1b1222cfe72adffcdb6a8b75c21823bfcdf28fb7bd682f5b34f0a2",
     );
   });
 
