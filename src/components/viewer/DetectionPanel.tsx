@@ -20,8 +20,9 @@ import {
   useKeynotesByPage,
 } from "@/queries/usePageWindow";
 import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
-import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
+import { SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
+import { annotationLabelColor as classColor } from "@/lib/annotation-label-color";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -34,12 +35,6 @@ import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import ClassGroupHeader from "./ClassGroupHeader";
 import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
-
-function classColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
-  return TWENTY_COLORS[Math.abs(hash) % TWENTY_COLORS.length];
-}
 
 // Stable module-level const — hoisted so the Set identity doesn't change per
 // render. Used by yoloAnnotations to filter out non-detection annotations.

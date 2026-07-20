@@ -2,7 +2,7 @@
 //
 // [refactor jul19 P3.3] Direct-parent executable freeze for the remaining existing-annotation
 // paint stage. It locks the mixed annotation/count-marker behavior before one ordered pure-helper
-// extraction; the top-level count renderer moves with the loop while labelColor stays captive.
+// extraction. The follow-up label-color fix shares one deterministic policy across consumers.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -470,7 +470,7 @@ function activeMatchTrace(): StageTraceEntry[] {
     ["call", "selection.has", 301, true],
     ["set", "fillStyle", "rgba(0,0,0,0.75)"],
     ["call", "fillRect", 120, -4, 34, 14],
-    ["set", "fillStyle", "#3cb44b"],
+    ["set", "fillStyle", "#aaffc3"],
     ["call", "fillText", "Matched YOLO", 123, 6],
     ["set", "globalAlpha", 1],
     ["set", "font", "bold 11px sans-serif"],
@@ -493,7 +493,7 @@ function selectedAreaTrace(): StageTraceEntry[] {
     ["call", "selection.has", 203, true],
     ["set", "fillStyle", "rgba(0,0,0,0.75)"],
     ["call", "fillRect", 60, 46, 47, 14],
-    ["set", "fillStyle", "#f58231"],
+    ["set", "fillStyle", "#000080"],
     ["call", "fillText", "Area Selected", 63, 56],
     ["set", "fillStyle", "#ff4444"],
     ["set", "font", "bold 10px sans-serif"],
@@ -631,24 +631,24 @@ describe("AnnotationOverlay existing-annotation render freeze", () => {
 
     expect(existingStage).toEqual([
       ...countMarkerTrace({ marker: "m101", shape: "circle", color: "#ff0000", cx: 0, cy: 20, radius: 4, selected: false }),
-      ...boxPaintTrace({ id: 201, name: "User Selected", color: "#e6194b", x: 20, y: 10, width: 40, height: 50, fontSize: 13, textWidth: 24, selected: true, user: true }),
+      ...boxPaintTrace({ id: 201, name: "User Selected", color: "#f58231", x: 20, y: 10, width: 40, height: 50, fontSize: 13, textWidth: 24, selected: true, user: true }),
       ["get", "m102.itemId"],
       ["call", "hidden.has", 999, true],
       ...countMarkerTrace({ marker: "m103", shape: "square", color: "#00ff00", cx: 90, cy: 20, radius: 5, selected: false }),
       ...activeMatchTrace(),
       ...countMarkerTrace({ marker: "m104", shape: "diamond", color: "#0000ff", cx: 40, cy: 70, radius: 6, selected: false }),
-      ...boxPaintTrace({ id: 202, name: "Takeoff Selected", color: "#0082c8", x: 160, y: 80, width: -20.000000000000018, height: -20.000000000000007, fontSize: 10, textWidth: 33, selected: true, user: false }),
+      ...boxPaintTrace({ id: 202, name: "Takeoff Selected", color: "#f032e6", x: 160, y: 80, width: -20.000000000000018, height: -20.000000000000007, fontSize: 10, textWidth: 33, selected: true, user: false }),
       ...countMarkerTrace({ marker: "m106", shape: "triangle", color: "#abcdef", cx: 120, cy: 60, radius: 5, selected: false }),
       ...selectedAreaTrace(),
       ...countMarkerTrace({ marker: "m105", shape: "cross", color: "#123456", cx: 180, cy: 30.000000000000004, radius: -2, selected: true }),
-      ...boxPaintTrace({ id: 204, name: "Plain User", color: "#911eb4", x: 10, y: 75, width: 30.000000000000004, height: 9.999999999999998, fontSize: 10, textWidth: 21, selected: false, user: true }),
+      ...boxPaintTrace({ id: 204, name: "Plain User", color: "#aaffc3", x: 10, y: 75, width: 30.000000000000004, height: 9.999999999999998, fontSize: 10, textWidth: 21, selected: false, user: true }),
     ]);
     expect(markerSizeReads).toBe(5);
     expect(boundaryStackDepth).toBe(0);
     expect(boundaryState).toEqual({
       dash: [9, 3],
-      fillStyle: "#911eb4",
-      strokeStyle: "#911eb4",
+      fillStyle: "#aaffc3",
+      strokeStyle: "#aaffc3",
       lineWidth: 2,
       globalAlpha: 1,
       font: "bold 10px sans-serif",
@@ -731,9 +731,11 @@ const EXISTING_ANNOTATIONS = readFileSync(
   join(process.cwd(), "src/components/viewer/render/existingAnnotations.ts"),
   "utf8",
 );
-const LABEL_HEADER = "/** Assign colors by unique label order — each unique label gets next color in palette */\n";
+const LABEL_COLOR_POLICY = readFileSync(
+  join(process.cwd(), "src/lib/annotation-label-color.ts"),
+  "utf8",
+);
 const COUNT_START = "function drawCountMarker(\n";
-const SNAPSHOT_START = "function readCanvasGestureSnapshot(): CanvasGestureSnapshot {\n";
 const HELPER_RENDER_HEADER = "/**\n * Draw existing count markers or bbox/label annotations in source-row order.\n";
 const EXISTING_HEADER = "    // Draw existing annotations\n";
 const ACTIVE_HEADER =
@@ -762,11 +764,11 @@ function expectPostMoveOrder(source: string): void {
 }
 
 describe("AnnotationOverlay existing-annotation post-move topology", () => {
-  it("pins AO, captive label support, helper import/body, ordered call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_732);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(74_787);
+  it("pins AO, shared label policy, helper import/body, ordered call, and dependencies", () => {
+    expect(count(AO, "\n")).toBe(1_725);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(74_508);
     expect(sha256(AO)).toBe(
-      "734e7d5ffdc2002fdd176b46b04b3bf0b0b98ae6a0839799ab279c6bfa7530f4",
+      "d9f8abb28aef0c1a9c6b6121ea783753d1cf1507bd947c6230ebd64a754a32cf",
     );
 
     const helperImport =
@@ -777,11 +779,13 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
       "d7e86e808d0b09a887cf53677600b2929b9dfe846697af373e622275697d4621",
     );
 
-    const labelSupport = exactSlice(AO, LABEL_HEADER, SNAPSHOT_START);
-    expect(count(labelSupport, "\n")).toBe(10);
-    expect(Buffer.byteLength(labelSupport, "utf8")).toBe(421);
-    expect(sha256(labelSupport)).toBe(
-      "9f045030a8885275fb67c3cee196d80263db25db281b426b94181a0f095ee905",
+    const labelPolicyImport =
+      'import { annotationLabelColor as labelColor } from "@/lib/annotation-label-color";\n';
+    expect(count(AO, labelPolicyImport)).toBe(1);
+    expect(count(LABEL_COLOR_POLICY, "\n")).toBe(9);
+    expect(Buffer.byteLength(LABEL_COLOR_POLICY, "utf8")).toBe(288);
+    expect(sha256(LABEL_COLOR_POLICY)).toBe(
+      "5d0932d56d74e94209b15526e179e1f6f1dba50c3664b65c9f3c5b2a16f607ac",
     );
 
     const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
@@ -830,13 +834,13 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
 
   it("keeps the five shapes, live bridge/coercive lookup, selection order, and biting stage order", () => {
     expectPostMoveOrder(AO);
-    const labelSupport = exactSlice(AO, LABEL_HEADER, SNAPSHOT_START);
     const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
     const stage = exactSlice(AO, EXISTING_HEADER, ACTIVE_HEADER);
 
-    expect(count(AO, "const labelColorMap = new Map<string, string>();")).toBe(1);
-    expect(count(AO, "function labelColor(name: string): string {")).toBe(1);
-    expect(count(labelSupport, "TWENTY_COLORS[labelColorMap.size % TWENTY_COLORS.length]")).toBe(1);
+    expect(AO).not.toMatch(/labelColorMap|function labelColor\(|TWENTY_COLORS/);
+    expect(LABEL_COLOR_POLICY).toContain(
+      "TWENTY_COLORS[Math.abs(hash) % TWENTY_COLORS.length]",
+    );
     expect(count(AO, COUNT_START.trim())).toBe(0);
     expect(count(EXISTING_ANNOTATIONS, COUNT_START.trim())).toBe(1);
     expect(count(stage, "drawExistingAnnotations(ctx, {")).toBe(1);

@@ -1,4 +1,4 @@
-import { TWENTY_COLORS } from "../constants";
+import { annotationLabelColor as classColor } from "@/lib/annotation-label-color";
 
 const SAMPLE_CLASSES = [
   { name: "door_single", count: 42, model: "yolo_medium" },
@@ -11,16 +11,8 @@ const SAMPLE_CLASSES = [
   { name: "drawings", count: 68, model: "yolo_precise" },
 ];
 
-function classColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
-  }
-  return TWENTY_COLORS[Math.abs(hash) % TWENTY_COLORS.length];
-}
-
 /** Matches the YOLO class chip rendering in the Detection Panel. Stable
- *  hashing from TWENTY_COLORS — same algorithm as DetectionPanel.tsx:11-15. */
+ *  hashing through the shared annotation-label palette policy. */
 export function YoloClassChipDemo() {
   return (
     <div className="flex flex-wrap gap-2">

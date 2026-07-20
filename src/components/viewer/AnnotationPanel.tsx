@@ -3,15 +3,7 @@
 import { useMemo } from "react";
 import { useUiStore } from "@/stores/uiStore";
 import { useAnnotations } from "@/queries/useAnnotations";
-import { TWENTY_COLORS } from "@/types";
-
-function labelColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
-  }
-  return TWENTY_COLORS[Math.abs(hash) % TWENTY_COLORS.length];
-}
+import { annotationLabelColor as labelColor } from "@/lib/annotation-label-color";
 
 export default function AnnotationPanel() {
   // [refactor jul10 P2.2⑥] Read the cache-owned collection; the old remove binding was dead.

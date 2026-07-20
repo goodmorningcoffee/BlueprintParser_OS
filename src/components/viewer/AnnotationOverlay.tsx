@@ -42,8 +42,9 @@ import {
   setTableParseStepWithTool,
 } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
-import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
+import { AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
+import { annotationLabelColor as labelColor } from "@/lib/annotation-label-color";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import { captureCanvasGestureLease, matchesCanvasGestureLease, selectActiveToolKey, type CanvasGestureLease, type CanvasGestureSnapshot } from "@/lib/active-tool-state";
 import {
@@ -85,15 +86,7 @@ interface AnnotationOverlayProps {
   cssScale: number;
 }
 
-/** Assign colors by unique label order — each unique label gets next color in palette */
-const labelColorMap = new Map<string, string>();
 const EMPTY_KEYNOTE_COLUMN_BBS: [number, number, number, number][] = [];
-function labelColor(name: string): string {
-  if (!labelColorMap.has(name)) {
-    labelColorMap.set(name, TWENTY_COLORS[labelColorMap.size % TWENTY_COLORS.length]);
-  }
-  return labelColorMap.get(name)!;
-}
 
 function readCanvasGestureSnapshot(): CanvasGestureSnapshot {
   const tool = useToolStore.getState();

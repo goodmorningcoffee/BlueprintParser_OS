@@ -520,10 +520,10 @@ function expectPostMoveOrder(source: string): void {
 
 describe("AnnotationOverlay symbol-search result post-move topology", () => {
   it("pins the exact AO, import, earlier driver, pure call, next pure call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_732);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(74_787);
+    expect(count(AO, "\n")).toBe(1_725);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(74_508);
     expect(sha256(AO)).toBe(
-      "734e7d5ffdc2002fdd176b46b04b3bf0b0b98ae6a0839799ab279c6bfa7530f4",
+      "d9f8abb28aef0c1a9c6b6121ea783753d1cf1507bd947c6230ebd64a754a32cf",
     );
 
     const symbolImport =
