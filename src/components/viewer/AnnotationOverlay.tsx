@@ -630,7 +630,7 @@ export default memo(function AnnotationOverlay({
     if (verts.length < 3) return;
 
     const activeItem = items.find((t) => t.id === activeId);
-    if (!activeItem) return;
+    if (!activeItem || activeItem.shape !== "polygon") return;
 
     // Compute bounding box from vertices
     const xs = verts.map((v) => v.x);
@@ -809,7 +809,7 @@ export default memo(function AnnotationOverlay({
     if (verts.length < 2) return;
 
     const activeItem = items.find((t) => t.id === activeId);
-    if (!activeItem) return;
+    if (!activeItem || activeItem.shape !== "linear") return;
 
     // Compute bounding box from vertices
     const xs = verts.map((v) => v.x);

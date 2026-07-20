@@ -261,35 +261,33 @@ describe("takeoff linear gesture freeze (real overlay, production mousedown)", (
     expect(parentMouseDown).not.toHaveBeenCalled();
   });
 
-  it("W3a-race: a render-captured linear press reaches the fresh saver after the same ID flips to polygon", async () => {
-    seedLinearState([], [linearItem({ id: 6 })]);
+  it.each([
+    {
+      label: "polygon",
+      replacement: { shape: "polygon" as const, name: "Fresh polygon identity", color: "#a855f7" },
+    },
+    {
+      label: "count",
+      replacement: { shape: "circle" as const, name: "Fresh count identity", color: "#ef4444" },
+    },
+  ])("W3a-race ($label): a render-captured linear snap fails closed after the same ID changes shape", async ({ replacement }) => {
+    seedLinearState([], [linearItem({ id: 6 })], { isDemo: false });
     const canvas = await mountCanvas();
     enterDrawing(TWO_VERTS);
 
+    act(() => useToolStore.setState({ _mousePos: { x: 77, y: 23 } }));
     // Query observers publish on a later task. During this same synchronous act, the controller
     // still classifies its render-captured linear item while the saver reads replacement metadata.
     act(() => {
-      seedTakeoff(queryClient, [linearItem({
-        id: 6,
-        shape: "polygon",
-        name: "Fresh polygon identity",
-        color: "#a855f7",
-      })], []);
+      seedTakeoff(queryClient, [linearItem({ id: 6, ...replacement })], []);
       fireEvent.mouseDown(canvas, { clientX: 109, clientY: 50, button: 0, detail: 1 });
     });
 
-    expect(polylineRows()).toHaveLength(1);
-    expect(polylineRows()[0]).toMatchObject({
-      name: "Fresh polygon identity",
-      data: {
-        type: "linear-polyline",
-        takeoffItemId: 6,
-        color: "#a855f7",
-        vertices: TWO_VERTS,
-      },
-    });
-    expect(useToolStore.getState().polygonDrawingMode).toBe("idle");
-    expect(useToolStore.getState().polygonVertices).toEqual([]);
+    expect(readSeededAnnotations(queryClient)).toEqual([]);
+    expect(useToolStore.getState().polygonDrawingMode).toBe("drawing");
+    expect(useToolStore.getState().polygonVertices).toEqual(TWO_VERTS);
+    expect(useToolStore.getState()._mousePos).toEqual({ x: 77, y: 23 });
+    expect(persistFetchMock).not.toHaveBeenCalled();
   });
 
   it("W3a-freshness: a same-ID linear replacement saves with its fresh name and color", async () => {
