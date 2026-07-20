@@ -22,7 +22,7 @@
 //      the finish calls saveLinearPolyline exactly once and never appends;
 //   7. the e.detail >= 2 silent consume (no save, no append, still TRUE + prelude);
 //   8. claim === true on EVERY arm with stopPropagation exactly once and tail invalidation;
-//   9. wantsEvents (P3.4 render-gate scaffolding): kind gate both directions;
+//   9. wantsEvents (P3.4 production registry gate): kind gate both directions;
 //  10. registry integration through the real TOOLS tuple: a linear press claims AT takeoffLinear
 //      (takeoffCount's mutations stay untouched — interior-order witness); a count press falls
 //      THROUGH takeoffLinear to takeoffCount; a polygon press propagates FALSE end-to-end.
@@ -363,7 +363,7 @@ describe("takeoffLinearController drawing arm", () => {
   });
 });
 
-describe("takeoffLinearController.wantsEvents (P3.4 render-gate scaffolding)", () => {
+describe("takeoffLinearController.wantsEvents (P3.4 production registry gate)", () => {
   it("requires exactly the takeoffPlacement activation", () => {
     expect(takeoffLinearController.wantsEvents(toolState())).toBe(true);
     expect(takeoffLinearController.wantsEvents(toolState({ activeTool: { kind: "calibration" } }))).toBe(false);

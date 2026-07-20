@@ -25,7 +25,7 @@
 //      far from the FIRST appends (the polygon/linear anchor discriminator);
 //   7. the e.detail >= 2 silent consume (no save, no append, still TRUE + prelude);
 //   8. claim === true on EVERY arm with stopPropagation exactly once and tail invalidation;
-//   9. wantsEvents (P3.4 render-gate scaffolding): kind gate both directions;
+//   9. wantsEvents (P3.4 production registry gate): kind gate both directions;
 //  10. registry integration through the real TOOLS tuple: a polygon press claims AT
 //      takeoffPolygon; a linear press falls THROUGH this slot to takeoffLinear (witnessed at the
 //      linear FINISH, which this controller's >= 3 gate could never produce); a count press
@@ -382,7 +382,7 @@ describe("takeoffPolygonController drawing arm", () => {
   });
 });
 
-describe("takeoffPolygonController.wantsEvents (P3.4 render-gate scaffolding)", () => {
+describe("takeoffPolygonController.wantsEvents (P3.4 production registry gate)", () => {
   it("requires exactly the takeoffPlacement activation", () => {
     expect(takeoffPolygonController.wantsEvents(toolState())).toBe(true);
     expect(takeoffPolygonController.wantsEvents(toolState({ activeTool: { kind: "calibration" } }))).toBe(false);

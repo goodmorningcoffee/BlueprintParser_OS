@@ -25,7 +25,7 @@ export const takeoffCountController: ToolController = Object.freeze({
   kind: "takeoffCount",
   // Render gate CANNOT discriminate shape (takeoffItems is component data, not ToolStoreState):
   // the canvas needs events for every takeoffPlacement activation regardless of which controller
-  // ultimately claims the press. P3.4 scaffolding, production-unwired.
+  // ultimately claims the press. P3.4 wires this overlap into the production registry gate.
   wantsEvents: (state) => state.activeTool?.kind === "takeoffPlacement",
   matches: (press) => press.toolAtDown.activeTool?.kind === "takeoffPlacement",
   onMouseDown(event, context) {

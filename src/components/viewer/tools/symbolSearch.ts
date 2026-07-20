@@ -6,7 +6,7 @@ import type { ToolController } from "./types";
 
 export const symbolSearchController: ToolController = Object.freeze({
   kind: "symbolSearch",
-  // P3.4 render-gate scaffolding. AnnotationOverlay remains the canvas-gate owner for now.
+  // P3.4 registry gate: the controller now owns this production event eligibility predicate.
   wantsEvents: (state) => state.activeTool?.kind === "symbolTemplate",
   matches: (press) => press.toolAtDown.activeTool?.kind === "symbolTemplate",
   onMouseDown(event, context) {

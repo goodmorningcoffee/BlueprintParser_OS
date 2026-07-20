@@ -17,6 +17,8 @@ const PREDICATE =
   "showTableCellStructure && tableCellStructure?.pageNumber === pageNumber";
 const NEGATED = ` && !(${PREDICATE})`;
 const POSITIVE = ` || (${PREDICATE})`;
+const POINTER_EVENTS =
+  'pointerEvents: tempPanMode ? "none" : canvasWantsEvents ? "auto" : "none",';
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -76,12 +78,18 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("normalizes the whole canvas gate to the exact accepted parent bytes", () => {
+  it("normalizes the whole canvas gate to the registry-owned accepted bytes", () => {
     expect(count(GATES, POSITIVE)).toBe(1);
+    expect(GATES).toContain(
+      "  const canvasToolState = useToolStore.getState();\n" +
+      "  const canvasWantsEvents = TOOLS.some((controller) => controller.wantsEvents(canvasToolState));",
+    );
+    expect(GATES).not.toContain("activeToolKey !== null");
+    expect(count(AO, POINTER_EVENTS)).toBe(1);
     const normalized = GATES.replace(POSITIVE, "");
-    expect(Buffer.byteLength(normalized, "utf8")).toBe(538);
+    expect(Buffer.byteLength(normalized, "utf8")).toBe(537);
     expect(sha256(normalized)).toBe(
-      "75992a223bb98a4c1bd340b1c75b7385ff3ad916921089bceb8a4f8a1124c40d",
+      "374d5962a878e73c1a5296530345cefe8b4192f0110ddd806c8939800b45ebd6",
     );
   });
 

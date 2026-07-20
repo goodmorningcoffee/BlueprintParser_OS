@@ -25,7 +25,7 @@ const HANDLE = 8;
 export const markupController: ToolController = Object.freeze({
   kind: "markup",
   // Render gate mirrors the live canvas-interactivity slice for markup: base markup interaction
-  // requires NO specialized owner. P3.4 scaffolding, production-unwired.
+  // requires NO specialized owner. P3.4 wires this predicate into the production registry gate.
   wantsEvents: (state) => state.activeTool === null && state.mode === "markup",
   matches: (press) =>
     press.toolAtDown.activeTool === null && press.toolAtDown.mode === "markup",

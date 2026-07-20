@@ -7,7 +7,7 @@
 //      stopPropagation and NO gesture call) — previously only a brittle source-text pin;
 //   2. the CAS activation SOURCE: the gesture must receive the CAPTURED press.toolAtDown
 //      activation, never a fresh getState() — enforced by arranging live-store !== captured;
-//   3. wantsEvents (P3.4 render-gate scaffolding, unwired at this HEAD): kind-only, any phase.
+//   3. wantsEvents (P3.4 production registry gate): kind-only, any phase.
 
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -118,7 +118,7 @@ describe("calibrationController mousedown contract", () => {
   });
 });
 
-describe("calibrationController.wantsEvents (P3.4 render-gate scaffolding)", () => {
+describe("calibrationController.wantsEvents (P3.4 production registry gate)", () => {
   it("is kind-only across every phase and false without the activation", () => {
     for (const calibrationMode of ["point1", "point2", "input"] as const) {
       useToolStore.getState().setCalibrationMode(calibrationMode);

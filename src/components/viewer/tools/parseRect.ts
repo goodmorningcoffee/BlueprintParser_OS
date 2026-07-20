@@ -7,7 +7,7 @@ import type { ToolController } from "./types";
 
 export const parseRectController: ToolController = Object.freeze({
   kind: "parseRect",
-  // P3.4 render-gate scaffolding. AnnotationOverlay remains the canvas-gate owner for now.
+  // P3.4 registry gate: the controller now owns this production event eligibility predicate.
   wantsEvents: (state) => state.activeTool?.kind === "parseRect",
   matches: (press) => press.toolAtDown.activeTool?.kind === "parseRect",
   onMouseDown(event, context) {

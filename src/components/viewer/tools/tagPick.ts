@@ -58,7 +58,7 @@ function startTagScan(
 
 export const tagPickController: ToolController = Object.freeze({
   kind: "tagPick",
-  // P3.4 render-gate scaffolding. AnnotationOverlay remains the canvas-gate owner for now.
+  // P3.4 registry gate: the controller now owns this production event eligibility predicate.
   wantsEvents: (state) => state.activeTool?.kind === "tagPick",
   matches: (press) => press.toolAtDown.activeTool?.kind === "tagPick",
   onMouseDown(event, context) {

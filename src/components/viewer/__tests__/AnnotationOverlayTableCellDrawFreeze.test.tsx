@@ -206,6 +206,21 @@ describe("AnnotationOverlay table-cell-only draw reachability", () => {
     },
   );
 
+  it("keeps the registry-eligible canvas mounted while temp pan suppresses its pointer events", () => {
+    setViewerStoreStateForTest({
+      mode: "pointer",
+      tempPanMode: true,
+    });
+
+    const result = renderOverlay();
+    expectCanvasSetup(result.annotationCanvas);
+    expectCanvasSetup(result.previewCanvas);
+    expect(result.annotationCanvas.style.pointerEvents).toBe("none");
+    expect(result.previewCanvas.style.pointerEvents).toBe("none");
+    expect(result.annotationCalls).toEqual(SETUP_AND_CLEAR);
+    expect(result.previewCalls).toEqual(SETUP_AND_CLEAR);
+  });
+
   it.each([
     { label: "hidden same-page", pageNumber: 1, visible: false },
     { label: "visible other-page", pageNumber: 2, visible: true },

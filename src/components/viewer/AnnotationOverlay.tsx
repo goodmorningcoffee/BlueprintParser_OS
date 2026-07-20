@@ -1634,8 +1634,8 @@ export default memo(function AnnotationOverlay({
 
   // Canvas gates — single source of truth so render-null and pointer-events can't drift.
   // Drift here has caused lasso + markup disappear bugs before (see group-tool fix 2026-04-19).
-  const canvasWantsEvents = activeToolKey !== null ||
-    (activeToolKey === null && (mode === "markup" || mode === "pointer" || mode === "group"));
+  const canvasToolState = useToolStore.getState();
+  const canvasWantsEvents = TOOLS.some((controller) => controller.wantsEvents(canvasToolState));
   const canvasShouldRender = (
     pageAnnotations.length > 0 ||
     polygonDrawingMode !== "idle" ||

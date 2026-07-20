@@ -22,7 +22,7 @@
 //      through the production seam (persistCreate wraps non-Errors first), so it is pinned here;
 //   7. claim === true with stopPropagation exactly once and tail invalidation on both claimed
 //      paths;
-//   8. wantsEvents (P3.4 render-gate scaffolding): kind gate both directions;
+//   8. wantsEvents (P3.4 production registry gate): kind gate both directions;
 //   9. registry integration: a declined press propagates FALSE through the real TOOLS tuple.
 
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -324,7 +324,7 @@ describe("takeoffCountController placement", () => {
   });
 });
 
-describe("takeoffCountController.wantsEvents (P3.4 render-gate scaffolding)", () => {
+describe("takeoffCountController.wantsEvents (P3.4 production registry gate)", () => {
   it("requires exactly the takeoffPlacement activation", () => {
     expect(takeoffCountController.wantsEvents(toolState())).toBe(true);
     expect(takeoffCountController.wantsEvents(toolState({ activeTool: { kind: "calibration" } }))).toBe(false);

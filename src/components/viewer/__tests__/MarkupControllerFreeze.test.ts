@@ -13,7 +13,7 @@
 //   5. claim === true with stopPropagation exactly once on EVERY path;
 //   6. invalidateToolTailAuthority on every path, the non-drawing select path included;
 //   7. deferredDrawing.start receives the press position and NO explicit clearSelection;
-//   8. wantsEvents (P3.4 render-gate scaffolding): activeTool===null && mode==="markup".
+//   8. wantsEvents (P3.4 production registry gate): activeTool===null && mode==="markup".
 
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -290,7 +290,7 @@ describe("markupController block order and geometry", () => {
   });
 });
 
-describe("markupController.wantsEvents (P3.4 render-gate scaffolding)", () => {
+describe("markupController.wantsEvents (P3.4 production registry gate)", () => {
   it("requires the base markup mode with NO specialized owner", () => {
     expect(markupController.wantsEvents(toolState())).toBe(true);
     expect(markupController.wantsEvents(toolState({ activeTool: { kind: "calibration" } }))).toBe(false);

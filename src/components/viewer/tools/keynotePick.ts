@@ -13,7 +13,7 @@ import type { ToolController } from "./types";
 
 export const keynotePickController: ToolController = Object.freeze({
   kind: "keynotePick",
-  // P3.4 render-gate scaffolding. AnnotationOverlay remains the canvas-gate owner for now.
+  // P3.4 registry gate. This deliberate overlap with parseRect is boolean-idempotent.
   wantsEvents: (state) =>
     state.activeTool?.kind === "parseRect" && state.activeTool.flow === "keynote",
   matches: (press) =>
