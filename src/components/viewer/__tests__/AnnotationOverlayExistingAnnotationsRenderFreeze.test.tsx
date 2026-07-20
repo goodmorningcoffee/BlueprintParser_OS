@@ -89,6 +89,14 @@ class TrackedIdSet extends Set<number> {
     stageTrace.push(["call", `${this.channel}.has`, value, this === expectedReceiver]);
     return super.has(value);
   }
+
+  override *[Symbol.iterator](): SetIterator<number> {
+    const expectedReceiver = this.channel === "selection" ? selectedIds : hiddenItemIds;
+    for (const value of super.values()) {
+      stageTrace.push(["call", `${this.channel}.iterate`, value, this === expectedReceiver]);
+      yield value;
+    }
+  }
 }
 
 const MEASURED_WIDTHS: Readonly<Record<string, number>> = {
@@ -242,7 +250,22 @@ function takeoffItemFixtures(): ClientTakeoffItem[] {
     sortOrder: 1,
     groupId: null,
   } satisfies ClientTakeoffItem;
-  return [decoy, live];
+  const duplicate = {
+    get id(): number {
+      stageTrace.push(["get", "duplicate.id"]);
+      return "7" as unknown as number;
+    },
+    name: "Normalized duplicate",
+    shape: "circle",
+    color: "#222222",
+    get size(): number {
+      stageTrace.push(["get", "duplicate.size"]);
+      return 100;
+    },
+    sortOrder: 2,
+    groupId: null,
+  } satisfies ClientTakeoffItem;
+  return [decoy, live, duplicate];
 }
 
 function activeTag(): YoloTag {
@@ -292,14 +315,15 @@ function emptySymbolResults(): SymbolSearchResult {
   };
 }
 
-function lookupTrace(marker: string, itemId: string): StageTraceEntry[] {
+function lookupTrace(marker: string, initializesIndexes: boolean): StageTraceEntry[] {
   return [
     ["get", `${marker}.itemId`],
-    ["call", "hidden.has", itemId, true],
-    ["get", "decoy.id"],
-    ["get", "decoy.id"],
-    ["get", "live.id"],
-    ["get", "live.id"],
+    ...(initializesIndexes ? [
+      ["call", "hidden.iterate", 999, true],
+      ["get", "decoy.id"],
+      ["get", "live.id"],
+      ["get", "duplicate.id"],
+    ] as StageTraceEntry[] : []),
   ];
 }
 
@@ -312,6 +336,7 @@ function countMarkerTrace({
   radius,
   selected,
   inheritedAlpha = 1,
+  initializesIndexes = false,
 }: {
   marker: string;
   shape: TakeoffShape;
@@ -321,6 +346,7 @@ function countMarkerTrace({
   radius: number;
   selected: boolean;
   inheritedAlpha?: number;
+  initializesIndexes?: boolean;
 }): StageTraceEntry[] {
   const dark = {
     "#ff0000": "rgb(178, 0, 0)",
@@ -369,7 +395,7 @@ function countMarkerTrace({
     );
   }
   return [
-    ...lookupTrace(marker, "7"),
+    ...lookupTrace(marker, initializesIndexes),
     ["call", "selection.has", Number(marker.slice(1)), true],
     ["get", "live.size"],
     ["call", "save"],
@@ -579,7 +605,7 @@ beforeEach(() => {
   seedAnnotations(queryClient, [
     annotation(101, "CIRCLE", [-0.1, 0.1, 0.1, 0.3], "takeoff", countData("m101", "circle", "#ff0000")),
     annotation(201, "User Selected", [0.1, 0.1, 0.3, 0.6], "user"),
-    annotation(102, "HIDDEN", [0.2, 0.2, 0.3, 0.3], "takeoff", countData("m102", "square", "#fedcba", 999)),
+    annotation(102, "HIDDEN", [0.2, 0.2, 0.3, 0.3], "takeoff", countData("m102", "square", "#fedcba", "999")),
     annotation(103, "SQUARE", [0.4, 0.1, 0.5, 0.3], "takeoff", countData("m103", "square", "#00ff00")),
     annotation(301, "Matched YOLO", [0.6, 0.1, 0.75, 0.4], "yolo", { confidence: 0.99 }),
     annotation(104, "DIAMOND", [0.1, 0.6, 0.3, 0.8], "takeoff", countData("m104", "diamond", "#0000ff")),
@@ -608,7 +634,8 @@ afterEach(() => {
 });
 
 describe("AnnotationOverlay existing-annotation render freeze", () => {
-  it("keeps mixed source order, live count lookup, selection, active/symbol behavior, geometry, and leakage", async () => {
+  it("keeps mixed source order, lazy normalized count lookup, selection, active/symbol behavior, geometry, and leakage", async () => {
+    const getQueryDataSpy = vi.spyOn(queryClient, "getQueryData");
     const { container } = render(
       <AnnotationOverlay width={WIDTH} height={HEIGHT} cssScale={CSS_SCALE} />,
       { wrapper },
@@ -634,10 +661,9 @@ describe("AnnotationOverlay existing-annotation render freeze", () => {
     const existingStage = latest.slice(0, boundaryIndex);
 
     expect(existingStage).toEqual([
-      ...countMarkerTrace({ marker: "m101", shape: "circle", color: "#ff0000", cx: 0, cy: 20, radius: 4, selected: false, inheritedAlpha: 0.37 }),
+      ...countMarkerTrace({ marker: "m101", shape: "circle", color: "#ff0000", cx: 0, cy: 20, radius: 4, selected: false, inheritedAlpha: 0.37, initializesIndexes: true }),
       ...boxPaintTrace({ id: 201, name: "User Selected", color: "#f58231", x: 20, y: 10, width: 40, height: 50, fontSize: 13, textWidth: 24, selected: true, user: true }),
       ["get", "m102.itemId"],
-      ["call", "hidden.has", 999, true],
       ...countMarkerTrace({ marker: "m103", shape: "square", color: "#00ff00", cx: 90, cy: 20, radius: 5, selected: false }),
       ...activeMatchTrace(),
       ...countMarkerTrace({ marker: "m104", shape: "diamond", color: "#0000ff", cx: 40, cy: 70, radius: 6, selected: false }),
@@ -647,7 +673,24 @@ describe("AnnotationOverlay existing-annotation render freeze", () => {
       ...countMarkerTrace({ marker: "m105", shape: "cross", color: "#123456", cx: 180, cy: 30.000000000000004, radius: -2, selected: true }),
       ...boxPaintTrace({ id: 204, name: "Plain User", color: "#aaffc3", x: 10, y: 75, width: 30.000000000000004, height: 9.999999999999998, fontSize: 10, textWidth: 21, selected: false, user: true }),
     ]);
+    const takeoffItemsKey = queryKeys.takeoff.items(PUBLIC_ID);
+    expect(getQueryDataSpy.mock.calls.filter(([key]) =>
+      JSON.stringify(key) === JSON.stringify(takeoffItemsKey)
+    )).toHaveLength(1);
     expect(markerSizeReads).toBe(5);
+    expect(existingStage.filter((entry) => entry[0] === "call" && entry[1] === "hidden.iterate")).toEqual([
+      ["call", "hidden.iterate", 999, true],
+    ]);
+    expect(existingStage.filter((entry) =>
+      entry[0] === "get" && ["decoy.id", "live.id", "duplicate.id"].includes(entry[1])
+    )).toEqual([
+      ["get", "decoy.id"],
+      ["get", "live.id"],
+      ["get", "duplicate.id"],
+    ]);
+    expect(existingStage.filter((entry) => entry[0] === "get" && entry[1] === "live.size")).toHaveLength(5);
+    expect(existingStage).not.toContainEqual(["get", "duplicate.size"]);
+    expect(existingStage).not.toContainEqual(["call", "selection.has", 102, true]);
     expect(boundaryStackDepth).toBe(0);
     expect(boundaryState).toEqual({
       dash: [9, 3],
@@ -742,6 +785,7 @@ const LABEL_COLOR_POLICY = readFileSync(
   "utf8",
 );
 const DARK_COLOR_START = "function darkenOpaqueHexColor(color: string): string {\n";
+const RENDER_ID_KEY_START = "function renderIdKey(id: unknown): string {\n";
 const COUNT_START = "function drawCountMarker(\n";
 const HELPER_RENDER_HEADER = "/**\n * Draw existing count markers or bbox/label annotations in source-row order.\n";
 const EXISTING_HEADER = "    // Draw existing annotations\n";
@@ -795,11 +839,21 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
       "5d0932d56d74e94209b15526e179e1f6f1dba50c3664b65c9f3c5b2a16f607ac",
     );
 
-    const darkColor = exactSlice(EXISTING_ANNOTATIONS, DARK_COLOR_START, COUNT_START);
+    const darkColor = exactSlice(EXISTING_ANNOTATIONS, DARK_COLOR_START, RENDER_ID_KEY_START);
     expect(count(darkColor, "\n")).toBe(11);
     expect(Buffer.byteLength(darkColor, "utf8")).toBe(467);
     expect(sha256(darkColor)).toBe(
       "72d670e3dafd5cf8590a242d4f14b53ada6a28930e03f4df31ff3f99a0bb9ec2",
+    );
+
+    const renderIdKey = exactSlice(EXISTING_ANNOTATIONS, RENDER_ID_KEY_START, COUNT_START);
+    expect(count(renderIdKey, "\n")).toBe(4);
+    expect(Buffer.byteLength(renderIdKey, "utf8")).toBe(68);
+    expect(sha256(renderIdKey)).toBe(
+      "a242de00784f250e4485f7c35442225b312d5e9c4408b7a3aaf7303998ce4f0f",
+    );
+    expect(renderIdKey).toBe(
+      "function renderIdKey(id: unknown): string {\n  return String(id);\n}\n\n",
     );
 
     const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
@@ -827,10 +881,10 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
       "2422f753908674c7df08da0eda338df772b825cffceceea815cc1b98750ad80c",
     );
 
-    expect(count(EXISTING_ANNOTATIONS, "\n")).toBe(254);
-    expect(Buffer.byteLength(EXISTING_ANNOTATIONS, "utf8")).toBe(9_254);
+    expect(count(EXISTING_ANNOTATIONS, "\n")).toBe(278);
+    expect(Buffer.byteLength(EXISTING_ANNOTATIONS, "utf8")).toBe(10_166);
     expect(sha256(EXISTING_ANNOTATIONS)).toBe(
-      "868fab2f6ae2fdf473dd3f485c6135022f5619082886e66b9a41f7f4504c9d85",
+      "81e940c35a5331fb04bf4589a47ac8a17d3057bd9574b1bef2b89faf2cbb5abf",
     );
 
     const dependencies = exactSlice(
@@ -846,7 +900,7 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
     expect(dependencies).not.toContain("takeoffItems");
   });
 
-  it("keeps the five shapes, live bridge/coercive lookup, selection order, and biting stage order", () => {
+  it("keeps the five shapes, lazy bridge/normalized first-wins lookup, selection order, and biting stage order", () => {
     expectPostMoveOrder(AO);
     const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
     const stage = exactSlice(AO, EXISTING_HEADER, ACTIVE_HEADER);
@@ -858,6 +912,8 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
     expect(count(AO, COUNT_START.trim())).toBe(0);
     expect(count(EXISTING_ANNOTATIONS, COUNT_START.trim())).toBe(1);
     expect(count(EXISTING_ANNOTATIONS, DARK_COLOR_START.trim())).toBe(1);
+    expect(count(EXISTING_ANNOTATIONS, RENDER_ID_KEY_START.trim())).toBe(1);
+    expect(EXISTING_ANNOTATIONS).not.toContain("export function renderIdKey");
     expect(count(stage, "drawExistingAnnotations(ctx, {")).toBe(1);
     expect(stage).toContain("annotations: pageAnnotations,");
     expect(stage).toContain("selection: multiSelect,");
@@ -868,11 +924,22 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
     expect(count(EXISTING_ANNOTATIONS, "drawCountMarker(ctx, ann, width, height")).toBe(1);
     expect(count(EXISTING_ANNOTATIONS, "const color = getLabelColor(ann.name);")).toBe(1);
     expect(count(EXISTING_ANNOTATIONS, "getTakeoffItems()")).toBe(1);
+    expect(count(EXISTING_ANNOTATIONS, "renderIdKey(")).toBe(4);
     expect(EXISTING_ANNOTATIONS).toContain("ctx.fillStyle = data.color;");
     expect(EXISTING_ANNOTATIONS).toContain("ctx.strokeStyle = darkenOpaqueHexColor(data.color);");
     expect(EXISTING_ANNOTATIONS).toContain("ctx.globalAlpha = inheritedGlobalAlpha * 0.8;");
     expect(EXISTING_ANNOTATIONS).not.toContain('data.color + "cc"');
-    expect(EXISTING_ANNOTATIONS).toContain("t.id === itemId || String(t.id) === String(itemId)");
+    expect(EXISTING_ANNOTATIONS).toContain("const itemKey = renderIdKey(itemId);");
+    expect(EXISTING_ANNOTATIONS).toContain("for (const hiddenId of hiddenTakeoffItemIds)");
+    expect(EXISTING_ANNOTATIONS).toContain("keys.add(renderIdKey(hiddenId));");
+    expect(EXISTING_ANNOTATIONS).toContain("if (hiddenTakeoffItemKeys.has(itemKey)) continue;");
+    expect(EXISTING_ANNOTATIONS).toContain("const index = new Map<string, TakeoffItemRenderData>();");
+    expect(EXISTING_ANNOTATIONS).toContain("for (const takeoffItem of getTakeoffItems())");
+    expect(EXISTING_ANNOTATIONS).toContain("const key = renderIdKey(takeoffItem.id);");
+    expect(EXISTING_ANNOTATIONS).toContain("if (!index.has(key)) index.set(key, takeoffItem);");
+    expect(EXISTING_ANNOTATIONS).toContain("const item = takeoffItemsById.get(itemKey);");
+    expect(EXISTING_ANNOTATIONS).not.toContain("hiddenTakeoffItemIds.has(");
+    expect(EXISTING_ANNOTATIONS).not.toContain(".find((t)");
     expect(EXISTING_ANNOTATIONS).toContain("ann.id === selectedId || selection.isSelected(ann.id)");
     expect(EXISTING_ANNOTATIONS).toContain("const [minX, minY, maxX, maxY] = ann.bbox;");
     expect(EXISTING_ANNOTATIONS).toContain("const w = (maxX - minX) * width;");

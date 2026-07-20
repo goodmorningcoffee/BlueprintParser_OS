@@ -772,7 +772,7 @@ describe("drawExistingAnnotations", () => {
         selected: index === 4,
       })
     ));
-    expect(bridgeReads).toBe(6);
+    expect(bridgeReads).toBe(1);
     expect(record.state()).toEqual(inheritedState());
     expect(record.trace.filter((entry) =>
       entry[0] === "call" && entry[1] === "beginPath"
@@ -866,54 +866,26 @@ describe("drawExistingAnnotations", () => {
     expect(record.state()).toEqual(inheritedState());
   });
 
-  it("characterizes raw hidden-ID membership diverging from coercive item lookup", () => {
-    const events: string[] = [];
-    const record = recordingContext({ events });
-    const hidden = {
-      get has() {
-        events.push("hidden:get-has");
-        return function (this: unknown, id: unknown) {
-          events.push(
-            `hidden:call:${typeof id}:${String(id)}:${this === hidden ? "receiver" : "detached"}`,
-          );
-          return id === 7;
-        };
-      },
-    } as unknown as ReadonlySet<number>;
-    const item = {
-      get id() {
-        events.push("item:id");
-        return 7;
-      },
-      get size() {
-        events.push("item:size");
-        return 8;
-      },
-    };
+  it("normalizes hidden count item IDs before the item bridge or canvas", () => {
+    const record = recordingContext();
+    let bridgeReads = 0;
 
     draw(record.context, [countAnnotation({ id: 1, itemId: "7" })], {
-      hiddenTakeoffItemIds: hidden,
-      getTakeoffItems: function (this: unknown) {
-        events.push(`bridge:${this === undefined ? "bare" : "bound"}`);
-        return [item];
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: {
+        isSelected: () => {
+          throw new Error("hidden marker selection must stay cold");
+        },
+      },
+      getTakeoffItems: () => {
+        bridgeReads += 1;
+        throw new Error("hidden marker bridge must stay cold");
       },
     });
 
-    expect(events.filter((event) => /^(hidden|bridge|item):/.test(event))).toEqual([
-      "hidden:get-has",
-      "hidden:call:string:7:receiver",
-      "bridge:bare",
-      "item:id",
-      "item:id",
-      "item:size",
-    ]);
-    expect(record.trace).toEqual(countTrace({
-      shape: "circle",
-      color: "#2468ac",
-      cx: 60,
-      cy: 50,
-      radius: 4,
-    }));
+    expect(bridgeReads).toBe(0);
+    expect(record.trace).toEqual([]);
+    expect(record.state()).toEqual(inheritedState());
   });
 
   it("keeps a missing matched item optional and uses strict selected-ID admission", () => {
@@ -1106,17 +1078,7 @@ describe("drawExistingAnnotations", () => {
     } as Annotation;
     const ordinary = annotation(3, "ordinary", [0.1, 0.2, 0.4, 0.4], "user");
     const rows = trackedIterable("rows", [hidden, malformed, ordinary], events);
-    const hiddenSet = {
-      get has() {
-        events.push("hiddenSet:get-has");
-        return function (this: unknown, id: number) {
-          events.push(
-            `hiddenSet:call:${id}:${this === hiddenSet ? "receiver" : "detached"}`,
-          );
-          return id === 90;
-        };
-      },
-    } as unknown as ReadonlySet<number>;
+    const hiddenSet = trackedIterable("hiddenSet", [90], events) as unknown as ReadonlySet<number>;
     let bridgeReads = 0;
 
     draw(record.context, rows, {
@@ -1134,11 +1096,15 @@ describe("drawExistingAnnotations", () => {
     expect(bridgeReads).toBe(1);
     expect(events).toContain("malformed:color");
     expect(events.indexOf("hidden:itemId")).toBeLessThan(
-      events.indexOf("hiddenSet:get-has"),
+      events.indexOf("hiddenSet:get-iterator"),
     );
-    expect(events.indexOf("hiddenSet:get-has")).toBeLessThan(
-      events.indexOf("hiddenSet:call:90:receiver"),
-    );
+    expect(events.filter((event) => event.startsWith("hiddenSet:"))).toEqual([
+      "hiddenSet:get-iterator",
+      "hiddenSet:call-iterator:receiver",
+      "hiddenSet:get-next",
+      "hiddenSet:call-next:0:receiver",
+      "hiddenSet:call-next:1:receiver",
+    ]);
     expect(events.indexOf("bridge:1")).toBeLessThan(
       events.indexOf("malformed:data:3"),
     );
@@ -1161,7 +1127,7 @@ describe("drawExistingAnnotations", () => {
     });
   });
 
-  it("uses coercive first-match lookup order, selection property-before-ID, receiver calls, and item?.size timing", () => {
+  it("builds one lazy normalized first-wins item index and keeps selection and size reads live", () => {
     const events: string[] = [];
     const record = recordingContext({ events });
     const dataReads = new Map<string, number>();
@@ -1206,7 +1172,11 @@ describe("drawExistingAnnotations", () => {
         name,
       } as Annotation;
     };
-    const rows = [makeRow("first", 7, "7"), makeRow("second", 8, 8)];
+    const rows = [
+      makeRow("first", 7, "7"),
+      makeRow("second", 8, 7),
+      makeRow("third", 9, 8),
+    ];
     const selection = {
       get isSelected() {
         events.push("selection:get-method");
@@ -1219,40 +1189,27 @@ describe("drawExistingAnnotations", () => {
       },
     } satisfies ExistingAnnotationSelection;
     let bridgeReads = 0;
-    const makeItem = (prefix: string, id: number, size: number): TakeoffItem => ({
+    const makeItem = (prefix: string, id: number | string, size: number): TakeoffItem => ({
       get id() {
-        events.push(`${prefix}:id`);
+        events.push(`item:${prefix}:id`);
         return id;
       },
       get size() {
-        events.push(`${prefix}:size`);
+        events.push(`item:${prefix}:size`);
         return size;
       },
-    });
-    const getTakeoffItems = (): readonly TakeoffItem[] => {
+    }) as unknown as TakeoffItem;
+    const items = trackedIterable("items", [
+      makeItem("decoy", 900, 99),
+      makeItem("primary", 7, 10),
+      makeItem("duplicate", "7", 88),
+      makeItem("strict", 8, -4),
+      makeItem("late", 8, 77),
+    ], events);
+    const getTakeoffItems = function (this: unknown): readonly TakeoffItem[] {
       bridgeReads += 1;
-      events.push(`bridge:${bridgeReads}`);
-      const candidates = bridgeReads === 1
-        ? [makeItem("decoy", 900, 99), makeItem("coercive", 7, 0)]
-        : [makeItem("strict", 8, -4), makeItem("late", 8, 88)];
-      const items = {
-        get find() {
-          events.push(`items${bridgeReads}:get-find`);
-          return function (
-            this: unknown,
-            predicate: (item: TakeoffItem) => boolean,
-          ) {
-            events.push(
-              `items${bridgeReads}:call-find:${this === items ? "receiver" : "detached"}`,
-            );
-            for (const candidate of candidates) {
-              if (predicate(candidate)) return candidate;
-            }
-            return undefined;
-          };
-        },
-      };
-      return items as unknown as readonly TakeoffItem[];
+      events.push(`bridge:${bridgeReads}:${this === undefined ? "bare" : "bound"}`);
+      return items;
     };
 
     draw(record.context, rows, {
@@ -1262,21 +1219,34 @@ describe("drawExistingAnnotations", () => {
       cssScale: 2,
     });
 
-    expect(dataReads).toEqual(new Map([["first", 3], ["second", 3]]));
-    expect(bridgeReads).toBe(2);
-    expect(events.filter((event) => event.endsWith(":id"))).toEqual([
-      "decoy:id",
-      "decoy:id",
-      "coercive:id",
-      "coercive:id",
-      "first:id",
-      "first:id",
-      "strict:id",
-      "second:id",
+    expect(dataReads).toEqual(new Map([
+      ["first", 3],
+      ["second", 3],
+      ["third", 3],
+    ]));
+    expect(bridgeReads).toBe(1);
+    expect(events.filter((event) => /^item:.*:id$/.test(event))).toEqual([
+      "item:decoy:id",
+      "item:primary:id",
+      "item:duplicate:id",
+      "item:strict:id",
+      "item:late:id",
     ]);
-    expect(events).toContain("items1:call-find:receiver");
-    expect(events).toContain("items2:call-find:receiver");
-    expect(events).not.toContain("late:id");
+    expect(events).toContain("bridge:1:bare");
+    expect(events).not.toContain("item:decoy:size");
+    expect(events).not.toContain("item:duplicate:size");
+    expect(events).not.toContain("item:late:size");
+    expect(events.filter((event) => event.endsWith(":size"))).toEqual([
+      "item:primary:size",
+      "item:primary:size",
+      "item:strict:size",
+    ]);
+    expect(events.indexOf("bridge:1:bare")).toBeLessThan(
+      events.indexOf("item:decoy:id"),
+    );
+    expect(events.indexOf("item:late:id")).toBeLessThan(
+      events.indexOf("first:id"),
+    );
     expect(events.indexOf("selection:get-method")).toBeLessThan(
       events.indexOf("selection:call:7:receiver"),
     );
@@ -1288,12 +1258,12 @@ describe("drawExistingAnnotations", () => {
     expect(firstIdReads[0]).toBeLessThan(events.indexOf("selection:get-method"));
     expect(events.indexOf("selection:get-method")).toBeLessThan(firstIdReads[1]);
     expect(events.indexOf("selection:call:7:receiver")).toBeLessThan(
-      events.indexOf("coercive:size"),
+      events.indexOf("item:primary:size"),
     );
-    expect(events.indexOf("second:id")).toBeLessThan(
-      events.indexOf("strict:size"),
+    expect(events.indexOf("third:id")).toBeLessThan(
+      events.indexOf("item:strict:size"),
     );
-    expect(events.filter((event) => event === "selection:get-method")).toHaveLength(1);
+    expect(events.filter((event) => event === "selection:get-method")).toHaveLength(2);
     expect(record.trace).toEqual([
       ...countTrace({
         shape: "circle",
@@ -1307,10 +1277,138 @@ describe("drawExistingAnnotations", () => {
         color: "#405060",
         cx: 20,
         cy: 10,
-        radius: -2,
+        radius: 5,
         selected: true,
       }),
+      ...countTrace({
+        shape: "square",
+        color: "#405060",
+        cx: 20,
+        cy: 10,
+        radius: -2,
+      }),
     ]);
+  });
+
+  it("keeps exact string ID keys and does not rebuild an empty item index", () => {
+    const exactRecord = recordingContext();
+    let exactBridgeReads = 0;
+
+    draw(exactRecord.context, [
+      countAnnotation({ id: 1, itemId: "07" }),
+      countAnnotation({ id: 2, itemId: " 7 " }),
+      countAnnotation({ id: 3, itemId: 7 }),
+    ], {
+      getTakeoffItems: () => {
+        exactBridgeReads += 1;
+        return [{ id: 7, size: 20 }];
+      },
+    });
+
+    expect(exactBridgeReads).toBe(1);
+    expect(exactRecord.trace).toEqual([
+      ...countTrace({
+        shape: "circle",
+        color: "#2468ac",
+        cx: 60,
+        cy: 50,
+        radius: 5,
+      }),
+      ...countTrace({
+        shape: "circle",
+        color: "#2468ac",
+        cx: 60,
+        cy: 50,
+        radius: 5,
+      }),
+      ...countTrace({
+        shape: "circle",
+        color: "#2468ac",
+        cx: 60,
+        cy: 50,
+        radius: 10,
+      }),
+    ]);
+
+    const hiddenExactRecord = recordingContext();
+    let hiddenExactBridgeReads = 0;
+    draw(hiddenExactRecord.context, [countAnnotation({ id: 7, itemId: "07" })], {
+      hiddenTakeoffItemIds: new Set([7]),
+      getTakeoffItems: () => {
+        hiddenExactBridgeReads += 1;
+        return [];
+      },
+    });
+    expect(hiddenExactBridgeReads).toBe(1);
+    expect(hiddenExactRecord.trace).toEqual(countTrace({
+      shape: "circle",
+      color: "#2468ac",
+      cx: 60,
+      cy: 50,
+      radius: 5,
+    }));
+
+    const emptyRecord = recordingContext();
+    let emptyBridgeReads = 0;
+    draw(emptyRecord.context, [
+      countAnnotation({ id: 4 }),
+      countAnnotation({ id: 5 }),
+    ], {
+      getTakeoffItems: () => {
+        emptyBridgeReads += 1;
+        return [];
+      },
+    });
+
+    expect(emptyBridgeReads).toBe(1);
+    expect(emptyRecord.trace).toEqual([
+      ...countTrace({
+        shape: "circle",
+        color: "#2468ac",
+        cx: 60,
+        cy: 50,
+        radius: 5,
+      }),
+      ...countTrace({
+        shape: "circle",
+        color: "#2468ac",
+        cx: 60,
+        cy: 50,
+        radius: 5,
+      }),
+    ]);
+
+    const firstDraw = recordingContext();
+    const secondDraw = recordingContext();
+    const sizes = [8, 12];
+    let localityBridgeReads = 0;
+    const liveBridge = () => [{
+      id: 6,
+      size: sizes[localityBridgeReads++],
+    }];
+
+    draw(firstDraw.context, [countAnnotation({ id: 6 })], {
+      getTakeoffItems: liveBridge,
+    });
+    draw(secondDraw.context, [countAnnotation({ id: 6 })], {
+      getTakeoffItems: liveBridge,
+    });
+
+    expect(localityBridgeReads).toBe(2);
+    expect(firstDraw.trace).toEqual(countTrace({
+      shape: "circle",
+      color: "#2468ac",
+      cx: 60,
+      cy: 50,
+      radius: 4,
+    }));
+    expect(secondDraw.trace).toEqual(countTrace({
+      shape: "circle",
+      color: "#2468ac",
+      cx: 60,
+      cy: 50,
+      radius: 6,
+    }));
   });
 
   it("keeps one interleaved generic traversal across ordinary, active-match, rejected YOLO, area, and negative MINMAX rows", () => {
@@ -2106,11 +2204,19 @@ describe("existingAnnotations source boundary", () => {
   it("keeps a private count renderer, one annotation loop, and an injected pure boundary", () => {
     expect(countOccurrences(source, "function darkenOpaqueHexColor(")).toBe(1);
     expect(source).not.toContain("export function darkenOpaqueHexColor(");
+    expect(countOccurrences(source, "function renderIdKey(")).toBe(1);
+    expect(source).not.toContain("export function renderIdKey(");
+    expect(source).toContain("return String(id);");
     expect(countOccurrences(source, "function drawCountMarker(")).toBe(1);
     expect(source).not.toContain("export function drawCountMarker(");
     expect(countOccurrences(source, "for (const ann of annotations)")).toBe(1);
     expect(countOccurrences(source, "getTakeoffItems()")).toBe(1);
-    expect(source).toContain("t.id === itemId || String(t.id) === String(itemId)");
+    expect(source).toContain("for (const hiddenId of hiddenTakeoffItemIds)");
+    expect(source).toContain("if (takeoffItemsById === undefined)");
+    expect(source).toContain("if (!index.has(key)) index.set(key, takeoffItem);");
+    expect(source).toContain("const item = takeoffItemsById.get(itemKey);");
+    expect(source).not.toContain("items.find(");
+    expect(source).not.toMatch(/Number\(itemId\)|parseInt\(itemId|parseInt\(String\(itemId\)/);
     expect(source).toContain("const [minX, minY, maxX, maxY] = ann.bbox;");
     expect(source).toContain("ctx.strokeStyle = darkenOpaqueHexColor(data.color);");
     expect(source).toContain("ctx.globalAlpha = inheritedGlobalAlpha * 0.8;");

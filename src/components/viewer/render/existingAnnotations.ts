@@ -43,6 +43,10 @@ function darkenOpaqueHexColor(color: string): string {
   return `rgb(${((rgb >> 16) & 0xff) * 0.7 | 0}, ${((rgb >> 8) & 0xff) * 0.7 | 0}, ${(rgb & 0xff) * 0.7 | 0})`;
 }
 
+function renderIdKey(id: unknown): string {
+  return String(id);
+}
+
 function drawCountMarker(
   ctx: CanvasRenderingContext2D,
   ann: ExistingAnnotationRenderData,
@@ -139,19 +143,39 @@ export function drawExistingAnnotations(
     getTakeoffItems,
   }: DrawExistingAnnotationsProps,
 ): void {
+  let hiddenTakeoffItemKeys: ReadonlySet<string> | undefined;
+  let takeoffItemsById: ReadonlyMap<string, TakeoffItemRenderData> | undefined;
+
   for (const ann of annotations) {
     // Count markers: draw shape instead of rectangle
     if (ann.source === "takeoff" && (ann.data as any)?.type === "count-marker") {
       const itemId = (ann.data as any)?.takeoffItemId;
-      if (hiddenTakeoffItemIds.has(itemId)) continue;
+      const itemKey = renderIdKey(itemId);
+      if (hiddenTakeoffItemKeys === undefined) {
+        const keys = new Set<string>();
+        for (const hiddenId of hiddenTakeoffItemIds) {
+          keys.add(renderIdKey(hiddenId));
+        }
+        hiddenTakeoffItemKeys = keys;
+      }
+      if (hiddenTakeoffItemKeys.has(itemKey)) continue;
       // [refactor jul10 P2.2④] bridge read, NOT the hook value: this draw effect's dep array
       // (end of effect) deliberately EXCLUDES takeoffItems — item edits (size/color) do not
       // redraw the canvas today. Using the subscribed hook value here (or adding the dep)
       // would create a brand-new canvas-redraw trigger class on every item mutation on the
       // SACRED path. The injected bridge reads the live cache synchronously, same as the old
-      // getState(). (TAKEOFF_IMPL/SPEC.md §3.3 :372 row — do not "clean up".)
-      const items = getTakeoffItems();
-      const item = items.find((t) => t.id === itemId || String(t.id) === String(itemId));
+      // getState(). Snapshot it once, lazily at the first non-hidden marker, so this draw uses one
+      // first-wins ID view without making takeoff items a render dependency.
+      // (TAKEOFF_IMPL/SPEC.md §3.3 :372 row — do not "clean up".)
+      if (takeoffItemsById === undefined) {
+        const index = new Map<string, TakeoffItemRenderData>();
+        for (const takeoffItem of getTakeoffItems()) {
+          const key = renderIdKey(takeoffItem.id);
+          if (!index.has(key)) index.set(key, takeoffItem);
+        }
+        takeoffItemsById = index;
+      }
+      const item = takeoffItemsById.get(itemKey);
       drawCountMarker(ctx, ann, width, height, ann.id === selectedId || selection.isSelected(ann.id), item?.size, cssScale);
       continue;
     }
