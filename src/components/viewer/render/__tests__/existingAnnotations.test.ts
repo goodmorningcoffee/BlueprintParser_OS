@@ -866,19 +866,47 @@ describe("drawExistingAnnotations", () => {
     expect(record.state()).toEqual(inheritedState());
   });
 
-  it("uses hidden Set membership without coercing count item IDs", () => {
-    const record = recordingContext();
-    let bridgeReads = 0;
+  it("characterizes raw hidden-ID membership diverging from coercive item lookup", () => {
+    const events: string[] = [];
+    const record = recordingContext({ events });
+    const hidden = {
+      get has() {
+        events.push("hidden:get-has");
+        return function (this: unknown, id: unknown) {
+          events.push(
+            `hidden:call:${typeof id}:${String(id)}:${this === hidden ? "receiver" : "detached"}`,
+          );
+          return id === 7;
+        };
+      },
+    } as unknown as ReadonlySet<number>;
+    const item = {
+      get id() {
+        events.push("item:id");
+        return 7;
+      },
+      get size() {
+        events.push("item:size");
+        return 8;
+      },
+    };
 
     draw(record.context, [countAnnotation({ id: 1, itemId: "7" })], {
-      hiddenTakeoffItemIds: new Set([7]),
-      getTakeoffItems: () => {
-        bridgeReads += 1;
-        return [{ id: 7, size: 8 }];
+      hiddenTakeoffItemIds: hidden,
+      getTakeoffItems: function (this: unknown) {
+        events.push(`bridge:${this === undefined ? "bare" : "bound"}`);
+        return [item];
       },
     });
 
-    expect(bridgeReads).toBe(1);
+    expect(events.filter((event) => /^(hidden|bridge|item):/.test(event))).toEqual([
+      "hidden:get-has",
+      "hidden:call:string:7:receiver",
+      "bridge:bare",
+      "item:id",
+      "item:id",
+      "item:size",
+    ]);
     expect(record.trace).toEqual(countTrace({
       shape: "circle",
       color: "#2468ac",
