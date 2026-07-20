@@ -271,6 +271,59 @@ describe("takeoff polygon gesture freeze (real overlay, production mousedown)", 
     expect(parentMouseDown).not.toHaveBeenCalled();
   });
 
+  it("W3a-race: a render-captured polygon press reaches the fresh saver after the same ID flips to linear", async () => {
+    seedPolygonState([], [polygonItem({ id: 6 })]);
+    const canvas = await mountCanvas();
+    enterDrawing(THREE_VERTS);
+
+    // The controller retains the render-captured polygon identity for this same-task press, while
+    // savePolygon's handler-time cache bridge observes the fresh replacement row.
+    act(() => {
+      seedTakeoff(queryClient, [polygonItem({
+        id: 6,
+        shape: "linear",
+        name: "Fresh linear identity",
+        color: "#06b6d4",
+      })], []);
+      fireEvent.mouseDown(canvas, { clientX: 114, clientY: 50, button: 0, detail: 1 });
+    });
+
+    expect(areaRows()).toHaveLength(1);
+    expect(areaRows()[0]).toMatchObject({
+      name: "Fresh linear identity",
+      data: {
+        type: "area-polygon",
+        takeoffItemId: 6,
+        color: "#06b6d4",
+        vertices: THREE_VERTS,
+      },
+    });
+    expect(useToolStore.getState().polygonDrawingMode).toBe("idle");
+    expect(useToolStore.getState().polygonVertices).toEqual([]);
+  });
+
+  it("W3a-freshness: a same-ID polygon replacement saves with its fresh name and color", async () => {
+    seedPolygonState([], [polygonItem({ id: 6 })]);
+    const canvas = await mountCanvas();
+    enterDrawing(THREE_VERTS);
+
+    act(() => {
+      seedTakeoff(queryClient, [polygonItem({
+        id: 6,
+        name: "Fresh flooring identity",
+        color: "#eab308",
+      })], []);
+      fireEvent.mouseDown(canvas, { clientX: 114, clientY: 50, button: 0, detail: 1 });
+    });
+
+    expect(areaRows()).toHaveLength(1);
+    expect(areaRows()[0]).toMatchObject({
+      name: "Fresh flooring identity",
+      data: { type: "area-polygon", color: "#eab308" },
+    });
+    expect(useToolStore.getState().polygonDrawingMode).toBe("idle");
+  });
+
   it("W3b: exactly 15px away is NOT a close (strict <) — the press appends instead", async () => {
     seedPolygonState([], [polygonItem({ id: 6 })]);
     const canvas = await mountCanvas();

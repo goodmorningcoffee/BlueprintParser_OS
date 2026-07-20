@@ -261,6 +261,59 @@ describe("takeoff linear gesture freeze (real overlay, production mousedown)", (
     expect(parentMouseDown).not.toHaveBeenCalled();
   });
 
+  it("W3a-race: a render-captured linear press reaches the fresh saver after the same ID flips to polygon", async () => {
+    seedLinearState([], [linearItem({ id: 6 })]);
+    const canvas = await mountCanvas();
+    enterDrawing(TWO_VERTS);
+
+    // Query observers publish on a later task. During this same synchronous act, the controller
+    // still classifies its render-captured linear item while the saver reads replacement metadata.
+    act(() => {
+      seedTakeoff(queryClient, [linearItem({
+        id: 6,
+        shape: "polygon",
+        name: "Fresh polygon identity",
+        color: "#a855f7",
+      })], []);
+      fireEvent.mouseDown(canvas, { clientX: 109, clientY: 50, button: 0, detail: 1 });
+    });
+
+    expect(polylineRows()).toHaveLength(1);
+    expect(polylineRows()[0]).toMatchObject({
+      name: "Fresh polygon identity",
+      data: {
+        type: "linear-polyline",
+        takeoffItemId: 6,
+        color: "#a855f7",
+        vertices: TWO_VERTS,
+      },
+    });
+    expect(useToolStore.getState().polygonDrawingMode).toBe("idle");
+    expect(useToolStore.getState().polygonVertices).toEqual([]);
+  });
+
+  it("W3a-freshness: a same-ID linear replacement saves with its fresh name and color", async () => {
+    seedLinearState([], [linearItem({ id: 6 })]);
+    const canvas = await mountCanvas();
+    enterDrawing(TWO_VERTS);
+
+    act(() => {
+      seedTakeoff(queryClient, [linearItem({
+        id: 6,
+        name: "Fresh conduit identity",
+        color: "#f97316",
+      })], []);
+      fireEvent.mouseDown(canvas, { clientX: 109, clientY: 50, button: 0, detail: 1 });
+    });
+
+    expect(polylineRows()).toHaveLength(1);
+    expect(polylineRows()[0]).toMatchObject({
+      name: "Fresh conduit identity",
+      data: { type: "linear-polyline", color: "#f97316" },
+    });
+    expect(useToolStore.getState().polygonDrawingMode).toBe("idle");
+  });
+
   it("W3b: exactly 10px away is NOT a finish (strict <) — the press appends instead", async () => {
     seedLinearState([], [linearItem({ id: 6 })]);
     const canvas = await mountCanvas();
