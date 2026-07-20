@@ -32,6 +32,17 @@ export interface DrawExistingAnnotationsProps {
   readonly getTakeoffItems: () => readonly TakeoffItemRenderData[];
 }
 
+function darkenOpaqueHexColor(color: string): string {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const shorthandOrFull = match[1];
+  const hex = shorthandOrFull.length === 3
+    ? [...shorthandOrFull].map((digit) => digit + digit).join("")
+    : shorthandOrFull;
+  const rgb = Number.parseInt(hex, 16);
+  return `rgb(${((rgb >> 16) & 0xff) * 0.7 | 0}, ${((rgb >> 8) & 0xff) * 0.7 | 0}, ${(rgb & 0xff) * 0.7 | 0})`;
+}
+
 function drawCountMarker(
   ctx: CanvasRenderingContext2D,
   ann: ExistingAnnotationRenderData,
@@ -51,9 +62,8 @@ function drawCountMarker(
   const r = (markerSize || 10) / (cssScale || 1);
 
   ctx.save();
-  ctx.fillStyle = data.color + "cc";
-  const rgb = parseInt(data.color.slice(1), 16);
-  ctx.strokeStyle = `rgb(${((rgb >> 16) & 0xff) * 0.7 | 0}, ${((rgb >> 8) & 0xff) * 0.7 | 0}, ${(rgb & 0xff) * 0.7 | 0})`;
+  ctx.fillStyle = data.color;
+  ctx.strokeStyle = darkenOpaqueHexColor(data.color);
   ctx.lineWidth = isSelected ? 3 : 1.5;
 
   ctx.beginPath();
@@ -89,7 +99,13 @@ function drawCountMarker(
       break;
     }
   }
-  ctx.fill();
+  const inheritedGlobalAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = inheritedGlobalAlpha * 0.8;
+  try {
+    ctx.fill();
+  } finally {
+    ctx.globalAlpha = inheritedGlobalAlpha;
+  }
   ctx.stroke();
 
   if (isSelected) {

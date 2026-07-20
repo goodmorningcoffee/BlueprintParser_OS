@@ -311,6 +311,7 @@ function countMarkerTrace({
   cy,
   radius,
   selected,
+  inheritedAlpha = 1,
 }: {
   marker: string;
   shape: TakeoffShape;
@@ -319,6 +320,7 @@ function countMarkerTrace({
   cy: number;
   radius: number;
   selected: boolean;
+  inheritedAlpha?: number;
 }): StageTraceEntry[] {
   const dark = {
     "#ff0000": "rgb(178, 0, 0)",
@@ -371,12 +373,14 @@ function countMarkerTrace({
     ["call", "selection.has", Number(marker.slice(1)), true],
     ["get", "live.size"],
     ["call", "save"],
-    ["set", "fillStyle", `${color}cc`],
+    ["set", "fillStyle", color],
     ["set", "strokeStyle", dark],
     ["set", "lineWidth", selected ? 3 : 1.5],
     ["call", "beginPath"],
     ...path,
+    ["set", "globalAlpha", inheritedAlpha * 0.8],
     ["call", "fill"],
+    ["set", "globalAlpha", inheritedAlpha],
     ["call", "stroke"],
     ...(selected ? [
       ["set", "strokeStyle", "#ffffff"],
@@ -630,7 +634,7 @@ describe("AnnotationOverlay existing-annotation render freeze", () => {
     const existingStage = latest.slice(0, boundaryIndex);
 
     expect(existingStage).toEqual([
-      ...countMarkerTrace({ marker: "m101", shape: "circle", color: "#ff0000", cx: 0, cy: 20, radius: 4, selected: false }),
+      ...countMarkerTrace({ marker: "m101", shape: "circle", color: "#ff0000", cx: 0, cy: 20, radius: 4, selected: false, inheritedAlpha: 0.37 }),
       ...boxPaintTrace({ id: 201, name: "User Selected", color: "#f58231", x: 20, y: 10, width: 40, height: 50, fontSize: 13, textWidth: 24, selected: true, user: true }),
       ["get", "m102.itemId"],
       ["call", "hidden.has", 999, true],
@@ -700,9 +704,11 @@ describe("AnnotationOverlay existing-annotation render freeze", () => {
     const clearIndex = lastIndexOfCall(record.trace, "clearRect");
     expect(clearIndex).toBeGreaterThan(-1);
     const latest = record.trace.slice(clearIndex + 1);
-    expect(latest.find((entry) =>
-      entry[0] === "set" && entry[1] === "globalAlpha"
-    )).toEqual(["set", "globalAlpha", 0.25]);
+    const ordinaryStroke = latest.findIndex((entry) =>
+      entry[0] === "set" && entry[1] === "strokeStyle" && entry[2] === "#f58231"
+    );
+    expect(ordinaryStroke).toBeGreaterThan(0);
+    expect(latest[ordinaryStroke - 1]).toEqual(["set", "globalAlpha", 0.25]);
   });
 });
 
@@ -735,6 +741,7 @@ const LABEL_COLOR_POLICY = readFileSync(
   join(process.cwd(), "src/lib/annotation-label-color.ts"),
   "utf8",
 );
+const DARK_COLOR_START = "function darkenOpaqueHexColor(color: string): string {\n";
 const COUNT_START = "function drawCountMarker(\n";
 const HELPER_RENDER_HEADER = "/**\n * Draw existing count markers or bbox/label annotations in source-row order.\n";
 const EXISTING_HEADER = "    // Draw existing annotations\n";
@@ -788,11 +795,18 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
       "5d0932d56d74e94209b15526e179e1f6f1dba50c3664b65c9f3c5b2a16f607ac",
     );
 
+    const darkColor = exactSlice(EXISTING_ANNOTATIONS, DARK_COLOR_START, COUNT_START);
+    expect(count(darkColor, "\n")).toBe(11);
+    expect(Buffer.byteLength(darkColor, "utf8")).toBe(467);
+    expect(sha256(darkColor)).toBe(
+      "72d670e3dafd5cf8590a242d4f14b53ada6a28930e03f4df31ff3f99a0bb9ec2",
+    );
+
     const countMarker = exactSlice(EXISTING_ANNOTATIONS, COUNT_START, HELPER_RENDER_HEADER);
-    expect(count(countMarker, "\n")).toBe(70);
-    expect(Buffer.byteLength(countMarker, "utf8")).toBe(2_055);
+    expect(count(countMarker, "\n")).toBe(75);
+    expect(Buffer.byteLength(countMarker, "utf8")).toBe(2_098);
     expect(sha256(countMarker)).toBe(
-      "e21bc361481e4c6309f51250f664b1decb031991cc8156d306cef6fb133e56ac",
+      "4593e70f0730f3be3c21d8f1ff35adb2767615e097424542ed210c9e2a3765aa",
     );
 
     const activeSupport = exactSlice(
@@ -813,10 +827,10 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
       "2422f753908674c7df08da0eda338df772b825cffceceea815cc1b98750ad80c",
     );
 
-    expect(count(EXISTING_ANNOTATIONS, "\n")).toBe(238);
-    expect(Buffer.byteLength(EXISTING_ANNOTATIONS, "utf8")).toBe(8_744);
+    expect(count(EXISTING_ANNOTATIONS, "\n")).toBe(254);
+    expect(Buffer.byteLength(EXISTING_ANNOTATIONS, "utf8")).toBe(9_254);
     expect(sha256(EXISTING_ANNOTATIONS)).toBe(
-      "2a92805207d46f2df5fa951cc8e996dba5c06f14e6dca75adab466cab31c40ed",
+      "868fab2f6ae2fdf473dd3f485c6135022f5619082886e66b9a41f7f4504c9d85",
     );
 
     const dependencies = exactSlice(
@@ -843,6 +857,7 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
     );
     expect(count(AO, COUNT_START.trim())).toBe(0);
     expect(count(EXISTING_ANNOTATIONS, COUNT_START.trim())).toBe(1);
+    expect(count(EXISTING_ANNOTATIONS, DARK_COLOR_START.trim())).toBe(1);
     expect(count(stage, "drawExistingAnnotations(ctx, {")).toBe(1);
     expect(stage).toContain("annotations: pageAnnotations,");
     expect(stage).toContain("selection: multiSelect,");
@@ -853,6 +868,10 @@ describe("AnnotationOverlay existing-annotation post-move topology", () => {
     expect(count(EXISTING_ANNOTATIONS, "drawCountMarker(ctx, ann, width, height")).toBe(1);
     expect(count(EXISTING_ANNOTATIONS, "const color = getLabelColor(ann.name);")).toBe(1);
     expect(count(EXISTING_ANNOTATIONS, "getTakeoffItems()")).toBe(1);
+    expect(EXISTING_ANNOTATIONS).toContain("ctx.fillStyle = data.color;");
+    expect(EXISTING_ANNOTATIONS).toContain("ctx.strokeStyle = darkenOpaqueHexColor(data.color);");
+    expect(EXISTING_ANNOTATIONS).toContain("ctx.globalAlpha = inheritedGlobalAlpha * 0.8;");
+    expect(EXISTING_ANNOTATIONS).not.toContain('data.color + "cc"');
     expect(EXISTING_ANNOTATIONS).toContain("t.id === itemId || String(t.id) === String(itemId)");
     expect(EXISTING_ANNOTATIONS).toContain("ann.id === selectedId || selection.isSelected(ann.id)");
     expect(EXISTING_ANNOTATIONS).toContain("const [minX, minY, maxX, maxY] = ann.bbox;");

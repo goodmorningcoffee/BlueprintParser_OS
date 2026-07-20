@@ -339,7 +339,13 @@ function captureThrown(run: () => void): unknown {
 }
 
 function darkened(color: string): string {
-  const rgb = parseInt(color.slice(1), 16);
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const shorthandOrFull = match[1];
+  const hex = shorthandOrFull.length === 3
+    ? [...shorthandOrFull].map((digit) => digit + digit).join("")
+    : shorthandOrFull;
+  const rgb = Number.parseInt(hex, 16);
   return `rgb(${((rgb >> 16) & 0xff) * 0.7 | 0}, ${((rgb >> 8) & 0xff) * 0.7 | 0}, ${(rgb & 0xff) * 0.7 | 0})`;
 }
 
@@ -351,6 +357,7 @@ function countTrace({
   radius,
   selected = false,
   haloScale = 2,
+  inheritedAlpha = 0.37,
 }: {
   readonly shape: string;
   readonly color: string;
@@ -359,6 +366,7 @@ function countTrace({
   readonly radius: number;
   readonly selected?: boolean;
   readonly haloScale?: number;
+  readonly inheritedAlpha?: number;
 }): TraceEntry[] {
   const path: TraceEntry[] = [];
   if (shape === "circle") {
@@ -405,12 +413,14 @@ function countTrace({
 
   return [
     ["get", "save"], ["call", "save"],
-    ["set", "fillStyle", `${color}cc`],
+    ["set", "fillStyle", color],
     ["set", "strokeStyle", darkened(color)],
     ["set", "lineWidth", selected ? 3 : 1.5],
     ["get", "beginPath"], ["call", "beginPath"],
     ...path,
+    ["set", "globalAlpha", inheritedAlpha * 0.8],
     ["get", "fill"], ["call", "fill"],
+    ["set", "globalAlpha", inheritedAlpha],
     ["get", "stroke"], ["call", "stroke"],
     ...(selected ? [
       ["set", "strokeStyle", "#ffffff"],
@@ -769,22 +779,40 @@ describe("drawExistingAnnotations", () => {
     )).toHaveLength(7);
   });
 
-  it("attempts shorthand and named count colors through legacy alpha concatenation and parseInt darkening", () => {
+  it("keeps CSS count colors valid while darkening only opaque hex", () => {
     const record = recordingContext();
 
     draw(record.context, [
       countAnnotation({ id: 1, color: "#abc" }),
-      countAnnotation({ id: 2, color: "red" }),
+      countAnnotation({ id: 2, color: "#A1B2C3" }),
+      countAnnotation({ id: 3, color: "red" }),
+      countAnnotation({ id: 4, color: "#abcd" }),
+      countAnnotation({ id: 5, color: "#12345678" }),
     ]);
 
     expect(record.trace.filter((entry) =>
       entry[0] === "set"
       && (entry[1] === "fillStyle" || entry[1] === "strokeStyle")
     )).toEqual([
-      ["set", "fillStyle", "#abccc"],
-      ["set", "strokeStyle", "rgb(0, 7, 131)"],
-      ["set", "fillStyle", "redcc"],
-      ["set", "strokeStyle", "rgb(0, 0, 165)"],
+      ["set", "fillStyle", "#abc"],
+      ["set", "strokeStyle", "rgb(118, 130, 142)"],
+      ["set", "fillStyle", "#A1B2C3"],
+      ["set", "strokeStyle", "rgb(112, 124, 136)"],
+      ["set", "fillStyle", "red"],
+      ["set", "strokeStyle", "red"],
+      ["set", "fillStyle", "#abcd"],
+      ["set", "strokeStyle", "#abcd"],
+      ["set", "fillStyle", "#12345678"],
+      ["set", "strokeStyle", "#12345678"],
+    ]);
+    expect(record.trace.filter((entry) =>
+      entry[0] === "set" && entry[1] === "globalAlpha"
+    )).toEqual([
+      ["set", "globalAlpha", 0.296], ["set", "globalAlpha", 0.37],
+      ["set", "globalAlpha", 0.296], ["set", "globalAlpha", 0.37],
+      ["set", "globalAlpha", 0.296], ["set", "globalAlpha", 0.37],
+      ["set", "globalAlpha", 0.296], ["set", "globalAlpha", 0.37],
+      ["set", "globalAlpha", 0.296], ["set", "globalAlpha", 0.37],
     ]);
   });
 
@@ -1907,7 +1935,45 @@ describe("drawExistingAnnotations", () => {
     expect(record.trace).not.toContainEqual(["call", "restore"]);
     expect(events).toContain("rows:call-return:receiver");
     expect(record.state()).toEqual({
-      fillStyle: "#102030cc",
+      fillStyle: "#102030",
+      strokeStyle: darkened("#102030"),
+      lineWidth: 1.5,
+      globalAlpha: 0.37,
+      font: "italic 13px serif",
+      stackDepth: 1,
+    });
+  });
+
+  it("restores inherited alpha before propagating a count fill failure", () => {
+    const events: string[] = [];
+    const failure = new Error("fill boom");
+    const record = recordingContext({
+      events,
+      failure: { phase: "call", property: "fill", error: failure },
+    });
+    const rows = trackedIterable(
+      "rows",
+      [countAnnotation({ id: 1, color: "#102030" })],
+      events,
+    );
+    const normal = countTrace({
+      shape: "circle",
+      color: "#102030",
+      cx: 60,
+      cy: 50,
+      radius: 4,
+    });
+    const fillCall = normal.findIndex((entry) =>
+      entry[0] === "call" && entry[1] === "fill"
+    );
+
+    expect(captureThrown(() => draw(record.context, rows, {
+      getTakeoffItems: () => [{ id: 1, size: 8 }],
+    }))).toBe(failure);
+    expect(record.trace).toEqual(normal.slice(0, fillCall + 2));
+    expect(events).toContain("rows:call-return:receiver");
+    expect(record.state()).toEqual({
+      fillStyle: "#102030",
       strokeStyle: darkened("#102030"),
       lineWidth: 1.5,
       globalAlpha: 0.37,
@@ -2010,12 +2076,17 @@ describe("existingAnnotations source boundary", () => {
   );
 
   it("keeps a private count renderer, one annotation loop, and an injected pure boundary", () => {
+    expect(countOccurrences(source, "function darkenOpaqueHexColor(")).toBe(1);
+    expect(source).not.toContain("export function darkenOpaqueHexColor(");
     expect(countOccurrences(source, "function drawCountMarker(")).toBe(1);
     expect(source).not.toContain("export function drawCountMarker(");
     expect(countOccurrences(source, "for (const ann of annotations)")).toBe(1);
     expect(countOccurrences(source, "getTakeoffItems()")).toBe(1);
     expect(source).toContain("t.id === itemId || String(t.id) === String(itemId)");
     expect(source).toContain("const [minX, minY, maxX, maxY] = ann.bbox;");
+    expect(source).toContain("ctx.strokeStyle = darkenOpaqueHexColor(data.color);");
+    expect(source).toContain("ctx.globalAlpha = inheritedGlobalAlpha * 0.8;");
+    expect(source).not.toContain('data.color + "cc"');
     expect(source).not.toMatch(/@tanstack|useQuery|useViewerStore|readTakeoffItems|labelColorMap/);
     expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB|fetch\(/);
   });
