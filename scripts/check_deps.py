@@ -7,7 +7,7 @@ Run: python3 scripts/check_deps.py
 Checks:
   - Python version (warn if 3.14+)
   - System tools: Ghostscript, Tesseract
-  - Core Python packages: opencv, numpy, img2table, camelot, pdfplumber
+  - Core Python packages: opencv, numpy, img2table, pdfplumber
   - ML packages: torch, torchvision, transformers, timm
   - TATR model files
 """
@@ -68,7 +68,6 @@ print("\n=== Table Parsing Packages ===")
 for mod, name, extra in [
     ("img2table.document", "img2table", ""),
     ("img2table.ocr", "img2table.ocr (TesseractOCR)", ""),
-    ("camelot", "camelot-py", ""),
     ("pdfplumber", "pdfplumber", ""),
 ]:
     try:
@@ -78,7 +77,7 @@ for mod, name, extra in [
         check(name, False, str(e))
 
 # PROD-FIX-3: PyMuPDF (fitz) is needed by Phase C's img2table PDF mode for
-# in-memory PDF cropping AND by camelot-fix for the same purpose. img2table
+# in-memory PDF cropping. img2table
 # itself imports fine without it (lazy fitz import), so this needs to be
 # checked explicitly. Production was missing this for one full release.
 try:
@@ -87,7 +86,7 @@ try:
     short = (ver[:60] if isinstance(ver, str) else str(ver))
     check("PyMuPDF (fitz)", True, short.strip() or "OK")
 except Exception as e:
-    check("PyMuPDF (fitz)", False, f"{e} — needed for img2table PDF mode + camelot crop. pip install pymupdf")
+    check("PyMuPDF (fitz)", False, f"{e} — needed for img2table PDF mode. pip install pymupdf")
 
 # Check if img2table TesseractOCR actually instantiates
 try:

@@ -69,7 +69,6 @@ export function Section06TablesAndTags() {
           headers={["Method", "Strengths", "Implementation"]}
           rows={[
             ["img2table", "Fast, handles grid-based tables well, returns cell-level bboxes.", <InlineCode key="1">src/lib/img2table-extract.ts</InlineCode>],
-            ["Camelot (pdfplumber-backed)", "PDF-native extraction via vector paths. Works when the PDF has text layers.", <InlineCode key="2">src/lib/camelot-extract.ts</InlineCode>],
             ["TATR (Table Transformer)", "Transformer-based structure inference. Robust to scanned / image-only tables.", <InlineCode key="3">src/lib/tatr-structure.ts</InlineCode>],
             ["OCR grid detect", "OpenCV line detection + OCR word clustering. Pure-image fallback.", <InlineCode key="4">src/lib/ocr-grid-detect.ts</InlineCode>],
           ]}

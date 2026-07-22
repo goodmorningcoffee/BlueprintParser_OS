@@ -2,8 +2,8 @@
  * Table parsing methods — OCR positions, Textract tables, OpenCV lines.
  *
  * These are the first 3 of the 7-method merge pipeline. Methods 4-7
- * (img2table, camelot lattice, camelot stream, pdfplumber) are in
- * their own modules: img2table-extract.ts and camelot-extract.ts.
+ * (img2table) live in their own modules (img2table-extract.ts). The
+ * camelot/pdfplumber chain was removed in P4.4 (zero callers since the extraction split).
  *
  * Extracted from api/table-parse/route.ts to keep the route handler thin.
  */
