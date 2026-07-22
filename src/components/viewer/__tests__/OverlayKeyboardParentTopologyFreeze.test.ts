@@ -1,19 +1,26 @@
 // @vitest-environment node
 //
-// [refactor jul20 P3.4 K0] Parent topology freeze for the shared AnnotationOverlay keyboard axis.
-// These assertions intentionally describe the pre-dispatcher defects: two independently ordered
-// listeners, incomplete editable gates, and Enter fan-out. K1 translates the same file to the
-// accepted one-listener topology instead of deleting the evidence.
+// [refactor jul20 P3.4 K1] Post-move topology freeze for the shared AnnotationOverlay keyboard
+// axis. K0 described the two listeners, incomplete editable gates, and Enter fan-out; the same
+// evidence now pins one dispatcher, deterministic priority, and the rejected page/zoom migration.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
 const OVERLAY_PATH = "src/components/viewer/AnnotationOverlay.tsx";
+const DISPATCHER_PATH = "src/components/viewer/useOverlayKeyboardDispatcher.ts";
+const EDITABLE_TARGET_PATH = "src/lib/keyboard-target.ts";
 const DEAD_HOOK_PATH = "src/hooks/useKeyboardShortcuts.ts";
 const OVERLAY = readFileSync(join(ROOT, OVERLAY_PATH), "utf8");
-const DEAD_HOOK = readFileSync(join(ROOT, DEAD_HOOK_PATH), "utf8");
+const DISPATCHER = readFileSync(join(ROOT, DISPATCHER_PATH), "utf8");
+const EDITABLE_TARGET = readFileSync(join(ROOT, EDITABLE_TARGET_PATH), "utf8");
+const AUTH_PAGE = readFileSync(
+  join(ROOT, "src/app/(dashboard)/project/[id]/page.tsx"),
+  "utf8",
+);
+const DEMO_PAGE = readFileSync(join(ROOT, "src/app/demo/project/[id]/page.tsx"), "utf8");
 
 function count(source: string, needle: string): number {
   return source.split(needle).length - 1;
@@ -49,71 +56,82 @@ function productionSources(directory = "src"): string[] {
 }
 
 describe("P3.4 overlay keyboard parent topology", () => {
-  it("characterizes the two independently installed window listeners", () => {
-    expect(count(OVERLAY, 'window.addEventListener("keydown",')).toBe(2);
-    expect(count(OVERLAY, 'window.removeEventListener("keydown",')).toBe(2);
-    expect(OVERLAY.indexOf('window.addEventListener("keydown", handleEscape)')).toBeLessThan(
-      OVERLAY.indexOf('window.addEventListener("keydown", handleKey)'),
+  it("keeps one unconditional AO dispatcher call before the render-null gate", () => {
+    expect(count(OVERLAY, "useOverlayKeyboardDispatcher({")).toBe(1);
+    expect(count(OVERLAY, 'window.addEventListener("keydown",')).toBe(0);
+    expect(count(DISPATCHER, 'window.addEventListener("keydown", handleKeyDown)')).toBe(1);
+    expect(count(DISPATCHER, 'window.removeEventListener("keydown", handleKeyDown)')).toBe(1);
+    expect(DISPATCHER).not.toContain('addEventListener("keydown", handleKeyDown,');
+    expect(DISPATCHER).not.toContain("if (selectedId === null) return;");
+    expect(OVERLAY.indexOf("useOverlayKeyboardDispatcher({")).toBeLessThan(
+      OVERLAY.indexOf("if (!canvasShouldRender) return null;"),
     );
-    expect(OVERLAY).toContain("if (selectedId === null) return;");
   });
 
-  it("characterizes the incomplete and differently placed editable gates", () => {
-    const toolListener = slice(
-      OVERLAY,
-      "  // Escape and tool-local keyboard commands",
-      "  // Keyboard: Delete/Backspace",
-    );
-    const selectionListener = slice(
-      OVERLAY,
-      "  // Keyboard: Delete/Backspace",
-      "  // Exit polygon drawing",
-    );
-
-    expect(toolListener.indexOf('if (e.key === "Escape")')).toBeLessThan(
-      toolListener.indexOf("e.target instanceof HTMLInputElement"),
-    );
-    expect(toolListener.indexOf('if (e.key === "Enter")')).toBeLessThan(
-      toolListener.indexOf("e.target instanceof HTMLInputElement"),
-    );
-    expect(toolListener).not.toContain("isContentEditable");
-    expect(selectionListener).toContain("e.target instanceof HTMLInputElement");
-    expect(selectionListener).toContain("e.target instanceof HTMLTextAreaElement");
-    expect(selectionListener).not.toContain("isContentEditable");
+  it("puts the complete safe editable predicate before lifecycle and owner reads", () => {
+    const handler = slice(DISPATCHER, "    function handleKeyDown", "    window.addEventListener");
+    const editable = handler.indexOf("if (isEditableKeyboardTarget(event.target)) return;");
+    const lifecycle = handler.indexOf("if (!canAdoptProjectLifecycle()) return;");
+    expect(editable).toBeGreaterThan(-1);
+    expect(editable).toBeLessThan(lifecycle);
+    for (const ownerRead of [
+      "useUiStore.getState()",
+      "useSessionStore.getState()",
+      "useToolStore.getState()",
+      "readActiveAnnotationDrag()",
+    ]) {
+      expect(editable, ownerRead).toBeLessThan(handler.indexOf(ownerRead));
+    }
+    expect(EDITABLE_TARGET).toContain("target instanceof HTMLInputElement");
+    expect(EDITABLE_TARGET).toContain("target instanceof HTMLTextAreaElement");
+    expect(EDITABLE_TARGET).toContain("target instanceof HTMLElement");
+    expect(EDITABLE_TARGET).toContain("target.isContentEditable");
+    expect(EDITABLE_TARGET).toContain('getAttribute("contenteditable")');
   });
 
-  it("characterizes simultaneous tool-Enter and drag-Enter fan-out", () => {
-    const toolListener = slice(
-      OVERLAY,
-      "  // Escape and tool-local keyboard commands",
-      "  // Keyboard: Delete/Backspace",
-    );
-    const selectionListener = slice(
-      OVERLAY,
-      "  // Keyboard: Delete/Backspace",
-      "  // Exit polygon drawing",
-    );
-
-    expect(toolListener).toContain('if (e.key === "Enter")');
-    expect(toolListener).toContain("acceptSplit();");
-    expect(toolListener).toContain("prepareBucketFillPolygon();");
-    expect(toolListener).toContain("saveLinearPolyline();");
-    expect(toolListener).toContain("savePolygon();");
-    expect(selectionListener).toContain('if (e.key === "Enter")');
-    expect(selectionListener).toContain("finishAnnotationDrag(annotationDrag, true);");
+  it("pins drag-first Enter before every tool Enter publication", () => {
+    const drag = DISPATCHER.indexOf("const annotationDrag = readActiveAnnotationDrag();");
+    const finish = DISPATCHER.indexOf("finishAnnotationDrag(annotationDrag, true);");
+    expect(drag).toBeGreaterThan(-1);
+    expect(finish).toBeGreaterThan(drag);
+    for (const toolAction of [
+      "acceptSplit();",
+      "prepareBucketFillPolygon();",
+      "saveLinearPolyline();",
+      "savePolygon();",
+    ]) {
+      expect(finish, toolAction).toBeLessThan(DISPATCHER.indexOf(toolAction));
+    }
+    expect(count(DISPATCHER, "finishAnnotationDrag(annotationDrag, true);")).toBe(1);
   });
 
-  it("pins the dead hook as promises without a production caller", () => {
+  it("moves only live browse/Z-W promises and rejects dead page/zoom ownership", () => {
+    expect(existsSync(join(ROOT, DEAD_HOOK_PATH))).toBe(false);
     const callers = productionSources()
-      .filter((path) => path !== DEAD_HOOK_PATH)
       .filter((path) => readFileSync(join(ROOT, path), "utf8").includes("useKeyboardShortcuts"));
     expect(callers).toEqual([]);
-    expect(DEAD_HOOK).toContain("navigateYoloTag(");
-    expect(DEAD_HOOK).toContain("takeoffUndo(qc);");
-    expect(DEAD_HOOK).toContain("takeoffRedo(qc);");
-    expect(DEAD_HOOK).toContain("navigateViewerPage(");
-    expect(DEAD_HOOK).toContain("core.zoomIn();");
-    expect(DEAD_HOOK).toContain("core.zoomOut();");
-    expect(DEAD_HOOK).toContain("core.zoomFit();");
+    expect(DISPATCHER).toContain("navigateYoloTag(");
+    expect(DISPATCHER).toContain("takeoffUndo(qc);");
+    expect(DISPATCHER).toContain("takeoffRedo(qc);");
+    expect(DISPATCHER).not.toContain("navigateViewerPage");
+    expect(DISPATCHER).not.toContain("useViewerCoreStore");
+    expect(DISPATCHER).not.toMatch(/\.zoom(?:In|Out|Fit)\(/u);
+    expect(DISPATCHER).not.toContain("stopPropagation");
+    expect(DISPATCHER).not.toContain("stopImmediatePropagation");
+  });
+
+  it("keeps both project-page Arrow guards before viewer-core reads", () => {
+    for (const [label, page] of [["auth", AUTH_PAGE], ["demo", DEMO_PAGE]] as const) {
+      const handler = slice(page, "    function handleKeyDown", "    window.addEventListener");
+      const editable = handler.indexOf("if (isEditableKeyboardTarget(e.target)) return;");
+      const browse = handler.indexOf("useUiStore.getState().tagBrowseId");
+      const core = handler.indexOf("const store = useViewerCoreStore.getState();");
+      expect(editable, `${label} editable`).toBeGreaterThan(-1);
+      expect(browse, `${label} browse`).toBeGreaterThan(editable);
+      expect(core, `${label} core`).toBeGreaterThan(browse);
+      expect(handler).toContain('e.key === "ArrowLeft" || e.key === "ArrowRight"');
+      expect(handler).not.toContain("stopPropagation");
+      expect(handler).not.toContain("stopImmediatePropagation");
+    }
   });
 });

@@ -93,7 +93,7 @@ describe("AnnotationOverlay TATR draw/mount gate topology", () => {
     );
   });
 
-  it("keeps AnnotationOverlay at the exact 1,725-line architecture ceiling", () => {
-    expect(count(AO, "\n")).toBe(1_725);
+  it("keeps AnnotationOverlay at the exact 1,571-line architecture ceiling", () => {
+    expect(count(AO, "\n")).toBe(1_571);
   });
 });

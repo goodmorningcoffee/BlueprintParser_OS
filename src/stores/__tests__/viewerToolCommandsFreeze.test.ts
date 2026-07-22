@@ -24,6 +24,7 @@ type ParseState = ReturnType<typeof useParseFlowStore.getState>;
 type ToolState = ReturnType<typeof useToolStore.getState>;
 
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
+const OVERLAY_KEYBOARD = "src/components/viewer/useOverlayKeyboardDispatcher.ts";
 const PDF_VIEWER = "src/components/viewer/PDFViewer.tsx";
 const VIEWER_COMMANDS = "src/stores/viewerCommands.ts";
 
@@ -796,6 +797,7 @@ describe("P2.3 T2 resetAllTools characterization", () => {
 
 describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
   const source = parseSource(ANNOTATION_OVERLAY);
+  const keyboardSource = parseSource(OVERLAY_KEYBOARD);
 
   it("pins the captured gesture lease and exact flow-owned mouseup dispatch", () => {
     const callbackBody = (name: string): ts.Block => {
@@ -870,39 +872,42 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
   });
 
   it("pins Escape to one exact live activation and kind-local action order", () => {
-    const handler = findNamedFunction(source, "handleEscape");
-    if (!handler.body) throw new Error("handleEscape must have a body");
+    const handler = findNamedFunction(keyboardSource, "handleKeyDown");
+    if (!handler.body) throw new Error("handleKeyDown must have a body");
     const escapeIf = descendants(handler.body, ts.isIfStatement).find(
-      (statement) => compact(statement.expression, source) === 'e.key==="Escape"',
+      (statement) =>
+        compact(statement.expression, keyboardSource) === 'event.key==="Escape"' &&
+        ts.isBlock(statement.thenStatement) &&
+        compact(statement.thenStatement, keyboardSource).includes("constsplitAtEscape="),
     );
     if (!escapeIf || !ts.isBlock(escapeIf.thenStatement)) {
       throw new Error("Expected the Escape block");
     }
 
     const escapeBlock = escapeIf.thenStatement;
-    expect(compact(escapeBlock.statements[0], source)).toBe(
+    expect(compact(escapeBlock.statements[0], keyboardSource)).toBe(
       "constsplitAtEscape=useToolStore.getState();",
     );
-    expect(compact(escapeBlock.statements[1], source)).toBe(
+    expect(compact(escapeBlock.statements[1], keyboardSource)).toBe(
       'if(splitAtEscape.activeTool?.kind==="split"&&splitAtEscape.splitPreview?.commitPending===true)return;',
     );
     const snapshotDeclarations = escapeBlock.statements.filter(ts.isVariableStatement);
-    expect(snapshotDeclarations.map((statement) => compact(statement, source))).toEqual([
+    expect(snapshotDeclarations.map((statement) => compact(statement, keyboardSource))).toEqual([
       "constsplitAtEscape=useToolStore.getState();",
       "constexpectedActiveTool=useToolStore.getState().activeTool;",
       "consttool=useToolStore.getState();",
       "constactiveTool=expectedActiveTool;",
     ]);
-    expect(compact(escapeBlock, source)).toContain(
+    expect(compact(escapeBlock, keyboardSource)).toContain(
       "cancelDeferredDrawing();consttool=useToolStore.getState();if(tool.activeTool!==expectedActiveTool)return;",
     );
     const cascade = escapeBlock.statements.filter(ts.isIfStatement).find(
-      (statement) => compact(statement.expression, source) === 'activeTool?.kind==="split"',
+      (statement) => compact(statement.expression, keyboardSource) === 'activeTool?.kind==="split"',
     );
     if (!cascade) throw new Error("Expected the Escape priority cascade");
     const branches = ifChain(cascade);
 
-    expect(branches.map(({ condition }) => compact(condition, source))).toEqual([
+    expect(branches.map(({ condition }) => compact(condition, keyboardSource))).toEqual([
       'activeTool?.kind==="split"',
       'activeTool?.kind==="bucketFill"',
       'activeTool?.kind==="parseRect"',
@@ -912,7 +917,7 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
       'activeTool?.kind==="tagPick"',
       'activeTool?.kind==="tagAdd"',
     ]);
-    expect(branches.map(({ body }) => directBranchCalls(body, source))).toEqual([
+    expect(branches.map(({ body }) => directBranchCalls(body, keyboardSource))).toEqual([
       ["invalidateToolTailAuthority", "tool.setSplitPreview", "tool.setSplitAreaActive"],
       [
         "invalidateToolTailAuthority", "invalidateLatestToolOperation",
@@ -937,15 +942,15 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
 
     const bucketBranch = branches[1].body;
     const bucketCascade = descendants(bucketBranch, ts.isIfStatement).find(
-      (statement) => compact(statement.expression, source) === "tool.bucketFillPendingPolygon",
+      (statement) => compact(statement.expression, keyboardSource) === "tool.bucketFillPendingPolygon",
     );
     if (!bucketCascade) throw new Error("Expected exact Bucket Escape guards");
-    expect(ifChain(bucketCascade).map(({ condition }) => compact(condition, source))).toEqual([
+    expect(ifChain(bucketCascade).map(({ condition }) => compact(condition, keyboardSource))).toEqual([
       "tool.bucketFillPendingPolygon",
       "tool.bucketFillPreview",
       "tool.bucketFillBarrierMode",
     ]);
-    expect(callLabels(escapeBlock, source)).not.toContain("e.preventDefault");
+    expect(callLabels(escapeBlock, keyboardSource)).not.toContain("event.preventDefault");
     expect(descendants(escapeBlock, ts.isBinaryExpression).some(
       (expression) => expression.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword,
     )).toBe(false);

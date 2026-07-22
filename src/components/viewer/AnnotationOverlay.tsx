@@ -36,10 +36,6 @@ import {
   addGuidedNotesRowForUser,
   addTableParseColumnForUser,
   addTableParseRowForUser,
-  setKeynoteParseStepWithTool,
-  setNotesParseStepWithTool,
-  setSpecParseStepWithTool,
-  setTableParseStepWithTool,
 } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { AREA_UNIT_MAP } from "@/types";
@@ -79,6 +75,7 @@ import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useAnnotationDragMachine } from "./useAnnotationDragMachine";
+import { useOverlayKeyboardDispatcher } from "./useOverlayKeyboardDispatcher";
 
 interface AnnotationOverlayProps {
   width: number;
@@ -951,6 +948,23 @@ export default memo(function AnnotationOverlay({
     setDragging, setResizeCorner, setDraggingVertex, setSelectedId,
   });
 
+  useOverlayKeyboardDispatcher({
+    canAdoptProjectLifecycle,
+    cancelDeferredDrawing,
+    acceptSplit,
+    prepareBucketFillPolygon,
+    savePolygon,
+    saveLinearPolyline,
+    setMousePos,
+    selectedId,
+    isDemo,
+    removeAnnotation,
+    setSelectedId,
+    readActiveAnnotationDrag,
+    finishAnnotationDrag,
+    publishTransientError: publishTransientBucketFillError,
+  });
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (!canAdoptProjectLifecycle()) return;
@@ -1347,174 +1361,6 @@ export default memo(function AnnotationOverlay({
     }
   }, [dragging, pageNumber, publicId, qc, saveDragPosition, saveLinearPolyline, savePolygon,
     selectedId, undoLastVertex]);
-
-  // Escape and tool-local keyboard commands always route through the exact live discriminator.
-  useEffect(() => {
-    function handleEscape(e: KeyboardEvent) {
-      if (!canAdoptProjectLifecycle()) return;
-      if (e.key === "Escape") {
-        const splitAtEscape = useToolStore.getState();
-        if (
-          splitAtEscape.activeTool?.kind === "split" &&
-          splitAtEscape.splitPreview?.commitPending === true
-        ) return;
-        const expectedActiveTool = useToolStore.getState().activeTool;
-        cancelDeferredDrawing();
-        const tool = useToolStore.getState();
-        if (tool.activeTool !== expectedActiveTool) return;
-        const activeTool = expectedActiveTool;
-        if (activeTool?.kind === "split") {
-          if (tool.splitPreview) {
-            invalidateToolTailAuthority();
-            tool.setSplitPreview(null);
-          } else {
-            tool.setSplitAreaActive(false);
-          }
-        } else if (activeTool?.kind === "bucketFill") {
-          if (tool.bucketFillPendingPolygon) {
-            invalidateToolTailAuthority();
-            invalidateLatestToolOperation("bucketFill");
-            tool.setBucketFillPendingPolygon(null);
-          } else if (tool.bucketFillPreview) {
-            invalidateToolTailAuthority();
-            invalidateLatestToolOperation("bucketFill");
-            tool.setBucketFillPreview(null);
-          } else if (tool.bucketFillBarrierMode) {
-            invalidateLatestToolOperation("bucketFill");
-            tool.setBucketFillBarrierMode(false);
-          } else {
-            tool.setBucketFillActive(false);
-          }
-        } else if (activeTool?.kind === "parseRect") {
-          if (activeTool.flow === "table") setTableParseStepWithTool("idle", "move");
-          else if (activeTool.flow === "keynote") setKeynoteParseStepWithTool("idle", "move");
-          else if (activeTool.flow === "notes") setNotesParseStepWithTool("idle", "move");
-          else setSpecParseStepWithTool("idle", "move");
-        } else if (activeTool?.kind === "takeoffPlacement") {
-          if (tool.polygonDrawingMode === "drawing") {
-            tool.resetPolygonDrawing();
-            if (!canAdoptProjectLifecycle()) return;
-            setMousePos(null);
-          } else {
-            tool.setActiveTakeoffItemId(null);
-          }
-        } else if (activeTool?.kind === "calibration") {
-          tool.resetCalibration();
-        } else if (activeTool?.kind === "symbolTemplate") {
-          tool.setSymbolSearchActive(false);
-        } else if (activeTool?.kind === "tagPick") {
-          tool.setYoloTagPickingMode(false);
-        } else if (activeTool?.kind === "tagAdd") {
-          tool.setTagAddingMode(null);
-        }
-      }
-      // Enter: accept bucket fill preview OR split preview OR close polygon/finish polyline
-      if (e.key === "Enter") {
-        const store = useToolStore.getState();
-        if (store.activeTool?.kind === "split" && store.splitPreview) {
-          e.preventDefault();
-          if (store.splitPreview.commitPending === true) return;
-          invalidateToolTailAuthority();
-          acceptSplit();
-        } else if (store.activeTool?.kind === "bucketFill" && store.bucketFillPreview) {
-          e.preventDefault();
-          invalidateToolTailAuthority();
-          invalidateLatestToolOperation("bucketFill");
-          prepareBucketFillPolygon();
-        } else if (store.activeTool?.kind === "takeoffPlacement" &&
-                   store.polygonDrawingMode === "drawing") {
-          e.preventDefault();
-          invalidateToolTailAuthority();
-          const verts = store.polygonVertices;
-          // [refactor jul10 P2.2④] items via the cache bridge (was store.takeoffItems). publicId
-          // freshness rides this effect's savePolygon/saveLinearPolyline deps (both re-create on
-          // publicId change), so the listener closure is never stale across a project switch.
-          const activeItem = readTakeoffItems(qc, publicId).find((t) => t.id === store.activeTakeoffItemId);
-          if (activeItem?.shape === "linear") {
-            if (verts.length >= 2) saveLinearPolyline();
-          } else {
-            if (verts.length >= 3) savePolygon();
-          }
-        }
-      }
-      // B: toggle barrier mode (when bucket fill is active)
-      if (e.key === "b" || e.key === "B") {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-        const store = useToolStore.getState();
-        if (store.activeTool?.kind === "bucketFill" && !store.bucketFillPreview) {
-          e.preventDefault();
-          invalidateLatestToolOperation("bucketFill");
-          store.setBucketFillBarrierMode(!store.bucketFillBarrierMode);
-        }
-      }
-      // Ctrl+Z: undo last barrier (in barrier mode) or last polygon vertex
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
-        const store = useToolStore.getState();
-        if (store.activeTool?.kind === "bucketFill" && store.bucketFillBarriers.length > 0) {
-          e.preventDefault();
-          invalidateToolTailAuthority();
-          invalidateLatestToolOperation("bucketFill");
-          store.undoLastBarrier();
-        } else if (store.activeTool?.kind === "takeoffPlacement" &&
-                   store.polygonDrawingMode === "drawing") {
-          e.preventDefault();
-          invalidateToolTailAuthority();
-          store.undoLastVertex();
-        }
-      }
-    }
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [acceptSplit, canAdoptProjectLifecycle, cancelDeferredDrawing, prepareBucketFillPolygon,
-    publicId, qc, saveLinearPolyline, savePolygon, setMousePos]);
-
-  // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
-  useEffect(() => {
-    if (selectedId === null) return;
-
-    function handleKey(e: KeyboardEvent) {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
-        return;
-      if (!canAdoptProjectLifecycle()) return;
-
-      if (e.key === "Delete" || e.key === "Backspace") {
-        e.preventDefault();
-        invalidateToolTailAuthority();
-        if (canPersist(publicId, isDemo) && selectedId! > 0) {
-          const deleteId = selectedId!;
-          (async () => {
-            try {
-              await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
-            } catch (err) {
-              publishTransientBucketFillError(
-                err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
-              );
-            }
-          })();
-        }
-        removeAnnotation(selectedId!);
-        if (!canAdoptProjectLifecycle()) return;
-        setSelectedId(null);
-      }
-
-      if (e.key === "Enter") {
-        const annotationDrag = readActiveAnnotationDrag();
-        if (annotationDrag?.operation.kind === "vertex" ||
-            annotationDrag?.operation.kind === "bbox") {
-          e.preventDefault();
-          invalidateToolTailAuthority();
-          finishAnnotationDrag(annotationDrag, true);
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [canAdoptProjectLifecycle, finishAnnotationDrag, isDemo, publicId,
-    publishTransientBucketFillError, readActiveAnnotationDrag, removeAnnotation, selectedId]);
 
   // Exit polygon drawing when switching interaction modes
   const modeCleanupLifecycleRef = useRef(canAdoptProjectLifecycle);

@@ -446,6 +446,8 @@ describe("AT2 one exact global tool-tail authority", () => {
       // claimed polygon presses (pre-move AO:1759 semantics); its declines are zero-side-effect,
       // so exactly one borrower invalidates per press.
       "src/components/viewer/tools/takeoffPolygon.ts:invalidateToolTailAuthority",
+      "src/components/viewer/useOverlayKeyboardDispatcher.ts:invalidateLatestToolOperation",
+      "src/components/viewer/useOverlayKeyboardDispatcher.ts:invalidateToolTailAuthority",
       "src/queries/useAnnotations.ts:invalidateToolTailAuthority",
       "src/stores/toolStore.ts:invalidateLatestToolOperation",
       "src/stores/toolStore.ts:invalidateToolTailAuthority",

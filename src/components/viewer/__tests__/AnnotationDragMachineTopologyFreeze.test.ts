@@ -12,6 +12,10 @@ const OVERLAY = readFileSync(
   join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
   "utf8",
 );
+const KEYBOARD = readFileSync(
+  join(process.cwd(), "src/components/viewer/useOverlayKeyboardDispatcher.ts"),
+  "utf8",
+);
 
 describe("annotation drag machine topology", () => {
   it("revalidates the captured session before exposing hot-path physics", () => {
@@ -128,13 +132,17 @@ describe("annotation drag machine topology", () => {
   });
 
   it("routes Enter through the exact terminal with vertex-first precedence", () => {
-    const keyboard = OVERLAY.slice(
-      OVERLAY.indexOf("// Keyboard: Delete/Backspace"),
-      OVERLAY.indexOf("// Exit polygon drawing"),
+    const handler = KEYBOARD.slice(
+      KEYBOARD.indexOf("    function handleKeyDown"),
+      KEYBOARD.indexOf("      // Modal tag browsing"),
     );
-    const inputGuard = keyboard.indexOf("e.target instanceof HTMLInputElement");
-    const lifecycleGuard = keyboard.indexOf("if (!canAdoptProjectLifecycle()) return;");
-    const enterStart = keyboard.indexOf('if (e.key === "Enter")');
+    const keyboard = KEYBOARD.slice(
+      KEYBOARD.indexOf("      // An exact drag terminal"),
+      KEYBOARD.indexOf("      if (\n        selectedId !== null"),
+    );
+    const inputGuard = handler.indexOf("isEditableKeyboardTarget(event.target)");
+    const lifecycleGuard = handler.indexOf("if (!canAdoptProjectLifecycle()) return;");
+    const enterStart = keyboard.indexOf('if (event.key === "Enter")');
     const enter = keyboard.slice(enterStart);
     const read = enter.indexOf("const annotationDrag = readActiveAnnotationDrag();");
     const vertex = enter.indexOf('annotationDrag?.operation.kind === "vertex"');
@@ -150,12 +158,14 @@ describe("annotation drag machine topology", () => {
     expect(bbox).toBeGreaterThan(-1);
     expect(read).toBeLessThan(vertex);
     expect(inputGuard).toBeLessThan(lifecycleGuard);
-    expect(lifecycleGuard).toBeLessThan(enterStart);
+    expect(KEYBOARD.indexOf("if (!canAdoptProjectLifecycle()) return;")).toBeLessThan(
+      KEYBOARD.indexOf("const annotationDrag = readActiveAnnotationDrag();"),
+    );
     expect(vertex).toBeLessThan(bbox);
     expect(bbox).toBeLessThan(invalidate);
     expect(invalidate).toBeLessThan(finish);
     expect(enter.match(/finishAnnotationDrag\(annotationDrag, true\);/g)).toHaveLength(1);
-    expect(enter).not.toContain('e.key === "Enter" && dragging');
+    expect(enter).not.toContain('event.key === "Enter" && dragging');
     expect(enter).not.toContain("saveDragPosition();");
   });
 });

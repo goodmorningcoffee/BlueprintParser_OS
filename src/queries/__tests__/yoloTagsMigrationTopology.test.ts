@@ -147,7 +147,7 @@ describe("P2.2⑨ yoloTags migration topology", () => {
     expect(topology("navigateYoloTag")).toEqual({
       "src/components/viewer/KeynoteItem.tsx": 1,
       "src/components/viewer/TableCompareModal.tsx": 1,
-      "src/hooks/useKeyboardShortcuts.ts": 1,
+      "src/components/viewer/useOverlayKeyboardDispatcher.ts": 1,
     });
   });
 

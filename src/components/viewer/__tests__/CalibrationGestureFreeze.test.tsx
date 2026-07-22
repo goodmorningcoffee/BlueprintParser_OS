@@ -199,6 +199,10 @@ describe("calibration seam topology pins (post-move: controller registered, bran
     join(process.cwd(), "src/components/viewer/tools/calibration.ts"),
     "utf8",
   );
+  const DISPATCHER = readFileSync(
+    join(process.cwd(), "src/components/viewer/useOverlayKeyboardDispatcher.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
   it("pins the 4-arg seam wiring the captured press and lazy context factory", () => {
@@ -210,8 +214,10 @@ describe("calibration seam topology pins (post-move: controller registered, bran
   it("pins the calibration branch fully extracted from the overlay", () => {
     expect(count(AO, "// Scale calibration mode")).toBe(0);
     expect(count(AO, "advanceCalibrationGesture(")).toBe(0);
-    // Only the Escape keydown branch remains (out of P3.2 scope; the mousedown branch left).
-    expect(count(AO, 'activeTool?.kind === "calibration"')).toBe(1);
+    // [refactor jul22 P3.4] The Escape keydown branch moved to useOverlayKeyboardDispatcher;
+    // no calibration identity remains in AO. The Escape cascade owner is now the dispatcher.
+    expect(count(AO, 'activeTool?.kind === "calibration"')).toBe(0);
+    expect(count(DISPATCHER, 'activeTool?.kind === "calibration"')).toBe(1);
   });
 
   it("pins the controller as the sole home of the gesture calls with per-phase stopPropagation", () => {

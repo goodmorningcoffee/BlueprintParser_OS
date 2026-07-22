@@ -3,15 +3,14 @@
 // WHY THIS FILE EXISTS: takeoffUndo/takeoffRedo currently update annotations and the two history
 // stacks atomically inside zustand. In C3, annotations move to TanStack Query while the stacks stay
 // in zustand, so these operations become a deliberately non-atomic cache+store pair. These tests
-// freeze the user-visible behavior at BOTH production entry points before that split: the two
-// TakeoffPanel buttons and useKeyboardShortcuts' plain Z/W handlers. A refactor that wires only one
+// freeze the user-visible behavior at BOTH production entry points: the two TakeoffPanel buttons
+// and useOverlayKeyboardDispatcher's plain Z/W handlers. A refactor that wires only one
 // caller, removes the wrong matching marker, restores in the wrong position, or mutates history on a
 // guarded undo must therefore fail here.
 //
 // [refactor jul11 P2.2⑥] MIGRATION DISCIPLINE: QueryClientProvider is present from the first render.
-// C3 closes over useQueryClient() in its []-dependency keydown effect; mounting the provider proves
-// that wiring without rewriting test
-// bodies later. Annotation setup always goes through seedAnnotations(qc, rows), the domain's single
+// The dispatcher obtains the provider-stable QueryClient directly; mounting the provider proves
+// that production wiring. Annotation setup always goes through seedAnnotations(qc, rows), the domain's single
 // backing flip point. Likewise, EVERY annotation assertion goes through readCurrentAnnotations()
 // below, which delegates to the cache-backed shared test seam. Stack reads
 // deliberately remain zustand-backed because the stacks do.
@@ -24,12 +23,12 @@ import "@testing-library/jest-dom";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 import TakeoffPanel from "../TakeoffPanel";
+import { useOverlayKeyboardDispatcher } from "../useOverlayKeyboardDispatcher";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
@@ -107,7 +106,22 @@ function historyIds() {
 }
 
 function KeyboardHarness() {
-  useKeyboardShortcuts();
+  useOverlayKeyboardDispatcher({
+    canAdoptProjectLifecycle: () => true,
+    cancelDeferredDrawing: () => {},
+    acceptSplit: () => {},
+    prepareBucketFillPolygon: () => {},
+    savePolygon: () => {},
+    saveLinearPolyline: () => {},
+    setMousePos: () => {},
+    selectedId: null,
+    isDemo: false,
+    removeAnnotation: () => {},
+    setSelectedId: () => {},
+    readActiveAnnotationDrag: () => null,
+    finishAnnotationDrag: () => false,
+    publishTransientError: () => {},
+  });
   return <div data-testid="keyboard-shortcuts-mounted" />;
 }
 
@@ -225,7 +239,7 @@ describe("TakeoffPanel takeoff undo/redo buttons", () => {
   });
 });
 
-describe("useKeyboardShortcuts takeoff Z/W", () => {
+describe("useOverlayKeyboardDispatcher takeoff Z/W", () => {
   it("Z undoes through the live qc-ready handler and W restores the same row at the array tail", async () => {
     const staleRedo = takeoffAnnotation(91);
     seedAnnotations(qc, [
@@ -292,8 +306,8 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
       expect(readHistory().takeoffRedoStack).toBe(priorRedo);
     });
 
-    // The effect deliberately has [] deps, so changing these fields after mount also proves that the
-    // handler reads live store state. Item 7 exists, but only on page 1; page 2 is the no-match guard.
+    // Changing these fields after mount proves the handler and Query command read live owner state.
+    // Item 7 exists, but only on page 1; page 2 is the no-match guard.
     setViewerStoreStateForTest({
       activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: 7,

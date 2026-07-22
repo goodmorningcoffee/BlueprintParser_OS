@@ -523,18 +523,21 @@ describe("later user tool intent revokes parse completion writes", () => {
   });
 
   it("pins keyboard preview, undo, delete, and drag revocation before their publications", () => {
-    const source = readFileSync("src/components/viewer/AnnotationOverlay.tsx", "utf8");
+    const source = readFileSync(
+      "src/components/viewer/useOverlayKeyboardDispatcher.ts",
+      "utf8",
+    );
     for (const pattern of [
       /if \(activeTool\?\.kind === "split"\) \{[\s\S]*?if \(tool\.splitPreview\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?tool\.setSplitPreview\(null\)/,
       /else if \(activeTool\?\.kind === "bucketFill"\) \{[\s\S]*?if \(tool\.bucketFillPendingPolygon\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?tool\.setBucketFillPendingPolygon\(null\)/,
       /else if \(tool\.bucketFillPreview\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?tool\.setBucketFillPreview\(null\)/,
-      /if \(store\.activeTool\?\.kind === "split" && store\.splitPreview\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?acceptSplit\(\)/,
-      /else if \(store\.activeTool\?\.kind === "bucketFill" && store\.bucketFillPreview\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?prepareBucketFillPolygon\(\)/,
-      /else if \(store\.activeTool\?\.kind === "takeoffPlacement" &&[\s\S]*?store\.polygonDrawingMode === "drawing"\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?const verts = store\.polygonVertices/,
-      /store\.activeTool\?\.kind === "bucketFill" && store\.bucketFillBarriers\.length > 0[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?store\.undoLastBarrier\(\)/,
-      /else if \(store\.activeTool\?\.kind === "takeoffPlacement" &&[\s\S]*?store\.polygonDrawingMode === "drawing"\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?store\.undoLastVertex\(\)/,
-      /e\.key === "Delete" \|\| e\.key === "Backspace"[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?removeAnnotation/,
-      /if \(e\.key === "Enter"\) \{[\s\S]*?const annotationDrag = readActiveAnnotationDrag\(\);[\s\S]*?annotationDrag\?\.operation\.kind === "vertex"[\s\S]*?annotationDrag\?\.operation\.kind === "bbox"[\s\S]*?e\.preventDefault\(\);[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?finishAnnotationDrag\(annotationDrag, true\)/,
+      /if \(tool\.activeTool\?\.kind === "split" && tool\.splitPreview\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?acceptSplit\(\)/,
+      /if \(tool\.activeTool\?\.kind === "bucketFill" && tool\.bucketFillPreview\) \{[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?prepareBucketFillPolygon\(\)/,
+      /tool\.activeTool\?\.kind === "takeoffPlacement" &&[\s\S]*?tool\.polygonDrawingMode === "drawing"[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?const vertices = tool\.polygonVertices/,
+      /tool\.activeTool\?\.kind === "bucketFill" && tool\.bucketFillBarriers\.length > 0[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?invalidateLatestToolOperation\("bucketFill"\);[\s\S]*?tool\.undoLastBarrier\(\)/,
+      /tool\.activeTool\?\.kind === "takeoffPlacement" &&[\s\S]*?tool\.polygonDrawingMode === "drawing"[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?tool\.undoLastVertex\(\)/,
+      /event\.key === "Delete" \|\| event\.key === "Backspace"[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?removeAnnotation/,
+      /if \(event\.key === "Enter"\) \{[\s\S]*?const annotationDrag = readActiveAnnotationDrag\(\);[\s\S]*?annotationDrag\?\.operation\.kind === "vertex"[\s\S]*?annotationDrag\?\.operation\.kind === "bbox"[\s\S]*?event\.preventDefault\(\);[\s\S]*?invalidateToolTailAuthority\(\);[\s\S]*?finishAnnotationDrag\(annotationDrag, true\)/,
     ]) {
       expect(source).toMatch(pattern);
     }

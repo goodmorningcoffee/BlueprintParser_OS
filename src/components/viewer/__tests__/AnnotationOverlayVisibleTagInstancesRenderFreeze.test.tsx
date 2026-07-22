@@ -531,10 +531,10 @@ function expectPostMoveOrder(source: string): void {
 
 describe("AnnotationOverlay visible tag-instance post-move topology", () => {
   it("pins AO, import, upstream builder/prefix, pure call, bridge, downstream call, and dependencies", () => {
-    expect(count(AO, "\n")).toBe(1_725);
-    expect(Buffer.byteLength(AO, "utf8")).toBe(74_508);
+    expect(count(AO, "\n")).toBe(1_571);
+    expect(Buffer.byteLength(AO, "utf8")).toBe(67_479);
     expect(sha256(AO)).toBe(
-      "d9f8abb28aef0c1a9c6b6121ea783753d1cf1507bd947c6230ebd64a754a32cf",
+      "a24444efebcd341a89b2f54afc74f465f1e8ce0126a1c27ee33af0e34ad9c3b4",
     );
 
     const helperImport =

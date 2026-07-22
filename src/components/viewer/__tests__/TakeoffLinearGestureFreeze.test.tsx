@@ -559,14 +559,20 @@ describe("takeoff linear seam topology pins (post-move: controller registered, l
     join(process.cwd(), "src/components/viewer/tools/takeoffLinear.ts"),
     "utf8",
   );
+  const DISPATCHER = readFileSync(
+    join(process.cwd(), "src/components/viewer/useOverlayKeyboardDispatcher.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
   it("pins the linear identity fully extracted from the overlay", () => {
     expect(count(AO, 'if (activeItem.shape === "linear") {')).toBe(0);
     expect(count(AO, "if (dist < 10) {")).toBe(0);
     expect(count(AO, "const lastV = toolAtDown.polygonVertices[toolAtDown.polygonVertices.length - 1];")).toBe(0);
-    // The two SURVIVING call sites: Enter keydown + dblclick (the mousedown site moved).
-    expect(count(AO, "saveLinearPolyline();")).toBe(2);
+    // The two surviving finish paths now have distinct owners: dblclick stays in the overlay,
+    // while Enter is owned by the consolidated keyboard dispatcher.
+    expect(count(AO, "saveLinearPolyline();")).toBe(1);
+    expect(count(DISPATCHER, "saveLinearPolyline();")).toBe(1);
     // [refactor jul17 P3.2] The polygon identity moved to tools/takeoffPolygon.ts — the branch
     // now holds no shape identity at all (TakeoffPolygonGestureFreeze owns its pins).
     expect(count(AO, 'if (activeItem.shape === "polygon") {')).toBe(0);

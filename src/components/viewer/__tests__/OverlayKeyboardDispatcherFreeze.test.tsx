@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-// [refactor jul20 P3.4 K0] Parent behavior freeze for AnnotationOverlay's two window-keydown
-// listeners. This deliberately records the editable-target holes and the registration-order
-// fan-out that the dispatcher extraction must preserve or explicitly retire.
+// [refactor jul20 P3.4 K1] Real-Overlay behavior freeze for the consolidated keyboard dispatcher.
+// K0 recorded the editable-target holes and mutable two-listener fan-out; these tests now pin the
+// accepted first-operation editable gate and deterministic drag-first Enter priority.
 
 import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -227,6 +227,9 @@ beforeEach(() => {
     splitLineB: null,
     _mousePos: null,
     focusAnnotationId: null,
+    tagBrowseId: null,
+    tagBrowseIndex: 0,
+    llmHighlight: null,
   });
   seedAnnotations(queryClient, []);
   seedTakeoff(queryClient, [linearItem], []);
@@ -242,7 +245,7 @@ afterEach(async () => {
 });
 
 describe("AnnotationOverlay parent keyboard behavior", () => {
-  it("Escape currently consumes tool drawing from every editable kind and the button without preventing default", async () => {
+  it("Escape preserves every editable target and consumes only the noneditable button", async () => {
     setToolState({
       activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: ITEM_ID,
@@ -256,20 +259,29 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
         _mousePos: { x: 0.4, y: 0.5 },
       });
       const tail = claimTail();
+      const handled = targetName === "button";
 
       const event = press(target(targetName), "Escape");
 
       expect(event.defaultPrevented, targetName).toBe(false);
-      expect(useToolStore.getState().polygonDrawingMode, targetName).toBe("idle");
-      expect(useToolStore.getState().polygonVertices, targetName).toEqual([]);
-      expect(useToolStore.getState()._mousePos, targetName).toBeNull();
-      expect(ownsToolTailAuthority(tail.token), targetName).toBe(false);
-      await flushTail();
-      expect(tail.cancel, targetName).toHaveBeenCalledTimes(1);
+      expect(useToolStore.getState().polygonDrawingMode, targetName)
+        .toBe(handled ? "idle" : "drawing");
+      expect(useToolStore.getState().polygonVertices, targetName)
+        .toEqual(handled ? [] : VERTICES);
+      expect(useToolStore.getState()._mousePos, targetName)
+        .toEqual(handled ? null : { x: 0.4, y: 0.5 });
+      expect(ownsToolTailAuthority(tail.token), targetName).toBe(!handled);
+      if (handled) {
+        await flushTail();
+        expect(tail.cancel, targetName).toHaveBeenCalledTimes(1);
+      } else {
+        expect(tail.cancel, targetName).not.toHaveBeenCalled();
+        discardRetainedTail(tail.token);
+      }
     }
   });
 
-  it("tool Enter currently finishes a line from every editable kind and the button", async () => {
+  it("tool Enter preserves every editable target and finishes only from the noneditable button", async () => {
     setToolState({
       activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: ITEM_ID,
@@ -280,31 +292,40 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
       act(() => seedAnnotations(queryClient, []));
       setToolState({ polygonDrawingMode: "drawing", polygonVertices: VERTICES });
       const tail = claimTail();
+      const handled = targetName === "button";
 
       const event = press(target(targetName), "Enter");
 
-      expect(event.defaultPrevented, targetName).toBe(true);
-      expect(readSeededAnnotations(queryClient), targetName).toHaveLength(1);
-      expect(readSeededAnnotations(queryClient)[0].data, targetName).toMatchObject({
-        type: "linear-polyline",
-        takeoffItemId: ITEM_ID,
-        vertices: VERTICES,
-      });
-      expect(useToolStore.getState().polygonDrawingMode, targetName).toBe("idle");
-      expect(ownsToolTailAuthority(tail.token), targetName).toBe(false);
-      await flushTail();
-      expect(tail.cancel, targetName).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented, targetName).toBe(handled);
+      expect(readSeededAnnotations(queryClient), targetName).toHaveLength(handled ? 1 : 0);
+      if (handled) {
+        expect(readSeededAnnotations(queryClient)[0].data).toMatchObject({
+          type: "linear-polyline",
+          takeoffItemId: ITEM_ID,
+          vertices: VERTICES,
+        });
+      }
+      expect(useToolStore.getState().polygonDrawingMode, targetName)
+        .toBe(handled ? "idle" : "drawing");
+      expect(ownsToolTailAuthority(tail.token), targetName).toBe(!handled);
+      if (handled) {
+        await flushTail();
+        expect(tail.cancel, targetName).toHaveBeenCalledTimes(1);
+      } else {
+        expect(tail.cancel, targetName).not.toHaveBeenCalled();
+        discardRetainedTail(tail.token);
+      }
     }
   });
 
-  it("B guards input and textarea, but currently toggles from contenteditable and the button", async () => {
+  it("B guards every editable target and toggles only from the button", async () => {
     setToolState({ activeTool: { kind: "bucketFill" } });
     mount();
 
     for (const targetName of ALL_TARGETS) {
       setToolState({ bucketFillBarrierMode: false, bucketFillPreview: null });
       const tail = claimTail();
-      const handled = targetName === "contenteditable" || targetName === "button";
+      const handled = targetName === "button";
 
       const event = press(target(targetName), "B");
 
@@ -321,7 +342,7 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     }
   });
 
-  it("Ctrl+z currently removes a tool vertex from every editable kind and the button", async () => {
+  it("Ctrl+z preserves every editable target and removes a vertex only from the button", async () => {
     setToolState({
       activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: ITEM_ID,
@@ -331,24 +352,31 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     for (const targetName of ALL_TARGETS) {
       setToolState({ polygonDrawingMode: "drawing", polygonVertices: VERTICES });
       const tail = claimTail();
+      const handled = targetName === "button";
 
       const event = press(target(targetName), "z", { ctrlKey: true });
 
-      expect(event.defaultPrevented, targetName).toBe(true);
-      expect(useToolStore.getState().polygonVertices, targetName).toEqual(VERTICES.slice(0, -1));
-      expect(ownsToolTailAuthority(tail.token), targetName).toBe(false);
-      await flushTail();
-      expect(tail.cancel, targetName).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented, targetName).toBe(handled);
+      expect(useToolStore.getState().polygonVertices, targetName)
+        .toEqual(handled ? VERTICES.slice(0, -1) : VERTICES);
+      expect(ownsToolTailAuthority(tail.token), targetName).toBe(!handled);
+      if (handled) {
+        await flushTail();
+        expect(tail.cancel, targetName).toHaveBeenCalledTimes(1);
+      } else {
+        expect(tail.cancel, targetName).not.toHaveBeenCalled();
+        discardRetainedTail(tail.token);
+      }
     }
   });
 
-  it("selected Delete guards input and textarea, but currently deletes from contenteditable and the button", async () => {
+  it("selected Delete guards every editable target and deletes only from the button", async () => {
     mount();
 
     for (const targetName of ALL_TARGETS) {
       await selectRow();
       const tail = claimTail();
-      const handled = targetName === "contenteditable" || targetName === "button";
+      const handled = targetName === "button";
 
       const event = press(target(targetName), "Delete");
 
@@ -366,7 +394,7 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     }
   });
 
-  it("selected Enter guards input and textarea, but currently finishes a drag from contenteditable and the button", async () => {
+  it("selected Enter guards every editable target and finishes a drag only from the button", async () => {
     const session = dragSession();
     dragHarness.readActive.mockReturnValue(session);
     mount();
@@ -375,7 +403,7 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     for (const targetName of ALL_TARGETS) {
       dragHarness.finish.mockClear();
       const tail = claimTail();
-      const handled = targetName === "contenteditable" || targetName === "button";
+      const handled = targetName === "button";
 
       const event = press(target(targetName), "Enter");
 
@@ -420,10 +448,30 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     discardRetainedTail(tail.token);
   });
 
+  it("keeps modal Escape live when the canvas render gate returns null", () => {
+    setToolState({ mode: "move", activeTool: null });
+    act(() => useUiStore.setState({
+      tagBrowseId: "tag-7",
+      tagBrowseIndex: 3,
+      llmHighlight: { pageNumber: PAGE, bbox: [0.1, 0.2, 0.3, 0.4] },
+    }));
+    const rendered = mount();
+    expect(rendered.container.querySelector("canvas")).toBeNull();
+
+    const event = press(window, "Escape");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(useUiStore.getState()).toMatchObject({
+      tagBrowseId: null,
+      tagBrowseIndex: 0,
+      llmHighlight: null,
+    });
+  });
+
   it.each([
-    { label: "initial registration", churnWidth: false, expected: ["tool", "drag"] },
-    { label: "tool-listener dependency churn", churnWidth: true, expected: ["drag", "tool"] },
-  ])("simultaneous tool Enter + active drag fans out in $label order", async ({ churnWidth, expected }) => {
+    { label: "initial registration", churnWidth: false },
+    { label: "dependency churn", churnWidth: true },
+  ])("simultaneous tool Enter + active drag finishes only the drag after $label", async ({ churnWidth }) => {
     setToolState({
       activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: ITEM_ID,
@@ -455,12 +503,16 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     unsubscribe();
 
     expect(event.defaultPrevented).toBe(true);
-    expect(trace).toEqual(expected);
+    expect(trace).toEqual(["drag"]);
     expect(dragHarness.finish).toHaveBeenCalledOnce();
     expect(dragHarness.finish).toHaveBeenCalledWith(session, true);
     expect(readSeededAnnotations(queryClient).filter(
       (row) => (row.data as { type?: string } | null)?.type === "linear-polyline",
-    )).toHaveLength(1);
+    )).toHaveLength(0);
+    expect(useToolStore.getState()).toMatchObject({
+      polygonDrawingMode: "drawing",
+      polygonVertices: VERTICES,
+    });
     expect(ownsToolTailAuthority(tail.token)).toBe(false);
     await flushTail();
     expect(tail.cancel).toHaveBeenCalledTimes(1);

@@ -585,6 +585,10 @@ describe("takeoff polygon seam topology pins (post-move: controller registered, 
     join(process.cwd(), "src/components/viewer/tools/takeoffPolygon.ts"),
     "utf8",
   );
+  const DISPATCHER = readFileSync(
+    join(process.cwd(), "src/components/viewer/useOverlayKeyboardDispatcher.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
   it("pins the polygon identity fully extracted from the overlay", () => {
@@ -593,8 +597,10 @@ describe("takeoff polygon seam topology pins (post-move: controller registered, 
     expect(count(AO, "const firstV = toolAtDown.polygonVertices[0];")).toBe(0);
     // The overlay mousedown owns no distance math anymore (HitTestBehaviorFreeze whole-file pin).
     expect(count(AO, "Math.sqrt")).toBe(0);
-    // The two SURVIVING call sites: Enter keydown + dblclick (the mousedown site moved).
-    expect(count(AO, "savePolygon();")).toBe(2);
+    // The two surviving finish paths now have distinct owners: dblclick stays in the overlay,
+    // while Enter is owned by the consolidated keyboard dispatcher.
+    expect(count(AO, "savePolygon();")).toBe(1);
+    expect(count(DISPATCHER, "savePolygon();")).toBe(1);
     // The factory takeoffDrawing group carries savePolygon exactly once.
     expect(count(AO, "takeoffDrawing: { setPolygonDrawingMode, addPolygonVertex, saveLinearPolyline, savePolygon },")).toBe(1);
   });

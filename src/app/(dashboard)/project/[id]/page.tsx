@@ -10,6 +10,8 @@ import {
   type ProjectResponse,
 } from "@/lib/project-lifecycle";
 import { useSearch } from "@/hooks/useSearch";
+import { isEditableKeyboardTarget } from "@/lib/keyboard-target";
+import { useUiStore } from "@/stores/uiStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import PDFViewer from "@/components/viewer/PDFViewer";
@@ -77,14 +79,12 @@ export default function ProjectPage() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      const store = useViewerCoreStore.getState();
+      if (isEditableKeyboardTarget(e.target)) return;
       if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        (e.target as HTMLElement).isContentEditable
-      ) {
-        return;
-      }
+        (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+        useUiStore.getState().tagBrowseId
+      ) return;
+      const store = useViewerCoreStore.getState();
 
       if (e.key === "ArrowLeft" || e.key === "PageUp") {
         e.preventDefault();
