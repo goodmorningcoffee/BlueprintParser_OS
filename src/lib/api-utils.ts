@@ -83,25 +83,6 @@ export async function requireRootAdmin(): Promise<
   return { session: session as unknown as AuthSession, error: null };
 }
 
-/**
- * Check if a project belongs to the user's company. Returns 404 for wrong company.
- * Skips check for demo projects and root admins.
- */
-export function requireCompanyAccess(
-  session: AuthSession | null,
-  project: { companyId: number; isDemo: boolean },
-): NextResponse | null {
-  if (project.isDemo) return null; // Demo projects are public
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (session.user.isRootAdmin) return null; // Root admin can access any project
-  if (session.user.companyId !== project.companyId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-  return null;
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Centralized project access resolution
 // ═══════════════════════════════════════════════════════════════════
