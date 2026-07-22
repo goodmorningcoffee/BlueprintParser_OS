@@ -575,10 +575,12 @@ describe("AnnotationOverlay linear-polyline post-move topology", () => {
       );
     expect(() => expectPostMoveOrder(reordered)).toThrow();
 
-    expect(Buffer.byteLength(LINEAR_POLYLINES, "utf8")).toBe(2_571);
-    expect(count(LINEAR_POLYLINES, "\n")).toBe(77);
+    // [DR014] Re-pinned for the hidden-id String-domain mirror fix (renderIdKey + lazy
+    // draw-local key set), the only sanctioned helper change since the pure extraction.
+    expect(Buffer.byteLength(LINEAR_POLYLINES, "utf8")).toBe(3_339);
+    expect(count(LINEAR_POLYLINES, "\n")).toBe(95);
     expect(sha256(LINEAR_POLYLINES)).toBe(
-      "b5cc2e37f36c10df7e171ca46edae5dbbbb9978557edad6d0ea7785d57ff8ed4",
+      "6b3388a94db14f84c79d73c638867230dee89097ef47d4d4fdff72df95f12234",
     );
     expect(count(
       LINEAR_POLYLINES,

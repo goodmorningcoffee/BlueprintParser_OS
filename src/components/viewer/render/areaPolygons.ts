@@ -16,6 +16,10 @@ export interface DrawAreaPolygonsProps {
   readonly selection: AreaPolygonSelection;
 }
 
+function renderIdKey(id: unknown): string {
+  return String(id);
+}
+
 /**
  * Draw the completed area-polygon stage. The caller owns canvas setup and stage order.
  */
@@ -30,10 +34,24 @@ export function drawAreaPolygons(
     selection,
   }: DrawAreaPolygonsProps,
 ): void {
+  let hiddenTakeoffItemKeys: ReadonlySet<string> | undefined;
+
   for (const ann of annotations) {
     if (ann.source !== "takeoff" || ann.data?.type !== "area-polygon") continue;
     const data = ann.data as unknown as AreaPolygonData;
-    if (hiddenTakeoffItemIds.has(data.takeoffItemId)) continue;
+    // [refactor jul22 DR014] Hide gate normalized to the exact String domain, mirroring the
+    // count-marker pass (existingAnnotations renderIdKey, landed 003883e) so all three takeoff
+    // paint passes share one hide semantics — "07" and " 7 " stay distinct from 7. The caller's
+    // Set is read once, lazily at the first candidate row, and never mutated.
+    const rowKey = renderIdKey(data.takeoffItemId);
+    if (hiddenTakeoffItemKeys === undefined) {
+      const keys = new Set<string>();
+      for (const hiddenId of hiddenTakeoffItemIds) {
+        keys.add(renderIdKey(hiddenId));
+      }
+      hiddenTakeoffItemKeys = keys;
+    }
+    if (hiddenTakeoffItemKeys.has(rowKey)) continue;
     if (!data.vertices || data.vertices.length < 3) continue;
 
     // Holes (e.g., courtyards inside a U-shaped hallway). Rendered via

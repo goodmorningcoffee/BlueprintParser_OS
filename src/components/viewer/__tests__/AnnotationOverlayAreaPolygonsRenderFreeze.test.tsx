@@ -595,10 +595,12 @@ describe("AnnotationOverlay area-polygon post-move topology", () => {
       );
     expect(() => expectPostMoveOrder(reordered)).toThrow();
 
-    expect(Buffer.byteLength(AREA_POLYGONS, "utf8")).toBe(4_098);
-    expect(count(AREA_POLYGONS, "\n")).toBe(114);
+    // [DR014] Re-pinned for the hidden-id String-domain mirror fix (renderIdKey + lazy
+    // draw-local key set), the only sanctioned helper change since the pure extraction.
+    expect(Buffer.byteLength(AREA_POLYGONS, "utf8")).toBe(4_866);
+    expect(count(AREA_POLYGONS, "\n")).toBe(132);
     expect(sha256(AREA_POLYGONS)).toBe(
-      "3f1d469bbd10d709485a920d7b7f1138a0ef3b21f34e6012b5ed400a08685ab0",
+      "70765013f8be3bf7ab846c8d88a05c63ca816713d2306d133e2d7f870e1098b8",
     );
     expect(count(
       AREA_POLYGONS,

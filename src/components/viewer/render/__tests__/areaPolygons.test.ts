@@ -231,10 +231,13 @@ describe("drawAreaPolygons", () => {
         },
       },
     ] as unknown as AreaAnnotation[];
+    // [DR014] The gate no longer probes the caller's has per row; it snapshots the Set
+    // ONCE (lazily, at the first candidate row) through Symbol.iterator into a String-key
+    // view. The probe below observes exactly that read.
     const hiddenTakeoffItemIds = {
-      has(this: unknown, id: number) {
-        order.push(this === hiddenTakeoffItemIds ? `hidden:this:${id}` : `hidden:detached:${id}`);
-        return id === 13;
+      *[Symbol.iterator](this: unknown): IterableIterator<number> {
+        order.push(this === hiddenTakeoffItemIds ? "hidden:iterate:this" : "hidden:iterate:detached");
+        yield 13;
       },
     } as unknown as ReadonlySet<number>;
     const isSelected = vi.fn(() => true);
@@ -256,14 +259,12 @@ describe("drawAreaPolygons", () => {
       "undefined:data",
       "hidden:data",
       "hidden:data",
-      "hidden:this:13",
+      "hidden:iterate:this",
       "missing:data",
       "missing:data",
-      "hidden:this:14",
       "missing:vertices",
       "short:data",
       "short:data",
-      "hidden:this:15",
       "short:vertices",
       "short:vertices",
     ]);
@@ -304,7 +305,7 @@ describe("drawAreaPolygons", () => {
       selection: { isSelected },
     });
 
-    expect(hiddenHas.mock.calls).toEqual([[17]]);
+    expect(hiddenHas).not.toHaveBeenCalled();
     expect(isSelected.mock.calls).toEqual([[207]]);
     expect(record.trace).toEqual([
       ["call", "save"],
@@ -570,7 +571,7 @@ describe("drawAreaPolygons", () => {
         },
       },
     })).toThrow("selection boom");
-    expect(hiddenHas.mock.calls).toEqual([[61]]);
+    expect(hiddenHas).not.toHaveBeenCalled();
     expect(selectionRecord.stackDepth()).toBe(1);
     expect(selectionRecord.trace).not.toContainEqual(["call", "restore"]);
 
@@ -612,12 +613,12 @@ describe("drawAreaPolygons", () => {
   });
 });
 
-// ─── DR014 MED-1 seam ledger: hidden-id domain (characterization at 6ac3a8f) ───
-// The count-marker pass normalizes hide keys to the exact String domain
-// (existingAnnotations renderIdKey, landed 003883e); THIS pass still gates with strict
-// Set.has on the raw id domain. A string-id row ("7") therefore escapes an active numeric
-// hide {7} here while its count-marker twin is hidden. These witnesses pin the CURRENT
-// behavior; the marked expectations flip in the mirroring fix commit.
+// ─── DR014 MED-1 seam ledger: hidden-id domain ───
+// Characterized at 6ac3a8f (strict raw-domain Set.has, string-id rows escaped numeric
+// hides while their count-marker twins were hidden), then FIXED in the following commit:
+// the gate now mirrors the count-marker pass (existingAnnotations renderIdKey, 003883e) —
+// one lazy draw-local String-key set per invocation, caller's Set iterated once, never
+// mutated, "07"/" 7 " remain distinct from 7.
 describe("drawAreaPolygons hidden-id domain seam (DR014)", () => {
   it("hides the numeric-id row under a numeric hide", () => {
     const record = recordingContext();
@@ -632,7 +633,7 @@ describe("drawAreaPolygons hidden-id domain seam (DR014)", () => {
     expect(record.trace).toEqual([]);
   });
 
-  it("DEFECT WITNESS (flips at fix): string-id twin escapes the numeric hide", () => {
+  it("hides the string-id twin under the numeric hide (mirrored fix)", () => {
     const record = recordingContext();
     drawAreaPolygons(record.context, {
       annotations: [
@@ -644,7 +645,7 @@ describe("drawAreaPolygons hidden-id domain seam (DR014)", () => {
       hiddenTakeoffItemIds: new Set([7]),
       selection: { isSelected: () => false },
     });
-    expect(record.trace).not.toEqual([]);
+    expect(record.trace).toEqual([]);
   });
 
   it("keeps '07' distinct from 7 under every domain choice", () => {
@@ -664,9 +665,13 @@ describe("drawAreaPolygons hidden-id domain seam (DR014)", () => {
     expect(record.trace).not.toEqual([]);
   });
 
-  it("CURRENT COUPLING (flips at fix): the gate reads the caller's Set.has with raw ids", () => {
+  it("iterates the caller's Set lazily exactly once and never calls its has", () => {
     const hiddenTakeoffItemIds = new Set<number>([7]);
     const hiddenHas = vi.spyOn(hiddenTakeoffItemIds, "has");
+    const hiddenIterate = vi.spyOn(
+      hiddenTakeoffItemIds as unknown as Record<string, () => IterableIterator<number>>,
+      Symbol.iterator as unknown as string,
+    );
     const record = recordingContext();
     drawAreaPolygons(record.context, {
       annotations: [
@@ -679,6 +684,8 @@ describe("drawAreaPolygons hidden-id domain seam (DR014)", () => {
       hiddenTakeoffItemIds,
       selection: { isSelected: () => false },
     });
-    expect(hiddenHas.mock.calls).toEqual([[7], ["7"]]);
+    expect(hiddenHas).not.toHaveBeenCalled();
+    expect(hiddenIterate).toHaveBeenCalledTimes(1);
+    expect(record.trace).toEqual([]);
   });
 });

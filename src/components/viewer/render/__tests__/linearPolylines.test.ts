@@ -161,6 +161,11 @@ describe("drawLinearPolylines", () => {
       { id: 509, source: "takeoff", data: null },
     ];
 
+    const hiddenIterate = vi.spyOn(
+      hiddenTakeoffItemIds as unknown as Record<string, () => IterableIterator<number>>,
+      Symbol.iterator as unknown as string,
+    );
+
     drawLinearPolylines(record.context, {
       annotations,
       width: 200,
@@ -170,7 +175,10 @@ describe("drawLinearPolylines", () => {
       selection: { isSelected },
     });
 
-    expect(hiddenHas.mock.calls).toEqual([[503], [505], [507]]);
+    // [DR014] The gate reads the caller's Set exactly once (lazily, at the first candidate
+    // row) into a String-key view; per-row membership never touches the caller's has.
+    expect(hiddenHas).not.toHaveBeenCalled();
+    expect(hiddenIterate).toHaveBeenCalledTimes(1);
     expect(isSelected).not.toHaveBeenCalled();
     expect(record.trace).toEqual([]);
     expect(record.stackDepth()).toBe(0);
@@ -214,7 +222,7 @@ describe("drawLinearPolylines", () => {
       selection: { isSelected },
     });
 
-    expect(hiddenHas.mock.calls).toEqual([[17], [18], [19]]);
+    expect(hiddenHas).not.toHaveBeenCalled();
     expect(isSelected.mock.calls).toEqual([[307], [301]]);
     expect(record.trace).toEqual([
       ["call", "save"],
@@ -316,10 +324,13 @@ describe("drawLinearPolylines", () => {
         return payload;
       },
     };
+    // [DR014] Membership now flows through one lazy Symbol.iterator snapshot (String-key
+    // view) instead of per-row has probes; the read still happens between the data Gets
+    // and any vertices Get.
     const hiddenTakeoffItemIds = {
-      has(id: number) {
-        order.push(`hidden:${id}`);
-        return true;
+      *[Symbol.iterator](): IterableIterator<number> {
+        order.push("hidden:iterate");
+        yield 77;
       },
     } as unknown as ReadonlySet<number>;
 
@@ -337,7 +348,7 @@ describe("drawLinearPolylines", () => {
       },
     });
 
-    expect(order).toEqual(["data", "data", "hidden:77"]);
+    expect(order).toEqual(["data", "data", "hidden:iterate"]);
     expect(record.trace).toEqual([]);
   });
 
@@ -422,7 +433,7 @@ describe("drawLinearPolylines", () => {
         },
       },
     })).toThrow("selection boom");
-    expect(hiddenHas.mock.calls).toEqual([[31]]);
+    expect(hiddenHas).not.toHaveBeenCalled();
     expect(callbackRecord.stackDepth()).toBe(1);
     expect(callbackRecord.trace).not.toContainEqual(["call", "restore"]);
 
@@ -443,11 +454,11 @@ describe("drawLinearPolylines", () => {
   });
 });
 
-// ─── DR014 MED-1 seam ledger: hidden-id domain (characterization at 6ac3a8f) ───
-// Mirror of the areaPolygons seam ledger: the count-marker pass normalizes hide keys to
-// the exact String domain (existingAnnotations renderIdKey, 003883e); THIS pass still
-// gates with strict Set.has on the raw id domain. Witnesses pin CURRENT behavior; the
-// marked expectations flip in the mirroring fix commit.
+// ─── DR014 MED-1 seam ledger: hidden-id domain ───
+// Mirror of the areaPolygons seam ledger. Characterized at 6ac3a8f (strict raw-domain
+// Set.has), then FIXED in the following commit: the gate now mirrors the count-marker
+// pass (existingAnnotations renderIdKey, 003883e) — one lazy draw-local String-key set
+// per invocation, caller's Set iterated once, never mutated, "07" distinct from 7.
 describe("drawLinearPolylines hidden-id domain seam (DR014)", () => {
   const LINE = [
     { x: 0.1, y: 0.1 },
@@ -467,7 +478,7 @@ describe("drawLinearPolylines hidden-id domain seam (DR014)", () => {
     expect(record.trace).toEqual([]);
   });
 
-  it("DEFECT WITNESS (flips at fix): string-id twin escapes the numeric hide", () => {
+  it("hides the string-id twin under the numeric hide (mirrored fix)", () => {
     const record = recordingContext();
     drawLinearPolylines(record.context, {
       annotations: [
@@ -479,7 +490,7 @@ describe("drawLinearPolylines hidden-id domain seam (DR014)", () => {
       hiddenTakeoffItemIds: new Set([7]),
       selection: { isSelected: () => false },
     });
-    expect(record.trace).not.toEqual([]);
+    expect(record.trace).toEqual([]);
   });
 
   it("keeps '07' distinct from 7 under every domain choice", () => {
@@ -497,9 +508,13 @@ describe("drawLinearPolylines hidden-id domain seam (DR014)", () => {
     expect(record.trace).not.toEqual([]);
   });
 
-  it("CURRENT COUPLING (flips at fix): the gate reads the caller's Set.has with raw ids", () => {
+  it("iterates the caller's Set lazily exactly once and never calls its has", () => {
     const hiddenTakeoffItemIds = new Set<number>([7]);
     const hiddenHas = vi.spyOn(hiddenTakeoffItemIds, "has");
+    const hiddenIterate = vi.spyOn(
+      hiddenTakeoffItemIds as unknown as Record<string, () => IterableIterator<number>>,
+      Symbol.iterator as unknown as string,
+    );
     const record = recordingContext();
     drawLinearPolylines(record.context, {
       annotations: [
@@ -512,6 +527,8 @@ describe("drawLinearPolylines hidden-id domain seam (DR014)", () => {
       hiddenTakeoffItemIds,
       selection: { isSelected: () => false },
     });
-    expect(hiddenHas.mock.calls).toEqual([[7], ["7"]]);
+    expect(hiddenHas).not.toHaveBeenCalled();
+    expect(hiddenIterate).toHaveBeenCalledTimes(1);
+    expect(record.trace).toEqual([]);
   });
 });
