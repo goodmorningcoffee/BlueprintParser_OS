@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { useToolStore } from "@/stores/toolStore";
 import { useSessionStore } from "@/stores/sessionStore";
-// [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade. handleCreateAndAssign
-// below is UNCHANGED — it POSTs the NUMERIC projectId (frozen pre-existing quirk vs CountTab's
-// publicId body to the same endpoint; owner item, SPEC §8.3 — pinned by BF-3, do not "fix").
+// [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade.
+// [refactor jul22 DR014 MED-2] BF-3 UN-PINNED by owner (2026-07-22): handleCreateAndAssign now
+// POSTs the uuid publicId like its CountTab/LinearTab siblings. The old NUMERIC-dbId body was a
+// pre-existing quirk that /api/takeoff-items' zPublicId always rejected (non-demo Create&Assign
+// 400'd every time); the endpoint resolves by publicId, so this is the working wire.
 import { useTakeoffItems } from "@/queries/useTakeoff";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { TWENTY_COLORS } from "@/types";
@@ -33,7 +35,6 @@ export default function BucketFillAssignDialog({
   const { commitBucketFill } = useAnnotations();
   const setBucketFillPendingPolygon = useToolStore((s) => s.setBucketFillPendingPolygon);
   const publicId = useSessionStore((s) => s.publicId);
-  const projectId = useSessionStore((s) => s.projectId);
   const isDemo = useSessionStore((s) => s.isDemo);
   const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
 
@@ -63,10 +64,10 @@ export default function BucketFillAssignDialog({
     if (!name) return;
     setErrorMsg(null);
     if (!canAdoptProjectLifecycle()) return;
-    // Guard: non-demo requires a hydrated projectId. If the user somehow
-    // triggered this dialog before project metadata loaded, surface a
+    // Guard: non-demo requires a hydrated publicId (the id the POST body now carries). If the
+    // user somehow triggered this dialog before project metadata loaded, surface a
     // retryable message instead of firing a POST that will 400.
-    if (!isDemo && !projectId) {
+    if (!isDemo && !publicId) {
       setErrorMsg("Project not ready yet — try again in a moment");
       return;
     }
@@ -88,7 +89,7 @@ export default function BucketFillAssignDialog({
         const res = await fetch("/api/takeoff-items", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, name, shape: "polygon", color: formColor }),
+          body: JSON.stringify({ projectId: publicId, name, shape: "polygon", color: formColor }),
         });
         if (!canAdoptProjectLifecycle()) return;
         if (!res.ok) {

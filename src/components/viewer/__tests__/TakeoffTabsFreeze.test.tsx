@@ -21,8 +21,9 @@
 //    hiddenTakeoffItemIds join (eye toggle → line-through). Known pre-existing nested-<button>
 //    React warning on expand — do NOT fix in ④, do NOT assert console cleanliness (SPEC §8.7).
 //  - BucketFillAssignDialog is mounted DIRECTLY with a pendingPolygon prop (SPEC §6.2,
-//    probe-verified); BF-3 pins the frozen NUMERIC-projectId POST body quirk (:27,:77 — owner
-//    item SPEC §8.3) so an accidental publicId "fix" fails loudly.
+//    probe-verified); BF-3 originally pinned the frozen NUMERIC-projectId POST body quirk —
+//    UN-PINNED by owner 2026-07-22 (DR014 MED-2): the body now carries the uuid publicId like
+//    CountTab/LinearTab, and BF-3 pins THAT so a dbId regression fails loudly.
 //  - DrawingPreviewLayer and AnnotationOverlay are NOT mounted (canvas — SPEC §6.5 exclusion
 //    rows; their read paths ride the C2 hook/bridge suite + tsc + perf protocol + e2e).
 
@@ -944,8 +945,8 @@ describe("BucketFillAssignDialog — demo create&assign is local-only (BF-2)", (
   });
 });
 
-describe("BucketFillAssignDialog — non-demo create is server-first with the NUMERIC projectId (BF-3)", () => {
-  it("nothing added pre-release; POST body carries dbId 123 (frozen quirk); commit chain fires", async () => {
+describe("BucketFillAssignDialog — non-demo create is server-first with the uuid publicId (BF-3, un-pinned 2026-07-22)", () => {
+  it("nothing added pre-release; POST body carries publicId 'pid' (dbId regression fails here); commit chain fires", async () => {
     setViewerStoreStateForTest({ projectId: 123, bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 2 });
     seedTakeoff(qc, [], []);
     seedAnnotations(qc, []);
@@ -967,10 +968,11 @@ describe("BucketFillAssignDialog — non-demo create is server-first with the NU
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/takeoff-items");
     const body = JSON.parse(String(init.body));
-    // THE frozen quirk (owner item SPEC §8.3): BF POSTs the NUMERIC dbId to the SAME endpoint
-    // CountTab feeds the publicId. Preserved verbatim — an accidental "fix" fails here.
-    expect(body.projectId).toBe(123);
-    expect(body).toEqual({ projectId: 123, name: "Room B", shape: "polygon", color: expect.any(String) });
+    // [DR014 MED-2 fix] BF now POSTs the uuid publicId — the id /api/takeoff-items actually
+    // resolves (zPublicId rejected the old numeric body with a 400 every time). A dbId
+    // regression fails here.
+    expect(body.projectId).toBe("pid");
+    expect(body).toEqual({ projectId: "pid", name: "Room B", shape: "polygon", color: expect.any(String) });
     expect(screen.queryByRole("button", { name: "Room B" })).not.toBeInTheDocument(); // nothing added yet
     expect(screen.getByRole("button", { name: "Creating..." })).toBeInTheDocument(); // pre-release signal
 
