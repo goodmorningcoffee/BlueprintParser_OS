@@ -8,7 +8,6 @@ pytesseract>=0.3.13
 
 # Table extraction
 img2table>=0.0.12
-camelot-py[base]>=1.0.0
 pdfplumber>=0.11.0
 pdfminer.six
 tabulate

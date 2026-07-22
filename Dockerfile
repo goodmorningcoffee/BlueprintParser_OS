@@ -48,7 +48,7 @@ RUN npx esbuild scripts/project-asset-deletion-worker.ts \
 
 # ── Stage 3: Production runner ─────────────────────────────────
 # Using Debian slim instead of Alpine for full glibc compatibility
-# (required by img2table/polars, camelot, and future TATR/PyTorch)
+# (required by img2table/polars and future TATR/PyTorch)
 FROM node:20-slim AS runner
 WORKDIR /app
 
@@ -89,7 +89,6 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     openpyxl \
     "Pillow>=10.0" \
     "pillow-heif>=0.16" \
-    camelot-py[base] \
     img2table==0.0.12 \
     && pip3 install --break-system-packages \
     torch==2.5.1+cpu torchvision==0.20.1+cpu --index-url https://download.pytorch.org/whl/cpu \
