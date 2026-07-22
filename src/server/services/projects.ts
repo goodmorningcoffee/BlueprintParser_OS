@@ -2,8 +2,8 @@
 //
 // The two CORE projects route files (projects[/route] = POST create + GET list, [id] = GET/PUT/DELETE)
 // are now thin `defineRoute` shells; ALL behavior lives here. The six leaf sub-routes
-// (projects/[id]/{pages,export,thumbnail/[page],map-tags-batch,classify-regions} + projects/export-index)
-// are NOT in this family's scope (plan §P1.3 enumerates only `projects(+[id])`; classify-regions is a P5
+// (projects/[id]/{pages,export,thumbnail/[page],map-tags-batch} + projects/export-index)
+// are NOT in this family's scope (plan §P1.3 enumerates only `projects(+[id])`; classify-regions was DELETED in P4.4 as a P5-flagged
 // dead-code candidate) — they stay on the legacy pattern until a later P1.5 chunk.
 //
 // Behavior is preserved EXACTLY against the characterization tests: the EXISTING

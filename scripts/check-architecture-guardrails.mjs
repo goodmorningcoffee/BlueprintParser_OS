@@ -76,8 +76,8 @@ const RAW_FETCH_BASELINE = {
 };
 
 const DB_IMPORT_BASELINE = {
-  expectedFiles: 28,
-  expectedOccurrences: 52,
+  expectedFiles: 27,
+  expectedOccurrences: 50,
   approved: [
     {
       path: "src/app/api/auto-detect-tables/route.ts",
@@ -86,11 +86,6 @@ const DB_IMPORT_BASELINE = {
     },
     { path: "src/app/api/demo/chat/route.ts", max: 2, reason: "raw-route" },
     { path: "src/app/api/demo/csi/route.ts", max: 1, reason: "raw-route" },
-    {
-      path: "src/app/api/projects/[id]/classify-regions/route.ts",
-      max: 2,
-      reason: "raw-route",
-    },
     {
       path: "src/lib/admin-logs/manual-ban-cache.ts",
       max: 2,
@@ -175,7 +170,7 @@ const DB_IMPORT_BASELINE = {
 };
 
 const ROUTE_SHELL_BASELINE = {
-  expectedExceptions: 6,
+  expectedExceptions: 5,
   approved: [
     {
       path: "src/app/api/auth/[...nextauth]/route.ts",
@@ -200,11 +195,6 @@ const ROUTE_SHELL_BASELINE = {
     {
       path: "src/app/api/health/route.ts",
       classification: "health",
-      methods: ["GET"],
-    },
-    {
-      path: "src/app/api/projects/[id]/classify-regions/route.ts",
-      classification: "raw",
       methods: ["GET"],
     },
   ],

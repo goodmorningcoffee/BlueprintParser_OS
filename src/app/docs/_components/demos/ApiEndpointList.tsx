@@ -48,7 +48,6 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
       { method: "DELETE", path: "/api/projects/[id]", auth: "session", desc: "Delete a project and its data." },
       { method: "GET", path: "/api/projects/[id]/pages", auth: "session", desc: "List pages in a project with classifications and CSI counts." },
       { method: "POST", path: "/api/projects/[id]/map-tags-batch", auth: "session", desc: "Bind parsed schedule tags to matching YOLO shapes and free-floating OCR text. Returns scored matches with tier + drop reason; supports strictness and drawing-number-prefix scope." },
-      { method: "POST", path: "/api/projects/[id]/classify-regions", auth: "session", desc: "Re-run spatial classification using current YOLO + OCR data." },
       { method: "GET", path: "/api/project-assets/[id]/[...asset]", auth: "project", desc: "Tenant-authenticated or public-demo, no-store PDF/page/thumbnail stream with single-range PDF support." },
       { method: "GET", path: "/api/projects/[id]/thumbnail/[page]", auth: "project", desc: "Legacy no-store thumbnail gateway alias." },
       { method: "POST", path: "/api/pages/intelligence", auth: "session", desc: "Re-run analyzePageIntelligence on a specific page." },

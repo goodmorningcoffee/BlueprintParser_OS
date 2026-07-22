@@ -889,17 +889,6 @@ export const PUBLIC_DEMO_SURFACES = [
     ),
   ),
   publicSurface(
-    "demo-classify-regions",
-    "/api/projects/[id]/classify-regions",
-    "GET",
-    "owner-threat-model-debt",
-    ["src/app/api/projects/[id]/classify-regions/route.ts"],
-    debt(
-      "L5-public-region-classification",
-      "Mixed-ownership region inputs need a public compute serializer.",
-    ),
-  ),
-  publicSurface(
     "demo-map-tags",
     "/api/projects/[id]/map-tags-batch",
     "POST",
