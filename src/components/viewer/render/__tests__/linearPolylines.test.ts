@@ -442,3 +442,76 @@ describe("drawLinearPolylines", () => {
     expect(contextRecord.trace).not.toContainEqual(["call", "restore"]);
   });
 });
+
+// ─── DR014 MED-1 seam ledger: hidden-id domain (characterization at 6ac3a8f) ───
+// Mirror of the areaPolygons seam ledger: the count-marker pass normalizes hide keys to
+// the exact String domain (existingAnnotations renderIdKey, 003883e); THIS pass still
+// gates with strict Set.has on the raw id domain. Witnesses pin CURRENT behavior; the
+// marked expectations flip in the mirroring fix commit.
+describe("drawLinearPolylines hidden-id domain seam (DR014)", () => {
+  const LINE = [
+    { x: 0.1, y: 0.1 },
+    { x: 0.6, y: 0.4 },
+  ];
+
+  it("hides the numeric-id row under a numeric hide", () => {
+    const record = recordingContext();
+    drawLinearPolylines(record.context, {
+      annotations: [linearAnnotation(901, linearData(7, "#ef4444", LINE, 12, "ft"))],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: { isSelected: () => false },
+    });
+    expect(record.trace).toEqual([]);
+  });
+
+  it("DEFECT WITNESS (flips at fix): string-id twin escapes the numeric hide", () => {
+    const record = recordingContext();
+    drawLinearPolylines(record.context, {
+      annotations: [
+        linearAnnotation(902, linearData("7" as unknown as number, "#ef4444", LINE, 12, "ft")),
+      ],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: { isSelected: () => false },
+    });
+    expect(record.trace).not.toEqual([]);
+  });
+
+  it("keeps '07' distinct from 7 under every domain choice", () => {
+    const record = recordingContext();
+    drawLinearPolylines(record.context, {
+      annotations: [
+        linearAnnotation(903, linearData("07" as unknown as number, "#ef4444", LINE, 12, "ft")),
+      ],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: { isSelected: () => false },
+    });
+    expect(record.trace).not.toEqual([]);
+  });
+
+  it("CURRENT COUPLING (flips at fix): the gate reads the caller's Set.has with raw ids", () => {
+    const hiddenTakeoffItemIds = new Set<number>([7]);
+    const hiddenHas = vi.spyOn(hiddenTakeoffItemIds, "has");
+    const record = recordingContext();
+    drawLinearPolylines(record.context, {
+      annotations: [
+        linearAnnotation(904, linearData(7, "#ef4444", LINE, 12, "ft")),
+        linearAnnotation(905, linearData("7" as unknown as number, "#22d3ee", LINE, 12, "ft")),
+      ],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds,
+      selection: { isSelected: () => false },
+    });
+    expect(hiddenHas.mock.calls).toEqual([[7], ["7"]]);
+  });
+});

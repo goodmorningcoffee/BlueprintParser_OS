@@ -611,3 +611,74 @@ describe("drawAreaPolygons", () => {
     expect(contextRecord.trace).not.toContainEqual(["call", "restore"]);
   });
 });
+
+// ─── DR014 MED-1 seam ledger: hidden-id domain (characterization at 6ac3a8f) ───
+// The count-marker pass normalizes hide keys to the exact String domain
+// (existingAnnotations renderIdKey, landed 003883e); THIS pass still gates with strict
+// Set.has on the raw id domain. A string-id row ("7") therefore escapes an active numeric
+// hide {7} here while its count-marker twin is hidden. These witnesses pin the CURRENT
+// behavior; the marked expectations flip in the mirroring fix commit.
+describe("drawAreaPolygons hidden-id domain seam (DR014)", () => {
+  it("hides the numeric-id row under a numeric hide", () => {
+    const record = recordingContext();
+    drawAreaPolygons(record.context, {
+      annotations: [areaAnnotation(901, areaData(7, "#ef4444", TRIANGLE, 10, "SF"))],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: { isSelected: () => false },
+    });
+    expect(record.trace).toEqual([]);
+  });
+
+  it("DEFECT WITNESS (flips at fix): string-id twin escapes the numeric hide", () => {
+    const record = recordingContext();
+    drawAreaPolygons(record.context, {
+      annotations: [
+        areaAnnotation(902, areaData("7" as unknown as number, "#ef4444", TRIANGLE, 10, "SF")),
+      ],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: { isSelected: () => false },
+    });
+    expect(record.trace).not.toEqual([]);
+  });
+
+  it("keeps '07' distinct from 7 under every domain choice", () => {
+    // Drawn today (strict has) and MUST remain drawn after the String-domain fix —
+    // String("07") !== String(7). A Number()-domain mutant coerces and wrongly hides it.
+    const record = recordingContext();
+    drawAreaPolygons(record.context, {
+      annotations: [
+        areaAnnotation(903, areaData("07" as unknown as number, "#ef4444", TRIANGLE, 10, "SF")),
+      ],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds: new Set([7]),
+      selection: { isSelected: () => false },
+    });
+    expect(record.trace).not.toEqual([]);
+  });
+
+  it("CURRENT COUPLING (flips at fix): the gate reads the caller's Set.has with raw ids", () => {
+    const hiddenTakeoffItemIds = new Set<number>([7]);
+    const hiddenHas = vi.spyOn(hiddenTakeoffItemIds, "has");
+    const record = recordingContext();
+    drawAreaPolygons(record.context, {
+      annotations: [
+        areaAnnotation(904, areaData(7, "#ef4444", TRIANGLE, 10, "SF")),
+        areaAnnotation(905, areaData("7" as unknown as number, "#22d3ee", TRIANGLE, 10, "SF")),
+      ],
+      width: 200,
+      height: 100,
+      selectedId: null,
+      hiddenTakeoffItemIds,
+      selection: { isSelected: () => false },
+    });
+    expect(hiddenHas.mock.calls).toEqual([[7], ["7"]]);
+  });
+});
