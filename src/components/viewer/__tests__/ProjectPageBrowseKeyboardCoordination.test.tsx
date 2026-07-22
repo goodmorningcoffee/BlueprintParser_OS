@@ -222,6 +222,22 @@ describe("project-page and overlay modal browse keyboard coordination", () => {
     },
   );
 
+  it.each(ROUTE_ORDER_CASES)(
+    "$pageKind $order treats an empty-string browse id as inactive for Arrow keys",
+    ({ pageKind, order }) => {
+      // [refactor jul22 P3.4 K3] Green-hole closure: both page guards and the dispatcher
+      // admit browse on TRUTHY tagBrowseId; "" must page-navigate, never modal-navigate.
+      mountInRegistrationOrder(pageKind, order);
+      setBrowseState("", 4);
+
+      const event = dispatchKey("ArrowRight");
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(queryCommands.navigateYoloTag).not.toHaveBeenCalled();
+      expect(useViewerCoreStore.getState().pageNumber).toBe(4);
+    },
+  );
+
   it.each(PAGE_KEY_CASES)(
     "$pageKind $order keeps $key navigation active during modal tag browse",
     ({ pageKind, order, key }) => {

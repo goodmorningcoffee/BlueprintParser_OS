@@ -291,6 +291,19 @@ describe("useOverlayKeyboardDispatcher deterministic priority", () => {
     expect(queryCommands.takeoffRedo).not.toHaveBeenCalled();
   });
 
+  it("treats an empty-string browse id as inactive before any modal claim", () => {
+    // [refactor jul22 P3.4 K3] Green-hole closure: admission is TRUTHY, not non-null.
+    const options = makeOptions();
+    setViewerStoreStateForTest({ tagBrowseId: "", tagBrowseIndex: 4 });
+    render(<Harness options={options} />, { wrapper: Providers });
+
+    const event = dispatchKey(window, "ArrowRight");
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(queryCommands.navigateYoloTag).not.toHaveBeenCalled();
+    expectNoCapabilityAction(options);
+  });
+
   it("keeps neighboring window keyboard owners observable after a modal claim", () => {
     const options = makeOptions();
     setViewerStoreStateForTest({ tagBrowseId: "modal-tag", tagBrowseIndex: 2 });

@@ -123,13 +123,15 @@ describe("P3.4 overlay keyboard parent topology", () => {
   it("keeps the rejected controller key/page scaffold axes deleted", () => {
     // [refactor jul22 P3.4 K2] onKey/onPageChange were unimplemented scaffold on ToolController.
     // Keyboard is dispatcher-owned; page transitions stay with viewerCommands and the drag machine.
+    // [refactor jul22 P3.4 K3] Regex pins so a property-style re-add (onKey?: (…) =>) cannot
+    // evade the freeze; prose mentions like "onKey/onPageChange" stay legal.
     const TYPES = readFileSync(join(ROOT, "src/components/viewer/tools/types.ts"), "utf8");
-    expect(TYPES).not.toContain("onKey?(");
-    expect(TYPES).not.toContain("onPageChange?(");
+    expect(TYPES).not.toMatch(/onKey\??\s*[:(]/u);
+    expect(TYPES).not.toMatch(/onPageChange\??\s*[:(]/u);
     for (const path of productionSources("src/components/viewer/tools")) {
       const source = readFileSync(join(ROOT, path), "utf8");
-      expect(count(source, "onKey("), `${path} onKey`).toBe(0);
-      expect(count(source, "onPageChange("), `${path} onPageChange`).toBe(0);
+      expect(source, `${path} onKey`).not.toMatch(/onKey\??\s*[:(]/u);
+      expect(source, `${path} onPageChange`).not.toMatch(/onPageChange\??\s*[:(]/u);
     }
   });
 

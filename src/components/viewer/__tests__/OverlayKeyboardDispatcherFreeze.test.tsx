@@ -370,6 +370,74 @@ describe("AnnotationOverlay parent keyboard behavior", () => {
     }
   });
 
+  // [refactor jul22 P3.4 K3] Green-hole closures from the tranche-close test review: the
+  // preview-guarded B fall-through, the Cmd+z variant, and the bucket-barrier undo previously
+  // had source-pin-only witnesses.
+  it("B falls through untouched while a bucket preview is pending", () => {
+    setToolState({ activeTool: { kind: "bucketFill" } });
+    mount();
+    setToolState({
+      bucketFillBarrierMode: false,
+      bucketFillPreview: {
+        vertices: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.9, y: 0.1 },
+          { x: 0.9, y: 0.9 },
+        ],
+        method: "flood",
+      },
+    });
+    const tail = claimTail();
+
+    const event = press(target("button"), "B");
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(useToolStore.getState().bucketFillBarrierMode).toBe(false);
+    expect(ownsToolTailAuthority(tail.token)).toBe(true);
+    expect(tail.cancel).not.toHaveBeenCalled();
+    discardRetainedTail(tail.token);
+  });
+
+  it("Cmd+z removes a drawing vertex exactly like Ctrl+z", async () => {
+    setToolState({
+      activeTool: { kind: "takeoffPlacement" },
+      activeTakeoffItemId: ITEM_ID,
+    });
+    mount();
+    setToolState({ polygonDrawingMode: "drawing", polygonVertices: VERTICES });
+    const tail = claimTail();
+
+    const event = press(target("button"), "z", { metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(useToolStore.getState().polygonVertices).toEqual(VERTICES.slice(0, -1));
+    expect(ownsToolTailAuthority(tail.token)).toBe(false);
+    await flushTail();
+    expect(tail.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ctrl+z undoes the newest bucket barrier ahead of vertex undo", async () => {
+    setToolState({ activeTool: { kind: "bucketFill" } });
+    mount();
+    setToolState({
+      bucketFillBarriers: [
+        { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.4 },
+        { x1: 0.5, y1: 0.5, x2: 0.8, y2: 0.8 },
+      ],
+    });
+    const tail = claimTail();
+
+    const event = press(target("button"), "z", { ctrlKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(useToolStore.getState().bucketFillBarriers).toEqual([
+      { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.4 },
+    ]);
+    expect(ownsToolTailAuthority(tail.token)).toBe(false);
+    await flushTail();
+    expect(tail.cancel).toHaveBeenCalledTimes(1);
+  });
+
   it("selected Delete guards every editable target and deletes only from the button", async () => {
     mount();
 
