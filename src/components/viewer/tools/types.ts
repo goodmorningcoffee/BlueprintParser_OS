@@ -267,8 +267,10 @@ export interface ToolController {
   onMouseMove?(event: ReactMouseEvent, context: ToolContext): void;
   onMouseUp?(event: ReactMouseEvent, context: ToolContext): void;
   onDblClick?(event: ReactMouseEvent, context: ToolContext): boolean;
-  onKey?(event: KeyboardEvent, context: ToolContext): boolean;
-  onPageChange?(context: ToolContext): void;
+  // [refactor jul22 P3.4 K2] The onKey/onPageChange scaffold axes are DELETED, not pending:
+  // keyboard belongs to useOverlayKeyboardDispatcher, global page transitions to viewerCommands,
+  // and drag page rollback to useAnnotationDragMachine. No controller ever implemented either
+  // field; absence is pinned in OverlayKeyboardParentTopologyFreeze.
   drawPreview?(canvas: CanvasRenderingContext2D, context: ToolContext): void;
   /** Render-time canvas gate; unlike event handlers, this cannot require a press position. */
   wantsEvents(state: Readonly<ToolStoreState>): boolean;

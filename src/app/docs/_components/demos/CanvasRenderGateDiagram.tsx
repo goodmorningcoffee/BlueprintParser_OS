@@ -1,8 +1,11 @@
-/** The AnnotationOverlay 4-point render gate. Adding a new canvas tool without
- *  touching ALL FOUR of these is the single most common source of silent
- *  regressions (lasso disappears, markup eats events, cursor drifts). Verified
- *  against src/components/viewer/AnnotationOverlay.tsx:2607-2626 (canvasWantsEvents
- *  + canvasShouldRender + if-return-null), :2649 (pointerEvents), :2653 (cursor). */
+/** The AnnotationOverlay 4-point render gate. Since the P3.4 registry delegation,
+ *  condition #1 (canvasWantsEvents) is DERIVED from the tool registry — each
+ *  controller owns its wantsEvents predicate — so a new canvas tool registers a
+ *  predicate instead of editing AO's formula. Conditions #2–#4 still live in AO
+ *  and still drift if missed. Verified against
+ *  src/components/viewer/AnnotationOverlay.tsx:1484 (canvasWantsEvents),
+ *  :1485-1491 (canvasShouldRender + if-return-null), :1540 (pointerEvents),
+ *  :1493/:1544 (cursor). */
 export function CanvasRenderGateDiagram() {
   return (
     <div className="w-full overflow-x-auto">
@@ -23,35 +26,36 @@ export function CanvasRenderGateDiagram() {
           The 4-point render gate — AnnotationOverlay.tsx
         </text>
         <text x="480" y="38" textAnchor="middle" fontSize="10" opacity="0.6">
-          A new canvas mode must be added to ALL FOUR conditions, or the canvas drifts (dead clicks, wrong cursor, stolen events).
+          Condition #1 is registry-derived since P3.4; a new tool registers wantsEvents on its controller. #2–#4 remain manual in AO.
         </text>
 
-        {/* Box 1 — canvasWantsEvents */}
+        {/* Box 1 — canvasWantsEvents (registry-derived) */}
         <g>
           <rect x="30" y="70" width="440" height="180" rx="6" fill="none" stroke="#f59e0b" strokeWidth="1.8" />
-          <text x="50" y="90" fontSize="12" fontWeight="bold" fill="#f59e0b">1. canvasWantsEvents  (L2609–2619)</text>
-          <text x="50" y="106" fontSize="10" opacity="0.7" fontFamily="monospace">Boolean. True if any mode needs pointer events.</text>
-          <text x="50" y="130" fontSize="11" fontFamily="monospace" opacity="0.85">activeToolKey !== null ||</text>
-          <text x="50" y="146" fontSize="11" fontFamily="monospace" opacity="0.85">(activeToolKey === null &amp;&amp; (</text>
-          <text x="50" y="162" fontSize="11" fontFamily="monospace" opacity="0.85">  mode === &quot;markup&quot; || mode === &quot;pointer&quot; ||</text>
-          <text x="50" y="178" fontSize="11" fontFamily="monospace" opacity="0.85">  mode === &quot;group&quot;))</text>
-          <text x="50" y="194" fontSize="11" fontFamily="monospace" opacity="0.85">activeToolKey encodes specialized owner + parse flow</text>
-          <text x="50" y="210" fontSize="11" fontFamily="monospace" opacity="0.85">dormant session fields never open pointer events</text>
-          <text x="50" y="226" fontSize="11" fontFamily="monospace" opacity="0.85">tempPan disables pointerEvents separately</text>
+          <text x="50" y="90" fontSize="12" fontWeight="bold" fill="#f59e0b">1. canvasWantsEvents  (L1484 — registry-derived)</text>
+          <text x="50" y="106" fontSize="10" opacity="0.7" fontFamily="monospace">Boolean. True if any registered tool needs pointer events.</text>
+          <text x="50" y="130" fontSize="11" fontFamily="monospace" opacity="0.85">TOOLS.some((controller) =&gt;</text>
+          <text x="50" y="146" fontSize="11" fontFamily="monospace" opacity="0.85">  controller.wantsEvents(canvasToolState))</text>
+          <text x="50" y="170" fontSize="10" opacity="0.65">Each of the 13 controllers owns its eligibility predicate</text>
+          <text x="50" y="184" fontSize="10" opacity="0.65">(activeTool/mode only — proven boolean-equivalent to the</text>
+          <text x="50" y="198" fontSize="10" opacity="0.65">legacy manual formula before delegation; frozen in</text>
+          <text x="50" y="212" fontSize="10" opacity="0.65" fontFamily="monospace">TableCellStructureCanvasGateTopologyFreeze</text>
+          <text x="50" y="226" fontSize="10" opacity="0.65">). tempPan disables pointerEvents separately.</text>
         </g>
 
         {/* Box 2 — canvasShouldRender */}
         <g>
           <rect x="490" y="70" width="440" height="180" rx="6" fill="none" stroke="#a855f7" strokeWidth="1.8" />
-          <text x="510" y="90" fontSize="12" fontWeight="bold" fill="#a855f7">2. canvasShouldRender  (L2620–2626)</text>
+          <text x="510" y="90" fontSize="12" fontWeight="bold" fill="#a855f7">2. canvasShouldRender  (L1485–1491)</text>
           <text x="510" y="106" fontSize="10" opacity="0.7" fontFamily="monospace">If false, the whole canvas returns null.</text>
           <text x="510" y="130" fontSize="11" fontFamily="monospace" opacity="0.85">pageAnnotations.length &gt; 0 ||</text>
           <text x="510" y="146" fontSize="11" fontFamily="monospace" opacity="0.85">polygonDrawingMode !== &quot;idle&quot; ||</text>
           <text x="510" y="162" fontSize="11" fontFamily="monospace" opacity="0.85">pendingMarkup !== null ||</text>
-          <text x="510" y="178" fontSize="11" fontFamily="monospace" opacity="0.85">canvasWantsEvents</text>
-          <text x="510" y="210" fontSize="10" opacity="0.65">If false → <tspan fontFamily="monospace" opacity="0.85">return null</tspan> before any overlay renders.</text>
-          <text x="510" y="226" fontSize="10" opacity="0.65">Annotations on page + drawing previews + pendingMarkup</text>
-          <text x="510" y="240" fontSize="10" opacity="0.65">all independently force the canvas to mount.</text>
+          <text x="510" y="178" fontSize="11" fontFamily="monospace" opacity="0.85">canvasWantsEvents ||</text>
+          <text x="510" y="194" fontSize="11" fontFamily="monospace" opacity="0.85">(showTableCellStructure &amp;&amp;</text>
+          <text x="510" y="210" fontSize="11" fontFamily="monospace" opacity="0.85"> tableCellStructure?.pageNumber === pageNumber)</text>
+          <text x="510" y="230" fontSize="10" opacity="0.65">If false → <tspan fontFamily="monospace" opacity="0.85">return null</tspan> before any overlay renders. The keyboard</text>
+          <text x="510" y="244" fontSize="10" opacity="0.65">dispatcher mounts BEFORE this gate, so shortcuts stay live.</text>
         </g>
 
         {/* Arrow from box 1 into box 2 (canvasWantsEvents feeds canvasShouldRender) */}
@@ -60,7 +64,7 @@ export function CanvasRenderGateDiagram() {
         {/* Box 3 — pointerEvents */}
         <g>
           <rect x="30" y="280" width="440" height="120" rx="6" fill="none" stroke="#22c55e" strokeWidth="1.8" />
-          <text x="50" y="300" fontSize="12" fontWeight="bold" fill="#22c55e">3. pointerEvents  (L2649)</text>
+          <text x="50" y="300" fontSize="12" fontWeight="bold" fill="#22c55e">3. pointerEvents  (L1540)</text>
           <text x="50" y="316" fontSize="10" opacity="0.7" fontFamily="monospace">Inline style on the &lt;canvas&gt; element.</text>
           <text x="50" y="340" fontSize="11" fontFamily="monospace" opacity="0.85">tempPanMode</text>
           <text x="130" y="340" fontSize="11" fontFamily="monospace" opacity="0.85">? &quot;none&quot;</text>
@@ -71,8 +75,8 @@ export function CanvasRenderGateDiagram() {
         {/* Box 4 — cursor */}
         <g>
           <rect x="490" y="280" width="440" height="120" rx="6" fill="none" stroke="#60a5fa" strokeWidth="1.8" />
-          <text x="510" y="300" fontSize="12" fontWeight="bold" fill="#60a5fa">4. cursor  (L2653)</text>
-          <text x="510" y="316" fontSize="10" opacity="0.7" fontFamily="monospace">Inline style chain. One ternary arm per mode.</text>
+          <text x="510" y="300" fontSize="12" fontWeight="bold" fill="#60a5fa">4. cursor  (L1493–1544)</text>
+          <text x="510" y="316" fontSize="10" opacity="0.7" fontFamily="monospace">Inline style chain. One arm per mode.</text>
           <text x="510" y="340" fontSize="11" fontFamily="monospace" opacity="0.85">split | symbol | calibration | takeoff | tagAdd → crosshair</text>
           <text x="510" y="356" fontSize="11" fontFamily="monospace" opacity="0.85">bucketFill → wait | barrier | custom SVG cursor</text>
           <text x="510" y="372" fontSize="11" fontFamily="monospace" opacity="0.85">tagPick | keynote YOLO pick → pointer</text>
@@ -82,14 +86,14 @@ export function CanvasRenderGateDiagram() {
         {/* Bottom box — the trap */}
         <g>
           <rect x="30" y="430" width="900" height="72" rx="6" fill="none" stroke="#f87171" strokeWidth="1.8" />
-          <text x="50" y="452" fontSize="12" fontWeight="bold" fill="#f87171">⚠ The drift hazard</text>
+          <text x="50" y="452" fontSize="12" fontWeight="bold" fill="#f87171">⚠ The drift hazard (narrowed, not gone)</text>
           <text x="50" y="472" fontSize="11" opacity="0.9">
-            Adding a new tool means edits to <tspan fontFamily="monospace" fill="#f87171">all four</tspan> locations.
-            Miss #1 and the canvas eats events it shouldn&apos;t. Miss #2 and the canvas vanishes.
+            Miss-#1 bugs are structurally closed: forgetting <tspan fontFamily="monospace" fill="#f87171">wantsEvents</tspan> on a new controller
+            now fails the registry equivalence freeze instead of silently eating events.
           </text>
           <text x="50" y="490" fontSize="11" opacity="0.9">
-            Miss #3 and clicks fall through to the underlying page. Miss #4 and the cursor lies about the mode.
-            Group-tool 2026-04-19 fix: exactly this bug.
+            #2–#4 still drift: miss #2 and the canvas vanishes; miss #3 and clicks fall through; miss #4 and the cursor lies.
+            Group-tool 2026-04-19 fix: exactly this class of bug.
           </text>
         </g>
       </svg>

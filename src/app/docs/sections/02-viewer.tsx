@@ -606,12 +606,18 @@ export function Section02Viewer() {
       <SubSection title="The canvas render gate (drift hazard)">
         <p>
           <InlineCode>src/components/viewer/AnnotationOverlay.tsx</InlineCode>{" "}
-          is the center of the drawing logic &mdash; 2,581 lines that handle
-          every canvas mode, hit testing, bucket fill commit, split-area,
-          vertex edit, polygon drawing, symbol search, markup, calibration,
-          and keynote/table parse region selection. The file has one structural
-          trap that bit the group-tool fix on 2026-04-19 and keeps coming back:
-          <strong> adding a new mode requires touching four places.</strong>
+          is the center of the drawing logic. After the P3 controller
+          extraction it is ~1,571 lines: the 13 mousedown tool identities live
+          in <InlineCode>tools/</InlineCode> registry controllers, the paint
+          passes in <InlineCode>render/</InlineCode> helpers, and keyboard
+          dispatch in <InlineCode>useOverlayKeyboardDispatcher</InlineCode>;
+          AO composes them and owns the shared gates below. The historical
+          structural trap (bit the group-tool fix on 2026-04-19):
+          <strong> a new mode used to require touching four places.</strong>{" "}
+          Since P3.4, condition #1 derives from the tool registry &mdash; a new
+          tool registers its <InlineCode>wantsEvents</InlineCode> predicate on
+          its controller &mdash; but conditions #2&ndash;#4 still live in AO
+          and still bite.
         </p>
         <Figure
           kind="live"

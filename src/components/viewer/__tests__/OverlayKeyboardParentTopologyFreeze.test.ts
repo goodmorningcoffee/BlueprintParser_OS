@@ -120,6 +120,19 @@ describe("P3.4 overlay keyboard parent topology", () => {
     expect(DISPATCHER).not.toContain("stopImmediatePropagation");
   });
 
+  it("keeps the rejected controller key/page scaffold axes deleted", () => {
+    // [refactor jul22 P3.4 K2] onKey/onPageChange were unimplemented scaffold on ToolController.
+    // Keyboard is dispatcher-owned; page transitions stay with viewerCommands and the drag machine.
+    const TYPES = readFileSync(join(ROOT, "src/components/viewer/tools/types.ts"), "utf8");
+    expect(TYPES).not.toContain("onKey?(");
+    expect(TYPES).not.toContain("onPageChange?(");
+    for (const path of productionSources("src/components/viewer/tools")) {
+      const source = readFileSync(join(ROOT, path), "utf8");
+      expect(count(source, "onKey("), `${path} onKey`).toBe(0);
+      expect(count(source, "onPageChange("), `${path} onPageChange`).toBe(0);
+    }
+  });
+
   it("keeps both project-page Arrow guards before viewer-core reads", () => {
     for (const [label, page] of [["auth", AUTH_PAGE], ["demo", DEMO_PAGE]] as const) {
       const handler = slice(page, "    function handleKeyDown", "    window.addEventListener");

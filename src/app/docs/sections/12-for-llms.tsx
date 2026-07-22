@@ -93,7 +93,7 @@ export function Section12ForLlms() {
             [<InlineCode key="a8">streamChatWithTools</InlineCode>, "src/lib/llm/anthropic.ts:85-169", "Agentic tool-use loop. maxRounds=10."],
             [<InlineCode key="a9">BP_TOOLS</InlineCode>, "src/lib/llm/tools-defs.ts", "20 tool definitions. Client-safe (no db/fs)."],
             [<InlineCode key="a10">executeToolCall</InlineCode>, "src/lib/llm/tools.ts", "Server-side tool executors. Full db + fs access."],
-            [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:2609", "Render-gate condition #1. Also touch L2620, L2649, L2653."],
+            [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:1484", "Render-gate condition #1, registry-derived: TOOLS.some((c) => c.wantsEvents(state)). Extend via the controller's wantsEvents; companions L1485 (shouldRender), L1540 (pointerEvents), L1544 (cursor)."],
             [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,parseFlowStore}.ts + Query facades", "Use the owning leaf/facade; viewerStore is only a bounded inert compatibility sentinel."],
             [<InlineCode key="a13">resetAllTools</InlineCode>, "src/stores/viewerCommands.ts", "Neutral tool/parse reset command; leaf stores do not import siblings."],
             [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/uiStore.ts", "One-shot UI signal. Read-and-clear pattern."],
@@ -217,8 +217,8 @@ objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
           rows={[
             [
               "Canvas render gate drift",
-              "AnnotationOverlay.tsx:2609 + :2620 + :2649 + :2653",
-              "Adding a new canvas mode without touching all four conditions → silent event loss / wrong cursor.",
+              "AnnotationOverlay.tsx:1484 + :1485 + :1540 + :1544",
+              "Condition #1 is registry-derived (controller wantsEvents) since P3.4; forgetting wantsEvents on a new controller, or missing #2–#4 in AO, → silent event loss / wrong cursor.",
             ],
             [
               "csi-detect.ts is server-only",
@@ -277,8 +277,8 @@ objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
             <h4 className="text-[var(--fg)] font-semibold mb-1">Add a new canvas tool mode</h4>
             <ol className="list-decimal pl-5 space-y-0.5 text-[13px]">
               <li>Add flat interaction/session state to <InlineCode>toolStore.ts</InlineCode>; keep server rows in Query and parse state in <InlineCode>parseFlowStore.ts</InlineCode>.</li>
-              <li>Touch ALL FOUR conditions in <InlineCode>AnnotationOverlay.tsx</InlineCode>: <InlineCode>canvasWantsEvents</InlineCode> (L2609), <InlineCode>canvasShouldRender</InlineCode> (L2620), <InlineCode>pointerEvents</InlineCode> (L2649), <InlineCode>cursor</InlineCode> (L2653).</li>
-              <li>Add branches in <InlineCode>handleMouseDown/Move/Up</InlineCode>.</li>
+              <li>Register a controller in <InlineCode>tools/registry.ts</InlineCode> with a <InlineCode>wantsEvents</InlineCode> predicate (render-gate condition #1 is registry-derived since P3.4), then check the three AO conditions: <InlineCode>canvasShouldRender</InlineCode> (L1485), <InlineCode>pointerEvents</InlineCode> (L1540), <InlineCode>cursor</InlineCode> (L1544).</li>
+              <li>Implement the press in the controller&apos;s <InlineCode>matches</InlineCode>/<InlineCode>onMouseDown</InlineCode> (shared move/up stay in AO); keyboard belongs to <InlineCode>useOverlayKeyboardDispatcher</InlineCode>, not the controller.</li>
               <li>For cross-owner cleanup, compose the operation in <InlineCode>viewerCommands.resetAllTools()</InlineCode>; never import sibling stores into a leaf.</li>
             </ol>
           </div>
