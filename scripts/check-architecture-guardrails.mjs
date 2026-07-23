@@ -349,8 +349,10 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/lib/db/schema.ts",
-      maxLines: 923,
+      maxLines: 984,
       // [P4.1 rebudget 2026-07-23] +1: csiCodes $type<CsiCode[]> widening (5065f95, U9-D).
+      // [P5.4 rebudget 2026-07-23] +61: runtime_counters/login_lockouts/op_log tables +
+      // manual_ip_bans auto-ban columns (Stage B, migration 0039_runtime_state).
       reason: "immutable-provider-binding-and-retirement-authority",
     },
     {

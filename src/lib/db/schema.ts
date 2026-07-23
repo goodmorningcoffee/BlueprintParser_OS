@@ -641,19 +641,80 @@ export const abuseEvents = pgTable(
   ],
 );
 
-// manualIpBans: explicit Root_Admin-initiated bans (distinct from the Phase 3
-// in-memory auto-ban `banStore`). Middleware reads with 60s in-memory cache to
-// avoid per-request DB hits.
+// manualIpBans: Root_Admin-initiated bans AND (as of P5.4) the converged home
+// for the formerly in-memory auto-ban `banStore`. Middleware reads with a 60s
+// in-memory cache to avoid per-request DB hits.
+//
+// [refactor jul23 P5.4-B] Additive columns so auto-bans land in this same table
+// (one cache + one admin read path serves both):
+//   source            — 'manual' (Root_Admin, the historical default) | 'auto'
+//                        (parser-abuse escalation). Backfills to 'manual'.
+//   violations        — auto-only: strikes counted inside the 5-minute window.
+//   firstViolationAt  — auto-only: window anchor for the 2-strike escalation.
 export const manualIpBans = pgTable("manual_ip_bans", {
   id: serial("id").primaryKey(),
   ip: varchar("ip", { length: 45 }).notNull().unique(),
   reason: varchar("reason", { length: 500 }),
   bannedByUserId: integer("banned_by_user_id"),
   bannedUntil: timestamp("banned_until", { withTimezone: true }),
+  source: varchar("source", { length: 10 }).notNull().default("manual"),
+  violations: integer("violations"),
+  firstViolationAt: timestamp("first_violation_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
 });
+
+// ─── P5.4 PG-backed shared runtime state ────────────────────
+//
+// [refactor jul23 P5.4-B] These three tables move per-ECS-task in-memory state
+// (rate buckets, login lockouts, parse-history ring) to Postgres so a multi-task
+// autoscaled cluster stops N×-multiplying every threshold and stops being
+// per-task ban-blind. Additive migration 0039_runtime_state. A pg_advisory_lock
+// janitor (entrypoint `janitor` mode) sweeps expired rows.
+
+// runtimeCounters: generic fixed-window buckets (rate limits, cooldowns).
+// Increment atomically via INSERT ... ON CONFLICT (scope,key) DO UPDATE with a
+// CASE that resets the window when reset_at has passed. One statement = one
+// round-trip, so the hot path adds at most a single upsert per request.
+export const runtimeCounters = pgTable(
+  "runtime_counters",
+  {
+    scope: text("scope").notNull(),
+    key: text("key").notNull(),
+    count: integer("count").notNull().default(0),
+    resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.key] })],
+);
+
+// loginLockouts: dedicated table (not overloaded onto runtimeCounters) because
+// brute-force lockout keeps extra semantics — an exponentially growing
+// locked_until AND a count that survives an expired lockout. Keyed by lowercased
+// email. Mirrors the extracted src/lib/login-lockout.ts field-for-field.
+export const loginLockouts = pgTable("login_lockouts", {
+  email: text("email").primaryKey(),
+  count: integer("count").notNull().default(0),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  lastAttempt: timestamp("last_attempt", { withTimezone: true }),
+});
+
+// opLog: durable replacement for the 50-entry in-memory parse-history ring.
+// getHistory becomes ORDER BY created_at DESC LIMIT N; the janitor trims old
+// rows. request/response hold the same payloads the ring stored per entry.
+export const opLog = pgTable(
+  "op_log",
+  {
+    id: serial("id").primaryKey(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    kind: varchar("kind", { length: 40 }).notNull(),
+    request: jsonb("request"),
+    response: jsonb("response"),
+  },
+  (table) => [index("idx_op_log_created").on(table.createdAt)],
+);
 
 // ─── Invite Requests ────────────────────────────────────────
 export const inviteRequests = pgTable("invite_requests", {

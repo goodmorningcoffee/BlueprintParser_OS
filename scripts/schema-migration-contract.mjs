@@ -5,7 +5,12 @@ export const MIGRATIONS_FOLDER = "./drizzle";
 export const P2_DURABLE_CHECKPOINT_TAG = "0032_chat_global_nullable_project";
 export const P2_PRE_CUTOVER_TAG = "0036_project_asset_object_event_generation";
 export const P2_BOUNDARY_TAG = "0037_label_studio_asset_grants";
-export const P2_CURRENT_TAG = "0038_label_studio_session_retirements";
+// [refactor jul23 P5.4-B] Bumped 0038→0039 for the additive runtime_state
+// migration. Deliberate, policy-updated, migrator-tested cutover re-pin (the
+// sanctioned 0033-0038 precedent path). The pin exists to block ACCIDENTAL
+// migrations; a reviewed additive bump is exactly what it admits. Owner still
+// solely applies to prod.
+export const P2_CURRENT_TAG = "0039_runtime_state";
 
 export function localMigrationContract(folder = MIGRATIONS_FOLDER) {
   const migrations = readMigrationFiles({ migrationsFolder: folder });

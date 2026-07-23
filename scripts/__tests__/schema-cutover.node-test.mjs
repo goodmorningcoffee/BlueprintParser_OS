@@ -1380,7 +1380,7 @@ test("schema contract accepts only an exact timestamp/hash match", () => {
   assert.throws(() => assertSchemaCurrent(local, []), /not exactly current/u);
 });
 
-test("P2 migrator accepts exact full-history prefixes from 0032 through 0038", () => {
+test("P2 migrator accepts exact full-history prefixes from 0032 through 0039", () => {
   const local = localMigrationContract();
   assert.equal(local.latest.tag, P2_CURRENT_TAG);
   const checkpoint = local.entries.find(
@@ -1419,9 +1419,9 @@ test("both P2 modes reject an incomplete or future local migration journal", () 
     () =>
       assertP2LocalMigrationContract({
         ...local,
-        latest: { ...local.latest, tag: "0039_unreviewed_future" },
+        latest: { ...local.latest, tag: "0040_unreviewed_future" },
       }),
-    /pinned to 0038/u,
+    /pinned to 0039_runtime_state/u,
   );
   assert.throws(
     () =>
@@ -1795,7 +1795,7 @@ for (const legacyRow of ["session", "intent"]) {
 }
 
 test(
-  "actual singleton migration upgrades the durable 0032 checkpoint through 0038",
+  "actual singleton migration upgrades the durable 0032 checkpoint through 0039",
   { skip: !dbUp, timeout: 60_000 },
   async () => {
     const subset = await migrationFolderThrough(32);

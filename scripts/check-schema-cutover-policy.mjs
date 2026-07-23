@@ -3383,7 +3383,7 @@ requireAll(
     'P2_DURABLE_CHECKPOINT_TAG = "0032_chat_global_nullable_project"',
     'P2_PRE_CUTOVER_TAG = "0036_project_asset_object_event_generation"',
     'P2_BOUNDARY_TAG = "0037_label_studio_asset_grants"',
-    'P2_CURRENT_TAG = "0038_label_studio_session_retirements"',
+    'P2_CURRENT_TAG = "0039_runtime_state"',
     "ORDER BY created_at ASC",
     "expected.length === applied.length",
     "expected.every((entry, index) => matches(entry, applied[index]))",
