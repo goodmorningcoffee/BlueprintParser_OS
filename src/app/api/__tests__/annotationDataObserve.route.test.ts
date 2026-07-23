@@ -723,6 +723,31 @@ describe.skipIf(!dbUp)("[P4.1 U6] observeAnnotationData — PUT sink + empty-mar
     expect(shapeRegistryWarns(warn)).toHaveLength(0); // csiCodes extension tolerated
   });
 
+  // [P4.1 tranche-review] The seed-path POSITIVE warn net (U6-review LOW residual): the
+  // note-only branch's observation must actually SURFACE drift, not just stay silent on
+  // valid seeds. Existing blob is a malformed OBSERVED shape; the auto-csi seed re-persists
+  // it → exactly one warn. An unwired seed-branch observe would leave this at zero warns.
+  it("note-only PUT over a MALFORMED existing observed blob warns once at sink=annotations.update (seed-path positive proof)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const id = await seed(project.publicId, {
+      type: "count-marker",
+      shape: "hexagon", // not a TakeoffShape — the planted drift
+      color: "#abc",
+      takeoffItemId: 9,
+    });
+    const warn = vi.spyOn(logger, "warn");
+    const { status } = await putAnnotation(id, {
+      note: "Provide cast in place concrete for all foundation walls and footings.",
+    });
+    expect(status).toBe(200); // log-only: the seeded write still succeeds
+    const calls = shapeRegistryWarns(warn);
+    expect(calls).toHaveLength(1);
+    const ctx = calls[0][1] as Record<string, unknown>;
+    expect(ctx.sink).toBe("annotations.update");
+    expect(ctx.kind).toBe("count-marker");
+  });
+
   it("PUT name-only (no data write) performs NO observation", async () => {
     const { user, project } = await createWorld();
     asUser(user);

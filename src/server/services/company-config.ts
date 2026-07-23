@@ -98,6 +98,13 @@ const MAX_LOGGED_ISSUES = 5;
  * Observe the shape of a persisted pipelineConfig at the wrapper sink. Never throws;
  * the write has ALREADY happened — this is a read-only canary. `.loose()` schemas
  * mean only wrong-TYPED known keys drift; unknown keys/siblings round-trip silently.
+ *
+ * [P4.1 tranche-review, ACCEPTED DESIGN] This observes the WHOLE persisted config, so a
+ * chronically-drifted sibling subtree re-warns on every write to ANY subtree (unlike the
+ * pages-intelligence incoming-only stance). Deliberate: the wrapper is subtree-agnostic
+ * and the canary's question is "is the persisted config valid," not "was this patch
+ * valid"; the aggregated warn's `subtrees` field lets log analysis separate chronic
+ * legacy drift from new drift. Revisit only if canary noise materializes in prod.
  */
 function observePipelineConfig(config: PipelineConfig, sink: string): void {
   const cfg = config as Record<string, unknown>;

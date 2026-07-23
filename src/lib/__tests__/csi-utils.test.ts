@@ -115,6 +115,22 @@ describe("yolo placeholder merge — pre-swap equivalence net (Stage C identity)
     expect(viaMerge).toEqual(yoloLoopMerge(existing, yoloCodes));
   });
 
+  // [P4.1 tranche-review] The variant-collapse delta on the yolo path IS the U9 fix
+  // propagating (review-adjudicated desired): a format-variant of an existing page code
+  // no longer grows the array, so yolo.ts's `newCsi.length > existing.length` write-guard
+  // SKIPS the write instead of persisting a duplicate. Pinned here at the merge level.
+  it("format-variant yolo code collapses into the existing entry — length unchanged, so the yolo write-guard skips", () => {
+    const existing: CsiCode[] = [
+      { code: "08 11 13", description: "existing door", division: "08", trade: "" },
+    ];
+    const viaMerge = mergeCsiCodes(
+      existing,
+      ["081113"].map((code) => ({ code, description: "From YOLO class config" })),
+    );
+    expect(viaMerge).toHaveLength(existing.length); // guard condition false → no page write
+    expect(viaMerge[0].code).toBe("08 11 13"); // raw existing form kept
+  });
+
   it("reproduces the loop's objects byte-for-byte (existing present; already-present code skipped by both)", () => {
     const existing: CsiCode[] = [
       { code: "03 30 00", description: "Concrete", division: "03", trade: "" },
