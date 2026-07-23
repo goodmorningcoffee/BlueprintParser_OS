@@ -1,82 +1,79 @@
 /**
  * login-lockout.ts — Per-email brute-force lockout for credential sign-in.
  *
- * [refactor jul23 P5.4-A] Extracted verbatim from `auth.ts` (the `loginAttempts`
- * map, idle-sweep interval, and the three helper functions) into a pure module
- * with ZERO NextAuth/db/Google imports. Rationale: the exponential lockout
- * schedule had no test coverage because `auth.ts` cannot be imported in a unit
- * test (it pulls NextAuth/db/Google at module load). This seam lets the freeze
- * (login-lockout.test.ts) import the helpers directly and lock the exact
- * millisecond schedule before P5.4 swaps the backing store to Postgres
- * (`login_lockouts`). Behavior is identical to the pre-extraction auth.ts:
- * same THRESHOLD/STEP/BASE_MS/CAP_MS, same "count survives expired lockout"
- * semantics, same idle sweep. The only change is the sweep interval is now
- * `.unref()`'d so it never holds a test/process open (it never needed to).
+ * [refactor jul23 P5.4-A] Extracted verbatim from `auth.ts` into a pure module
+ * so the exponential lockout schedule could be frozen (login-lockout.test.ts).
+ *
+ * [refactor jul23 P5.4-C] Backing store swapped from the per-ECS-task in-memory
+ * `loginAttempts` Map to the shared Postgres `login_lockouts` table (migration
+ * 0039). Rationale: an autoscaled N-task cluster no longer N×-dilutes the
+ * lockout — every task reads/writes the one row per email. Signatures are
+ * preserved except that the three helpers are now `async` (callers in auth.ts
+ * await them; RD-P5e).
+ *
+ * WHY the schedule math is threaded with a JS timestamp instead of PG `now()`:
+ * the exponential cadence still lives in SQL (the `power(2, floor(...))` CASE
+ * below — one single upsert per failed attempt), but the *reference instant* is
+ * the caller's `Date.now()`, passed as a bound parameter. That keeps the frozen
+ * schedule assertions (login-lockout.test.ts uses vi.useFakeTimers) byte-for-
+ * byte green: awaiting the same functions under fake timers reproduces the exact
+ * same locked_until, because both the write and the read use the faked clock.
+ *
+ * Schedule (unchanged from the extraction): THRESHOLD=5, doubling every 2 extra
+ * failures, base 60s, capped at 3600s (1h). count 5→1m, 6→1m, 7→2m, 8→2m,
+ * 9→4m, ... 17→60m (64m clamped). The count SURVIVES an expired lockout so
+ * repeat offenders keep escalating; a successful login clears the row. Only
+ * failed passwords reach recordFailedLogin — normal sign-in/out never does.
+ *
+ * The idle sweep that dropped >2h-stale entries is now the advisory-locked
+ * runtime-state janitor (P5.4-E, DELETE FROM login_lockouts WHERE last_attempt
+ * < now() - interval '2 hours'), so this module no longer holds a setInterval.
  */
 
-// ─── Brute force protection ──────────────────────────────────
-const loginAttempts = new Map<
-  string,
-  { count: number; lockedUntil: number; lastAttempt: number }
->();
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
-const idleSweep = setInterval(
-  () => {
-    const now = Date.now();
-    for (const [key, val] of loginAttempts) {
-      // Drop entries idle for 2h+ (lockout long expired, attacker gave up). We keep
-      // the failure count across an expired lockout so repeat offenders keep
-      // escalating — only true inactivity clears it.
-      if (now - val.lastAttempt > 2 * 60 * 60 * 1000) loginAttempts.delete(key);
-    }
-  },
-  10 * 60 * 1000,
-);
-// Never keep the event loop (or a test worker) alive on account of the sweep.
-idleSweep.unref?.();
-
-export function checkBruteForce(email: string): string | null {
+export async function checkBruteForce(email: string): Promise<string | null> {
   const key = email.toLowerCase();
-  const entry = loginAttempts.get(key);
-  if (!entry) return null;
+  const now = Date.now();
+  const res = await db.execute(
+    sql`SELECT locked_until FROM login_lockouts WHERE email = ${key}`,
+  );
+  const row = res.rows[0] as { locked_until: Date | string | null } | undefined;
+  if (!row || row.locked_until == null) return null;
 
-  if (entry.lockedUntil > Date.now()) {
-    const mins = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
+  const lockedUntilMs = new Date(row.locked_until).getTime();
+  if (lockedUntilMs > now) {
+    const mins = Math.ceil((lockedUntilMs - now) / 60000);
     return `Account locked. Try again in ${mins} minute${mins > 1 ? "s" : ""}.`;
   }
   return null;
 }
 
-export function recordFailedLogin(email: string) {
+export async function recordFailedLogin(email: string): Promise<void> {
   const key = email.toLowerCase();
-  const entry = loginAttempts.get(key) || {
-    count: 0,
-    lockedUntil: 0,
-    lastAttempt: 0,
-  };
-  entry.count++;
-  entry.lastAttempt = Date.now();
-
-  // After THRESHOLD wrong attempts, lock the account with an EXPONENTIALLY
-  // growing window: the base doubles for every STEP additional failures, capped.
-  // A successful login clears the counter. Only failed passwords reach here —
-  // normal sign-in/out never does.
-  const THRESHOLD = 5;
-  const STEP = 2; // double every 2 extra failures
-  const BASE_MS = 60 * 1000; // 1 min at the threshold
-  const CAP_MS = 60 * 60 * 1000; // cap at 1 hour
-  if (entry.count >= THRESHOLD) {
-    const over = entry.count - THRESHOLD;
-    const lockMs = Math.min(
-      CAP_MS,
-      BASE_MS * Math.pow(2, Math.floor(over / STEP)),
-    );
-    entry.lockedUntil = Date.now() + lockMs;
-  }
-
-  loginAttempts.set(key, entry);
+  const now = Date.now();
+  // The caller's instant, threaded so fake timers control the stored window.
+  const nowTs = sql`to_timestamp(${now}::double precision / 1000)`;
+  // Single upsert: increment the count, and (once past the threshold) set a new
+  // locked_until on the exponential schedule. `login_lockouts.count` in the SET
+  // clause is the PRE-update value, so `+ 1` is the new count. A brand-new row
+  // is always count 1 (below threshold) → locked_until NULL.
+  await db.execute(sql`
+    INSERT INTO login_lockouts (email, count, locked_until, last_attempt)
+    VALUES (${key}, 1, NULL, ${nowTs})
+    ON CONFLICT (email) DO UPDATE SET
+      count = login_lockouts.count + 1,
+      last_attempt = ${nowTs},
+      locked_until = CASE
+        WHEN login_lockouts.count + 1 >= 5
+        THEN ${nowTs} + (LEAST(3600, 60 * power(2, floor((login_lockouts.count + 1 - 5)::numeric / 2)))::int * interval '1 second')
+        ELSE NULL
+      END
+  `);
 }
 
-export function clearFailedLogins(email: string) {
-  loginAttempts.delete(email.toLowerCase());
+export async function clearFailedLogins(email: string): Promise<void> {
+  const key = email.toLowerCase();
+  await db.execute(sql`DELETE FROM login_lockouts WHERE email = ${key}`);
 }

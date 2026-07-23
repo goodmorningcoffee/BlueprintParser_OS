@@ -406,7 +406,10 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
       mergerNotes: merged.mergerNotes,
     },
   };
-  addToHistory(historyEntry);
+  // [refactor jul23 P5.4-C] addToHistory now writes op_log (async). Awaited so a
+  // write failure surfaces rather than becoming an unhandled rejection; the
+  // response shape is unchanged.
+  await addToHistory(historyEntry);
 
   // Phase D.1 + D-cleanup: per-method results are included only when the
   // client opts in via debugMode. Default response is merged + infraErrors —

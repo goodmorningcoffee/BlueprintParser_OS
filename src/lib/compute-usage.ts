@@ -148,18 +148,32 @@ export async function recordComputeUsage(opts: {
 }
 
 /**
- * In-memory per-company cooldown for cap-hit alert emails so repeated blocked
- * runs can't spam ROOT_ADMIN_EMAIL (an email-cost / DoS vector). The abuse-event
- * + audit-log entries still fire on every hit (cheap, drive the root badge); only
- * the email is throttled. Per-process state — bounds emails to ~1 per company per
- * window per ECS task, enough to neutralize the spam vector without new schema.
+ * Per-company cooldown for cap-hit alert emails so repeated blocked runs can't
+ * spam ROOT_ADMIN_EMAIL (an email-cost / DoS vector). The abuse-event + audit-log
+ * entries still fire on every hit (cheap, drive the root badge); only the email
+ * is throttled.
+ *
+ * [refactor jul23 P5.4-C] Moved from a per-ECS-task in-memory Map to the shared
+ * `runtime_counters` table (scope 'cap_alert', key = companyId), so the whole
+ * cluster — not each task — sends at most one email per company per 15m window.
+ * One single upsert (one round-trip): a fresh/expired window resets count to 1
+ * and this call "claims" the send; a live window increments (count > 1) and
+ * returns false. Now-instant threaded from JS so the fixed window is testable.
  */
 const CAP_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
-const lastCapAlertAt = new Map<number, number>();
-export function shouldSendCapAlert(companyId: number): boolean {
+export async function shouldSendCapAlert(companyId: number): Promise<boolean> {
   const now = Date.now();
-  const prev = lastCapAlertAt.get(companyId) ?? 0;
-  if (now - prev < CAP_ALERT_COOLDOWN_MS) return false;
-  lastCapAlertAt.set(companyId, now);
-  return true;
+  const nowTs = sql`to_timestamp(${now}::double precision / 1000)`;
+  const windowTs = sql`to_timestamp(${now}::double precision / 1000) + (${CAP_ALERT_COOLDOWN_MS} * interval '1 millisecond')`;
+  const res = await db.execute(sql`
+    INSERT INTO runtime_counters (scope, key, count, reset_at)
+    VALUES ('cap_alert', ${String(companyId)}, 1, ${windowTs})
+    ON CONFLICT (scope, key) DO UPDATE SET
+      count = CASE WHEN runtime_counters.reset_at < ${nowTs} THEN 1 ELSE runtime_counters.count + 1 END,
+      reset_at = CASE WHEN runtime_counters.reset_at < ${nowTs} THEN ${windowTs} ELSE runtime_counters.reset_at END
+    RETURNING count
+  `);
+  const count = (res.rows[0] as { count?: number } | undefined)?.count ?? 0;
+  // count === 1 means this call opened a fresh window → send exactly one email.
+  return count === 1;
 }

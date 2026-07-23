@@ -50,8 +50,8 @@ declare module "@auth/core/jwt" {
 }
 
 // [refactor jul23 P5.4-A] Brute-force lockout state + helpers moved to
-// @/lib/login-lockout (imported above). checkBruteForce/recordFailedLogin/
-// clearFailedLogins keep identical signatures and call sites below are untouched.
+// @/lib/login-lockout (imported above). [P5.4-C] The three helpers are now async
+// (login_lockouts PG table); the call sites below are awaited — no other change.
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -77,7 +77,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials.password as string;
 
         // Check brute force lockout
-        const lockMsg = checkBruteForce(email);
+        // [refactor jul23 P5.4-C] login-lockout helpers are now async (login_lockouts PG table).
+        const lockMsg = await checkBruteForce(email);
         if (lockMsg) {
           console.error(`[AUTH FAIL] lockout: ${email}`);
           return null;
@@ -110,7 +111,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!user) {
           console.error(`[AUTH FAIL] user not found: ${email}`);
-          recordFailedLogin(email);
+          await recordFailedLogin(email);
           audit("login_failed", {
             details: { email, reason: "user_not_found" },
           });
@@ -121,7 +122,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           console.error(
             `[AUTH FAIL] null passwordHash: ${email} (id=${user.id})`,
           );
-          recordFailedLogin(email);
+          await recordFailedLogin(email);
           audit("login_failed", {
             userId: user.id,
             companyId: user.companyId,
@@ -133,7 +134,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const passwordMatch = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatch) {
           console.error(`[AUTH FAIL] wrong password: ${email} (id=${user.id})`);
-          recordFailedLogin(email);
+          await recordFailedLogin(email);
           audit("login_failed", {
             userId: user.id,
             companyId: user.companyId,
@@ -194,7 +195,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
         }
 
-        clearFailedLogins(email);
+        await clearFailedLogins(email);
         audit("login_success", { userId: user.id, companyId: user.companyId });
 
         return {

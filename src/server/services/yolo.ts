@@ -350,7 +350,7 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
           // Optional SES alert — best-effort, throttled per company to avoid spam.
           if (
             process.env.ROOT_ADMIN_EMAIL &&
-            shouldSendCapAlert(session.user.companyId)
+            (await shouldSendCapAlert(session.user.companyId)) // [P5.4-C] now async (runtime_counters)
           ) {
             try {
               await sendAlertEmail(

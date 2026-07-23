@@ -33,10 +33,12 @@ const delReq = () => makeReq("/api/admin/recent-parses", { method: "DELETE" });
 const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S044 fold: A applied]
 const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S044 fold: A applied]
 
+// [refactor jul23 P5.4-C] the ring buffer is now op_log (async). seed/isolation
+// await the async helpers; every assertion is unchanged.
 const seed = (id: string) =>
   addToHistory({ id, timestamp: 0, requestType: "table", methodResults: [] } as never);
 
-beforeEach(() => { vi.clearAllMocks(); signedOut(); clearHistory(); });
+beforeEach(async () => { vi.clearAllMocks(); signedOut(); await clearHistory(); });
 
 describe.skipIf(!dbUp)("admin/recent-parses (RP)", () => {
   it("RP-1 GET auth: signed-out→401, member→403, admin+root→200", async () => {
@@ -56,8 +58,8 @@ describe.skipIf(!dbUp)("admin/recent-parses (RP)", () => {
 
   it("RP-2 GET: {entries, count, maxEntries} from the ring buffer", async () => {
     const { admin } = await makeAdmin();
-    seed("p1");
-    seed("p2");
+    await seed("p1");
+    await seed("p2");
     asUser(admin);
     const r = await readJson(await rpGET(getReq()));
     expect(r.status).toBe(200);
@@ -81,11 +83,11 @@ describe.skipIf(!dbUp)("admin/recent-parses (RP)", () => {
 
   it("RP-4 DELETE: clears the ring buffer → {ok:true}", async () => {
     const { admin } = await makeAdmin();
-    seed("p3");
+    await seed("p3");
     asUser(admin);
     const r = await readJson(await rpDELETE(delReq()));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ ok: true }); // note: DELETE returns {ok:true}, GET-family uses different keys
-    expect(getHistory()).toHaveLength(0); // buffer cleared
+    expect(await getHistory()).toHaveLength(0); // buffer cleared
   });
 });

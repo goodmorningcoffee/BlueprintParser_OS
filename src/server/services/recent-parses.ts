@@ -9,7 +9,8 @@
 import { getHistory, clearHistory, getMaxEntries } from "@/lib/parse-history";
 
 export async function getRecentParses(): Promise<unknown> {
-  const entries = getHistory();
+  // [refactor jul23 P5.4-C] getHistory/clearHistory are now async (op_log-backed).
+  const entries = await getHistory();
   return {
     entries,
     count: entries.length,
@@ -18,6 +19,6 @@ export async function getRecentParses(): Promise<unknown> {
 }
 
 export async function clearRecentParses(): Promise<unknown> {
-  clearHistory();
+  await clearHistory();
   return { ok: true };
 }
