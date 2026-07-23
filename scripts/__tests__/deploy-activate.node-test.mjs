@@ -223,12 +223,32 @@ case "\${service} \${action}" in
 esac
 `;
 
+// [refactor jul23 P5.1-δ] Hermetic health-endpoint stub for the post-deploy poll. Returns
+// {status:"ok"} by default; MOCK_HEALTH_FAIL makes the request fail, MOCK_HEALTH_BADBODY returns
+// a non-ok body. The base activate() below skips the poll entirely (BP_SKIP_HEALTH_POLL=1) so the
+// pre-existing P2 activate coverage never touches the network; the δ tests opt back in.
+const mockCurl = `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${MOCK_HEALTH_FAIL:-0}" = 1 ]; then
+  echo "curl: (22) simulated HTTP error" >&2
+  exit 22
+fi
+if [ "\${MOCK_HEALTH_BADBODY:-0}" = 1 ]; then
+  printf '%s' '{"status":"degraded"}'
+else
+  printf '%s' '{"status":"ok"}'
+fi
+`;
+
 before(async () => {
   fixtureDir = await mkdtemp(path.join(tmpdir(), "bp-deploy-activate-"));
   logPath = path.join(fixtureDir, "aws.log");
   const awsPath = path.join(fixtureDir, "aws");
   await writeFile(awsPath, mockAws);
   await chmod(awsPath, 0o755);
+  const curlPath = path.join(fixtureDir, "curl");
+  await writeFile(curlPath, mockCurl);
+  await chmod(curlPath, 0o755);
 });
 
 after(async () => {
@@ -253,6 +273,11 @@ async function activate(extraEnv = {}) {
       DOMAIN: "example.com",
       CLOUDFRONT_DISTRIBUTION_ID: "E1234567890123",
       ROOT_ADMIN_EMAIL: "",
+      // [refactor jul23 P5.1-δ] Keep the P2 activate suite off the network by default; the poll
+      // is exercised explicitly by the δ tests below via BP_SKIP_HEALTH_POLL="0".
+      BP_SKIP_HEALTH_POLL: "1",
+      BP_HEALTH_CURL_BIN: path.join(fixtureDir, "curl"),
+      BP_HEALTH_POLL_DELAY_SECONDS: "0",
       ...extraEnv,
     },
   });
@@ -490,4 +515,44 @@ test("activate fail-closes exact security-sensitive task environment values", as
     assert.match(result.stderr, error, `${name} mutation failed for the wrong reason`);
     assert.doesNotMatch(result.log, /ecs run-task|ecs update-service/u);
   }
+});
+
+// ---- [refactor jul23 P5.1-δ] post-deploy /api/health poll (additive, non-fatal) ----
+
+test("activate confirms application health after an ECS-stable rollout", async () => {
+  const result = await activate({ BP_SKIP_HEALTH_POLL: "0" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Deployment completed/u);
+  assert.match(result.stdout, /Post-deploy health check passed for activate/u);
+});
+
+test("a failing health endpoint is loud but never reverses a stable rollout", async () => {
+  const result = await activate({
+    BP_SKIP_HEALTH_POLL: "0",
+    MOCK_HEALTH_FAIL: "1",
+    BP_HEALTH_POLL_ATTEMPTS: "2",
+  });
+  // The rollout already proved ECS-stable, so the deploy still succeeds.
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Deployment completed/u);
+  assert.match(result.stderr, /did NOT observe/u);
+  assert.match(result.stderr, /after 2 attempts for activate/u);
+});
+
+test("a non-ok health body counts as a failed poll and stays non-fatal", async () => {
+  const result = await activate({
+    BP_SKIP_HEALTH_POLL: "0",
+    MOCK_HEALTH_BADBODY: "1",
+    BP_HEALTH_POLL_ATTEMPTS: "1",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Deployment completed/u);
+  assert.match(result.stderr, /did NOT observe/u);
+});
+
+test("BP_SKIP_HEALTH_POLL=1 skips the poll entirely (default in this suite)", async () => {
+  const result = await activate();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Skipping post-deploy health poll for activate/u);
+  assert.doesNotMatch(result.stdout, /Post-deploy health check passed/u);
 });
