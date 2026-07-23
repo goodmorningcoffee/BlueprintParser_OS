@@ -44,14 +44,21 @@ describe("mergeCsiCodes", () => {
 // collapse distinct Level-4 dotted siblings → silent data loss). These pins mark
 // exactly what flips (case 1) and what must SURVIVE unchanged (case 2, case 3).
 describe("mergeCsiCodes — raw-code dedupe (PRE-FIX characterization)", () => {
-  it("THE BUG (flips at Stage B): format-variants '08 11 13' + '081113' BOTH persist (length 2) — raw-code dedupe misses them", () => {
+  it("FIXED (U9): format-variants '08 11 13' + '081113' collapse to ONE entry (length 1) — existing raw form kept", () => {
     const merged = mergeCsiCodes(
       [{ code: "08 11 13", description: "existing door", division: "08", trade: "" }],
       [{ code: "081113", description: "raw-form dup" }],
     );
-    // PRE-FIX pin: the seen-set keys on the RAW code string, "081113" !== "08 11 13",
-    // so one logical code double-writes. Stage B flips this to length 1 (first-wins).
-    expect(merged).toHaveLength(2);
+    // Stage B fix: csiDedupeKey("081113") === csiDedupeKey("08 11 13") === "081113",
+    // so the incoming variant is recognized as a duplicate and dropped (first-wins).
+    // The existing row keeps its raw "08 11 13" form verbatim. (Was length 2 pre-fix.)
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toEqual({
+      code: "08 11 13",
+      description: "existing door",
+      division: "08",
+      trade: "",
+    });
   });
 
   it("PIN — must SURVIVE the fix (anti-data-loss guard): Level-4 dotted siblings '00 24 13.13' + '00 24 13.16' BOTH persist (length 2)", () => {

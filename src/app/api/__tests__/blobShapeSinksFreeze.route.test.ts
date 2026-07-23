@@ -627,7 +627,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] PATCH /api/pages/intelligence — shallow-merg
     expect(st.pi.extraKey).toBe("new"); // new top-level key added
   });
 
-  it("merges parsedRegions.csiTags into pages.csiCodes via mergeCsiCodes AND PINS the raw-code dedupe BUG ('08 11 13' vs '081113' double-write) — U9 bug, DO NOT FIX here (csi-utils.ts:52,55)", async () => {
+  it("merges parsedRegions.csiTags into pages.csiCodes via mergeCsiCodes; format-variant '081113' is deduped against existing '08 11 13' [refactor jul23 P4.1 U9 fix — was the raw-code double-write BUG]", async () => {
     const { user, project } = await createWorld();
     const page = await createPage(project.id, 1, {
       csiCodes: [{ code: "08 11 13", description: "existing door", division: "08", trade: "" }] as any,
@@ -649,15 +649,15 @@ describe.skipIf(!dbUp)("[P4.1 U0] PATCH /api/pages/intelligence — shallow-merg
     });
     expect(status).toBe(200);
     const st = await pageState(page.id);
-    // PINNED U9 BUG: mergeCsiCodes dedupes by the RAW `.code` string (never normalizeCsiCode'd),
-    // so "081113" is NOT string-equal to the existing "08 11 13" and BOTH persist — one logical
-    // CSI code double-written. Division for incoming tags is derived from code.substring(0,2),
-    // trade defaults "". This is the characterization of the bug; the normalize-before-dedupe fix
-    // is U9's own char→fix unit — do NOT "fix" it here.
+    // [refactor jul23 P4.1 U9 fix] mergeCsiCodes now dedupes on csiDedupeKey (separator-strip-only):
+    // csiDedupeKey("081113") === csiDedupeKey("08 11 13") === "081113", so the incoming "081113" is
+    // recognized as a duplicate of the existing "08 11 13" and DROPPED (first-wins — the existing row
+    // keeps its raw form untouched). Only the genuinely new "23 05 00" is added (division derived from
+    // code.substring(0,2), trade ""). The format-variant double-write BUG this test used to pin is
+    // fixed at its source (csi-utils.ts). (Pre-fix this asserted a third "081113" duplicate row.)
     expect(st.csi).toEqual([
       { code: "08 11 13", description: "existing door", division: "08", trade: "" }, // first-wins, untouched
-      { code: "081113", description: "raw-form dup", division: "08", trade: "" }, // BUG: duplicate of the above
-      { code: "23 05 00", description: "new hvac", division: "23", trade: "" },
+      { code: "23 05 00", description: "new hvac", division: "23", trade: "" }, // genuinely new code added
     ]);
   });
 });
