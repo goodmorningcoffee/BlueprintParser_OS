@@ -32,6 +32,7 @@ import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { createCompany } from "@/test/harness";
 // [refactor jul23 P4.1 U11] Stage-B target — the companies-row FOR-UPDATE wrapper.
+import { updatePipelineConfig } from "@/server/services/company-config";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -100,4 +101,22 @@ describe.skipIf(!dbUp)("[P4.1 U11] pipelineConfig concurrent different-subtree w
   });
 
   // ── STAGE B — the wrapper closes it (lands WITH company-config.ts) ──
+  // PROBE: revert updatePipelineConfig's `.for("update")` to an unlocked read and this
+  // test goes RED (one write is lost again) — the FOR UPDATE lock is load-bearing here.
+  it("STAGE-B serialization: concurrent updatePipelineConfig demo-write vs csi-write BOTH survive (FOR UPDATE serializes)", async () => {
+    const company = await createCompany({ pipelineConfig: BASE as never });
+
+    // No barrier: the two real transactions contend on the SAME companies row's FOR
+    // UPDATE lock, so the second blocks until the first commits, then RE-READS the
+    // first's committed base and adds its own subtree — both survive regardless of
+    // which transaction wins the lock race.
+    await Promise.all([
+      updatePipelineConfig(company.id, (c) => ({ ...c, demo: NEW_DEMO }) as never),
+      updatePipelineConfig(company.id, (c) => ({ ...c, csi: NEW_CSI }) as never),
+    ]);
+
+    const pc = await pcOf(company.id);
+    expect(pc?.demo).toEqual(NEW_DEMO); // first-lost subtree now survives
+    expect(pc?.csi).toEqual(NEW_CSI); // and so does the other
+  });
 });

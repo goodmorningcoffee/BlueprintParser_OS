@@ -41,8 +41,9 @@ import { ApiError } from "@/server/api/envelope";
 import type { CsiConfigPutBody } from "@/server/api/schemas"; // [refactor jul9 P2-A C1]
 import { BUILT_IN_RULES } from "@/lib/heuristic-engine";
 import { getAllDetectorMeta } from "@/lib/detectors/registry";
-
-type PipelineConfig = NonNullable<typeof companies.$inferSelect.pipelineConfig>;
+// [refactor jul23 P4.1 U11] the companies-row FOR-UPDATE write wrapper + its shared
+// PipelineConfig type (single source of truth; was a duplicate local alias here).
+import { updatePipelineConfig, type PipelineConfig } from "./company-config";
 
 /** The pipelineConfig top-level keys the six B1 routes own (typed union per DR003). */
 type ConfigKey = "csi" | "demo" | "pipeline" | "llm" | "textAnnotation" | "heuristics" | "pageNaming";
@@ -67,12 +68,17 @@ async function writePipelineConfig(
   patch: Partial<Record<ConfigKey, unknown>>,
   opts: { touchUpdatedAt?: boolean } = {},
 ): Promise<void> {
-  const existing = await readPipelineConfig(companyId);
-  const updated = { ...existing, ...patch } as PipelineConfig;
-  await db
-    .update(companies)
-    .set(opts.touchUpdatedAt ? { pipelineConfig: updated, updatedAt: new Date() } : { pipelineConfig: updated })
-    .where(eq(companies.id, companyId));
+  // [refactor jul23 P4.1 U11] delegate to the companies-row FOR-UPDATE wrapper: the
+  // read+spread+write is now ATOMIC, closing the non-atomic lost-update flagged at
+  // :14-15 (H2 class). Merge semantics BYTE-IDENTICAL — the mutator does the SAME
+  // top-level spread `{...current, ...patch}` and the SAME touchUpdatedAt split; the
+  // six route callers are untouched. (Previously: unlocked readPipelineConfig →
+  // `{...existing, ...patch}` → bare db.update — reproduced verbatim in the mutator.)
+  await updatePipelineConfig(
+    companyId,
+    (current) => ({ ...current, ...patch }) as PipelineConfig,
+    opts,
+  );
 }
 
 // ── demo/config ───────────────────────────────────────────────────────────────
@@ -183,16 +189,26 @@ export async function getCsiConfig(session: AuthSession): Promise<unknown> {
  * RMW (H2 class, :14-15) unchanged in kind. getCsiConfig untouched (CSI-2/CSI-3 hold).
  */
 export async function putCsiConfig(session: AuthSession, body: CsiConfigPutBody): Promise<unknown> {
-  const existing = await readPipelineConfig(session.user.companyId);
-  const existingCsi = (existing.csi && typeof existing.csi === "object" && !Array.isArray(existing.csi)
-    ? existing.csi
-    : {}) as Record<string, unknown>;
-  const { customDatabaseS3Key, customDatabaseName, customDatabaseCodes } = existingCsi;
-  const preserved: Record<string, unknown> = {};
-  if (customDatabaseS3Key !== undefined) preserved.customDatabaseS3Key = customDatabaseS3Key;
-  if (customDatabaseName !== undefined) preserved.customDatabaseName = customDatabaseName;
-  if (customDatabaseCodes !== undefined) preserved.customDatabaseCodes = customDatabaseCodes;
-  await writePipelineConfig(session.user.companyId, { csi: { ...body, ...preserved } });
+  // [refactor jul23 P4.1 U11] [G-class latent-race fix] fold the triple-lift INTO the
+  // locked mutator so the S037 DOUBLE READ collapses to a SINGLE FOR-UPDATE read. Before:
+  // an own `readPipelineConfig` lifted the server-preserved custom-DB triple, THEN
+  // writePipelineConfig re-read the base — two UNLOCKED SELECTs that could diverge under
+  // a concurrent upload/revert (triple read from one snapshot, base from another). Now the
+  // wrapper's single locked read feeds both the triple lift and the merge, so triple and
+  // base are always consistent (same G-class collapse as pages.ts's DR002 fix). Merge
+  // semantics BYTE-IDENTICAL: `{...current, csi: {...body, ...preserved}}`, the SAME
+  // undefined-guarded triple preserve, touchUpdatedAt defaulted false (csi does not touch it).
+  await updatePipelineConfig(session.user.companyId, (current) => {
+    const existingCsi = (current.csi && typeof current.csi === "object" && !Array.isArray(current.csi)
+      ? current.csi
+      : {}) as Record<string, unknown>;
+    const { customDatabaseS3Key, customDatabaseName, customDatabaseCodes } = existingCsi;
+    const preserved: Record<string, unknown> = {};
+    if (customDatabaseS3Key !== undefined) preserved.customDatabaseS3Key = customDatabaseS3Key;
+    if (customDatabaseName !== undefined) preserved.customDatabaseName = customDatabaseName;
+    if (customDatabaseCodes !== undefined) preserved.customDatabaseCodes = customDatabaseCodes;
+    return { ...current, csi: { ...body, ...preserved } } as PipelineConfig;
+  });
   return { success: true };
 }
 

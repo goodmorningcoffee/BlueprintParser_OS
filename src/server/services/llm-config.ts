@@ -29,6 +29,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { encryptApiKey, maskApiKey, decryptApiKey } from "@/lib/crypto";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+// [refactor jul23 P4.1 U11] companies-row FOR-UPDATE write wrapper for the PUT sink.
+import { updatePipelineConfig } from "./company-config";
 
 /**
  * GET /api/admin/llm-config
@@ -228,24 +230,21 @@ export async function deleteLlmConfig(session: AuthSession, body: Record<string,
 export async function updateLlmSettings(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
   const { systemPrompt } = body as { systemPrompt?: string };
 
-  // Merge into pipelineConfig.llm
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
-
-  const existing = company?.pipelineConfig || {};
-  const existingLlm = existing.llm || {};
-  const updated = {
-    ...existing,
-    llm: { ...existingLlm, systemPrompt: systemPrompt || undefined },
-  };
-
-  await db
-    .update(companies)
-    .set({ pipelineConfig: updated, updatedAt: new Date() })
-    .where(eq(companies.id, session.user.companyId));
+  // [refactor jul23 P4.1 U11] migrate the non-atomic `llm.systemPrompt` RMW onto the
+  // companies-row FOR-UPDATE wrapper. This closes the cross-writer H2 race flagged at
+  // :22-23 with putLlmConfig — both mutate the `llm` subtree from DIFFERENT routes
+  // (/api/admin/llm-config PUT here vs /api/admin/llm/config PUT there), so a concurrent
+  // pair previously let one silently clobber the other. Merge semantics BYTE-IDENTICAL:
+  // `{...current, llm: {...existingLlm, systemPrompt: systemPrompt || undefined}}`,
+  // updatedAt TOUCHED (preserved via touchUpdatedAt:true — the frozen PUT split).
+  await updatePipelineConfig(
+    session.user.companyId,
+    (current) => {
+      const existingLlm = current.llm || {};
+      return { ...current, llm: { ...existingLlm, systemPrompt: systemPrompt || undefined } };
+    },
+    { touchUpdatedAt: true },
+  );
 
   return { success: true };
 }

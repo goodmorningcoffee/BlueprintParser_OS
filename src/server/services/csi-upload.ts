@@ -26,9 +26,10 @@
 // [refactor jul9 P2-A C1] C2 update: DIVISION_TRADES since replaced by the canonical
 // @/lib/csi-divisions map (see comment at inferTradeFromCode; ledger D-9).
 
-import { db } from "@/lib/db";
-import { companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+// [refactor jul23 P4.1 U11] both the upload pointer-triple RMW and the revert
+// triple-STRIP RMW now route through the companies-row FOR-UPDATE wrapper, so the
+// direct db/companies/eq handles here are gone; S3 + cache work stays OUTSIDE it (I-1).
+import { updatePipelineConfig, type PipelineConfig } from "./company-config";
 import { uploadToS3, deleteFromS3 } from "@/lib/s3";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
@@ -131,29 +132,23 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
 
   await uploadToS3(s3Key, Buffer.from(tsvContent, "utf-8"), "text/tab-separated-values");
 
-  // Update company config to point to custom file
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, companyId))
-    .limit(1);
-
-  const existing = (company?.pipelineConfig || {}) as Record<string, unknown>;
-  const csiConfig = (existing.csi || {}) as Record<string, unknown>;
-  const updated = {
-    ...existing,
-    csi: {
-      ...csiConfig,
-      customDatabaseS3Key: s3Key,
-      customDatabaseName: file.name,
-      customDatabaseCodes: entries.length,
-    },
-  };
-
-  await db
-    .update(companies)
-    .set({ pipelineConfig: updated })
-    .where(eq(companies.id, companyId));
+  // [refactor jul23 P4.1 U11] Update company config to point to custom file — migrated
+  // onto the companies-row FOR-UPDATE wrapper. I-1: `uploadToS3` (ABOVE) and
+  // `invalidateCache` (BELOW) stay OUTSIDE the tx — no async S3/cache work runs while the
+  // row lock is held (the regions.ts:155-158 precedent). Merge semantics BYTE-IDENTICAL:
+  // `{...current, csi: {...existingCsi, customDatabaseS3Key/Name/Codes}}`, no updatedAt.
+  await updatePipelineConfig(companyId, (current) => {
+    const csiConfig = (current.csi || {}) as Record<string, unknown>;
+    return {
+      ...current,
+      csi: {
+        ...csiConfig,
+        customDatabaseS3Key: s3Key,
+        customDatabaseName: file.name,
+        customDatabaseCodes: entries.length,
+      },
+    } as PipelineConfig;
+  });
 
   // [refactor jul9 P2-A C1] C3: drop the resolver's cached custom-DB snapshot so
   // the re-upload-to-same-key case (deterministic s3Key) is visible immediately
@@ -174,23 +169,16 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
 export async function revertCsiDatabase(session: AuthSession): Promise<unknown> {
   const companyId = session.user.companyId;
 
-  // Remove custom config
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, companyId))
-    .limit(1);
-
-  const existing = (company?.pipelineConfig || {}) as Record<string, unknown>;
-  const csiConfig = (existing.csi || {}) as Record<string, unknown>;
-  const { customDatabaseS3Key, customDatabaseName, customDatabaseCodes, ...restCsi } = csiConfig;
-
-  const updated = { ...existing, csi: restCsi };
-
-  await db
-    .update(companies)
-    .set({ pipelineConfig: updated })
-    .where(eq(companies.id, companyId));
+  // [refactor jul23 P4.1 U11] Remove custom config — migrated onto the companies-row
+  // FOR-UPDATE wrapper. I-1: `invalidateCache` and the best-effort S3 delete (BELOW) stay
+  // OUTSIDE/AFTER the tx (SPEC_FINAL §1.6(C3) ordering preserved). Strip semantics
+  // BYTE-IDENTICAL: destructure-drop EXACTLY the 3 `customDatabase*` keys; sibling `csi.*`
+  // + top-level siblings survive; no updatedAt.
+  await updatePipelineConfig(companyId, (current) => {
+    const csiConfig = (current.csi || {}) as Record<string, unknown>;
+    const { customDatabaseS3Key, customDatabaseName, customDatabaseCodes, ...restCsi } = csiConfig;
+    return { ...current, csi: restCsi } as PipelineConfig;
+  });
 
   // [refactor jul9 P2-A C1] C3: invalidate the resolver cache AFTER the config
   // write (the pointer is gone → next resolve short-circuits to builtin) and
