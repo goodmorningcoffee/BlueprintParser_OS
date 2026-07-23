@@ -76,7 +76,7 @@ const optional = z.object({
 
   // ops/misc (code defaults noted)
   GEOIP_DB_PATH: opt, // default /data/GeoLite2-Country.mmdb
-  CLOUDWATCH_LOG_GROUP: opt, // code default /aws/lambda/bp2 is WRONG (P5.2)
+  CLOUDWATCH_LOG_GROUP: opt, // [jul23 P5.3 U5] code default is /ecs/blueprintparser-app (cw-logs.ts) — legacy name, moves with the beaver-* owner cutover. (Prior note here named a phantom code default that never existed.)
   LOG_LEVEL: opt, // default info
   ALLOW_MODEL_UPLOAD: opt, // default false — weights-upload kill-switch
   DEV_PROCESSING_ENABLED: opt, // default false

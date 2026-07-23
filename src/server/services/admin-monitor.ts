@@ -28,8 +28,15 @@ interface DataPoint { t: string; v: number }
 export async function getMonitor(): Promise<unknown> {
   const now = new Date();
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+  // [OWNER-CUTOVER jul23 P5.3 U5] LEGACY `blueprintparser-*` names. The live ECS cluster/service
+  // are `beaver-cluster`/`beaver-app` (deploy.sh, ecs.tf), so the Monitor tab's ECS CPU/mem
+  // series currently query a NONEXISTENT service and come back empty. Do NOT flip in isolation:
+  // the canonical name is an OWNER ratification (P5.3), and cw-logs.ts's LOG_GROUP, env.ts's
+  // CLOUDWATCH_LOG_GROUP note, and the AlarmNamePrefix below must all move in the SAME cutover.
+  // Pinned by scripts/__tests__/naming-residue-pin.node-test.mjs.
   const cluster = "blueprintparser-cluster";
   const appService = "blueprintparser-app";
+  // lambdaFn is NOT part of the beaver-* cutover: `blueprintparser-cv-pipeline` matches lambda.tf.
   const lambdaFn = "blueprintparser-cv-pipeline";
 
   // [B] no try/catch — a CloudWatch/Budgets error propagates to the shell's generic INTERNAL
@@ -84,6 +91,7 @@ export async function getMonitor(): Promise<unknown> {
       ],
     })),
     cw().send(new DescribeAlarmsCommand({
+      // [OWNER-CUTOVER jul23 P5.3 U5] Legacy prefix — moves with the cluster/appService rename above.
       AlarmNamePrefix: "blueprintparser-",
     })),
     ACCOUNT

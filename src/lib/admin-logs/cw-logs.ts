@@ -20,6 +20,11 @@ import { logger } from "@/lib/logger";
  * A monthly Admin Logs tab usage pattern of 10 queries/day → ~$1.50/mo total.
  */
 
+// [OWNER-CUTOVER jul23 P5.3 U5] `/ecs/blueprintparser-app` is CORRECT today — it matches the
+// awslogs-group in infrastructure/terraform/ecs.tf — but it is the legacy `blueprintparser-*`
+// name. When the owner ratifies the `beaver-*` cutover (P5.3), this default, env.ts's
+// CLOUDWATCH_LOG_GROUP note, and admin-monitor.ts's cluster/service/alarm names must change in
+// lockstep. Pinned by scripts/__tests__/naming-residue-pin.node-test.mjs.
 const LOG_GROUP = process.env.CLOUDWATCH_LOG_GROUP || "/ecs/blueprintparser-app";
 
 let client: CloudWatchLogsClient | null = null;
