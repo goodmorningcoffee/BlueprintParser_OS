@@ -54,6 +54,8 @@ import {
   type SplitAnnotationResponse,
 } from "@/lib/annotation-split-contract";
 import { splitPolygonByLine, type Pt } from "@/lib/polygon-split";
+// [refactor jul23 P4.1 U1] log-mode shape observation + v-gate at the create sink.
+import { observeAnnotationData } from "./annotation-data-observe";
 import { ApiError } from "@/server/api/envelope";
 import {
   resolveByPublicId,
@@ -302,6 +304,14 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
   // [refactor jul9 P2-A C1] company CSI context (no tx here); threaded into mergeAutoCsi.
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
+  // [refactor jul23 P4.1 U1] mergeAutoCsi hoisted out of the tx callback (pure fn —
+  // identical persisted value, shorter row-lock hold; the d120d42 sink freeze pins the
+  // v-absent behavior byte-identical) so the shape observation sees the value ACTUALLY
+  // persisted. Log-mode observe + v-gate per annotation-data-observe.ts: v-absent data
+  // NEVER changes behavior (warn-only); v-carrying data must be shape-valid (400).
+  const dataToPersist = mergeAutoCsi(note, data, csiCtx);
+  observeAnnotationData(dataToPersist, "annotations.create");
+
   const annotation = await withProjectWrite(
     writeCapability,
     project.id,
@@ -317,7 +327,7 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
           pageNumber,
           note: note || null,
           source: source || "user",
-          data: mergeAutoCsi(note, data, csiCtx), // [refactor jul9 P2-A C1]
+          data: dataToPersist, // [refactor jul9 P2-A C1] merged above [P4.1 U1]
           creatorId: session.user.dbId,
           projectId: project.id,
         })
