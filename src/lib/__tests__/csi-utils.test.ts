@@ -35,6 +35,92 @@ describe("mergeCsiCodes", () => {
   });
 });
 
+// [refactor jul23 P4.1 U9] Characterization of the raw-code dedupe bug and the
+// data-loss hazard that constrains the fix. mergeCsiCodes today builds its `seen`
+// set from the RAW `.code` string (csi-utils.ts:52,55) and never normalizes, so
+// two format-variants of one logical code ("08 11 13" vs "081113") both persist.
+// The fix (Stage B) keys dedupe on a separator-strip-only `csiDedupeKey` — which
+// collapses format variants BUT must NOT truncate (full normalizeCsiCode would
+// collapse distinct Level-4 dotted siblings → silent data loss). These pins mark
+// exactly what flips (case 1) and what must SURVIVE unchanged (case 2, case 3).
+describe("mergeCsiCodes — raw-code dedupe (PRE-FIX characterization)", () => {
+  it("THE BUG (flips at Stage B): format-variants '08 11 13' + '081113' BOTH persist (length 2) — raw-code dedupe misses them", () => {
+    const merged = mergeCsiCodes(
+      [{ code: "08 11 13", description: "existing door", division: "08", trade: "" }],
+      [{ code: "081113", description: "raw-form dup" }],
+    );
+    // PRE-FIX pin: the seen-set keys on the RAW code string, "081113" !== "08 11 13",
+    // so one logical code double-writes. Stage B flips this to length 1 (first-wins).
+    expect(merged).toHaveLength(2);
+  });
+
+  it("PIN — must SURVIVE the fix (anti-data-loss guard): Level-4 dotted siblings '00 24 13.13' + '00 24 13.16' BOTH persist (length 2)", () => {
+    const merged = mergeCsiCodes(
+      [{ code: "00 24 13.13", description: "sibling .13", division: "00", trade: "" }],
+      [{ code: "00 24 13.16", description: "sibling .16" }],
+    );
+    // These are two DIFFERENT real MasterFormat codes (csi-masterformat.json). The
+    // separator-strip-only key keeps them distinct ("00241313" != "00241316"), so this
+    // stays length 2 AFTER the fix. A truncating key would collapse them → data loss.
+    expect(merged).toHaveLength(2);
+  });
+
+  it("documents WHY normalizeCsiCode must NOT be the dedupe key: it truncates Level-4 to 6 digits (two distinct siblings normalize IDENTICALLY)", () => {
+    expect(normalizeCsiCode("00 24 13.16")).toBe("00 24 13");
+    expect(normalizeCsiCode("00 24 13.13")).toBe("00 24 13");
+    // Both dotted siblings collapse to "00 24 13" — proof that keying dedupe on
+    // normalizeCsiCode would silently drop one of two genuinely different codes.
+  });
+});
+
+// [refactor jul23 P4.1 U9] Pre-swap equivalence net for Stage C. The yolo-load path
+// (src/server/services/yolo.ts) hand-rolls a placeholder-CSI merge with ZERO test
+// coverage. Stage C replaces that loop with mergeCsiCodes. This pins that, for the
+// yolo call shape, mergeCsiCodes reproduces the loop's objects byte-for-byte — proving
+// the swap is an identity. Inputs are distinct, non-format-variant codes so raw-code
+// dedupe (the loop) and csiDedupeKey dedupe (post-Stage-B mergeCsiCodes) AGREE; the
+// equivalence therefore holds both before and after the Stage B key change.
+describe("yolo placeholder merge — pre-swap equivalence net (Stage C identity)", () => {
+  // Faithful replica of the yolo.ts merge loop as it stood before Stage C.
+  function yoloLoopMerge(existingPageCsi: CsiCode[], allYoloCsi: string[]): CsiCode[] {
+    const existingSet = new Set(existingPageCsi.map((c) => c.code));
+    const newCsi: CsiCode[] = [...existingPageCsi];
+    for (const code of allYoloCsi) {
+      if (!existingSet.has(code)) {
+        newCsi.push({
+          code,
+          description: "From YOLO class config",
+          division: code.substring(0, 2),
+          trade: "",
+        });
+      }
+    }
+    return newCsi;
+  }
+
+  it("reproduces the loop's objects byte-for-byte (empty existing)", () => {
+    const existing: CsiCode[] = [];
+    const yoloCodes = ["08 11 00", "23 05 00"];
+    const viaMerge = mergeCsiCodes(
+      existing,
+      yoloCodes.map((code) => ({ code, description: "From YOLO class config" })),
+    );
+    expect(viaMerge).toEqual(yoloLoopMerge(existing, yoloCodes));
+  });
+
+  it("reproduces the loop's objects byte-for-byte (existing present; already-present code skipped by both)", () => {
+    const existing: CsiCode[] = [
+      { code: "03 30 00", description: "Concrete", division: "03", trade: "" },
+    ];
+    const yoloCodes = ["08 11 00", "03 30 00"]; // "03 30 00" already present → both skip it
+    const viaMerge = mergeCsiCodes(
+      existing,
+      yoloCodes.map((code) => ({ code, description: "From YOLO class config" })),
+    );
+    expect(viaMerge).toEqual(yoloLoopMerge(existing, yoloCodes));
+  });
+});
+
 describe("normalizeCsiCode", () => {
   it("pads single-digit division to 2 chars", () => {
     expect(normalizeCsiCode("8")).toBe("08");
