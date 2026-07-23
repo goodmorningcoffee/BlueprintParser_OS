@@ -349,12 +349,14 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/lib/db/schema.ts",
-      maxLines: 922,
+      maxLines: 923,
+      // [P4.1 rebudget 2026-07-23] +1: csiCodes $type<CsiCode[]> widening (5065f95, U9-D).
       reason: "immutable-provider-binding-and-retirement-authority",
     },
     {
       path: "src/lib/processing.ts",
-      maxLines: 814,
+      maxLines: 825,
+      // [P4.1 rebudget 2026-07-23] +11: U7 shape-parse observe-sink hoist (b170db0).
       reason: "legacy-domain-engine",
     },
     {
@@ -369,12 +371,14 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/server/services/reprocess.ts",
-      maxLines: 881,
+      maxLines: 899,
+      // [P4.1 rebudget 2026-07-23] +18: U7 observe at both shape-parse writers (b170db0).
       reason: "legacy-service",
     },
     {
       path: "src/server/services/yolo.ts",
-      maxLines: 949,
+      maxLines: 963,
+      // [P4.1 rebudget 2026-07-23] +14: U7 yolo.load observe (b170db0) + U9-C merge unification (e5f441e).
       reason: "legacy-service",
     },
     {
