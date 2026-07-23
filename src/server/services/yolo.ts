@@ -68,6 +68,8 @@ import {
 import { logger } from "@/lib/logger";
 import { ApiError, notFound } from "@/server/api/envelope";
 import { assertProjectWritable } from "@/server/api/access";
+// [refactor jul23 P4.1 U7] log-mode shape observation at the yolo-load persistence sink.
+import { observeAnnotationDataBatch } from "./annotation-data-observe";
 import {
   withProjectMutationLease,
   withProjectWrite,
@@ -605,6 +607,16 @@ export async function yoloLoad(
           error: "No detections found in result files", // in-band 200 error — never flips (YQ-5)
         };
       }
+
+      // [refactor jul23 P4.1 U7] Log-mode observe of the yolo-detection blobs about to be
+      // persisted (the exact array, mapped pre-tx). gate:false PERMANENTLY (RD-U7a): a throw
+      // here would poison the whole load — these blobs are fixed-key literals that never
+      // stamp v, so the gate is moot; the flag makes "log+skip permanent" explicit.
+      observeAnnotationDataBatch(
+        allValues.map((v) => v.data),
+        "yolo.load",
+        { gate: false },
+      );
 
       let totalInserted = 0;
       let deletedPrevious = 0;

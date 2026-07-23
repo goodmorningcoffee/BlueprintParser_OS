@@ -75,9 +75,16 @@ import { assertProjectWritable } from "@/server/api/project-write-capability";
 import { db } from "@/lib/db";
 import { annotations, pages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 import { createPage, createWorld } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
+
+// [refactor jul23 P4.1 U7] Only the observe module's entries — logger.warn is shared.
+const shapeRegistryWarns = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.filter(
+    (c) => typeof c[0] === "string" && (c[0] as string).startsWith("[shape-registry]"),
+  );
 
 const userParsedRegions = [
   { id: "pr-f4", type: "schedule", bbox: [0.1, 0.1, 0.5, 0.5], data: { rows: 3 } },
@@ -232,3 +239,61 @@ describe.skipIf(!dbUp)("processProject — F4 pageIntelligence carry (UPDATE bra
   }, 30000);
 });
 
+// [refactor jul23 P4.1 U7] Warn-net for the processing.ts shape-parse observe wiring
+// (rides commit U7-B). Log-mode contract (spec Verdict 2 / RD-U7d): a valid blob warns
+// zero times; a malformed blob STILL persists byte-identical (log+skip, gate:false) and
+// emits exactly ONE aggregated [shape-registry] warn carrying sink+kind. Uses a scoped
+// logger spy restored per-test (a blanket restoreAllMocks would nuke the vi.hoisted mock
+// defaults this file relies on — see keynotesMocks etc.).
+describe.skipIf(!dbUp)("processProject — U7 shape-parse observe warn-net [P4.1 U7]", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warnSpy = vi.spyOn(logger, "warn");
+  });
+  afterEach(() => warnSpy.mockRestore());
+
+  it("valid keynote → shape-parse row persists with ZERO shape-registry warns", async () => {
+    const { project } = await createWorld();
+    rasterMocks.getPdfPageCount.mockResolvedValue(1);
+    keynotesMocks.extractKeynotes.mockResolvedValueOnce({
+      keynotes: [
+        { shape: "circle", text: "K1", bbox: [0.1, 0.1, 0.2, 0.2], contour: [[0.1, 0.1]] },
+      ],
+      warnings: [],
+    });
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    const shapeRows = (
+      await db.select().from(annotations).where(eq(annotations.projectId, project.id))
+    ).filter((r) => r.source === "shape-parse");
+    expect(shapeRows).toHaveLength(1);
+    expect(shapeRegistryWarns(warnSpy)).toHaveLength(0);
+  }, 30000);
+
+  it("malformed keynote (shapeType number) → row STILL persists (log-only) + exactly ONE warn {sink:processing.shapeParse, kind:shape-parse}", async () => {
+    const { project } = await createWorld();
+    rasterMocks.getPdfPageCount.mockResolvedValue(1);
+    // shapeType comes from k.shape; a number violates zShapeParseData.shapeType (string).
+    // k.shape also feeds the varchar `name` col (coerced to "9") so the row still inserts.
+    keynotesMocks.extractKeynotes.mockResolvedValueOnce({
+      keynotes: [
+        { shape: 9, text: "K1", bbox: [0.1, 0.1, 0.2, 0.2], contour: [[0.1, 0.1]] } as never,
+      ],
+      warnings: [],
+    });
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    const shapeRows = (
+      await db.select().from(annotations).where(eq(annotations.projectId, project.id))
+    ).filter((r) => r.source === "shape-parse");
+    expect(shapeRows).toHaveLength(1); // ← log-only: v0 write never blocked
+    expect((shapeRows[0].data as Record<string, unknown>).shapeType).toBe(9); // persisted, violations and all
+    const calls = shapeRegistryWarns(warnSpy);
+    expect(calls).toHaveLength(1);
+    const ctx = calls[0][1] as Record<string, unknown>;
+    expect(ctx.sink).toBe("processing.shapeParse");
+    expect(ctx.kind).toBe("shape-parse");
+  }, 30000);
+});

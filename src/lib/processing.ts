@@ -45,6 +45,8 @@ import {
   withProjectWrite,
   type ProjectWriteCapability,
 } from "@/server/api/project-write-capability";
+// [refactor jul23 P4.1 U7] log-mode shape observation at the processing shape-parse sink.
+import { observeAnnotationDataBatch } from "@/server/services/annotation-data-observe";
 
 const DEFAULT_PAGE_CONCURRENCY = 8;
 
@@ -487,30 +489,39 @@ async function processProjectWithLease(
               logger.info(
                 `[processing] Page ${pageNum}: ${result.keynotes.length} shapes detected`,
               );
+              // [refactor jul23 P4.1 U7] Hoist the shape-parse rows out of the tx map
+              // (pure .map, no side effects) so the EXACT blobs about to be inserted can be
+              // observed before withProjectWrite opens — behavior-identical to the prior
+              // inline map. gate:false PERMANENTLY (RD-U7a): a throw would poison the whole
+              // page; these fixed-key blobs never stamp v, so the gate is moot (log+skip).
+              const shapeParseRows = result.keynotes.map((k) => ({
+                name: k.shape,
+                minX: k.bbox[0],
+                minY: k.bbox[1],
+                maxX: k.bbox[2],
+                maxY: k.bbox[3],
+                pageNumber: pageNum,
+                threshold: 0.9,
+                source: "shape-parse" as const,
+                data: {
+                  modelName: "shape-parse",
+                  shapeType: k.shape,
+                  text: k.text,
+                  contour: k.contour,
+                  confidence: 0.9,
+                },
+                projectId: project.id,
+              }));
+              observeAnnotationDataBatch(
+                shapeParseRows.map((r) => r.data),
+                "processing.shapeParse",
+                { gate: false },
+              );
               await withProjectWrite(
                 writeCapability,
                 project.id,
                 async (tx) => {
-                  await tx.insert(annotations).values(
-                    result.keynotes.map((k) => ({
-                      name: k.shape,
-                      minX: k.bbox[0],
-                      minY: k.bbox[1],
-                      maxX: k.bbox[2],
-                      maxY: k.bbox[3],
-                      pageNumber: pageNum,
-                      threshold: 0.9,
-                      source: "shape-parse" as const,
-                      data: {
-                        modelName: "shape-parse",
-                        shapeType: k.shape,
-                        text: k.text,
-                        contour: k.contour,
-                        confidence: 0.9,
-                      },
-                      projectId: project.id,
-                    })),
-                  );
+                  await tx.insert(annotations).values(shapeParseRows);
                 },
               );
             }

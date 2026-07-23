@@ -53,6 +53,13 @@ const OBSERVED_SHAPES: ReadonlySet<AnnotationDataKind> = new Set([
   // comes under observation. Its schema is all-optional, so only wrong-TYPED known
   // keys (csiCodes/keywords/v) can ever warn — unknown keys stay tolerated.
   "empty-markup",
+  // [refactor jul23 P4.1 U7] the two server-pipeline writer families join as the four
+  // pipeline sinks (yolo.load / processing.shapeParse / reprocess.shapeParse.fanout /
+  // .sequential) come under observation. These sinks pass gate:false PERMANENTLY (log+skip,
+  // spec Verdict 2 / RD-U7a) — their blobs are fixed-key literals that never stamp v, so
+  // the gate is structurally moot and observation can only ever warn, never throw.
+  "shape-parse",
+  "yolo-detection",
 ]);
 
 /** Cap issue detail per log entry — enough to locate the field, no value dumps. */
@@ -108,8 +115,21 @@ export function observeAnnotationData(
  * systematic v0 drift, per-row warns would flood the log and drown the exact canary
  * signal log-mode exists to surface. The v-gate is UNCHANGED (still per-row, still
  * throws on the first v-carrying invalid row — before any logging, before the tx).
+ *
+ * @param opts.gate default true (mirrors the single-variant U6-hazard opts). The
+ *        SERVER-PIPELINE sinks (yolo.load / processing.shapeParse /
+ *        reprocess.shapeParse.{fanout,sequential}) pass gate:false PERMANENTLY (RD-U7a):
+ *        those writers run inside a load / NDJSON stream / batch where a throw would
+ *        poison the WHOLE unit, so they are log+skip forever — never graduating to reject.
+ *        With gate:false, the v-gate is skipped and any (moot) v-carrying row falls
+ *        through to plain log-mode observation, exactly like observeAnnotationData.
+ *        [refactor jul23 P4.1 U7]
  */
-export function observeAnnotationDataBatch(datas: unknown[], sink: string): void {
+export function observeAnnotationDataBatch(
+  datas: unknown[],
+  sink: string,
+  opts: { gate?: boolean } = {},
+): void {
   const agg = new Map<
     AnnotationDataKind,
     { failedCount: number; issueCount: number; paths: Set<string> }
@@ -117,8 +137,10 @@ export function observeAnnotationDataBatch(datas: unknown[], sink: string): void
   for (const data of datas) {
     if (data === null || data === undefined) continue;
     const kind = classifyAnnotationData(data);
-    gateVCarrying(data, kind, sink); // throws → whole batch 400s pre-tx
-    if (vPresent(data)) continue;
+    if (opts.gate !== false) {
+      gateVCarrying(data, kind, sink); // throws → whole batch 400s pre-tx
+      if (vPresent(data)) continue;
+    }
     const failure = validateForLog(data, kind);
     if (!failure) continue;
     const entry = agg.get(kind) ?? { failedCount: 0, issueCount: 0, paths: new Set() };

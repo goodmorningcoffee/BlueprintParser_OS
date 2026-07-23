@@ -52,6 +52,8 @@ import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis"
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
 import { assertProjectWritable } from "@/server/api/access";
+// [refactor jul23 P4.1 U7] log-mode shape observation at both reprocess shape-parse sinks.
+import { observeAnnotationDataBatch } from "./annotation-data-observe";
 import {
   type ProjectWriteCapability,
   withProjectMutationLease,
@@ -428,22 +430,30 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
               for (const [pnStr, shapes] of Object.entries(byPage)) {
                 const pn = Number(pnStr);
+                // [refactor jul23 P4.1 U7] Hoist the shape-parse rows (pure .map — the same
+                // array the tx inlined) so the blobs can be observed before the per-page
+                // write. gate:false PERMANENTLY (RD-U7a): a throw here is caught → sequential
+                // fallback; fixed-key blobs never stamp v, so the gate is moot (log+skip).
+                const fanoutRows = shapes.map((k) => ({
+                  name: k.shape,
+                  minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
+                  pageNumber: pn,
+                  threshold: 0.9,
+                  source: "shape-parse" as const,
+                  data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
+                  projectId: project.id,
+                }));
+                observeAnnotationDataBatch(
+                  fanoutRows.map((r) => r.data),
+                  "reprocess.shapeParse.fanout",
+                  { gate: false },
+                );
                 await withProjectWrite(writeCapability, project.id, async (tx) => {
                   await tx.update(pages).set({ keynotes: shapes }).where(
                     and(eq(pages.projectId, project.id), eq(pages.pageNumber, pn)),
                   );
                   if (shapes.length > 0) {
-                    await tx.insert(annotations).values(
-                      shapes.map((k) => ({
-                        name: k.shape,
-                        minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
-                        pageNumber: pn,
-                        threshold: 0.9,
-                        source: "shape-parse" as const,
-                        data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
-                        projectId: project.id,
-                      })),
-                    );
+                    await tx.insert(annotations).values(fanoutRows);
                   }
                 });
                 updatedPages++;
@@ -463,23 +473,31 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                 const pngBuffer = await downloadFromS3(s3Key);
                 const result = await extractKeynotes(pngBuffer);
 
+                // [refactor jul23 P4.1 U7] Hoist the shape-parse rows (pure .map — the same
+                // array the tx inlined) so the blobs can be observed before the per-page
+                // write. gate:false PERMANENTLY (RD-U7a): a throw is caught per-page
+                // (skippedPages++); fixed-key blobs never stamp v → gate moot (log+skip).
+                const seqRows = result.keynotes.map((k) => ({
+                  name: k.shape,
+                  minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
+                  pageNumber: page.pageNumber,
+                  threshold: 0.9,
+                  source: "shape-parse" as const,
+                  data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
+                  projectId: project.id,
+                }));
+                observeAnnotationDataBatch(
+                  seqRows.map((r) => r.data),
+                  "reprocess.shapeParse.sequential",
+                  { gate: false },
+                );
                 await withProjectWrite(writeCapability, project.id, async (tx) => {
                   await tx.update(pages).set({
                     keynotes: result.keynotes.length > 0 ? result.keynotes : null,
                   }).where(eq(pages.id, page.id));
 
                   if (result.keynotes.length > 0) {
-                    await tx.insert(annotations).values(
-                      result.keynotes.map((k) => ({
-                        name: k.shape,
-                        minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
-                        pageNumber: page.pageNumber,
-                        threshold: 0.9,
-                        source: "shape-parse" as const,
-                        data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
-                        projectId: project.id,
-                      })),
-                    );
+                    await tx.insert(annotations).values(seqRows);
                   }
                 });
                 if (result.keynotes.length > 0) updatedPages++;

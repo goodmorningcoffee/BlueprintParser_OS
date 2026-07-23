@@ -113,26 +113,27 @@ describe.skipIf(!dbUp)("[P4.1 U1] observeAnnotationData at createAnnotationSingl
     expect(JSON.stringify(ctx)).not.toContain("yards");
   });
 
-  // [refactor jul23 P4.1 U2-U4, repointed again at U5] The still-unobserved exemplar is
-  // now client shape-parse: count-marker joined at U2, symbol-search at U5; shape-parse
-  // stays unobserved until U7 (shared with the server-pipeline writers). This test keeps
-  // proving the "non-observed shape persists silently, zero warns" leg of the contract.
-  it("malformed NON-observed shape (shape-parse) persists silently — allowlist stops before shape-parse (U7)", async () => {
+  // [refactor jul23 P4.1 U2-U4, repointed at U5 and FINAL at U7] With U7 all EIGHT
+  // recognized shapes are observed — the permanent non-observed exemplar is an
+  // UNKNOWN-kind blob (arbitrary/legacy shape): deliberately unobserved FOREVER (the
+  // canary only watches recognized shapes; unknown blobs are the passthrough corpus).
+  // This test pins the "unobserved kind persists silently, zero warns" contract leg.
+  it("arbitrary UNKNOWN-kind blob persists silently — unknown is never observed (permanent)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const warn = vi.spyOn(logger, "warn");
-    const badShapeParse = { modelName: "shape-parse", shapeType: 9, text: null, confidence: "high" };
+    const legacyBlob = { legacyKey: "legacy-value", weird: { nested: [1, 2] }, count: "three" };
     const { status } = await postAnnotations({
       projectId: project.publicId,
       pageNumber: 1,
-      name: "shape",
+      name: "legacy",
       bbox,
       note: null,
-      data: badShapeParse,
+      data: legacyBlob,
     });
     expect(status).toBe(200);
     const [row] = await annotationsFor(project.id);
-    expect(row.data).toEqual(badShapeParse);
+    expect(row.data).toEqual(legacyBlob);
     expect(shapeRegistryWarns(warn)).toHaveLength(0);
   });
 

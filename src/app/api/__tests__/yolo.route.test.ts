@@ -35,7 +35,7 @@
 //     are soft-fail (response stays success) · PI updates SPREAD-MERGE (user keys
 //     survive — the G3-correct writer) · csiCodes merged from model classCsiCodes.
 // Assertions tagged [S031 fold] flip in the fold commit (sanctioned A/B/E only).
-import { describe, expect, inject, it, vi, beforeEach } from "vitest";
+import { describe, expect, inject, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -165,8 +165,15 @@ import {
   annotations as annotationsTable,
 } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 
 const dbUp = inject("dbUp") as boolean;
+
+// [refactor jul23 P4.1 U7] Only the observe module's entries — logger.warn is shared.
+const shapeRegistryWarns = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.filter(
+    (c) => typeof c[0] === "string" && (c[0] as string).startsWith("[shape-registry]"),
+  );
 
 async function createModel(
   companyId: number,
@@ -1000,5 +1007,75 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
       w.project.id,
       expect.anything(),
     );
+  });
+
+  // ── yolo.load observe warn-net (rides commit U7-B) [refactor jul23 P4.1 U7] ──
+  // Log-mode contract (spec Verdict 2 / RD-U7d): valid detections → zero [shape-registry]
+  // warns; a malformed detection STILL persists (log+skip, gate:false — a throw would
+  // poison the whole load) + exactly ONE aggregated warn {sink:yolo.load, kind:yolo-detection}.
+  // det.class_id → data.classId; a string violates zYoloDetectionData.classId (int) while the
+  // varchar `name` col takes det.class_name ("door") and the row still inserts. Scoped logger
+  // spy restored per-test (the file-level beforeEach re-seeds every default before the next).
+  describe("yolo.load observe warn-net [U7]", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      warnSpy = vi.spyOn(logger, "warn");
+    });
+    afterEach(() => warnSpy.mockRestore());
+
+    it("valid detections → rows persist with ZERO shape-registry warns", async () => {
+      const w = await loadWorld();
+      asUser(w.admin);
+      seedS3Results([
+        detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET]),
+      ]);
+      const { status, body } = await readJson(
+        await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }),
+      );
+      expect(status).toBe(200);
+      expect(body.success).toBe(true);
+      const rows = await db
+        .select()
+        .from(annotationsTable)
+        .where(
+          and(
+            eq(annotationsTable.projectId, w.project.id),
+            eq(annotationsTable.source, "yolo"),
+          ),
+        );
+      expect(rows.length).toBeGreaterThan(0);
+      expect(shapeRegistryWarns(warnSpy)).toHaveLength(0);
+    });
+
+    it("MALFORMED detection (classId string) → row STILL persists (log-only) + ONE warn {sink:yolo.load, kind:yolo-detection}", async () => {
+      const w = await loadWorld();
+      asUser(w.admin);
+      seedS3Results([
+        detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [
+          { ...DET, class_id: "x" }, // classId string → violates zYoloDetectionData; name still "door"
+        ]),
+      ]);
+      const { status, body } = await readJson(
+        await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }),
+      );
+      expect(status).toBe(200);
+      expect(body.success).toBe(true); // ← log-only: nothing blocked
+      const rows = await db
+        .select({ data: annotationsTable.data })
+        .from(annotationsTable)
+        .where(
+          and(
+            eq(annotationsTable.projectId, w.project.id),
+            eq(annotationsTable.source, "yolo"),
+          ),
+        );
+      expect(rows).toHaveLength(1);
+      expect((rows[0].data as Record<string, unknown>).classId).toBe("x"); // persisted, violations and all
+      const calls = shapeRegistryWarns(warnSpy);
+      expect(calls).toHaveLength(1);
+      const ctx = calls[0][1] as Record<string, unknown>;
+      expect(ctx.sink).toBe("yolo.load");
+      expect(ctx.kind).toBe("yolo-detection");
+    });
   });
 });

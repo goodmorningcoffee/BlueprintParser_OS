@@ -29,7 +29,7 @@
 // pipelines (page-analysis, csi-detect, text-annotations, intelligence-merge,
 // project-analysis) run REAL — that's the behavior being frozen.
 // NDJSON: drain via res.text(), NEVER readJson() (G3 idiom — work happens in the stream).
-import { beforeEach, describe, expect, inject, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -98,6 +98,7 @@ import { POST as demoPOST } from "@/app/api/admin/demo/route";
 import { db } from "@/lib/db";
 import { annotations, pages, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 import {
   ageProjectForPublication,
   annotationsFor,
@@ -112,6 +113,12 @@ import {
 } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
+
+// [refactor jul23 P4.1 U7] Only the observe module's entries — logger.warn is shared.
+const shapeRegistryWarns = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.filter(
+    (c) => typeof c[0] === "string" && (c[0] as string).startsWith("[shape-registry]"),
+  );
 
 /** Drain the NDJSON stream fully (the work happens inside it), parse every line. */
 async function drain(res: Response): Promise<Record<string, any>[]> {
@@ -616,6 +623,97 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     expect(keynotesMocks.extractKeynotes).toHaveBeenCalled(); // fallback actually ran
     expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 0, skipped: 1, total: 1 });
   }, 30000);
+
+  // ── shape-parse observe warn-net (rides commit U7-B) [refactor jul23 P4.1 U7] ──
+  // Log-mode contract (spec Verdict 2 / RD-U7d): a valid pipeline blob → zero
+  // [shape-registry] warns; a malformed blob STILL persists (log+skip, gate:false — a throw
+  // would poison the NDJSON stream) + exactly ONE aggregated warn carrying the sink+kind.
+  // shapeType comes from k.shape; a number violates zShapeParseData.shapeType (string) while
+  // the varchar `name` col coerces to "9" so the row still inserts. Scoped logger spy
+  // restored per-test — a blanket restoreAllMocks would nuke the vi.hoisted mock defaults.
+  describe("shape-parse observe warn-net [U7]", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      warnSpy = vi.spyOn(logger, "warn");
+    });
+    afterEach(() => warnSpy.mockRestore());
+
+    const runShapeParse = async () => {
+      const res = await POST(
+        makeReq("/api/admin/reprocess?scope=shape-parse", { method: "POST" }),
+      );
+      return drain(res);
+    };
+
+    it("sequential VALID keynote → shape-parse row persists with ZERO shape-registry warns", async () => {
+      const { company, project } = await createWorld();
+      const admin = await createUser(company.id, { role: "admin" });
+      await createPage(project.id, 1, {});
+      keynotesMocks.extractKeynotes.mockResolvedValueOnce({
+        keynotes: [{ shape: "hexagon", bbox: [1, 2, 3, 4], text: "K1", contour: [[0, 0]] }],
+        warnings: [],
+      });
+
+      asUser(admin);
+      await runShapeParse();
+
+      const anns = await annotationsFor(project.id);
+      expect(anns.some((a) => a.source === "shape-parse")).toBe(true);
+      expect(shapeRegistryWarns(warnSpy)).toHaveLength(0);
+    }, 30000);
+
+    it("sequential MALFORMED (shapeType number) → row STILL persists (log-only) + ONE warn {sink:reprocess.shapeParse.sequential, kind:shape-parse}", async () => {
+      const { company, project } = await createWorld();
+      const admin = await createUser(company.id, { role: "admin" });
+      await createPage(project.id, 1, {});
+      keynotesMocks.extractKeynotes.mockResolvedValueOnce({
+        keynotes: [{ shape: 9, bbox: [1, 2, 3, 4], text: "K1", contour: [[0, 0]] }],
+        warnings: [],
+      });
+
+      asUser(admin);
+      await runShapeParse();
+
+      const created = (await annotationsFor(project.id)).find((a) => a.source === "shape-parse");
+      expect(created).toBeDefined(); // ← log-only: v0 write never blocked
+      expect((created!.data as Record<string, unknown>).shapeType).toBe(9);
+      const calls = shapeRegistryWarns(warnSpy);
+      expect(calls).toHaveLength(1);
+      const ctx = calls[0][1] as Record<string, unknown>;
+      expect(ctx.sink).toBe("reprocess.shapeParse.sequential");
+      expect(ctx.kind).toBe("shape-parse");
+    }, 30000);
+
+    it("fan-out MALFORMED (shapeType number via fanOutShapeParse) → row STILL persists + ONE warn {sink:reprocess.shapeParse.fanout, kind:shape-parse}", async () => {
+      const { company, project } = await createWorld();
+      const admin = await createUser(company.id, { role: "admin" });
+      await createPage(project.id, 1, {});
+      lambdaMocks.isLambdaCvEnabled.mockReturnValueOnce(true);
+      lambdaMocks.fanOutShapeParse.mockResolvedValueOnce({
+        results: [
+          {
+            pageS3Key: `${project.dataUrl}/pages/page_0001.png`,
+            shape: 9,
+            bbox: [5, 6, 7, 8],
+            text: "L1",
+            contour: [[1, 1]],
+          },
+        ],
+      });
+
+      asUser(admin);
+      await runShapeParse();
+
+      const created = (await annotationsFor(project.id)).find((a) => a.source === "shape-parse");
+      expect(created).toBeDefined();
+      expect((created!.data as Record<string, unknown>).shapeType).toBe(9);
+      const calls = shapeRegistryWarns(warnSpy);
+      expect(calls).toHaveLength(1);
+      const ctx = calls[0][1] as Record<string, unknown>;
+      expect(ctx.sink).toBe("reprocess.shapeParse.fanout");
+      expect(ctx.kind).toBe("shape-parse");
+    }, 30000);
+  });
 
   // ── T2 demo-write exclusion (P1-review, owner-sanctioned 2026-07-08) ─────────
   it("T2: isDemo projects are EXCLUDED from reprocess — not counted, never written", async () => {
