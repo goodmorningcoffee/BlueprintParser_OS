@@ -32,12 +32,19 @@ import {
 } from "@/types/shapes";
 
 /**
- * Shapes currently under log-mode observation. U1 wires scale-calibration only (the
- * pattern-prover: single shape, single writer, own source enum). U2-U5 grow this set
- * one frozen unit at a time (count-marker, linear-polyline, area-polygon, symbol-search).
+ * Shapes currently under log-mode observation. U1 wired scale-calibration (the
+ * pattern-prover: single shape, single writer, own source enum). U2-U4 add the three
+ * remaining client takeoff shapes (count-marker, linear-polyline, area-polygon) — same
+ * single-sink mechanism, one concern per landed unit. The allowlist still grows one
+ * frozen unit at a time: U5 adds symbol-search (and extends observation to the batch
+ * sink), and U6+ bring empty-markup + the server-pipeline / mutate-in-place sinks.
  */
 const OBSERVED_SHAPES: ReadonlySet<AnnotationDataKind> = new Set([
   "scale-calibration",
+  // [refactor jul23 P4.1 U2-U4] client takeoff shapes join the log-mode allowlist.
+  "count-marker",
+  "linear-polyline",
+  "area-polygon",
 ]);
 
 /** Cap issue detail per log entry — enough to locate the field, no value dumps. */
