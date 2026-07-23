@@ -11,14 +11,18 @@
 // "fs corruption" incident S001/S004/S005 — writes fail when it hits 0), and
 // the overlay is wiped on container rebuild anyway. The bind mount has room
 // and persists. Reinstall after deleting:
-//   PLAYWRIGHT_BROWSERS_PATH=/workspaces/BlueprintParser_OS/.pw-browsers \
+//   PLAYWRIGHT_BROWSERS_PATH=/workspaces/projects/BlueprintParser_OS_july10_part6_refactor/.pw-browsers \
 //     npx playwright install chromium --no-shell
 // Perf numbers are DEV-MODE (turbopack) — compare phase-over-phase only,
 // never against prod; mode is stamped into the perf JSON.
 import { defineConfig } from "@playwright/test";
 
+// [refactor jul23] Fallback corrected after the July-13 workspace move
+// (/workspaces/BlueprintParser_OS → /workspaces/projects/BlueprintParser_OS_july10_part6_refactor).
+// The old path made bare `npx playwright test` fail with a missing-executable error unless
+// the caller exported PLAYWRIGHT_BROWSERS_PATH manually; browsers live at the refactor root.
 process.env.PLAYWRIGHT_BROWSERS_PATH ||=
-  "/workspaces/BlueprintParser_OS/.pw-browsers";
+  "/workspaces/projects/BlueprintParser_OS_july10_part6_refactor/.pw-browsers";
 
 const TEST_DATABASE_URL = "postgres://bp_test:bp_test@localhost:5433/bp_test";
 
