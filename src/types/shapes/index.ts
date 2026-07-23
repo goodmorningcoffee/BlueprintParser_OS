@@ -14,3 +14,5 @@ export * from "./primitives";
 export * from "./csi";
 export * from "./annotation-data";
 export * from "./region-data";
+// [refactor jul23 P4.1 U11] pipelineConfig subtree registry (Stage D).
+export * from "./pipeline-config";

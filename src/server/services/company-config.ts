@@ -27,6 +27,9 @@
 import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+// [refactor jul23 P4.1 U11-D] log-mode shape observation at the sink (Stage D).
+import { logger } from "@/lib/logger";
+import { PIPELINE_SUBTREE_SCHEMAS } from "@/types/shapes";
 
 /** The non-null `companies.pipelineConfig` column type (the jsonb `$type` union). */
 export type PipelineConfig = NonNullable<typeof companies.$inferSelect.pipelineConfig>;
@@ -70,5 +73,53 @@ export async function updatePipelineConfig(
           : { pipelineConfig: updated },
       )
       .where(eq(companies.id, companyId));
+    // [refactor jul23 P4.1 U11-D] observe what was just persisted (log-only, never
+    // throws — pure CPU zod under the lock is accepted, the RD-U10 in-tx-classifier
+    // precedent). NO v-gate / NO 400: no pipelineConfig writer stamps a `v`, so this
+    // is pure log-mode canary (Verdict 2); the shell-level zCsiConfigPut 400 and the
+    // imperative in-service 400s (company-settings.ts) stay verbatim upstream.
+    observePipelineConfig(updated, "pipelineConfig.write");
+  });
+}
+
+// ─── Stage D: log-mode subtree observation ───────────────────────────────────
+// [refactor jul23 P4.1 U11-D] Classify the persisted config BY TOP-LEVEL SUBTREE KEY
+// and validate each RECOGNIZED subtree against its `.loose()` registry schema
+// (src/types/shapes/pipeline-config.ts). ONE aggregated `[shape-registry]` warn per
+// call; paths+codes only, NEVER blob values (admin config can carry user prompt text
+// in llm.systemPrompt / heuristics). Unknown top-level siblings (e.g. `__sentinel`,
+// `ensemble`, `disabledSteps`) have no sibling schema → skipped, never warned. This
+// is the pipelineConfig analogue of annotation-data-observe.ts (U1).
+
+/** Cap issue detail per log entry — enough to locate the field, no value dumps. */
+const MAX_LOGGED_ISSUES = 5;
+
+/**
+ * Observe the shape of a persisted pipelineConfig at the wrapper sink. Never throws;
+ * the write has ALREADY happened — this is a read-only canary. `.loose()` schemas
+ * mean only wrong-TYPED known keys drift; unknown keys/siblings round-trip silently.
+ */
+function observePipelineConfig(config: PipelineConfig, sink: string): void {
+  const cfg = config as Record<string, unknown>;
+  const drifted: string[] = [];
+  const issues: string[] = [];
+  let issueCount = 0;
+  for (const [subtree, schema] of Object.entries(PIPELINE_SUBTREE_SCHEMAS)) {
+    if (!(subtree in cfg) || cfg[subtree] === undefined) continue;
+    const result = schema.safeParse(cfg[subtree]);
+    if (result.success) continue;
+    drifted.push(subtree);
+    issueCount += result.error.issues.length;
+    // Prefix every issue path with its subtree so the aggregated warn is locatable.
+    for (const i of result.error.issues) {
+      issues.push(`${subtree}.${i.path.join(".") || "(root)"}:${i.code}`);
+    }
+  }
+  if (drifted.length === 0) return;
+  logger.warn(`[shape-registry] v0 pipelineConfig write failed subtree validation (log-only)`, {
+    sink,
+    subtrees: drifted,
+    issueCount,
+    issues: issues.slice(0, MAX_LOGGED_ISSUES),
   });
 }
