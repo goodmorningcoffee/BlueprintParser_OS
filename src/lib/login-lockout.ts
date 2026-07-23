@@ -31,7 +31,8 @@
  */
 
 import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
+import { loginLockouts } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 
 export async function checkBruteForce(email: string): Promise<string | null> {
   const key = email.toLowerCase();
@@ -59,21 +60,30 @@ export async function recordFailedLogin(email: string): Promise<void> {
   // locked_until on the exponential schedule. `login_lockouts.count` in the SET
   // clause is the PRE-update value, so `+ 1` is the new count. A brand-new row
   // is always count 1 (below threshold) → locked_until NULL.
-  await db.execute(sql`
-    INSERT INTO login_lockouts (email, count, locked_until, last_attempt)
-    VALUES (${key}, 1, NULL, ${nowTs})
-    ON CONFLICT (email) DO UPDATE SET
-      count = login_lockouts.count + 1,
-      last_attempt = ${nowTs},
-      locked_until = CASE
-        WHEN login_lockouts.count + 1 >= 5
-        THEN ${nowTs} + (LEAST(3600, 60 * power(2, floor((login_lockouts.count + 1 - 5)::numeric / 2)))::int * interval '1 second')
-        ELSE NULL
-      END
-  `);
+  // [P5.4-C security-policy] Written via the drizzle builder (statically-resolvable
+  // loginLockouts table) rather than db.execute(sql`INSERT…`): the project-security
+  // checker forbids dynamic raw-SQL mutations it cannot prove target a non-tenant table.
+  // The exponential-schedule value-SQL is verbatim from the prior raw statement, so the
+  // frozen ladder is byte-preserved (login_lockouts.count in the ON-CONFLICT SET is the
+  // PRE-update value per Postgres; `${loginLockouts.count}` renders that same column).
+  await db
+    .insert(loginLockouts)
+    .values({ email: key, count: 1, lockedUntil: null, lastAttempt: nowTs })
+    .onConflictDoUpdate({
+      target: loginLockouts.email,
+      set: {
+        count: sql`${loginLockouts.count} + 1`,
+        lastAttempt: nowTs,
+        lockedUntil: sql`CASE
+          WHEN ${loginLockouts.count} + 1 >= 5
+          THEN ${nowTs} + (LEAST(3600, 60 * power(2, floor((${loginLockouts.count} + 1 - 5)::numeric / 2)))::int * interval '1 second')
+          ELSE NULL
+        END`,
+      },
+    });
 }
 
 export async function clearFailedLogins(email: string): Promise<void> {
   const key = email.toLowerCase();
-  await db.execute(sql`DELETE FROM login_lockouts WHERE email = ${key}`);
+  await db.delete(loginLockouts).where(eq(loginLockouts.email, key));
 }

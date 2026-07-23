@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { computeUsage, companies, users } from "@/lib/db/schema";
+import { computeUsage, companies, users, runtimeCounters } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 
 export type ComputeResource = "sagemaker" | "textract" | "lambda_cv";
@@ -165,15 +165,21 @@ export async function shouldSendCapAlert(companyId: number): Promise<boolean> {
   const now = Date.now();
   const nowTs = sql`to_timestamp(${now}::double precision / 1000)`;
   const windowTs = sql`to_timestamp(${now}::double precision / 1000) + (${CAP_ALERT_COOLDOWN_MS} * interval '1 millisecond')`;
-  const res = await db.execute(sql`
-    INSERT INTO runtime_counters (scope, key, count, reset_at)
-    VALUES ('cap_alert', ${String(companyId)}, 1, ${windowTs})
-    ON CONFLICT (scope, key) DO UPDATE SET
-      count = CASE WHEN runtime_counters.reset_at < ${nowTs} THEN 1 ELSE runtime_counters.count + 1 END,
-      reset_at = CASE WHEN runtime_counters.reset_at < ${nowTs} THEN ${windowTs} ELSE runtime_counters.reset_at END
-    RETURNING count
-  `);
-  const count = (res.rows[0] as { count?: number } | undefined)?.count ?? 0;
+  // [P5.4-C security-policy] drizzle builder (statically-resolvable runtimeCounters)
+  // rather than db.execute(sql`INSERT…`) — the checker forbids unprovable dynamic
+  // raw-SQL mutations. Window value-SQL verbatim from the prior raw statement.
+  const res = await db
+    .insert(runtimeCounters)
+    .values({ scope: "cap_alert", key: String(companyId), count: 1, resetAt: windowTs })
+    .onConflictDoUpdate({
+      target: [runtimeCounters.scope, runtimeCounters.key],
+      set: {
+        count: sql`CASE WHEN ${runtimeCounters.resetAt} < ${nowTs} THEN 1 ELSE ${runtimeCounters.count} + 1 END`,
+        resetAt: sql`CASE WHEN ${runtimeCounters.resetAt} < ${nowTs} THEN ${windowTs} ELSE ${runtimeCounters.resetAt} END`,
+      },
+    })
+    .returning({ count: runtimeCounters.count });
+  const count = res[0]?.count ?? 0;
   // count === 1 means this call opened a fresh window → send exactly one email.
   return count === 1;
 }

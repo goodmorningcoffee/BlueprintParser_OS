@@ -77,7 +77,10 @@ const RAW_FETCH_BASELINE = {
 
 const DB_IMPORT_BASELINE = {
   expectedFiles: 29,
-  expectedOccurrences: 53,
+  // [P5.4-C rebudget 2026-07-23] 53→54: login-lockout's DELETE became a recognized
+  // db.delete builder sink when the unprovable db.execute(sql`…`) form was replaced
+  // (security-policy gate); matches the login-lockout per-file ceiling bump to 2.
+  expectedOccurrences: 54,
   approved: [
     {
       path: "src/app/api/auto-detect-tables/route.ts",
@@ -130,7 +133,10 @@ const DB_IMPORT_BASELINE = {
     { path: "src/lib/llm/tools.ts", max: 2, reason: "legacy-domain-engine" },
     {
       path: "src/lib/login-lockout.ts",
-      max: 1,
+      max: 2,
+      // [P5.4-C rebudget 2026-07-23] +1: the login_lockouts upsert + DELETE became
+      // drizzle-builder sinks (db.insert/db.delete) — the security checker forbids the
+      // prior unprovable db.execute(sql`…`) form; both are now recognized db placements.
       reason: "shared-runtime-state",
     },
     {
