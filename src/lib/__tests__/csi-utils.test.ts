@@ -66,7 +66,7 @@ describe("mergeCsiCodes — raw-code dedupe (PRE-FIX characterization)", () => {
       [{ code: "00 24 13.13", description: "sibling .13", division: "00", trade: "" }],
       [{ code: "00 24 13.16", description: "sibling .16" }],
     );
-    // These are two DIFFERENT real MasterFormat codes (csi-masterformat.json). The
+    // These are two DIFFERENT real MasterFormat codes (the csi-masterformat TSV corpus). The
     // separator-strip-only key keeps them distinct ("00241313" != "00241316"), so this
     // stays length 2 AFTER the fix. A truncating key would collapse them → data loss.
     expect(merged).toHaveLength(2);
