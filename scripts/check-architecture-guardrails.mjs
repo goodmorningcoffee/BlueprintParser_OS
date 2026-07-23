@@ -76,8 +76,8 @@ const RAW_FETCH_BASELINE = {
 };
 
 const DB_IMPORT_BASELINE = {
-  expectedFiles: 27,
-  expectedOccurrences: 50,
+  expectedFiles: 29,
+  expectedOccurrences: 53,
   approved: [
     {
       path: "src/app/api/auto-detect-tables/route.ts",
@@ -128,6 +128,16 @@ const DB_IMPORT_BASELINE = {
     { path: "src/lib/llm/resolve.ts", max: 2, reason: "legacy-domain-engine" },
     { path: "src/lib/llm/stream.ts", max: 2, reason: "legacy-domain-engine" },
     { path: "src/lib/llm/tools.ts", max: 2, reason: "legacy-domain-engine" },
+    {
+      path: "src/lib/login-lockout.ts",
+      max: 1,
+      reason: "shared-runtime-state",
+    },
+    {
+      path: "src/lib/parse-history.ts",
+      max: 2,
+      reason: "shared-runtime-state",
+    },
     { path: "src/lib/processing.ts", max: 2, reason: "legacy-domain-engine" },
     {
       path: "src/lib/project-analysis.ts",
