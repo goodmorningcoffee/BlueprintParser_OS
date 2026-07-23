@@ -65,17 +65,29 @@ const MAX_LOGGED_ISSUES = 5;
  * @param data the value that will be persisted (post-mergeAutoCsi — observe what actually
  *             lands in the column, not the client's pre-merge payload)
  * @param sink stable sink identifier for the structured log (e.g. "annotations.create")
- * @throws ApiError("VALIDATION") ONLY for v-carrying data that is unclassifiable or fails
- *         its shape schema. Never throws for v-absent (legacy/current-wire) data.
+ * @param opts.gate default true. Pass FALSE when the value was SEEDED FROM AN EXISTING
+ *        ROW rather than client-supplied (e.g. a note-only PUT re-persisting the row's
+ *        own blob): the reject leg is for NEW v-carrying writes only (Verdict 2), and the
+ *        historic corpus is unsampleable — a legacy blob with a coincidental top-level
+ *        `v` key must never 400 an existing wire. With gate:false, v-carrying data falls
+ *        through to plain log-mode observation. [refactor jul23 P4.1 U6-hazard]
+ * @throws ApiError("VALIDATION") ONLY when gate is on AND the data carries `v` AND it is
+ *         unclassifiable or fails its shape schema. Never throws for v-absent data.
  */
-export function observeAnnotationData(data: unknown, sink: string): void {
+export function observeAnnotationData(
+  data: unknown,
+  sink: string,
+  opts: { gate?: boolean } = {},
+): void {
   // jsonb-null / absent data: nothing to observe (classify() would say "unknown", which
   // is unobserved in U1 anyway) and nothing to gate (no `v`).
   if (data === null || data === undefined) return;
 
   const kind = classifyAnnotationData(data);
-  gateVCarrying(data, kind, sink);
-  if (vPresent(data)) return; // versioned and valid — no observation log needed.
+  if (opts.gate !== false) {
+    gateVCarrying(data, kind, sink);
+    if (vPresent(data)) return; // versioned and valid — no observation log needed.
+  }
 
   // LOG-MODE observation (v-absent = every existing wire). Never throws.
   const failure = validateForLog(data, kind);

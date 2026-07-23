@@ -620,8 +620,13 @@ export async function updateAnnotation(
   // [refactor jul23 P4.1 U6] Observe the data column's final value whenever this PUT will
   // write it (body.data replace AND/OR the auto-csi seed above) — post-seed, post-auth,
   // pre-tx, same contract as the create sinks: v-absent logs only, v-carrying must be valid.
+  // [U6-hazard] The v-gate arms ONLY when the client supplied fresh data (body.data). A
+  // note-only PUT re-persists the EXISTING row's blob (seeded above) — the historic corpus
+  // may carry a coincidental `v` key, and an existing wire must never 400 (Verdict 2).
   if (updates.data !== undefined) {
-    observeAnnotationData(updates.data, "annotations.update");
+    observeAnnotationData(updates.data, "annotations.update", {
+      gate: body.data !== undefined,
+    });
   }
 
   updates.updatedAt = new Date();

@@ -27,6 +27,11 @@ vi.mock("@/lib/auth", async () => {
 import { POST } from "@/app/api/annotations/route";
 // [refactor jul23 P4.1 U6] PUT route for the update-sink nets (vi.mock is hoisted above).
 import { PUT } from "@/app/api/annotations/[id]/route";
+// [U6-hazard net] direct-DB plant of a legacy blob (simulating the historic corpus,
+// which never passed through the v-gate).
+import { db } from "@/lib/db";
+import { annotations as annotationsTable } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { logger } from "@/lib/logger";
 import {
   annotationsFor,
@@ -750,5 +755,30 @@ describe.skipIf(!dbUp)("[P4.1 U6] observeAnnotationData — PUT sink + empty-mar
     expect(body.error.code).toBe("VALIDATION");
     const rows = await annotationsFor(project.id);
     expect(rows[0].data).toEqual(original); // nothing written
+  });
+
+  // [U6-hazard] The historic corpus never passed through the v-gate; a legacy blob may
+  // carry a coincidental top-level `v` key. A note-only PUT re-persists the row's OWN
+  // blob (auto-csi seed) — an EXISTING wire, which must NEVER 400 (Verdict 2). The gate
+  // arms only for client-supplied body.data.
+  it("note-only PUT on a legacy row with a coincidental v key STILL succeeds (seed path never gated)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const id = await seed(project.publicId, { foo: "legacy" });
+    // Plant the coincidental v key directly (simulates pre-registry historic data).
+    const legacyBlob = { foo: "legacy", v: "0.9-beta" };
+    await db
+      .update(annotationsTable)
+      .set({ data: legacyBlob })
+      .where(eq(annotationsTable.id, id));
+    const { status } = await putAnnotation(id, {
+      note: "Provide cast in place concrete for all foundation walls and footings.",
+    });
+    expect(status).toBe(200); // ← the wire survives; a gated seed path would 400 here
+    const rows = await annotationsFor(project.id);
+    const persisted = rows[0].data as Record<string, unknown>;
+    expect(persisted.foo).toBe("legacy"); // legacy keys intact
+    expect(persisted.v).toBe("0.9-beta"); // coincidental v preserved verbatim
+    expect(Array.isArray(persisted.csiCodes)).toBe(true); // the seed still happened
   });
 });
