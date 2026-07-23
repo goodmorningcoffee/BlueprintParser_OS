@@ -78,6 +78,9 @@ import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { PARSED_REGION_DEFAULT_CONFIDENCE } from "@/lib/spatial-constants";
 import { logger } from "@/lib/logger";
+// [refactor jul23 P4.1 U10] log-mode region-data shape observation (never throws, no v-gate —
+// no region write carries `v`; see region-data-observe.ts header).
+import { observeRegionData } from "@/server/services/region-data-observe";
 import type {
   TextractPageData,
   PageIntelligence,
@@ -302,6 +305,17 @@ export async function promoteRegion(body: Record<string, unknown>) {
     if (sourceTextRegionId) {
       parsedRegion.sourceTextRegionId = sourceTextRegionId;
     }
+
+    // [refactor jul23 P4.1 U10] Observe the shape of the value about to be persisted. ONE call
+    // covers BOTH sinks that feed parsedRegion.data — the Parser-Save verbatim client blob
+    // (:286, the highest-value target: rawest client JSONB passthrough in the app) AND the
+    // server-binder grid/spec shape (:231-235/:271-280, server-constructed, covered for free).
+    // WHY inside the tx (not hoisted pre-tx like the annotation-create sink): the Classifier
+    // path's regionData is built from the FOR-UPDATE'd page reads (textractData/textRegions), so
+    // the final value isn't known until here. Pure-CPU-in-tx (zod safeParse) is accepted — the
+    // tx already runs heavier CSI detection inside itself, so the added lock-hold is negligible.
+    // Log-mode NEVER throws → the write is byte-identical whether or not the blob drifts.
+    observeRegionData(parsedRegion.data, "regions.promote");
 
     const existingRegions = currentIntel.parsedRegions ?? [];
     const existingIdx = existingRegions.findIndex((r) => r.id === regionId);

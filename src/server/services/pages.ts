@@ -74,6 +74,8 @@ import { downloadFromS3 } from "@/lib/s3";
 import { assertCurrentProjectAssetRead } from "@/server/services/project-assets";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { logger } from "@/lib/logger";
+// [refactor jul23 P4.1 U10] log-mode region-data shape observation (never throws, no v-gate).
+import { observeRegionDataBatch } from "@/server/services/region-data-observe";
 import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
 import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 
@@ -148,6 +150,23 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
 
   const { project: proj } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
   const writeCapability = assertProjectWritable(proj);
+
+  // [refactor jul23 P4.1 U10] Observe the region-data shapes in the INCOMING patch, batch-
+  // aggregated (ONE warn per (sink,kind)). Read `intelligence.parsedRegions`, NEVER
+  // `merged.parsedRegions` (below): the shallow merge falls `merged.parsedRegions` through to
+  // the STORED array whenever the PATCH omits it (a real path — rejectedTextRegionIds-only
+  // dismiss / classification-only update), so observing merged would FALSE-POSITIVE canary
+  // warns on legacy-drifted stored rows THIS request never writes (recon §2b). Pure-CPU pre-tx
+  // (log-mode never throws); the tx opens below and reads its own FOR-UPDATE'd copy.
+  const incomingRegions = Array.isArray(intelligence.parsedRegions)
+    ? (intelligence.parsedRegions as Array<{ data?: unknown }>)
+    : [];
+  if (incomingRegions.length) {
+    observeRegionDataBatch(
+      incomingRegions.map((r) => r?.data),
+      "pages.intelligence",
+    );
+  }
 
   // [bugfix jul6 H2/DR002] The read-merge-write below was UNLOCKED — a concurrent writer
   // (regions/promote's own tx, or a second PATCH from another tab holding a stale client
