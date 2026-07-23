@@ -32,7 +32,7 @@
 // Assertions tagged [S041 fold: … applied] were flipped in the fold commit onto
 // services/model-access.ts + services/reprocess-csi.ts (sanctioned A/E only — no catch-500
 // literals, so NO B; unexpected errors → generic INTERNAL 500).
-import { describe, expect, inject, it, beforeEach, vi } from "vitest";
+import { describe, expect, inject, it, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -44,6 +44,8 @@ import { POST as rcPOST } from "@/app/api/admin/models/reprocess-csi/route";
 import { db } from "@/lib/db";
 import { models, modelAccess, annotations } from "@/lib/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
+// [refactor jul23 P4.1 U8] log-mode observe warn-net imports.
+import { logger } from "@/lib/logger";
 import {
   asUser,
   createCompany,
@@ -73,6 +75,12 @@ const rawReq = (path: string, method: string, raw?: string) =>
 const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S041 fold: A applied]
 const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S041 fold: A applied]
 const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S041 fold: A applied]
+
+// [refactor jul23 P4.1 U8] Only the observe module's entries — logger.warn is shared.
+const shapeRegistryWarns = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.filter(
+    (c) => typeof c[0] === "string" && (c[0] as string).startsWith("[shape-registry]"),
+  );
 
 beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 
@@ -346,5 +354,125 @@ describe.skipIf(!dbUp)("admin/models/reprocess-csi (RC, requireAdmin)", () => {
     const r = await readJson(await rcPOST(rawReq("/api/admin/models/reprocess-csi", "POST", "{oops")));
     expect(r.status).toBe(400);
     expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+  });
+});
+
+// ── reprocess-csi observe warn-net (rides U8) [refactor jul23 P4.1 U8] ─────────
+// Log-mode contract (RD-U8 option a / spec Verdict 2): the raw-SQL `data || $1::jsonb` merge
+// yields a yolo-detection blob (modelId+classId → classifyAnnotationData), observed POST-write
+// via `RETURNING data`, gate:false PERMANENT. A valid merged result → zero [shape-registry]
+// warns; a blob that ALREADY violates zYoloDetectionData (drift in the historic corpus) still
+// re-stamps (log-only, never blocked — a throw would tear the per-project loop) + exactly ONE
+// aggregated warn {sink:"reprocessCsi", kind:"yolo-detection"}. Scoped logger spy restored
+// per-test (never a blanket restoreAllMocks — the U7 deviation: it would nuke hoisted defaults).
+// The RC-5 sibling-preservation pin above (|| MERGE keeps `keep:"me"`) stays green unchanged:
+// widening RETURNING never touches the SET/WHERE, so persisted bytes are byte-identical.
+describe.skipIf(!dbUp)("admin/models/reprocess-csi observe warn-net (U8, requireAdmin)", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warnSpy = vi.spyOn(logger, "warn");
+  });
+  afterEach(() => warnSpy.mockRestore());
+
+  it("U8-a VALID yolo-detection: merge stamps csi/keywords, persists as valid superset, ZERO warns", async () => {
+    const company = await createCompany();
+    const admin = await createUser(company.id, { role: "admin" });
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id);
+    await createPage(project.id, 1);
+    const model = await makeModel(company.id, {
+      classCsiCodes: { Door: ["08 11 00"] },
+      classKeywords: { Door: ["hinged"] },
+    });
+    // A fully-VALID yolo-detection blob (modelId+classId ⇒ classifies as yolo-detection;
+    // confidence∈[0,1]; modelName string). Merging server-derived csi/keywords keeps it a valid
+    // zYoloDetectionData superset, so log-mode must stay silent.
+    await db.insert(annotations).values({
+      name: "Door", minX: 0, maxX: 1, minY: 0, maxY: 1, pageNumber: 1, projectId: project.id,
+      source: "yolo",
+      data: { modelId: model.id, modelName: "yolo-v8", classId: 3, confidence: 0.9 } as never,
+    });
+    asUser(admin);
+    const r = await readJson(await rcPOST(rcReq({ modelId: model.id })));
+    expect(r.status).toBe(200);
+    expect(r.body.annotationsUpdated).toBe(1);
+    expect(r.body.projectsProcessed).toBe(1);
+    const [door] = await db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.name, "Door")));
+    const data = door.data as Record<string, unknown>;
+    expect(data.csiCodes).toEqual(["08 11 00"]); // stamped by the merge
+    expect(data.keywords).toEqual(["hinged"]);
+    expect(data.confidence).toBe(0.9); // yolo siblings preserved (|| not replace)
+    expect(data.classId).toBe(3);
+    expect(shapeRegistryWarns(warnSpy)).toHaveLength(0); // valid merged blob → silent
+  });
+
+  it("U8-b DRIFT: a pre-drifted yolo-detection row (confidence:'high') still re-stamps (log-only) + ONE warn {reprocessCsi, yolo-detection}", async () => {
+    const company = await createCompany();
+    const admin = await createUser(company.id, { role: "admin" });
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id);
+    await createPage(project.id, 1);
+    const model = await makeModel(company.id, {
+      classCsiCodes: { Door: ["08 11 00"] },
+      classKeywords: { Door: ["hinged"] },
+    });
+    // Plant drift directly in the DB (bypasses every write-time observe, simulating a historic
+    // corpus row): confidence is a STRING, violating zYoloDetectionData.confidence (z.number()).
+    // classId keeps it classified as yolo-detection so the drift is caught at the right sink.
+    await db.insert(annotations).values({
+      name: "Door", minX: 0, maxX: 1, minY: 0, maxY: 1, pageNumber: 1, projectId: project.id,
+      source: "yolo",
+      data: { modelId: model.id, modelName: "yolo-v8", classId: 3, confidence: "high" } as never,
+    });
+    asUser(admin);
+    const r = await readJson(await rcPOST(rcReq({ modelId: model.id })));
+    // gate:false ⇒ the drift NEVER blocks the re-stamp; the write lands byte-per-merge.
+    expect(r.status).toBe(200);
+    expect(r.body.annotationsUpdated).toBe(1);
+    const [door] = await db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.name, "Door")));
+    const data = door.data as Record<string, unknown>;
+    expect(data.csiCodes).toEqual(["08 11 00"]); // merge succeeded despite the drift
+    expect(data.confidence).toBe("high"); // drift preserved (log-only, not repaired)
+    // exactly ONE aggregated warn for this (sink,kind).
+    const calls = shapeRegistryWarns(warnSpy);
+    expect(calls).toHaveLength(1);
+    const ctx = calls[0][1] as Record<string, unknown>;
+    expect(ctx.sink).toBe("reprocessCsi");
+    expect(ctx.kind).toBe("yolo-detection");
+  });
+
+  it("U8-c GATE:FALSE PERMANENT: a row carrying a coincidental unrecognized version tag re-stamps (200), never 400s the loop", async () => {
+    const company = await createCompany();
+    const admin = await createUser(company.id, { role: "admin" });
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id);
+    await createPage(project.id, 1);
+    const model = await makeModel(company.id, {
+      classCsiCodes: { Door: ["08 11 00"] },
+      classKeywords: { Door: ["hinged"] },
+    });
+    // The blob is otherwise VALID yolo-detection but carries `v:2` — a version the registry does
+    // not recognize (ANNOTATION_DATA_VERSION===1). This is precisely the U6 hazard: were the sink
+    // to ARM the v-gate (gate:true), gateVCarrying would 400 on this coincidental tag and TEAR the
+    // sequential per-project loop. reprocess-csi passes gate:false PERMANENTLY (RD-U8) — re-read
+    // historic-corpus rows, not fresh client writes — so the tag falls through to plain log-mode.
+    await db.insert(annotations).values({
+      name: "Door", minX: 0, maxX: 1, minY: 0, maxY: 1, pageNumber: 1, projectId: project.id,
+      source: "yolo",
+      data: { modelId: model.id, modelName: "yolo-v8", classId: 3, confidence: 0.9, v: 2 } as never,
+    });
+    asUser(admin);
+    const r = await readJson(await rcPOST(rcReq({ modelId: model.id })));
+    // The load-bearing gate:false pin: 200, NOT a 400/500 from a v-gate throw.
+    expect(r.status).toBe(200);
+    expect(r.body.annotationsUpdated).toBe(1);
+    const [door] = await db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.name, "Door")));
+    const data = door.data as Record<string, unknown>;
+    expect(data.csiCodes).toEqual(["08 11 00"]); // the merge landed despite the version tag
+    expect(data.v).toBe(2); // tag preserved (log-only, not repaired)
+    // gate:false ⇒ v-carrying blob still gets plain log-mode observation → ONE warn (v mismatch).
+    const calls = shapeRegistryWarns(warnSpy);
+    expect(calls).toHaveLength(1);
+    expect((calls[0][1] as Record<string, unknown>).kind).toBe("yolo-detection");
   });
 });

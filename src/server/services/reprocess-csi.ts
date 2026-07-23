@@ -22,6 +22,8 @@ import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
+// [refactor jul23 P4.1 U8] log-mode shape observation for the raw-SQL mutate-in-place sink.
+import { observeAnnotationDataBatch } from "./annotation-data-observe";
 
 export async function reprocessCsi(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   const { modelId } = rawBody as { modelId?: unknown };
@@ -78,9 +80,19 @@ export async function reprocessCsi(rawBody: Record<string, unknown>, session: Au
   for (const project of targetProjects) {
     const writeCapability = assertProjectWritable(project);
     await withProjectWrite(writeCapability, project.id, async (tx) => {
+      // [refactor jul23 P4.1 U8] Collect the TRUE persisted blobs across the per-class merges so
+      // we can observe the shape that ACTUALLY lands (RD-U8 option a). The in-process pre-write
+      // value is only the fragment {csiCodes,keywords}, which would mis-classify as empty-markup;
+      // RETURNING the merged row yields the real yolo-detection blob. Per-project scope: the
+      // observe fires once per project, after this project's class loop but still in-tx.
+      const observedBlobs: unknown[] = [];
       for (const className of classNames) {
         const csiCodes = classCsiCodes[className] || [];
         const keywords = classKeywords[className] || [];
+        // RETURNING widened project_id → data; the byte-exact `data || $1::jsonb` MERGE (SET) and
+        // the WHERE predicate are untouched, so RC-5/L5 persisted-byte + count pins hold. rowCount
+        // still counts one row per updated annotation (accounting byte-identical), and result.rows
+        // now carries one merged blob per updated annotation.
         const result = await tx.execute(sql`
           UPDATE annotations
           SET data = data || ${JSON.stringify({ csiCodes, keywords })}::jsonb
@@ -88,11 +100,19 @@ export async function reprocessCsi(rawBody: Record<string, unknown>, session: Au
             AND source = 'yolo'
             AND data->>'modelId' = ${String(modelId)}
             AND name = ${className}
-          RETURNING project_id
+          RETURNING data
         `);
         totalUpdated += result.rowCount || 0;
         if ((result.rowCount || 0) > 0) projectIds.add(project.id);
+        for (const row of result.rows as { data: unknown }[]) observedBlobs.push(row.data);
       }
+      // [refactor jul23 P4.1 U8] Post-write, in-tx, LOG-ONLY observation of the merged
+      // yolo-detection blobs. gate:false is PERMANENT (like every pipeline sink): these are
+      // re-read historic-corpus rows, not fresh client writes, so a coincidental legacy top-level
+      // `v` must never 400 an admin re-stamp — and a throw here would tear the SEQUENTIAL
+      // per-project loop (projects 1..N-1 already committed) into a partial re-stamp + 500. The
+      // batch aggregates one warn per (sink,kind), so a systematic drift can't flood the log.
+      observeAnnotationDataBatch(observedBlobs, "reprocessCsi", { gate: false });
     });
   }
 
