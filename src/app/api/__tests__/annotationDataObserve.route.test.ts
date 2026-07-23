@@ -105,27 +105,26 @@ describe.skipIf(!dbUp)("[P4.1 U1] observeAnnotationData at createAnnotationSingl
     expect(JSON.stringify(ctx)).not.toContain("yards");
   });
 
-  // [refactor jul23 P4.1 U2-U4] Repointed from count-marker → symbol-search. U2-U4 add
-  // count-marker/linear-polyline/area-polygon to OBSERVED_SHAPES, so a malformed
-  // count-marker now WARNS (covered by the U2 describe block below). symbol-search is the
-  // still-unobserved exemplar (it joins the allowlist at U5), so it keeps proving the
-  // "non-observed shape persists silently, zero warns" leg of the contract.
-  it("malformed NON-observed shape (symbol-search) persists silently — U2-U4 allowlist stops before symbol-search (U5)", async () => {
+  // [refactor jul23 P4.1 U2-U4, repointed again at U5] The still-unobserved exemplar is
+  // now client shape-parse: count-marker joined at U2, symbol-search at U5; shape-parse
+  // stays unobserved until U7 (shared with the server-pipeline writers). This test keeps
+  // proving the "non-observed shape persists silently, zero warns" leg of the contract.
+  it("malformed NON-observed shape (shape-parse) persists silently — allowlist stops before shape-parse (U7)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const warn = vi.spyOn(logger, "warn");
-    const badSymbol = { modelName: "symbol-search", method: 5, confidence: "high", scale: -1 };
+    const badShapeParse = { modelName: "shape-parse", shapeType: 9, text: null, confidence: "high" };
     const { status } = await postAnnotations({
       projectId: project.publicId,
       pageNumber: 1,
-      name: "symbol",
+      name: "shape",
       bbox,
       note: null,
-      data: badSymbol,
+      data: badShapeParse,
     });
     expect(status).toBe(200);
     const [row] = await annotationsFor(project.id);
-    expect(row.data).toEqual(badSymbol);
+    expect(row.data).toEqual(badShapeParse);
     expect(shapeRegistryWarns(warn)).toHaveLength(0);
   });
 
@@ -501,5 +500,105 @@ describe.skipIf(!dbUp)("[P4.1 U4] observeAnnotationData — area-polygon (deep: 
     expect(status).toBe(400);
     expect(body.error.code).toBe("VALIDATION");
     expect(await annotationsFor(project.id)).toHaveLength(0);
+  });
+});
+
+// ── U5: symbol-search + the BATCH sink (createAnnotationBatch) ───────────────
+// [refactor jul23 P4.1 U5] First unit observing the batch sink. Rows are merged +
+// observed BEFORE the tx (annotations.ts): a v-carrying invalid item must 400 the
+// WHOLE batch BEFORE the delete-before-insert runs — the atomicity pin below proves
+// a rejected batch never leaves a source's annotations deleted-but-not-replaced.
+// clientBlobs2U1 symbol-search: modelName/method/confidence/scale/templateSourcePage?.
+const VALID_SYMBOL = {
+  modelName: "symbol-search",
+  method: "ncc",
+  confidence: 0.83,
+  scale: 1,
+  templateSourcePage: 2,
+};
+
+const postSymbolBatch = (
+  projectPublicId: string,
+  data: unknown,
+  extras: Record<string, unknown> = {},
+) =>
+  postAnnotations({
+    projectId: projectPublicId,
+    ...extras,
+    annotations: [
+      {
+        pageNumber: 4,
+        name: "symbol-match",
+        bbox,
+        source: "symbol-search",
+        threshold: 0.83,
+        note: null,
+        data,
+      },
+    ],
+  });
+
+describe.skipIf(!dbUp)("[P4.1 U5] observeAnnotationData — symbol-search at the batch sink", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("valid symbol-search batch persists verbatim with ZERO shape-registry warns", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const warn = vi.spyOn(logger, "warn");
+    const { status, body } = await postSymbolBatch(project.publicId, VALID_SYMBOL);
+    expect(status).toBe(200);
+    expect(body.count).toBe(1);
+    const [row] = await annotationsFor(project.id);
+    expect(row.data).toEqual(VALID_SYMBOL);
+    expect(shapeRegistryWarns(warn)).toHaveLength(0);
+  });
+
+  it("MALFORMED symbol-search batch STILL persists byte-identical and emits exactly ONE warn with sink=annotations.createBatch", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const warn = vi.spyOn(logger, "warn");
+    const malformed = { ...VALID_SYMBOL, method: 5, confidence: "high" };
+    const { status } = await postSymbolBatch(project.publicId, malformed);
+    expect(status).toBe(200);
+    const [row] = await annotationsFor(project.id);
+    expect(row.data).toEqual(malformed);
+    const calls = shapeRegistryWarns(warn);
+    expect(calls).toHaveLength(1);
+    const ctx = calls[0][1] as Record<string, unknown>;
+    expect(ctx.sink).toBe("annotations.createBatch");
+    expect(ctx.kind).toBe("symbol-search");
+    expect(ctx.issueCount).toBe(2);
+    expect(ctx.issues).toEqual(
+      expect.arrayContaining([expect.stringContaining("method:"), expect.stringContaining("confidence:")]),
+    );
+  });
+
+  it("synthetic v:1 VALID symbol-search batch persists", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const versioned = { ...VALID_SYMBOL, v: 1 };
+    const { status } = await postSymbolBatch(project.publicId, versioned);
+    expect(status).toBe(200);
+    const [row] = await annotationsFor(project.id);
+    expect(row.data).toEqual(versioned);
+  });
+
+  it("v:1 INVALID item 400s the WHOLE batch BEFORE delete-before-insert — seeded rows survive (atomicity pin)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    // Seed an existing symbol-search row on page 4 (plain append).
+    await postSymbolBatch(project.publicId, VALID_SYMBOL);
+    // Rejected batch that WOULD have deleted page 4's symbol-search rows first.
+    const { status, body } = await postSymbolBatch(
+      project.publicId,
+      { ...VALID_SYMBOL, v: 1, method: 5 },
+      { deleteSource: "symbol-search", deletePageNumbers: [4] },
+    );
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION");
+    // The seeded row is STILL THERE: the v-gate fired pre-tx, so nothing was deleted.
+    const rows = await annotationsFor(project.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].data).toEqual(VALID_SYMBOL);
   });
 });

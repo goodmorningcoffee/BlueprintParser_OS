@@ -45,6 +45,10 @@ const OBSERVED_SHAPES: ReadonlySet<AnnotationDataKind> = new Set([
   "count-marker",
   "linear-polyline",
   "area-polygon",
+  // [refactor jul23 P4.1 U5] symbol-search joins as the batch sink comes under
+  // observation (createAnnotationBatch). shape-parse stays unobserved until U7
+  // (it is shared with the server-pipeline writers, which U7 wires as log+skip).
+  "symbol-search",
 ]);
 
 /** Cap issue detail per log entry — enough to locate the field, no value dumps. */

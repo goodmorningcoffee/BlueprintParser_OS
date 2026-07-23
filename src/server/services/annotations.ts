@@ -224,6 +224,30 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
     if (err) throw new ApiError("VALIDATION", `Invalid annotation: ${err}`);
   }
 
+  // [refactor jul23 P4.1 U5] Rows are built + merged BEFORE the tx (mergeAutoCsi is pure;
+  // every field is tx-independent — the d120d42 batch freeze pins byte-identical behavior)
+  // so each blob can be observed on the value actually persisted. Ordering is load-bearing:
+  // a v-carrying INVALID item throws here and 400s the WHOLE batch BEFORE the
+  // delete-before-insert runs, so a rejected batch can never leave a source's annotations
+  // deleted-but-not-replaced.
+  const rows = anns.map((ann) => ({
+    name: ann.name,
+    minX: ann.bbox[0],
+    minY: ann.bbox[1],
+    maxX: ann.bbox[2],
+    maxY: ann.bbox[3],
+    pageNumber: ann.pageNumber,
+    threshold: ann.threshold ?? null,
+    note: ann.note || null,
+    source: ann.source || "user",
+    data: mergeAutoCsi(ann.note, ann.data, csiCtx), // [refactor jul9 P2-A C1] merged above [P4.1 U5]
+    creatorId: session.user.dbId,
+    projectId: project.id,
+  }));
+  for (const row of rows) {
+    observeAnnotationData(row.data, "annotations.createBatch");
+  }
+
   // delete-before-insert + insert wrapped in ONE tx so a failed insert can't leave a source's
   // annotations deleted-but-not-replaced (sanctioned scope-add; happy path identical — P1.2 precedent).
   const inserted = await withProjectWrite(
@@ -243,25 +267,7 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
             );
         }
       }
-      return tx
-        .insert(annotations)
-        .values(
-          anns.map((ann) => ({
-            name: ann.name,
-            minX: ann.bbox[0],
-            minY: ann.bbox[1],
-            maxX: ann.bbox[2],
-            maxY: ann.bbox[3],
-            pageNumber: ann.pageNumber,
-            threshold: ann.threshold ?? null,
-            note: ann.note || null,
-            source: ann.source || "user",
-            data: mergeAutoCsi(ann.note, ann.data, csiCtx), // [refactor jul9 P2-A C1]
-            creatorId: session.user.dbId,
-            projectId: project.id,
-          })),
-        )
-        .returning();
+      return tx.insert(annotations).values(rows).returning();
     },
   );
 
