@@ -49,6 +49,10 @@ const OBSERVED_SHAPES: ReadonlySet<AnnotationDataKind> = new Set([
   // observation (createAnnotationBatch). shape-parse stays unobserved until U7
   // (it is shared with the server-pipeline writers, which U7 wires as log+skip).
   "symbol-search",
+  // [refactor jul23 P4.1 U6] empty-markup joins as the PUT sink (annotations.update)
+  // comes under observation. Its schema is all-optional, so only wrong-TYPED known
+  // keys (csiCodes/keywords/v) can ever warn — unknown keys stay tolerated.
+  "empty-markup",
 ]);
 
 /** Cap issue detail per log entry — enough to locate the field, no value dumps. */

@@ -617,6 +617,13 @@ export async function updateAnnotation(
     updates.data = data;
   }
 
+  // [refactor jul23 P4.1 U6] Observe the data column's final value whenever this PUT will
+  // write it (body.data replace AND/OR the auto-csi seed above) — post-seed, post-auth,
+  // pre-tx, same contract as the create sinks: v-absent logs only, v-carrying must be valid.
+  if (updates.data !== undefined) {
+    observeAnnotationData(updates.data, "annotations.update");
+  }
+
   updates.updatedAt = new Date();
 
   await withProjectWrite(writeCapability, project.id, async (tx) => {

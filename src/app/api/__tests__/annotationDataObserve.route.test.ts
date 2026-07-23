@@ -25,12 +25,15 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { POST } from "@/app/api/annotations/route";
+// [refactor jul23 P4.1 U6] PUT route for the update-sink nets (vi.mock is hoisted above).
+import { PUT } from "@/app/api/annotations/[id]/route";
 import { logger } from "@/lib/logger";
 import {
   annotationsFor,
   asUser,
   createWorld,
   makeReq,
+  params,
   readJson,
 } from "@/test/harness";
 
@@ -629,5 +632,123 @@ describe.skipIf(!dbUp)("[P4.1 U5] observeAnnotationData — symbol-search at the
     const rows = await annotationsFor(project.id);
     expect(rows).toHaveLength(1);
     expect(rows[0].data).toEqual(VALID_SYMBOL);
+  });
+});
+
+// ── U6: empty-markup + the PUT sink (annotations.update) ─────────────────────
+// [refactor jul23 P4.1 U6] The PUT writes the data column in two ways (both frozen in
+// d120d42): body.data whole-blob replace, and the note-only auto-csi seed of the
+// EXISTING row's blob. Observation runs on the FINAL updates.data value, post-seed,
+// pre-tx, only when the column will actually be written. empty-markup joins the
+// allowlist (all-optional schema — only wrong-typed known keys can warn).
+describe.skipIf(!dbUp)("[P4.1 U6] observeAnnotationData — PUT sink + empty-markup", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const putAnnotation = async (id: number, body: unknown) =>
+    readJson(
+      await PUT(
+        makeReq(`/api/annotations/${id}`, { method: "PUT", body }),
+        params({ id: String(id) }),
+      ),
+    );
+  const seed = async (projectPublicId: string, data: Record<string, unknown>) => {
+    const { body } = await postAnnotations({
+      projectId: projectPublicId,
+      pageNumber: 1,
+      name: "u6-seed",
+      bbox,
+      note: null,
+      data,
+    });
+    return body.id as number;
+  };
+
+  it("malformed empty-markup (wrong-typed csiCodes) at the CREATE sink warns with kind=empty-markup", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const warn = vi.spyOn(logger, "warn");
+    const bad = { csiCodes: "not-an-array" };
+    const { status } = await postAnnotations({
+      projectId: project.publicId,
+      pageNumber: 1,
+      name: "markup-bad",
+      bbox,
+      note: null,
+      data: bad,
+    });
+    expect(status).toBe(200);
+    const [row] = await annotationsFor(project.id);
+    expect(row.data).toEqual(bad); // log-only: persists unchanged
+    const calls = shapeRegistryWarns(warn);
+    expect(calls).toHaveLength(1);
+    expect((calls[0][1] as Record<string, unknown>).kind).toBe("empty-markup");
+  });
+
+  it("PUT body.data replace with a malformed observed shape persists + warns with sink=annotations.update", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const id = await seed(project.publicId, { type: "count-marker", shape: "circle", color: "#111", takeoffItemId: 1 });
+    const warn = vi.spyOn(logger, "warn");
+    const malformed = { type: "count-marker", shape: "hexagon", color: "#222", takeoffItemId: 2 };
+    const { status } = await putAnnotation(id, { data: malformed });
+    expect(status).toBe(200); // log-only: v0 PUT never rejects
+    const rows = await annotationsFor(project.id);
+    expect(rows[0].data).toEqual(malformed); // whole-blob replace, violations and all
+    const calls = shapeRegistryWarns(warn);
+    expect(calls).toHaveLength(1);
+    const ctx = calls[0][1] as Record<string, unknown>;
+    expect(ctx.sink).toBe("annotations.update");
+    expect(ctx.kind).toBe("count-marker");
+    expect(JSON.stringify(ctx)).not.toContain("hexagon");
+  });
+
+  it("PUT note-only auto-csi seed observes the SEEDED value without a false positive", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const id = await seed(project.publicId, { type: "count-marker", shape: "circle", color: "#333", takeoffItemId: 3 });
+    const warn = vi.spyOn(logger, "warn");
+    const { status } = await putAnnotation(id, {
+      note: "Provide cast in place concrete for all foundation walls and footings.",
+    });
+    expect(status).toBe(200);
+    const rows = await annotationsFor(project.id);
+    const persisted = rows[0].data as Record<string, unknown>;
+    expect(Array.isArray(persisted.csiCodes)).toBe(true); // seed happened
+    expect(shapeRegistryWarns(warn)).toHaveLength(0); // csiCodes extension tolerated
+  });
+
+  it("PUT name-only (no data write) performs NO observation", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const id = await seed(project.publicId, { csiCodes: "not-an-array" }); // malformed markup already in row
+    const warn = vi.spyOn(logger, "warn");
+    const { status } = await putAnnotation(id, { name: "renamed" });
+    expect(status).toBe(200);
+    expect(shapeRegistryWarns(warn)).toHaveLength(0); // data column untouched → unobserved
+  });
+
+  it("PUT v:1 VALID data persists through the update sink", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const id = await seed(project.publicId, { type: "count-marker", shape: "circle", color: "#444", takeoffItemId: 4 });
+    const versioned = { type: "count-marker", shape: "square", color: "#555", takeoffItemId: 5, v: 1 };
+    const { status } = await putAnnotation(id, { data: versioned });
+    expect(status).toBe(200);
+    const rows = await annotationsFor(project.id);
+    expect(rows[0].data).toEqual(versioned);
+  });
+
+  it("PUT v:1 INVALID data → 400 and the EXISTING blob is untouched (update-sink reject pin)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const original = { type: "count-marker", shape: "circle", color: "#666", takeoffItemId: 6 };
+    const id = await seed(project.publicId, original);
+    const { status, body } = await putAnnotation(id, {
+      data: { type: "count-marker", shape: "hexagon", color: "#777", takeoffItemId: 7, v: 1 },
+    });
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION");
+    const rows = await annotationsFor(project.id);
+    expect(rows[0].data).toEqual(original); // nothing written
   });
 });
