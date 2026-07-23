@@ -22,6 +22,7 @@ import type {
   PageIntelligence,
   TextractPageData,
   KeynoteShapeData,
+  CsiCode,
   TextAnnotationResult,
   AnnotationData,
   QtoParsedSchedule,
@@ -404,10 +405,10 @@ export const pages = pgTable(
     rawText: text("raw_text"),
     textractData: jsonb("textract_data").$type<TextractPageData>(),
     keynotes: jsonb("keynotes").$type<KeynoteShapeData[]>(),
-    csiCodes:
-      jsonb("csi_codes").$type<
-        { code: string; description: string; trade: string; division: string }[]
-      >(),
+    // [refactor jul23 P4.1 U9] Widened inline anonymous type → CsiCode[] (adds the
+    // optional `triggers` field the anonymous type omitted; reprocess.ts already
+    // persists triggers into these bytes). Compile-time only — a pure widening.
+    csiCodes: jsonb("csi_codes").$type<CsiCode[]>(),
     textAnnotations: jsonb("text_annotations").$type<TextAnnotationResult>(),
     pageIntelligence: jsonb("page_intelligence").$type<PageIntelligence>(),
     error: text("error"),
