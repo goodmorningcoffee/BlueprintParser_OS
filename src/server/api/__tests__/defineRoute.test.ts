@@ -9,6 +9,12 @@ import { NextResponse } from "next/server";
 
 // hoisted so the vi.mock factory can close over it
 const { mockResolve } = vi.hoisted(() => ({ mockResolve: vi.fn() }));
+// [refactor jul23 P5.6 U4] Mock the structured logger so the 500-path error line is inspectable
+// as fielded context (not console noise). All four levels are stubbed; only .error is asserted.
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+vi.mock("@/lib/logger", () => ({ logger: mockLogger }));
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -65,6 +71,7 @@ function setSessionVal() {
 beforeEach(() => {
   signedOut();
   mockResolve.mockReset();
+  mockLogger.error.mockClear();
 });
 
 describe("defineRoute — body parse + envelope", () => {
@@ -340,5 +347,73 @@ describe("defineRoute — error leak prevention", () => {
     expect(body).toEqual({
       error: { code: "FORBIDDEN", message: "Demo projects are read-only" },
     });
+    // the demo backstop is an EXPECTED policy denial, not a 500 — it must not log a route error
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+});
+
+// [refactor jul23 P5.6 U4] Structured, queryable 500 logging + client↔server correlation.
+describe("defineRoute — structured error logging (P5.6)", () => {
+  it("the 500 path emits ONE fielded route-error line {tag, requestId, method, path, status, code}", async () => {
+    const route = defineRoute({
+      auth: "none",
+      handler: () => {
+        throw new Error("constraint chat_messages_project_id_fkey violated: secret detail");
+      },
+    });
+
+    const res = await route(makeReq("/api/projects/42/chat", { method: "GET" }));
+    expect(res.status).toBe(500);
+
+    // exactly one structured line, not a formatted string blob
+    expect(mockLogger.error).toHaveBeenCalledTimes(1);
+    const [msg, ctx] = mockLogger.error.mock.calls[0];
+    expect(typeof msg).toBe("string");
+    expect(ctx).toMatchObject({
+      tag: "route-error",
+      method: "GET",
+      path: "/api/projects/42/chat",
+      status: 500,
+      code: "INTERNAL",
+    });
+    // requestId is a uuid the query can pivot on
+    expect(ctx.requestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    // the real cause is carried server-side (the CLIENT body staying generic is proven above)
+    expect(ctx.err).toBeInstanceOf(Error);
+  });
+
+  it("the 500 response carries x-request-id equal to the logged requestId (correlation key)", async () => {
+    const route = defineRoute({
+      auth: "none",
+      handler: () => {
+        throw new Error("boom");
+      },
+    });
+
+    const res = await route(makeReq("/x", { method: "GET" }));
+    expect(res.status).toBe(500);
+
+    const headerId = res.headers.get("x-request-id");
+    expect(headerId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    const loggedId = mockLogger.error.mock.calls[0][1].requestId;
+    expect(headerId).toBe(loggedId);
+  });
+
+  it("a thrown ApiError (4xx) does NOT emit a route-error line (only unexpected 500s do)", async () => {
+    const route = defineRoute({
+      auth: "none",
+      handler: () => {
+        throw new ApiError("CONFLICT", "already exists");
+      },
+    });
+    const res = await route(makeReq("/x", { method: "GET" }));
+    expect(res.status).toBe(409);
+    expect(mockLogger.error).not.toHaveBeenCalled();
+    // 4xx envelope errors are not correlated to a server log line — no header expected
+    expect(res.headers.get("x-request-id")).toBeNull();
   });
 });

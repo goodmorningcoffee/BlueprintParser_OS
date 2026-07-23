@@ -277,13 +277,28 @@ export function defineRoute<B = undefined, Q = undefined>(
       if (isDemoWriteProtectionError(err)) {
         return errorResponse("FORBIDDEN", "Demo projects are read-only");
       }
-      // unexpected — NEVER leak the underlying message
-      logger.error(
-        `[route] ${req.method} ${safePath(req)} reqId=${requestId} failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return errorResponse("INTERNAL", "Internal server error");
+      // [refactor jul23 P5.6 U4] Unexpected throw. NEVER leak the underlying message to the
+      // client, but emit a QUERYABLE structured line server-side — fielded, not a formatted
+      // string blob — so an admin CloudWatch Logs Insights "errors" query can filter/aggregate
+      // by tag/status/code/path, mirroring the `visit` line middleware already emits and the
+      // Logs tabs read. The real cause (message + stack) rides the server-only `err` field.
+      logger.error("route error", {
+        tag: "route-error",
+        requestId,
+        method: req.method,
+        path: safePath(req),
+        status: 500,
+        code: "INTERNAL",
+        err: err instanceof Error ? err : String(err),
+      });
+      // [P5.6 U4 GAP-C] Correlation key. The envelope shape is FROZEN ({error:{code,message}}),
+      // so surface requestId as an `x-request-id` response header instead of in the body — a
+      // client-reported 500 can then be pivoted to the exact server log line. Scoped to the
+      // logged 500 path (the only correlation target); broadening to every response is a
+      // trivial, envelope-safe follow-up if wanted.
+      const res = errorResponse("INTERNAL", "Internal server error");
+      res.headers.set("x-request-id", requestId);
+      return res;
     }
   };
 }
