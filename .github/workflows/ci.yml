@@ -91,3 +91,38 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check:lint-baseline
+
+  # [P5 / DR016 V-L5] Golden e2e paths — the end-to-end invariant heartbeat (demo-never-writes,
+  # draw→reload persistence, promote/delete survival, sidebar search) that previously ran only
+  # in local close batteries. Self-contained: playwright.config webServer array boots the
+  # cdn-stub (:9876) + next dev (:3100) with dummy AWS env; global-setup migrates + seeds the
+  # :5433 test DB and generates the gitignored synthetic PDF. No secrets, no YOLO weights.
+  golden-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: bp_test
+          POSTGRES_PASSWORD: bp_test
+          POSTGRES_DB: bp_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U bp_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Override playwright.config's devcontainer-path fallback (absent on runners).
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium --no-shell
+      - name: golden e2e (SOLO, offline over cdn-stub + seeded test DB)
+        run: npm run e2e -- golden-paths.spec.ts
