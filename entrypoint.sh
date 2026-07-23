@@ -14,6 +14,13 @@ case "${mode}" in
   migrate)
     exec node scripts/run-schema-migrations.mjs
     ;;
+  janitor)
+    # [refactor jul23 P5.4-E] Advisory-locked TTL sweep of the PG-backed runtime
+    # state tables (runtime_counters / login_lockouts / auto-bans / op_log).
+    # One-shot; run on a schedule. Concurrent janitors self-deconflict via a
+    # non-blocking advisory lock, so an N-task cluster never stampedes.
+    exec node scripts/run-state-janitor.mjs
+    ;;
   worker)
     shift
     if [ "$#" -eq 0 ]; then
