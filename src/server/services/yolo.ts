@@ -58,7 +58,8 @@ import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
-import type { ClassifiedTable } from "@/types";
+import type { ClassifiedTable, CsiCode } from "@/types";
+import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import {
   S3Client,
@@ -890,28 +891,29 @@ export async function yoloLoad(
               }
             }
 
-            // Merge YOLO CSI codes from model class config into page-level csiCodes
-            let mergedCsiCodes: any[] | undefined;
+            // Merge YOLO CSI codes from model class config into page-level csiCodes.
+            // [refactor jul23 P4.1 U9] Unified onto mergeCsiCodes (was a hand-rolled
+            // raw-code dedupe loop). mergeCsiCodes builds byte-identical placeholder
+            // objects for {code, description:"From YOLO class config"} — division defaults
+            // to code.substring(0,2), trade to "" — so this is an identity swap (pinned by
+            // the pre-swap equivalence net in csi-utils.test.ts), and yolo now inherits the
+            // separator-strip-only dedupe key for free instead of maintaining a parallel
+            // raw-code dedupe. Write-guard preserved verbatim: only persist when NEW codes
+            // were actually added (newCsi.length > existing.length).
+            let mergedCsiCodes: CsiCode[] | undefined;
             const allYoloCsi = new Set<string>();
             for (const codes of Object.values(classCsiCodes)) {
               for (const code of codes) allYoloCsi.add(code);
             }
             if (allYoloCsi.size > 0) {
-              const existingPageCsi = (page.csiCodes || []) as any[];
-              const existingSet = new Set(
-                existingPageCsi.map((c: any) => c.code),
+              const existingPageCsi = (page.csiCodes || []) as CsiCode[];
+              const newCsi = mergeCsiCodes(
+                existingPageCsi,
+                [...allYoloCsi].map((code) => ({
+                  code,
+                  description: "From YOLO class config",
+                })),
               );
-              const newCsi = [...existingPageCsi];
-              for (const code of allYoloCsi) {
-                if (!existingSet.has(code)) {
-                  newCsi.push({
-                    code,
-                    description: "From YOLO class config",
-                    division: code.substring(0, 2),
-                    trade: "",
-                  });
-                }
-              }
               if (newCsi.length > existingPageCsi.length) {
                 mergedCsiCodes = newCsi;
               }
