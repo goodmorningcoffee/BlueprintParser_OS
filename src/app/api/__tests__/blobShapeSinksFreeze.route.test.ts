@@ -11,8 +11,10 @@
 // Every writer-literal payload is lifted field-for-field from the verified writer sites in
 // U0_RECON_RAW_2026-07-23.json (.result.{serverBlobs,clientBlobs1,clientBlobs2U1,regionsCsiZod};
 // RD-I: that recon overrides ENTRY_RECON). Each `data` blob ALSO carries an unknown sentinel key
-// (__freezeSentinel:"preserve") that MUST survive byte-identical — this is the live proof of the
-// spec Verdict-1 passthrough contract (the sibling of annotationMarkupEditCacheFreeze.test.ts:29).
+// (__freezeSentinel:"preserve") that MUST survive byte-identical — the ROUTE-persistence proof of
+// the spec Verdict-1 passthrough contract. (annotationMarkupEditCacheFreeze.test.ts:29 pins the
+// same contract on the CLIENT-CACHE side — a query-cache CAS freeze, not a route→Postgres one;
+// the U0 review flagged the distinction, hence the empty-markup route pin below for U6.)
 //
 // Assertions are ORDER-INSENSITIVE on jsonb key order (Postgres jsonb normalizes key order): we
 // use deep toEqual (order-independent for object props) PLUS an explicit sorted key-SET assertion
@@ -141,6 +143,38 @@ describe.skipIf(!dbUp)("[P4.1 U0] POST /api/annotations single — createAnnotat
     expectDataExactly(row.data, data);
     // The 200 response body echoes the same blob (toClientAnnotation: data: a.data ?? null).
     expectDataExactly(body.data, data);
+    // [U0 review R2] single-POST OMITS threshold on insert (frozen quirk — batch sets it;
+    // see the symbol-search batch test's 0.83 pin for the divergence's other half).
+    expect(row.threshold).toBeNull();
+  });
+
+  // [U0 review R2] U6 pre-pin: the all-optional empty-markup shape ({} from llm/tools.ts:578;
+  // client markup posts through this same single sink) — the route-persistence baseline the
+  // U6 wiring will refactor against.
+  it("empty-markup {} and a sentinel-only markup blob persist verbatim through the single sink", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const { status: s1, body: b1 } = await postAnnotations({
+      projectId: project.publicId,
+      pageNumber: 1,
+      name: "markup-empty",
+      bbox,
+      note: null,
+      data: {},
+    });
+    expect(s1).toBe(200);
+    expectDataExactly((await rowById(b1.id as number)).data, {});
+    const sentinelOnly = { [SENTINEL]: "preserve" };
+    const { status: s2, body: b2 } = await postAnnotations({
+      projectId: project.publicId,
+      pageNumber: 1,
+      name: "markup-sentinel",
+      bbox,
+      note: null,
+      data: sentinelOnly,
+    });
+    expect(s2).toBe(200);
+    expectDataExactly((await rowById(b2.id as number)).data, sentinelOnly);
   });
 
   it("count-marker blob persists verbatim (incl. sentinel)", async () => {
@@ -328,6 +362,9 @@ describe.skipIf(!dbUp)("[P4.1 U0] mergeAutoCsi on create — annotations.ts:79-9
     expect(persisted[SENTINEL]).toBe("preserve");
     expect(persisted.type).toBe("count-marker");
     expect(persisted.color).toBe("#222");
+    // [U0 review R2] value integrity on the remaining keys (key-set alone missed coercion).
+    expect(persisted.shape).toBe("square");
+    expect(persisted.takeoffItemId).toBe(6);
     // Key set = input keys + the newly added "csiCodes".
     expect([...Object.keys(persisted)].sort()).toEqual(
       [...Object.keys(data), "csiCodes"].sort(),
