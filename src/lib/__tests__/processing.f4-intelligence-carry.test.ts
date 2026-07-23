@@ -73,7 +73,7 @@ vi.mock("@/lib/keynotes", async (importOriginal) => ({
 import { processProject } from "@/lib/processing";
 import { assertProjectWritable } from "@/server/api/project-write-capability";
 import { db } from "@/lib/db";
-import { pages } from "@/lib/db/schema";
+import { annotations, pages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createPage, createWorld } from "@/test/harness";
 
@@ -162,4 +162,73 @@ describe.skipIf(!dbUp)("processProject — F4 pageIntelligence carry (UPDATE bra
     expect(row.textractData).toEqual({ lines: [], words: [] });
     expect(row.pageIntelligence).toBeNull(); // insert semantics byte-identical
   }, 30000);
+
+  // [refactor jul23 P4.1 U7-A] FREEZE-FIRST: fire the processing.ts:504 shape-parse sink
+  // for the FIRST time under test. Every prior test mocks extractKeynotes to {keynotes:[]}
+  // so the sink (guarded by `result.keynotes.length > 0`) never ran — this pins the
+  // PRE-wiring persisted shape (row cols + EXACT data blob + pages.keynotes mirror). U7's
+  // log-mode observe never touches persistence, so this stays green AFTER the wiring lands.
+  it("★U7-A pin: non-empty extractKeynotes fires the shape-parse sink — inserted row + EXACT data blob + pages.keynotes mirror", async () => {
+    const { project } = await createWorld();
+    rasterMocks.getPdfPageCount.mockResolvedValue(1);
+    // One realistic keynote (the 300-DPI display-buffer shape-parse result).
+    const keynote = {
+      shape: "circle",
+      text: "K1",
+      bbox: [0.1, 0.1, 0.2, 0.2],
+      contour: [
+        [0.1, 0.1],
+        [0.2, 0.2],
+      ],
+    };
+    keynotesMocks.extractKeynotes.mockResolvedValueOnce({
+      keynotes: [keynote],
+      warnings: [],
+    });
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    // (1) exactly one shape-parse annotation row; geometry + threshold + source pinned.
+    const rows = await db
+      .select()
+      .from(annotations)
+      .where(eq(annotations.projectId, project.id));
+    const shapeRows = rows.filter((r) => r.source === "shape-parse");
+    expect(shapeRows).toHaveLength(1);
+    const [row] = shapeRows;
+    expect(row.name).toBe("circle");
+    expect(row.minX).toBeCloseTo(0.1, 5);
+    expect(row.minY).toBeCloseTo(0.1, 5);
+    expect(row.maxX).toBeCloseTo(0.2, 5);
+    expect(row.maxY).toBeCloseTo(0.2, 5);
+    expect(row.pageNumber).toBe(1);
+    expect(row.threshold).toBe(0.9);
+    expect(row.source).toBe("shape-parse");
+    // (2) EXACT data blob — deep-equal + sorted key-set (no extra/missing keys, jsonb exact).
+    expect(row.data).toEqual({
+      modelName: "shape-parse",
+      shapeType: "circle",
+      text: "K1",
+      contour: [
+        [0.1, 0.1],
+        [0.2, 0.2],
+      ],
+      confidence: 0.9,
+    });
+    expect(Object.keys(row.data as object).sort()).toEqual([
+      "confidence",
+      "contour",
+      "modelName",
+      "shapeType",
+      "text",
+    ]);
+    // (3) pages.keynotes mirror carries the RAW keynote (written via pageData — a separate
+    // concern from the annotations insert; recon documents the desync hazard, out of scope).
+    const [pageRow] = await db
+      .select({ keynotes: pages.keynotes })
+      .from(pages)
+      .where(eq(pages.projectId, project.id));
+    expect(pageRow.keynotes).toEqual([keynote]);
+  }, 30000);
 });
+
