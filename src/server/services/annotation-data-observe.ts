@@ -70,52 +70,110 @@ export function observeAnnotationData(data: unknown, sink: string): void {
   if (data === null || data === undefined) return;
 
   const kind = classifyAnnotationData(data);
-  const carriesV =
-    typeof data === "object" &&
-    !Array.isArray(data) &&
-    (data as Record<string, unknown>).v !== undefined;
-
-  if (carriesV) {
-    // V-GATE: new registry-aware writes must be valid. Unclassifiable-but-versioned is
-    // itself a contract violation (v implies a recognized v1 shape).
-    if (kind === "unknown") {
-      throw new ApiError(
-        "VALIDATION",
-        "annotation data carries a version tag but matches no registered shape",
-      );
-    }
-    const gate = SHAPE_SCHEMAS[kind].safeParse(data);
-    if (!gate.success) {
-      // Paths/codes only — no values (see log-hygiene note above).
-      const issues = gate.error.issues
-        .slice(0, MAX_LOGGED_ISSUES)
-        .map((i) => `${i.path.join(".") || "(root)"}:${i.code}`);
-      logger.warn(`[shape-registry] rejected v-carrying write`, {
-        sink,
-        kind,
-        issueCount: gate.error.issues.length,
-        issues,
-      });
-      throw new ApiError(
-        "VALIDATION",
-        `annotation data (v1, ${kind}) failed shape validation`,
-      );
-    }
-    return; // versioned and valid — no observation log needed.
-  }
+  gateVCarrying(data, kind, sink);
+  if (vPresent(data)) return; // versioned and valid — no observation log needed.
 
   // LOG-MODE observation (v-absent = every existing wire). Never throws.
-  if (!OBSERVED_SHAPES.has(kind)) return;
-  const result = SHAPE_SCHEMAS[kind].safeParse(data);
-  if (!result.success) {
-    const issues = result.error.issues
-      .slice(0, MAX_LOGGED_ISSUES)
-      .map((i) => `${i.path.join(".") || "(root)"}:${i.code}`);
+  const failure = validateForLog(data, kind);
+  if (failure) {
     logger.warn(`[shape-registry] v0 write failed shape validation (log-only)`, {
       sink,
       kind,
-      issueCount: result.error.issues.length,
-      issues,
+      issueCount: failure.issueCount,
+      issues: failure.paths.slice(0, MAX_LOGGED_ISSUES),
     });
   }
+}
+
+/**
+ * Batch-sink variant [refactor jul23 P4.1 U5-review MED]: one warn per (sink, kind) per
+ * CALL, not per row. A symbol-search save carries visibleMatches.map(...) — dozens to
+ * hundreds of rows — and the server-pipeline writers (U7) are bigger still; under a
+ * systematic v0 drift, per-row warns would flood the log and drown the exact canary
+ * signal log-mode exists to surface. The v-gate is UNCHANGED (still per-row, still
+ * throws on the first v-carrying invalid row — before any logging, before the tx).
+ */
+export function observeAnnotationDataBatch(datas: unknown[], sink: string): void {
+  const agg = new Map<
+    AnnotationDataKind,
+    { failedCount: number; issueCount: number; paths: Set<string> }
+  >();
+  for (const data of datas) {
+    if (data === null || data === undefined) continue;
+    const kind = classifyAnnotationData(data);
+    gateVCarrying(data, kind, sink); // throws → whole batch 400s pre-tx
+    if (vPresent(data)) continue;
+    const failure = validateForLog(data, kind);
+    if (!failure) continue;
+    const entry = agg.get(kind) ?? { failedCount: 0, issueCount: 0, paths: new Set() };
+    entry.failedCount += 1;
+    entry.issueCount += failure.issueCount;
+    for (const p of failure.paths) entry.paths.add(p);
+    agg.set(kind, entry);
+  }
+  for (const [kind, entry] of agg) {
+    logger.warn(`[shape-registry] v0 batch writes failed shape validation (log-only)`, {
+      sink,
+      kind,
+      rowCount: datas.length,
+      failedCount: entry.failedCount,
+      issueCount: entry.issueCount,
+      issues: [...entry.paths].slice(0, MAX_LOGGED_ISSUES),
+    });
+  }
+}
+
+// NOTE [U5 review]: the gate arms on ANY non-undefined `v` — v:null / v:2 / v:"1" all
+// count as "carrying a version tag" and must validate (z.literal(1) then rejects them).
+// "Absent ⇒ v0" means literally absent. Upgraders (RD-F) must therefore stamp literal 1.
+function vPresent(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as Record<string, unknown>).v !== undefined
+  );
+}
+
+/** V-GATE: new registry-aware (v-carrying) writes must be valid. Throws ApiError. */
+function gateVCarrying(data: unknown, kind: AnnotationDataKind, sink: string): void {
+  if (!vPresent(data)) return;
+  // Unclassifiable-but-versioned is itself a contract violation (v ⇒ a recognized v1 shape).
+  if (kind === "unknown") {
+    throw new ApiError(
+      "VALIDATION",
+      "annotation data carries a version tag but matches no registered shape",
+    );
+  }
+  const gate = SHAPE_SCHEMAS[kind].safeParse(data);
+  if (!gate.success) {
+    // Paths/codes only — no values (see log-hygiene note above).
+    const issues = gate.error.issues
+      .slice(0, MAX_LOGGED_ISSUES)
+      .map((i) => `${i.path.join(".") || "(root)"}:${i.code}`);
+    logger.warn(`[shape-registry] rejected v-carrying write`, {
+      sink,
+      kind,
+      issueCount: gate.error.issues.length,
+      issues,
+    });
+    throw new ApiError(
+      "VALIDATION",
+      `annotation data (v1, ${kind}) failed shape validation`,
+    );
+  }
+}
+
+/** Log-mode leg: returns the failure summary for an OBSERVED, v-absent blob (else null). */
+function validateForLog(
+  data: unknown,
+  kind: AnnotationDataKind,
+): { issueCount: number; paths: string[] } | null {
+  if (!OBSERVED_SHAPES.has(kind)) return null;
+  const result = SHAPE_SCHEMAS[kind].safeParse(data);
+  if (result.success) return null;
+  return {
+    issueCount: result.error.issues.length,
+    paths: result.error.issues.map((i) => `${i.path.join(".") || "(root)"}:${i.code}`),
+  };
 }

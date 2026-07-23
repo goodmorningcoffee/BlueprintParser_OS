@@ -55,7 +55,10 @@ import {
 } from "@/lib/annotation-split-contract";
 import { splitPolygonByLine, type Pt } from "@/lib/polygon-split";
 // [refactor jul23 P4.1 U1] log-mode shape observation + v-gate at the create sink.
-import { observeAnnotationData } from "./annotation-data-observe";
+import {
+  observeAnnotationData,
+  observeAnnotationDataBatch,
+} from "./annotation-data-observe";
 import { ApiError } from "@/server/api/envelope";
 import {
   resolveByPublicId,
@@ -244,9 +247,13 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
     creatorId: session.user.dbId,
     projectId: project.id,
   }));
-  for (const row of rows) {
-    observeAnnotationData(row.data, "annotations.createBatch");
-  }
+  // [refactor jul23 P4.1 U5-review] batch variant: v-gate still per-row (throws pre-tx),
+  // but log-mode warns aggregate to ONE per (sink, kind) per request — a drifted
+  // symbol-search save must not emit hundreds of identical canary warns.
+  observeAnnotationDataBatch(
+    rows.map((r) => r.data),
+    "annotations.createBatch",
+  );
 
   // delete-before-insert + insert wrapped in ONE tx so a failed insert can't leave a source's
   // annotations deleted-but-not-replaced (sanctioned scope-add; happy path identical — P1.2 precedent).

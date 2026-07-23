@@ -567,10 +567,36 @@ describe.skipIf(!dbUp)("[P4.1 U5] observeAnnotationData — symbol-search at the
     const ctx = calls[0][1] as Record<string, unknown>;
     expect(ctx.sink).toBe("annotations.createBatch");
     expect(ctx.kind).toBe("symbol-search");
+    expect(ctx.failedCount).toBe(1); // [U5-review] aggregated ctx carries per-batch counts
     expect(ctx.issueCount).toBe(2);
     expect(ctx.issues).toEqual(
       expect.arrayContaining([expect.stringContaining("method:"), expect.stringContaining("confidence:")]),
     );
+    // Paths+codes only — never blob values (parity with the U1-U4 leak guards).
+    expect(JSON.stringify(ctx)).not.toContain("high");
+  });
+
+  it("[U5-review] multi-row drift aggregates to ONE warn per (sink, kind) — not one per row", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const warn = vi.spyOn(logger, "warn");
+    const malformed = { ...VALID_SYMBOL, method: 5 };
+    const { status } = await postAnnotations({
+      projectId: project.publicId,
+      annotations: [
+        { pageNumber: 4, name: "m1", bbox, source: "symbol-search", note: null, data: malformed },
+        { pageNumber: 4, name: "m2", bbox, source: "symbol-search", note: null, data: malformed },
+        { pageNumber: 4, name: "ok", bbox, source: "symbol-search", note: null, data: VALID_SYMBOL },
+      ],
+    });
+    expect(status).toBe(200); // log-only: all three rows persist
+    expect(await annotationsFor(project.id)).toHaveLength(3);
+    const calls = shapeRegistryWarns(warn);
+    expect(calls).toHaveLength(1); // ← the aggregation contract: one warn, not two
+    const ctx = calls[0][1] as Record<string, unknown>;
+    expect(ctx.rowCount).toBe(3);
+    expect(ctx.failedCount).toBe(2);
+    expect(ctx.issues).toEqual(expect.arrayContaining([expect.stringContaining("method:")]));
   });
 
   it("synthetic v:1 VALID symbol-search batch persists", async () => {
@@ -596,7 +622,10 @@ describe.skipIf(!dbUp)("[P4.1 U5] observeAnnotationData — symbol-search at the
     );
     expect(status).toBe(400);
     expect(body.error.code).toBe("VALIDATION");
-    // The seeded row is STILL THERE: the v-gate fired pre-tx, so nothing was deleted.
+    // The seeded row is STILL THERE. [U5-review note] This pins the SAFETY OUTCOME (a
+    // rejected batch never leaves a source deleted-but-not-replaced); the wiring places
+    // the gate pre-tx, but an in-tx-post-delete throw would also roll back to this same
+    // state — the invariant, not the mechanism, is what this net freezes.
     const rows = await annotationsFor(project.id);
     expect(rows).toHaveLength(1);
     expect(rows[0].data).toEqual(VALID_SYMBOL);
