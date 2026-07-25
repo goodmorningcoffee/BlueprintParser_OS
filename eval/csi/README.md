@@ -11,6 +11,7 @@
 | `pilot-agreement.ts` | merges the two independent pilot passes and scores their agreement | P1.2b |
 | `gold-pilot.json` | 20 calibration pages, both passes, agreement per page — **UNCERTIFIED** | P1.2b |
 | `adjudication-packet.ts` → `PILOT_ADJUDICATION_PACKET.md` | the review document the owner works through to certify the pilot | S1b |
+| `score.ts` → `score-old-engine.json` | **the eval harness** — P/R/F0.5 per division, and the thing that refuses to lie | S2 |
 
 The baseline says what the engine *does*. The gold set is the only thing that can
 say what it *should have done*. Neither alone is an acceptance bar.

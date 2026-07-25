@@ -241,7 +241,12 @@ question.
 SECTION scoring is inflatable by sibling-spraying: emitting `08 71 00`,
 `08 71 13` and `08 71 13.16` yields three SECTION true positives for one fact.
 **Collapse emitted codes to their distinct sections before computing SECTION
-precision.** EXACT precision uses the raw list.
+precision.** EXACT precision collapses only exact-duplicate codes — that is, pure
+formatting variants of one code (`08 71 13` and `087113`), which §5.2 requires be
+treated as the same code anyway. It does **not** collapse level-4 siblings, so
+sibling-spraying is still visible there. (An audit read the earlier wording,
+"EXACT precision uses the raw list", as forbidding that dedupe; the wording was
+imprecise, not the implementation.)
 
 Level-2 flooding is *not* a viable exploit and needs no separate guard: `08 00 00`
 has section `0800`, which does not match `0871`, so spraying division roots scores
