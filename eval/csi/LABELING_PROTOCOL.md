@@ -373,6 +373,19 @@ So: **10% of pages are drawn at random (by hash) for `full` review regardless of
 stated confidence**, and the disagreement rate on that slice — not on the
 self-flagged pages — is the number that describes label quality.
 
+**This is no longer an assumption — the pilot measured it.** Across 20 pages with
+two independent labelers (`gold-pilot.json`):
+
+- **Not one page was marked `low` confidence by either pass.** Confidence-based
+  routing would have selected *zero* pages for review.
+- Eight pages nonetheless landed below 0.6 section agreement, and **four of those
+  eight were rated `high` confidence by BOTH passes** (`K-1` 0.57, `A-702.00`
+  0.56, `E-000.00` 0.55, `E-000` 0.47).
+
+Confidence is not worthless — pages where either pass said `medium` averaged 0.611
+agreement versus 0.751 when both said `high` — but it misses half the problem
+pages while flagging none of them outright. Keep the random slice.
+
 ### 9.3 What the labeler may and may not see
 
 - **May see:** the page text, `drawingNumber`, discipline, the MasterFormat list.

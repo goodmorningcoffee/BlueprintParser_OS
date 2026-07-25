@@ -8,6 +8,8 @@
 | `GRANULARITY_RUBRIC.md` | what counts as ONE group — the recall denominator, with worked examples | P1.2a |
 | `select-gold-frame.ts` | which pages get labeled, deterministically | P1.1 |
 | `gold-frame.json` | the resulting selection: 240 pages, 20 strata, dev/test split | P1.1 |
+| `pilot-agreement.ts` | merges the two independent pilot passes and scores their agreement | P1.2b |
+| `gold-pilot.json` | 20 calibration pages, both passes, agreement per page — **UNCERTIFIED** | P1.2b |
 
 The baseline says what the engine *does*. The gold set is the only thing that can
 say what it *should have done*. Neither alone is an acceptance bar.
