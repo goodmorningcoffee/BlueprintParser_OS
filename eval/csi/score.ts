@@ -454,6 +454,25 @@ function main(): void {
         /** §5.0 row 4 — where GOLD INCOMPLETENESS, not the tagger, may be at fault. */
         unadjudicated: +agg.fpUnadj.toFixed(1),
       },
+      /**
+       * What precision could be, given that `unadjudicated` codes are of unknown
+       * correctness. The floor assumes every one of them is wrong (which is what
+       * `precision` above reports); the ceiling assumes every one is right.
+       *
+       * This is the honest shape of precision under an incomplete gold set. With
+       * no negative labels at all the ceiling is 1.0 and the bracket says
+       * nothing; every should_not label narrows it. Watching this interval close
+       * is how you tell whether more adjudication is still worth buying.
+       */
+      precisionBracket: (() => {
+        const denom = agg.tp + agg.fpHard + agg.fpCross + agg.fpUnadj;
+        if (!denom) return null;
+        return {
+          floor: +(agg.tp / denom).toFixed(4),
+          ceiling: +((agg.tp + agg.fpUnadj) / denom).toFixed(4),
+          unadjudicatedShare: +(agg.fpUnadj / denom).toFixed(4),
+        };
+      })(),
       groupsTotal: +agg.groupsTotal.toFixed(1),
       groupsHit: +agg.groupsHit.toFixed(1),
       perDivision: perDivisionRollup(scores, minUnits),

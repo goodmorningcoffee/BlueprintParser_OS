@@ -170,6 +170,26 @@ that matters; the overall number is inflated by tertiary judgment calls.
 - `should_not_divisions` — whole divisions that are wrong for the sheet. `00` and `01`
   (procurement/general-requirements boilerplate) are the common ones.
 
+#### 4.3.1 The division 00/01 rule — write it down, because labelers split on it
+
+The pilot's negative pass treated division 00 consistently (marked `should_not` on
+10 of 10 pages where it fired) but split on division 01: `should_not` on four
+pages, acceptable on three. The split turned out to be *principled* — but it was
+nowhere written, so the gold set was teaching division 01 as both a hard negative
+and acceptable. The rule, stated:
+
+| sheet type | div 00 | div 01 |
+|---|---|---|
+| specification, detail, plan, schedule, legend | `should_not` | `should_not` |
+| **general-notes / general-requirements sheets** | `should_not` | **acceptable** — these sheets carry real division-01 scope (temporary facilities, protection, cutting and patching, closeout) as instructed work, not boilerplate |
+
+Division 00 is never acceptable: procurement and contracting requirements are not
+scoped construction work on any drawing sheet.
+
+The test for division 01 is the same trade test as R1 — is the sheet *instructing*
+someone to do temporary protection or cutting and patching, or merely reciting
+contract conditions? Quote the instruction, or mark it `should_not`.
+
 ---
 
 ## 5 · Matching, specificity, and the scoring rule

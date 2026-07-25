@@ -153,10 +153,35 @@ function loadPass(dir: string, pass: "A" | "B"): Map<string, PageLabel> {
   return out;
 }
 
+/** Negative labels for one page, as produced by the S3 labelers. */
+interface Negatives {
+  bundle: string;
+  page: number;
+  acceptable_divisions: string[];
+  should_not_divisions: string[];
+  should_not_codes: { code: string; why: string }[];
+  confidence?: string;
+  note?: string;
+}
+
+function loadNegatives(dir: string): Map<string, Negatives & { source: string }> {
+  const out = new Map<string, Negatives & { source: string }>();
+  for (let i = 1; i <= 4; i++) {
+    const f = join(dir, `negatives_batch${i}.json`);
+    if (!existsSync(f)) {
+      console.error(`[pilot] no ${f} — those pages get no negative labels`);
+      continue;
+    }
+    const parsed = JSON.parse(readFileSync(f, "utf-8")) as { pages: Negatives[] };
+    for (const n of parsed.pages) out.set(`${n.bundle}:${n.page}`, { ...n, source: `llm:negatives_batch${i}` });
+  }
+  return out;
+}
+
 function main(): void {
-  const [dir, outPath] = process.argv.slice(2);
+  const [dir, outPath, negativesDir] = process.argv.slice(2);
   if (!dir || !outPath) {
-    console.error("usage: node csi-pilot.js <pilot-dir> <out.json>");
+    console.error("usage: node csi-pilot.js <pilot-dir> <out.json> [negatives-dir]");
     process.exit(1);
   }
 
@@ -166,6 +191,8 @@ function main(): void {
 
   const A = loadPass(dir, "A");
   const B = loadPass(dir, "B");
+  const N = negativesDir ? loadNegatives(negativesDir) : new Map<string, Negatives & { source: string }>();
+  const floorRepairs: { page: string; added: string[] }[] = [];
 
   const rows = frame.pilot
     .map(p => {
@@ -200,6 +227,36 @@ function main(): void {
           onlyA: [...sa].filter(x => !sb.has(x)).sort(),
           onlyB: [...sb].filter(x => !sa.has(x)).sort(),
         },
+        ...(() => {
+          const n = N.get(k);
+          if (!n) return {};
+          // The floor is MECHANICAL and is never left to the labeler: every
+          // division appearing in any positive group's codes must be acceptable,
+          // or the tagger is scored as making a cross-division error on a code
+          // this gold set itself calls correct (GRANULARITY_RUBRIC §1.1). Union
+          // it in and RECORD that we did, so a labeler's omission is visible
+          // rather than silently patched.
+          const floor = new Set(
+            [...(a?.expected_groups ?? []), ...(b?.expected_groups ?? [])]
+              .flatMap(g => g.codes)
+              .map(c => c.replace(/[^0-9]/g, "").slice(0, 2)),
+          );
+          const stated = new Set(n.acceptable_divisions.map(d => d.replace(/[^0-9]/g, "").padStart(2, "0")));
+          const added = [...floor].filter(d => !stated.has(d)).sort();
+          if (added.length) floorRepairs.push({ page: k, added });
+          return {
+            acceptable_divisions: [...new Set([...stated, ...floor])].sort(),
+            should_not_divisions: [...new Set(n.should_not_divisions.map(d => d.replace(/[^0-9]/g, "").padStart(2, "0")))].sort(),
+            should_not_codes: n.should_not_codes.map(c => c.code),
+            negativesProvenance: {
+              source: n.source,
+              confidence: n.confidence ?? null,
+              note: n.note ?? null,
+              reasons: n.should_not_codes,
+              floorDivisionsAddedMechanically: added,
+            },
+          };
+        })(),
         /** §9.2.1: null means UNCERTIFIED. No acceptance number may use this page. */
         reviewed_by: null,
       };
@@ -286,6 +343,28 @@ function main(): void {
         meanJaccardWhenBothHighConfidence: highConf.length ? +mean(highConf.map(r => r.agreement.sectionJaccard!)).toFixed(3) : null,
         note: "If these two means are close, stated confidence does NOT predict difficulty and protocol §9.2.2's random audit slice is justified.",
       },
+    },
+    negatives: {
+      pagesWithNegatives: N.size,
+      /**
+       * Audit findings on the negative pass, recorded rather than silently
+       * cleaned. A gold set that hides its own known weak spots is worse than
+       * one that names them.
+       */
+      auditFlags: [
+        {
+          page: "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json:67",
+          issue:
+            "The recorded reason quotes 'NON-STRUCTURAL TOPPING' as the trigger; that phrase occurs ZERO times " +
+            "in the page rawText (verified). The verdict may still be right — the only FRAMING hit is a " +
+            "verification note, not scope — but the quoted mechanism was smoothed rather than transcribed. " +
+            "Treat this page's negatives as needing human ratification before use.",
+        },
+      ],
+      /** Divisions a labeler omitted from acceptable_divisions that the gold's own
+       *  positive codes required. Repaired mechanically; listed so the omission is
+       *  auditable rather than invisible. */
+      floorRepairs,
     },
     /** Ranked worst-first: where a human reviewer's time buys the most. */
     reviewPriority: [...scored]

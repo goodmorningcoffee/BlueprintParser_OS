@@ -1,6 +1,6 @@
 {
   "schemaVersion": "csi-score/1",
-  "generatedAt": "2026-07-25T14:27:06.936Z",
+  "generatedAt": "2026-07-25T15:08:21.006Z",
   "gold": "eval/csi/gold-pilot.json",
   "engine": "eval/csi/baseline-old-engine.json",
   "config": {
@@ -17,8 +17,6 @@
   },
   "caveats": [
     "Stratum weights applied from /workspaces/projects/BlueprintParser_OS_july10_part6_refactor/blueprintparser_2/eval/csi/gold-frame.json (sha 8456afc1ec0f55cc) per §11.1.",
-    "Gold has no acceptable_divisions, so cross-division false positives CANNOT be separated; they fall into `unadjudicated`.",
-    "Gold has no should_not_codes, so no false positive can be classified as `hard` yet.",
     "Pooled adjudication (§5.0.1) has not run. Precision is provisional for BOTH engines and is not a fair OLD-vs-NEW comparison.",
     "PRECISION AS REPORTED IS A FLOOR, NOT AN ESTIMATE. Every emitted code the gold does not name counts as a false positive, but some of those may be correct codes no labeler happened to think of. True precision is therefore >= the figure shown. Pooled adjudication (§5.0.1) is what converts this floor into an estimate.",
     "RECALL is bracketed rather than bounded: the strict/generous pair spans labeler disagreement about what is on the page. A NARROW span means certification would barely move the number; a wide one means it would."
@@ -43,9 +41,14 @@
         "f05": 0.0436,
         "truePositives": 51.4,
         "falsePositives": {
-          "hard": 0,
-          "crossDivision": 0,
-          "unadjudicated": 1365.4
+          "hard": 772.6,
+          "crossDivision": 33.6,
+          "unadjudicated": 559.2
+        },
+        "precisionBracket": {
+          "floor": 0.0363,
+          "ceiling": 0.4309,
+          "unadjudicatedShare": 0.3947
         },
         "groupsTotal": 198.4,
         "groupsHit": 44.7,
@@ -480,9 +483,14 @@
         "f05": 0.0106,
         "truePositives": 21.8,
         "falsePositives": {
-          "hard": 0,
-          "crossDivision": 0,
-          "unadjudicated": 2491.8
+          "hard": 1164.7,
+          "crossDivision": 49.6,
+          "unadjudicated": 1277.5
+        },
+        "precisionBracket": {
+          "floor": 0.0087,
+          "ceiling": 0.5169,
+          "unadjudicatedShare": 0.5083
         },
         "groupsTotal": 198.4,
         "groupsHit": 17.8,
@@ -919,9 +927,14 @@
         "f05": 0.0543,
         "truePositives": 64.5,
         "falsePositives": {
-          "hard": 0,
-          "crossDivision": 0,
-          "unadjudicated": 1352.2
+          "hard": 772.6,
+          "crossDivision": 33.6,
+          "unadjudicated": 546
+        },
+        "precisionBracket": {
+          "floor": 0.0455,
+          "ceiling": 0.4309,
+          "unadjudicatedShare": 0.3854
         },
         "groupsTotal": 322.3,
         "groupsHit": 75.4,
@@ -1356,9 +1369,14 @@
         "f05": 0.0135,
         "truePositives": 27.8,
         "falsePositives": {
-          "hard": 0,
-          "crossDivision": 0,
-          "unadjudicated": 2485.8
+          "hard": 1164.7,
+          "crossDivision": 49.6,
+          "unadjudicated": 1271.6
+        },
+        "precisionBracket": {
+          "floor": 0.011,
+          "ceiling": 0.5169,
+          "unadjudicatedShare": 0.5059
         },
         "groupsTotal": 322.3,
         "groupsHit": 33.6,

@@ -108,3 +108,72 @@ describe("CSI calibration pilot", () => {
     expect(mean).toBeLessThan(6.5);
   });
 });
+
+describe("negative labels (S3)", () => {
+  interface WithNegatives {
+    pages: {
+      bundle: string;
+      page: number;
+      passA: { groups: { codes: string[] }[] } | null;
+      passB: { groups: { codes: string[] }[] } | null;
+      acceptable_divisions?: string[];
+      should_not_divisions?: string[];
+      should_not_codes?: string[];
+      negativesProvenance?: { source: string; reasons: { code: string; why: string }[] };
+    }[];
+    negatives?: { pagesWithNegatives: number; floorRepairs: { page: string; added: string[] }[] };
+  }
+  const load2 = () => JSON.parse(readFileSync(PILOT, "utf-8")) as WithNegatives;
+
+  it("acceptable_divisions is a superset of every division the page's own gold codes use", () => {
+    // GRANULARITY_RUBRIC §1.1. Violating this scores the tagger as making a
+    // cross-division error on a code THIS GOLD SET calls correct — the gold
+    // contradicting itself, in the engine's disfavour.
+    const f = load2();
+    const violations: string[] = [];
+    for (const p of f.pages) {
+      if (!p.acceptable_divisions) continue;
+      const acceptable = new Set(p.acceptable_divisions);
+      const required = new Set(
+        [...(p.passA?.groups ?? []), ...(p.passB?.groups ?? [])]
+          .flatMap(g => g.codes)
+          .map(c => c.replace(/[^0-9]/g, "").slice(0, 2)),
+      );
+      for (const d of required) if (!acceptable.has(d)) violations.push(`${p.bundle}:${p.page} missing div ${d}`);
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("acceptable and should_not divisions never overlap — a division cannot be both", () => {
+    const f = load2();
+    const contradictions: string[] = [];
+    for (const p of f.pages) {
+      const a = new Set(p.acceptable_divisions ?? []);
+      for (const d of p.should_not_divisions ?? []) {
+        if (a.has(d)) contradictions.push(`${p.bundle}:${p.page} div ${d} is both acceptable and should_not`);
+      }
+    }
+    expect(contradictions).toEqual([]);
+  });
+
+  it("every should_not_code carries a recorded reason (provenance, not bare assertion)", () => {
+    const f = load2();
+    const unreasoned: string[] = [];
+    for (const p of f.pages) {
+      const reasons = new Map((p.negativesProvenance?.reasons ?? []).map(r => [r.code, r.why]));
+      for (const c of p.should_not_codes ?? []) {
+        const why = reasons.get(c);
+        if (!why || why.trim().length < 10) unreasoned.push(`${p.bundle}:${p.page} ${c}`);
+      }
+    }
+    expect(unreasoned).toEqual([]);
+  });
+
+  it("records any division the generator had to repair mechanically", () => {
+    // A labeler omitting a required division is patched by the generator, but the
+    // patch must be visible — otherwise the gold looks cleaner than it was.
+    const f = load2();
+    expect(f.negatives).toBeDefined();
+    expect(Array.isArray(f.negatives!.floorRepairs)).toBe(true);
+  });
+});
