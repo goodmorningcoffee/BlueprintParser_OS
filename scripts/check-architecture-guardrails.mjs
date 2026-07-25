@@ -389,8 +389,12 @@ const MAX_LINES_BASELINE = {
     },
     {
       path: "src/server/services/reprocess.ts",
-      maxLines: 899,
+      maxLines: 926,
       // [P4.1 rebudget 2026-07-23] +18: U7 observe at both shape-parse writers (b170db0).
+      // [csi-rebuild S8 rebudget 2026-07-25] +27: per-project try/catch on the four
+      // scopes that lacked one (TILE_015 C1). Without them a single failing project
+      // truncated the NDJSON stream with no `done`. Comments are consolidated to one
+      // full explanation plus three references specifically to keep this bump small.
       reason: "legacy-service",
     },
     {

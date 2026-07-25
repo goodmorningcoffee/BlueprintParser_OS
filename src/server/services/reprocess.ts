@@ -192,6 +192,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         send({ type: "config", yoloEnabled, targetClasses: [...targetClasses], sources: yoloSources.length });
 
         for (const project of allProjects) {
+          try {
           await withReprocessLease(project.id, async (writeCapability) => {
           const projectPages = await db
             .select({
@@ -311,6 +312,14 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             }
           }
           });
+          } catch (err) {
+            // [csi-rebuild S8 / TILE_015 C1] Per-project guard. Without it one failing
+            // project throws out of the loop and the NDJSON stream ends with no `done`,
+            // leaving the client waiting on a response that already stopped. The
+            // `thumbnails` scope already guarded itself this way; the other four did not.
+            logger.error(`[reprocess-page-names] Project ${project.name} failed:`, err);
+            send({ type: "error", project: project.name, error: err instanceof Error ? err.message : "Failed" });
+          }
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -390,6 +399,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         send({ type: "config", useLambda });
 
         for (const project of allProjects) {
+          try {
           const projectPages = await db
             .select({ id: pages.id, pageNumber: pages.pageNumber })
             .from(pages)
@@ -512,6 +522,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             }
           }
           });
+          } catch (err) {
+            // Per-project guard — see the page-names scope for why (S8 / TILE_015 C1).
+            logger.error(`[reprocess-shape-parse] Project ${project.name} failed:`, err);
+            send({ type: "error", project: project.name, error: err instanceof Error ? err.message : "Failed" });
+          }
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -525,6 +540,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         // re-run). If YOLO data exists for a page, it's passed to runHeuristicEngine
         // and classifyPageRegions — mirrors /api/yolo/load post-processing.
         for (const project of allProjects) {
+          try {
           await withReprocessLease(project.id, async (writeCapability) => {
           const projectPages = await db
             .select({
@@ -780,6 +796,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             logger.error(`[reprocess-intel] Summary computation failed for ${project.name}:`, err);
           }
           });
+          } catch (err) {
+            // Per-project guard — see the page-names scope for why (S8 / TILE_015 C1).
+            logger.error(`[reprocess-intelligence] Project ${project.name} failed:`, err);
+            send({ type: "error", project: project.name, error: err instanceof Error ? err.message : "Failed" });
+          }
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -789,6 +810,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
       // Full reprocess (existing behavior)
       for (const project of allProjects) {
+        try {
         await withReprocessLease(project.id, async (writeCapability) => {
         // Fetch pages with existing textractData (core columns only)
         const projectPages = await db
@@ -886,6 +908,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
           logger.error(`[reprocess] Summary computation failed for ${project.name}:`, err);
         }
         });
+        } catch (err) {
+          // Per-project guard — see the page-names scope for why (S8 / TILE_015 C1).
+          logger.error(`[reprocess-full] Project ${project.name} failed:`, err);
+          send({ type: "error", project: project.name, error: err instanceof Error ? err.message : "Failed" });
+        }
       }
 
       send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
