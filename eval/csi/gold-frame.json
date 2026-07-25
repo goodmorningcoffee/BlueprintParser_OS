@@ -1,0 +1,2786 @@
+{
+  "schemaVersion": "csi-gold-frame/1",
+  "what": "Which corpus pages get gold CSI labels, and how they are stratified.",
+  "protocol": "eval/csi/LABELING_PROTOCOL.md",
+  "generatedAt": "2026-07-25T09:22:17.309Z",
+  "generatedAtGitSha": "f8566b61d31c3aab16c2cc312c19dd0dfb11a339",
+  "corpusSha": "5c3a9cdea5ff68379692364afd64013e908131b8ca506cc993178e5c4a9b029c",
+  "baselineSha": "beb1a3d3ad55d87470f1737e8450cf9973bc0ca3bca9e579693e792bcfe9607f",
+  "params": {
+    "targetPages": 240,
+    "floorPerStratum": 3,
+    "pilotSize": 20,
+    "ordering": "sha256(bundle + ':' + page), bundle round-robin within stratum",
+    "splitRule": "parity of rank within stratum"
+  },
+  "frame": {
+    "corpusPages": 471,
+    "framePages": 466,
+    "excluded": [
+      {
+        "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+        "page": 17,
+        "reason": "no usable OCR text"
+      },
+      {
+        "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+        "page": 25,
+        "reason": "no usable OCR text"
+      },
+      {
+        "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+        "page": 61,
+        "reason": "no usable OCR text"
+      },
+      {
+        "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+        "page": 108,
+        "reason": "no usable OCR text"
+      },
+      {
+        "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+        "page": 23,
+        "reason": "no usable OCR text"
+      }
+    ],
+    "selectedPages": 240,
+    "dev": 123,
+    "test": 117
+  },
+  "splitQuality": {
+    "clusters": 57,
+    "clusterRule": "transitive closure of (same bundle+drawing series) and (adjacent page in same bundle)",
+    "adjacentPairsStraddling": 0,
+    "perBundle": [
+      {
+        "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+        "dev": 19,
+        "test": 16
+      },
+      {
+        "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+        "dev": 8,
+        "test": 5
+      },
+      {
+        "bundle": "2e890012-9ea8-42ad-89b1-429698c56c18.json",
+        "dev": 1,
+        "test": 0
+      },
+      {
+        "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+        "dev": 14,
+        "test": 18
+      },
+      {
+        "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+        "dev": 29,
+        "test": 29
+      },
+      {
+        "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+        "dev": 32,
+        "test": 29
+      },
+      {
+        "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+        "dev": 20,
+        "test": 20
+      }
+    ],
+    "strataWithDisjointBundles": [
+      "A|151+",
+      "MEP|0",
+      "OTHER|0",
+      "OTHER|151+",
+      "S|0",
+      "S|1-10"
+    ]
+  },
+  "strata": [
+    {
+      "stratum": "A|0",
+      "population": 71,
+      "weight": 1.9189,
+      "selected": 37,
+      "dev": 20,
+      "test": 17
+    },
+    {
+      "stratum": "A|1-10",
+      "population": 71,
+      "weight": 1.9189,
+      "selected": 37,
+      "dev": 20,
+      "test": 17
+    },
+    {
+      "stratum": "A|11-50",
+      "population": 80,
+      "weight": 2.1053,
+      "selected": 38,
+      "dev": 18,
+      "test": 20
+    },
+    {
+      "stratum": "A|151+",
+      "population": 5,
+      "weight": 1.6667,
+      "selected": 3,
+      "dev": 2,
+      "test": 1
+    },
+    {
+      "stratum": "A|51-150",
+      "population": 25,
+      "weight": 1.9231,
+      "selected": 13,
+      "dev": 9,
+      "test": 4
+    },
+    {
+      "stratum": "MEP|0",
+      "population": 14,
+      "weight": 2,
+      "selected": 7,
+      "dev": 5,
+      "test": 2
+    },
+    {
+      "stratum": "MEP|1-10",
+      "population": 27,
+      "weight": 1.9286,
+      "selected": 14,
+      "dev": 6,
+      "test": 8
+    },
+    {
+      "stratum": "MEP|11-50",
+      "population": 41,
+      "weight": 1.9524,
+      "selected": 21,
+      "dev": 9,
+      "test": 12
+    },
+    {
+      "stratum": "MEP|151+",
+      "population": 14,
+      "weight": 2,
+      "selected": 7,
+      "dev": 4,
+      "test": 3
+    },
+    {
+      "stratum": "MEP|51-150",
+      "population": 27,
+      "weight": 1.9286,
+      "selected": 14,
+      "dev": 7,
+      "test": 7
+    },
+    {
+      "stratum": "OTHER|0",
+      "population": 8,
+      "weight": 2,
+      "selected": 4,
+      "dev": 1,
+      "test": 3
+    },
+    {
+      "stratum": "OTHER|1-10",
+      "population": 8,
+      "weight": 2,
+      "selected": 4,
+      "dev": 2,
+      "test": 2
+    },
+    {
+      "stratum": "OTHER|11-50",
+      "population": 9,
+      "weight": 1.8,
+      "selected": 5,
+      "dev": 3,
+      "test": 2
+    },
+    {
+      "stratum": "OTHER|151+",
+      "population": 12,
+      "weight": 2,
+      "selected": 6,
+      "dev": 4,
+      "test": 2
+    },
+    {
+      "stratum": "OTHER|51-150",
+      "population": 8,
+      "weight": 2,
+      "selected": 4,
+      "dev": 1,
+      "test": 3
+    },
+    {
+      "stratum": "S|0",
+      "population": 2,
+      "weight": 1,
+      "selected": 2,
+      "dev": 1,
+      "test": 1
+    },
+    {
+      "stratum": "S|1-10",
+      "population": 15,
+      "weight": 1.875,
+      "selected": 8,
+      "dev": 2,
+      "test": 6
+    },
+    {
+      "stratum": "S|11-50",
+      "population": 16,
+      "weight": 2,
+      "selected": 8,
+      "dev": 4,
+      "test": 4
+    },
+    {
+      "stratum": "S|151+",
+      "population": 4,
+      "weight": 1.3333,
+      "selected": 3,
+      "dev": 2,
+      "test": 1
+    },
+    {
+      "stratum": "S|51-150",
+      "population": 9,
+      "weight": 1.8,
+      "selected": 5,
+      "dev": 3,
+      "test": 2
+    }
+  ],
+  "pilot": [
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 81,
+      "stratum": "A|11-50",
+      "drawingNumber": "A-601.00"
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 100,
+      "stratum": "MEP|51-150",
+      "drawingNumber": "E-000.00"
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 65,
+      "stratum": "S|51-150",
+      "drawingNumber": "S-1"
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 29,
+      "stratum": "OTHER|151+",
+      "drawingNumber": "G-002.00"
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 44,
+      "stratum": "A|0",
+      "drawingNumber": "A701"
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 3,
+      "stratum": "OTHER|151+",
+      "drawingNumber": "G-002.00"
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 88,
+      "stratum": "MEP|11-50",
+      "drawingNumber": "K-1"
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 56,
+      "stratum": "MEP|1-10",
+      "drawingNumber": "P-101.00"
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 103,
+      "stratum": "MEP|51-150",
+      "drawingNumber": "E-000"
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 92,
+      "stratum": "A|0",
+      "drawingNumber": "A-904"
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 36,
+      "stratum": "A|1-10",
+      "drawingNumber": "A-506"
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 64,
+      "stratum": "S|151+",
+      "drawingNumber": "S-0"
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 84,
+      "stratum": "A|1-10",
+      "drawingNumber": "A-702.00"
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 33,
+      "stratum": "A|11-50",
+      "drawingNumber": "A-201.00"
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 67,
+      "stratum": "MEP|11-50",
+      "drawingNumber": "H10A"
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 85,
+      "stratum": "A|1-10",
+      "drawingNumber": "A-16"
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 52,
+      "stratum": "MEP|1-10",
+      "drawingNumber": "P-003.00"
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 67,
+      "stratum": "S|1-10",
+      "drawingNumber": "S-200.00"
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 35,
+      "stratum": "A|1-10",
+      "drawingNumber": "A-505"
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 21,
+      "stratum": "MEP|151+",
+      "drawingNumber": "M-001.00"
+    }
+  ],
+  "pages": [
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 1,
+      "drawingNumber": "A-812",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 95
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 2,
+      "drawingNumber": "A-201",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 26
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 4,
+      "drawingNumber": "A-203",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 5,
+      "drawingNumber": "A-204",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 8,
+      "drawingNumber": "A-207",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 9,
+      "drawingNumber": "A-208",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 10,
+      "drawingNumber": "A-209",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 14,
+      "drawingNumber": "A-302",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 16,
+      "drawingNumber": "A-304",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 17,
+      "drawingNumber": "A-305",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 26,
+      "drawingNumber": "A-421",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 16
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 29,
+      "drawingNumber": "A-424",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 15
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 33,
+      "drawingNumber": "A-503",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 34,
+      "drawingNumber": "A-504",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 35,
+      "drawingNumber": "A-505",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 36,
+      "drawingNumber": "A-506",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 37,
+      "drawingNumber": null,
+      "discipline": null,
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 39,
+      "drawingNumber": "A-511",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 40,
+      "drawingNumber": "A-512",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 42,
+      "drawingNumber": "A-514",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 50,
+      "drawingNumber": "A-522",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 53,
+      "drawingNumber": "A-601",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 59,
+      "drawingNumber": "A-614",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 69,
+      "drawingNumber": "A-705",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 48
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 70,
+      "drawingNumber": "A-706",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 13
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 72,
+      "drawingNumber": "A-802",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 74,
+      "drawingNumber": "A-804",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 75,
+      "drawingNumber": "A-805",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 18
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 77,
+      "drawingNumber": "A-807",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 78,
+      "drawingNumber": "A-808",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 4
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 79,
+      "drawingNumber": "A-809",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 91,
+      "drawingNumber": "A-903",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 92,
+      "drawingNumber": "A-904",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 95,
+      "drawingNumber": "A-907",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "06916aa6-a4c2-4a42-8b08-40abf7d6fa89.json",
+      "page": 96,
+      "drawingNumber": "A-908",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 1,
+      "drawingNumber": "P-200.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 22
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 2,
+      "drawingNumber": "A-001.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 11
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 3,
+      "drawingNumber": "A-002.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 254
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 5,
+      "drawingNumber": "A-004.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 158
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 6,
+      "drawingNumber": "A-005.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 55
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 7,
+      "drawingNumber": "DM-100.00",
+      "discipline": "DM",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 29
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 8,
+      "drawingNumber": "A-200.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 103
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 9,
+      "drawingNumber": "A-300.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 82
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 11,
+      "drawingNumber": "A-500.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 37
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 12,
+      "drawingNumber": "A-600.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 13,
+      "drawingNumber": "A-700",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 3
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 14,
+      "drawingNumber": "A-800",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 8
+    },
+    {
+      "bundle": "2d367b0e-c62c-4108-8fb8-07295016e706.json",
+      "page": 15,
+      "drawingNumber": "A-801",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "2e890012-9ea8-42ad-89b1-429698c56c18.json",
+      "page": 1,
+      "drawingNumber": "Q143",
+      "discipline": "Q",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 24
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 1,
+      "drawingNumber": "T-001.00",
+      "discipline": "T",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 147
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 3,
+      "drawingNumber": "G-002.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 301
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 5,
+      "drawingNumber": "G-004.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 36
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 7,
+      "drawingNumber": "A-101.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 53
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 9,
+      "drawingNumber": "A-103.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 10,
+      "drawingNumber": "A-201.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 47
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 11,
+      "drawingNumber": "A-202.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 29
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 12,
+      "drawingNumber": "A-203.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 14,
+      "drawingNumber": "A-402.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 25
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 15,
+      "drawingNumber": "A-501.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 9
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 16,
+      "drawingNumber": "A-502.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 6
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 18,
+      "drawingNumber": "A701",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 20,
+      "drawingNumber": "A-703.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 16
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 21,
+      "drawingNumber": "M-001.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 227
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 26,
+      "drawingNumber": "P-003.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 27,
+      "drawingNumber": "T-001.00",
+      "discipline": "T",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 147
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 29,
+      "drawingNumber": "G-002.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 301
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 32,
+      "drawingNumber": "DM-101.00",
+      "discipline": "DM",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 31
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 33,
+      "drawingNumber": "A-101.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 53
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 35,
+      "drawingNumber": "A-103.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 36,
+      "drawingNumber": "A-201.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 47
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 37,
+      "drawingNumber": "A-202.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 29
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 38,
+      "drawingNumber": "A-203.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 39,
+      "drawingNumber": "A-401.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 25
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 40,
+      "drawingNumber": "A-402.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 25
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 41,
+      "drawingNumber": "A-501.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 9
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 42,
+      "drawingNumber": "A-502.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 6
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 44,
+      "drawingNumber": "A701",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 47,
+      "drawingNumber": "M-001.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 227
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 50,
+      "drawingNumber": "P-001.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 51,
+      "drawingNumber": "P-002.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "4df240ee-4379-4ca4-9798-16c74562f8dc.json",
+      "page": 52,
+      "drawingNumber": "P-003.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 2,
+      "drawingNumber": "BR-1",
+      "discipline": "BR",
+      "disciplineGroup": "S",
+      "stratum": "S|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 113
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 3,
+      "drawingNumber": null,
+      "discipline": "?",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 9
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 4,
+      "drawingNumber": "SP-1",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 34
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 6,
+      "drawingNumber": "S-0",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 212
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 7,
+      "drawingNumber": "S-1",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 53
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 14,
+      "drawingNumber": "A-4",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 38
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 20,
+      "drawingNumber": "A-10",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 38
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 21,
+      "drawingNumber": "A-11",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 3
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 22,
+      "drawingNumber": "A-12",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 26
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 23,
+      "drawingNumber": "A-12A",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 25,
+      "drawingNumber": "A-14",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 29
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 27,
+      "drawingNumber": "A-16",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 6
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 28,
+      "drawingNumber": "A-17",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 104
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 29,
+      "drawingNumber": "A-18",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 31,
+      "drawingNumber": "K-2",
+      "discipline": "K",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 11
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 33,
+      "drawingNumber": "K-3",
+      "discipline": "K",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 36,
+      "drawingNumber": "M-3",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 27
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 38,
+      "drawingNumber": "M-5",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 62
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 43,
+      "drawingNumber": "P-4",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 45,
+      "drawingNumber": "E-1",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "test",
+      "oldEngineCodeCount": 311
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 48,
+      "drawingNumber": "E-4",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 50,
+      "drawingNumber": "E-6",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 6
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 52,
+      "drawingNumber": "CS-1",
+      "discipline": "C",
+      "disciplineGroup": "S",
+      "stratum": "S|151+",
+      "split": "test",
+      "oldEngineCodeCount": 162
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 54,
+      "drawingNumber": null,
+      "discipline": "?",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 7
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 58,
+      "drawingNumber": "SP-4",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 4
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 60,
+      "drawingNumber": "SP-6",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 38
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 63,
+      "drawingNumber": "SP-9",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 106
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 64,
+      "drawingNumber": "S-0",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 216
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 65,
+      "drawingNumber": "S-1",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 53
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 66,
+      "drawingNumber": "S2",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 11
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 67,
+      "drawingNumber": "H10A",
+      "discipline": "H",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 22
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 68,
+      "drawingNumber": "S-4",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 24
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 69,
+      "drawingNumber": "A-1",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 122
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 71,
+      "drawingNumber": "A-3",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 22
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 72,
+      "drawingNumber": "A-4",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 27
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 73,
+      "drawingNumber": "A-5",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|151+",
+      "split": "test",
+      "oldEngineCodeCount": 181
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 75,
+      "drawingNumber": "A-7",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 87
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 79,
+      "drawingNumber": "A-11",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 3
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 81,
+      "drawingNumber": "A-12A",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 83,
+      "drawingNumber": "A-14",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 31
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 84,
+      "drawingNumber": "A-15",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 28
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 85,
+      "drawingNumber": "A-16",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 7
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 87,
+      "drawingNumber": "A-18",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 88,
+      "drawingNumber": "K-1",
+      "discipline": "K",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 20
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 89,
+      "drawingNumber": "M-1",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 294
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 90,
+      "drawingNumber": "M-2",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 135
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 93,
+      "drawingNumber": "M-5",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 63
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 94,
+      "drawingNumber": "M-6",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 96,
+      "drawingNumber": "P-2",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 33
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 98,
+      "drawingNumber": "P-4",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 99,
+      "drawingNumber": "P4",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 45
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 104,
+      "drawingNumber": "E-5",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 32
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 108,
+      "drawingNumber": "SP-2",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 25
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 109,
+      "drawingNumber": "SP-3",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 8
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 110,
+      "drawingNumber": "SP-4",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 3
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 111,
+      "drawingNumber": "SP-5",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 109
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 113,
+      "drawingNumber": "H-20",
+      "discipline": "H",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 54
+    },
+    {
+      "bundle": "5353458d-b06c-485f-b421-2303e085e04c.json",
+      "page": 114,
+      "drawingNumber": "SP-8",
+      "discipline": "SP",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 26
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 1,
+      "drawingNumber": "M-000.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 138
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 2,
+      "drawingNumber": "M-100.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 65
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 3,
+      "drawingNumber": "M-101.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 37
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 4,
+      "drawingNumber": "M-900.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "test",
+      "oldEngineCodeCount": 540
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 10,
+      "drawingNumber": "E-100.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 17
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 11,
+      "drawingNumber": "E-101.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 13,
+      "drawingNumber": "E-201.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 14
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 15,
+      "drawingNumber": "E-301.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 29
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 18,
+      "drawingNumber": "S-100.00",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 3
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 19,
+      "drawingNumber": "S-200.00",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 6
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 20,
+      "drawingNumber": "T-001.00",
+      "discipline": "T",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 23,
+      "drawingNumber": "G-003.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|151+",
+      "split": "test",
+      "oldEngineCodeCount": 200
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 24,
+      "drawingNumber": "G-004.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 51
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 27,
+      "drawingNumber": "DM-101.00",
+      "discipline": "DM",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 96
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 29,
+      "drawingNumber": "A-002.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 31,
+      "drawingNumber": "A-101.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 53
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 33,
+      "drawingNumber": "A-201.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 22
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 37,
+      "drawingNumber": "A-301.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 35
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 43,
+      "drawingNumber": "A-501.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 46,
+      "drawingNumber": "A-700.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 47,
+      "drawingNumber": "A-701.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 48,
+      "drawingNumber": "A-702.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 10
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 49,
+      "drawingNumber": "A-710.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 50,
+      "drawingNumber": "A-711.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 51,
+      "drawingNumber": "A-712.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 9
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 53,
+      "drawingNumber": "A-721.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 56,
+      "drawingNumber": "T-001.00",
+      "discipline": "T",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 57,
+      "drawingNumber": "G-001.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 47
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 58,
+      "drawingNumber": "G-002.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 143
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 59,
+      "drawingNumber": "G-003.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|151+",
+      "split": "test",
+      "oldEngineCodeCount": 200
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 60,
+      "drawingNumber": "G-004.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 51
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 64,
+      "drawingNumber": "A-001.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 32
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 65,
+      "drawingNumber": "A-002.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 67,
+      "drawingNumber": "A-101.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 53
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 68,
+      "drawingNumber": "A-200.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 27
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 73,
+      "drawingNumber": "A-301.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 35
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 77,
+      "drawingNumber": "A-401.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 25
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 78,
+      "drawingNumber": "A-500.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 79,
+      "drawingNumber": "A-501.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 81,
+      "drawingNumber": "A-601.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 27
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 82,
+      "drawingNumber": "A-700.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 83,
+      "drawingNumber": "A-701.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 84,
+      "drawingNumber": "A-702.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 10
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 85,
+      "drawingNumber": "A-710.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 87,
+      "drawingNumber": "A-712.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 9
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 89,
+      "drawingNumber": "A-721.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 94,
+      "drawingNumber": "M-101.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 37
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 95,
+      "drawingNumber": "M-900.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "test",
+      "oldEngineCodeCount": 540
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 96,
+      "drawingNumber": "P-100.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 10
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 100,
+      "drawingNumber": "E-000.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 62
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 101,
+      "drawingNumber": "E-100.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 17
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 102,
+      "drawingNumber": "E-101.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 103,
+      "drawingNumber": "E-000",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 62
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 106,
+      "drawingNumber": "E-301.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 29
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 111,
+      "drawingNumber": "HG-1",
+      "discipline": "HG",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 4
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 115,
+      "drawingNumber": "B44",
+      "discipline": "B",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 9
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 116,
+      "drawingNumber": null,
+      "discipline": null,
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 117,
+      "drawingNumber": "R2",
+      "discipline": "R",
+      "disciplineGroup": "S",
+      "stratum": "S|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 118,
+      "drawingNumber": null,
+      "discipline": null,
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 119,
+      "drawingNumber": null,
+      "discipline": "?",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "b7014f2e-1c1a-4eba-92bf-12214a8e65b3.json",
+      "page": 124,
+      "drawingNumber": null,
+      "discipline": null,
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 1,
+      "drawingNumber": "A-101.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 130
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 2,
+      "drawingNumber": "A-801",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 35
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 5,
+      "drawingNumber": "A-501.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 8
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 6,
+      "drawingNumber": "A-601.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 28
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 7,
+      "drawingNumber": "A-701.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 4
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 8,
+      "drawingNumber": "A-702.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 15
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 10,
+      "drawingNumber": "A-901.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 33
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 11,
+      "drawingNumber": "AS-01",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 12,
+      "drawingNumber": "AS-02",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 13,
+      "drawingNumber": "AS-03",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|0",
+      "split": "test",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 18,
+      "drawingNumber": "SKM-1.00",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 19,
+      "drawingNumber": "SSK-1",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 20,
+      "drawingNumber": "G-001.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 158
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 21,
+      "drawingNumber": "G-002.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 259
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 24,
+      "drawingNumber": "G-005.00",
+      "discipline": "G",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 25,
+      "drawingNumber": "DM-001.00",
+      "discipline": "DM",
+      "disciplineGroup": "OTHER",
+      "stratum": "OTHER|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 46
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 26,
+      "drawingNumber": "A-101.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 130
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 30,
+      "drawingNumber": "A-501.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 8
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 31,
+      "drawingNumber": "A-601.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 28
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 32,
+      "drawingNumber": "A-701.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 4
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 33,
+      "drawingNumber": "A-702.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 15
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 35,
+      "drawingNumber": "A-901.00",
+      "discipline": "A",
+      "disciplineGroup": "A",
+      "stratum": "A|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 33
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 36,
+      "drawingNumber": "EN-001.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 108
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 39,
+      "drawingNumber": "M-001.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 144
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 40,
+      "drawingNumber": "M-101.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|0",
+      "split": "dev",
+      "oldEngineCodeCount": 0
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 41,
+      "drawingNumber": "M-201.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 16
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 42,
+      "drawingNumber": "M-301.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 37
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 43,
+      "drawingNumber": "M-401.00",
+      "discipline": "M",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "dev",
+      "oldEngineCodeCount": 52
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 47,
+      "drawingNumber": "E-001.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|51-150",
+      "split": "test",
+      "oldEngineCodeCount": 91
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 48,
+      "drawingNumber": "E-101.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 5
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 51,
+      "drawingNumber": "E-301.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 18
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 52,
+      "drawingNumber": "E-401.00",
+      "discipline": "E",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 28
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 56,
+      "drawingNumber": "P-101.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 1
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 57,
+      "drawingNumber": "P-201.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 59,
+      "drawingNumber": "P-401.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 36
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 60,
+      "drawingNumber": "P-501.00",
+      "discipline": "P",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|151+",
+      "split": "dev",
+      "oldEngineCodeCount": 156
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 62,
+      "drawingNumber": "FA-101.00",
+      "discipline": "FA",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|1-10",
+      "split": "test",
+      "oldEngineCodeCount": 6
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 63,
+      "drawingNumber": "FA-201.00",
+      "discipline": "FA",
+      "disciplineGroup": "MEP",
+      "stratum": "MEP|11-50",
+      "split": "test",
+      "oldEngineCodeCount": 11
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 67,
+      "drawingNumber": "S-200.00",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|1-10",
+      "split": "dev",
+      "oldEngineCodeCount": 2
+    },
+    {
+      "bundle": "fb9ce1b6-62d0-45d1-aba0-3df20225c0c3.json",
+      "page": 68,
+      "drawingNumber": "S-300.00",
+      "discipline": "S",
+      "disciplineGroup": "S",
+      "stratum": "S|11-50",
+      "split": "dev",
+      "oldEngineCodeCount": 30
+    }
+  ]
+}

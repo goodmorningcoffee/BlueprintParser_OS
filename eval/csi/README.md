@@ -1,4 +1,15 @@
-# eval/csi — CSI tagger freeze-first baseline
+# eval/csi — CSI tagger baseline and gold set
+
+| file | what it is | phase |
+|---|---|---|
+| `baseline-old-engine.json` | what the OLD engine **emits** over all 471 pages | P0.1 |
+| `extract-corpus.sh` + `capture.ts` | the harness that produced it | P0.1 |
+| `LABELING_PROTOCOL.md` | what a **correct** label is — read before labeling anything | P1.1 |
+| `select-gold-frame.ts` | which pages get labeled, deterministically | P1.1 |
+| `gold-frame.json` | the resulting selection: 240 pages, 20 strata, dev/test split | P1.1 |
+
+The baseline says what the engine *does*. The gold set is the only thing that can
+say what it *should have done*. Neither alone is an acceptance bar.
 
 `baseline-old-engine.json` is the **pre-rebuild measurement** of the live CSI text
 engine. Everything the rebuild claims about precision is scored against this file.
