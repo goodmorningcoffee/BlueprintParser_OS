@@ -1,0 +1,242 @@
+{
+  "schemaVersion": "csi-kb-stats/1",
+  "generatedAt": "2026-07-25T15:54:46.342Z",
+  "sources": {
+    "masterformat": {
+      "sha256": "8966fe2a28756aef",
+      "entries": 8951
+    },
+    "crosswalk": {
+      "sha256": "d86252fad943530c",
+      "codesWithAlternates": 2238
+    }
+  },
+  "vocabulary": {
+    "entries": 8951,
+    "distinctTokens": 4168,
+    "tokensFromCanonicalTitlesOnly": 3972,
+    "codesGainingAlternates": 1163,
+    "newSignificantWordsFromAlternates": 1907,
+    "meanTokensPerCode": 3.74
+  },
+  "reachability": {
+    "note": "Unreachable = no tier can clear the 0.4 threshold for ANY input under the CURRENT rule. S4 predicted vocabulary would barely move this because unreachability is a scoring property. These two numbers are kept separate so breadth and reachability are never conflated.",
+    "unreachableCanonicalOnly": 2362,
+    "unreachableWithAlternates": 2096,
+    "rescuedByAlternates": 266,
+    "rescuedShareOfUnreachable": 0.1126,
+    "stillUnreachableShareOfDatabase": 0.2342,
+    "sampleRescued": [
+      {
+        "code": "020000",
+        "canonical": "existing conditions",
+        "canonicalWords": 2,
+        "viaAlternates": 4,
+        "altTitles": [
+          "site construction"
+        ]
+      },
+      {
+        "code": "022113",
+        "canonical": "site surveys",
+        "canonicalWords": 2,
+        "viaAlternates": 4,
+        "altTitles": [
+          "markers and monuments"
+        ]
+      },
+      {
+        "code": "023113",
+        "canonical": "seismic investigations",
+        "canonicalWords": 2,
+        "viaAlternates": 3,
+        "altTitles": [
+          "seismic investigation"
+        ]
+      },
+      {
+        "code": "023216",
+        "canonical": "material testing",
+        "canonicalWords": 2,
+        "viaAlternates": 4,
+        "altTitles": [
+          "standard penetration testing"
+        ]
+      },
+      {
+        "code": "023219",
+        "canonical": "exploratory excavations",
+        "canonicalWords": 2,
+        "viaAlternates": 4,
+        "altTitles": [
+          "test pits"
+        ]
+      },
+      {
+        "code": "024119",
+        "canonical": "selective demolition",
+        "canonicalWords": 2,
+        "viaAlternates": 5,
+        "altTitles": [
+          "minor site demolition for remodeling"
+        ]
+      },
+      {
+        "code": "025100",
+        "canonical": "physical decontamination",
+        "canonicalWords": 2,
+        "viaAlternates": 3,
+        "altTitles": [
+          "physical treatment"
+        ]
+      },
+      {
+        "code": "025200",
+        "canonical": "chemical decontamination",
+        "canonicalWords": 2,
+        "viaAlternates": 3,
+        "altTitles": [
+          "chemical treatment"
+        ]
+      },
+      {
+        "code": "025300",
+        "canonical": "thermal decontamination",
+        "canonicalWords": 2,
+        "viaAlternates": 3,
+        "altTitles": [
+          "thermal processes"
+        ]
+      },
+      {
+        "code": "025400",
+        "canonical": "biological decontamination",
+        "canonicalWords": 2,
+        "viaAlternates": 3,
+        "altTitles": [
+          "biological processes"
+        ]
+      }
+    ]
+  },
+  "ifTheWordCountGateChanged": [
+    {
+      "ifTierGateWere": 1,
+      "reachableCanonical": 8951,
+      "reachableWithAlts": 8951
+    },
+    {
+      "ifTierGateWere": 2,
+      "reachableCanonical": 8632,
+      "reachableWithAlts": 8669
+    },
+    {
+      "ifTierGateWere": 3,
+      "reachableCanonical": 6589,
+      "reachableWithAlts": 6855
+    }
+  ],
+  "weakestTokens": [
+    {
+      "token": "equipment",
+      "codes": 998
+    },
+    {
+      "token": "systems",
+      "codes": 351
+    },
+    {
+      "token": "concrete",
+      "codes": 320
+    },
+    {
+      "token": "control",
+      "codes": 320
+    },
+    {
+      "token": "maintenance",
+      "codes": 320
+    },
+    {
+      "token": "water",
+      "codes": 313
+    },
+    {
+      "token": "piping",
+      "codes": 292
+    },
+    {
+      "token": "metal",
+      "codes": 260
+    },
+    {
+      "token": "schedules",
+      "codes": 241
+    },
+    {
+      "token": "pumps",
+      "codes": 231
+    },
+    {
+      "token": "process",
+      "codes": 228
+    },
+    {
+      "token": "operation",
+      "codes": 221
+    },
+    {
+      "token": "air",
+      "codes": 205
+    },
+    {
+      "token": "gas",
+      "codes": 198
+    },
+    {
+      "token": "storage",
+      "codes": 196
+    },
+    {
+      "token": "wood",
+      "codes": 183
+    },
+    {
+      "token": "treatment",
+      "codes": 175
+    },
+    {
+      "token": "fire",
+      "codes": 160
+    },
+    {
+      "token": "electrical",
+      "codes": 145
+    },
+    {
+      "token": "liquid",
+      "codes": 141
+    },
+    {
+      "token": "power",
+      "codes": 137
+    },
+    {
+      "token": "doors",
+      "codes": 136
+    },
+    {
+      "token": "integrated",
+      "codes": 131
+    },
+    {
+      "token": "masonry",
+      "codes": 131
+    },
+    {
+      "token": "communications",
+      "codes": 126
+    }
+  ],
+  "strongestTokenSample": 1707
+}
