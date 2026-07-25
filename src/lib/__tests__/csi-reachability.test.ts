@@ -28,10 +28,23 @@ import { DEFAULT_CSI_DETECT_CONFIG } from "@/lib/csi-detect-defs";
 /**
  * Can this entry clear the confidence threshold under ANY input?
  *
- * Mirrors the gates in detectCsiCodes: best case is every word present, so
- * Tier 2 reaches `1² × tier2Weight` and Tier 3 reaches `1 × tier3Weight`, each
- * behind its own word-count gate; Tier 1's ceiling is the weight for that word
- * count. If none clears the threshold, no page can ever surface the code.
+ * ⚠ THIS IS A MODEL OF THE ENGINE, NOT THE ENGINE. It re-derives the tier
+ * ceilings by hand rather than calling `detectCsiCodes`, because the real
+ * question — "is there ANY input that surfaces this code?" — is a statement
+ * about the engine's upper bound, which no single call can answer. Only the
+ * database and its word counts come from live code (`loadBuiltinCsiDatabase`).
+ *
+ * The consequence: **if the tier logic in csi-detect.ts changes, this model must
+ * be re-derived by hand.** It will not fail on its own. Re-read
+ * `detectCsiCodes`'s scoring block before trusting these numbers after any
+ * engine edit — `csi-baseline-freshness.test.ts` is what tells you an edit
+ * happened.
+ *
+ * The model: best case is every word present, so Tier 2 reaches
+ * `1² × tier2Weight` and Tier 3 reaches `1 × tier3Weight`, each behind its own
+ * word-count gate; Tier 1's ceiling is the weight for that word count. The
+ * multi-tier boost only applies once something already scored, so the ceiling is
+ * the max of the three. If none clears the threshold, no page can surface the code.
  */
 function isReachable(wordCount: number): boolean {
   const cfg = DEFAULT_CSI_DETECT_CONFIG;

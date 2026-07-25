@@ -74,6 +74,71 @@ function containment(a: Set<string>, b: Set<string>): number {
   return inter / Math.min(a.size, b.size);
 }
 
+/**
+ * Match groups ACROSS passes, then diff. Section-set Jaccard alone was wrong and
+ * a usability review caught it: when both labelers identify the same system but
+ * list different alternative codes for it — "topping trench" as 03 30 00/03 01 00
+ * vs 03 81 00/02 41 19 — every one of those sections reads as a disagreement.
+ * Roughly HALF the disputes it produced were this: the same group twice, wearing
+ * different codes. Two labelers agreeing on the work and differing on which
+ * MasterFormat entry names it is a far milder thing than one of them missing the
+ * work entirely, and the two must not be counted alike.
+ *
+ * Match rule: groups pair if they share any code SECTION, else if their ids are
+ * token-similar. Greedy, highest overlap first — good enough at 5-8 groups/page,
+ * and deterministic because ties break on the sorted id.
+ */
+export interface GroupMatch {
+  a: Group | null;
+  b: Group | null;
+  /** both found it — but check codesDiffer/tiersDiffer for the residual question */
+  matched: boolean;
+  codesDiffer: boolean;
+  tiersDiffer: boolean;
+}
+
+const idTokens = (id: string) => new Set(id.toLowerCase().split(/[_\s-]+/).filter(t => t.length > 2));
+
+function idSimilar(x: string, y: string): boolean {
+  const a = idTokens(x);
+  const b = idTokens(y);
+  if (!a.size || !b.size) return false;
+  const shared = [...a].filter(t => b.has(t)).length;
+  return shared / Math.min(a.size, b.size) >= 0.5;
+}
+
+export function matchGroups(ga: Group[], gb: Group[]): GroupMatch[] {
+  const secs = (g: Group) => new Set(g.codes.map(section));
+  const pairs: { i: number; j: number; overlap: number }[] = [];
+  for (let i = 0; i < ga.length; i++) {
+    for (let j = 0; j < gb.length; j++) {
+      const sa = secs(ga[i]);
+      const sb = secs(gb[j]);
+      const overlap = [...sa].filter(x => sb.has(x)).length;
+      if (overlap > 0) pairs.push({ i, j, overlap: overlap + 1 });
+      else if (idSimilar(ga[i].id, gb[j].id)) pairs.push({ i, j, overlap: 1 });
+    }
+  }
+  pairs.sort((p, q) => q.overlap - p.overlap || ga[p.i].id.localeCompare(ga[q.i].id) || gb[p.j].id.localeCompare(gb[q.j].id));
+
+  const usedA = new Set<number>();
+  const usedB = new Set<number>();
+  const out: GroupMatch[] = [];
+  for (const { i, j } of pairs) {
+    if (usedA.has(i) || usedB.has(j)) continue;
+    usedA.add(i);
+    usedB.add(j);
+    const A = ga[i];
+    const B = gb[j];
+    const ca = [...new Set(A.codes.map(c => c.replace(/[\s.\-]/g, "")))].sort().join(",");
+    const cb = [...new Set(B.codes.map(c => c.replace(/[\s.\-]/g, "")))].sort().join(",");
+    out.push({ a: A, b: B, matched: true, codesDiffer: ca !== cb, tiersDiffer: A.tier !== B.tier });
+  }
+  for (let i = 0; i < ga.length; i++) if (!usedA.has(i)) out.push({ a: ga[i], b: null, matched: false, codesDiffer: false, tiersDiffer: false });
+  for (let j = 0; j < gb.length; j++) if (!usedB.has(j)) out.push({ a: null, b: gb[j], matched: false, codesDiffer: false, tiersDiffer: false });
+  return out;
+}
+
 function loadPass(dir: string, pass: "A" | "B"): Map<string, PageLabel> {
   const out = new Map<string, PageLabel>();
   for (let i = 1; i <= 4; i++) {
@@ -124,6 +189,7 @@ function main(): void {
         stratum: p.stratum,
         passA: a ? { groups: a.expected_groups, confidence: a.confidence, sheetSubject: a.sheetSubject ?? null, note: a.note ?? null } : null,
         passB: b ? { groups: b.expected_groups, confidence: b.confidence, sheetSubject: b.sheetSubject ?? null, note: b.note ?? null } : null,
+        groupMatches: a && b ? matchGroups(a.expected_groups, b.expected_groups) : null,
         agreement: {
           sectionJaccard: j === null ? null : +j.toFixed(3),
           sectionContainment: a && b ? +containment(sa, sb).toFixed(3) : null,
@@ -185,6 +251,25 @@ function main(): void {
       meanSectionJaccard: +mean(js).toFixed(3),
       medianSectionJaccard: +[...js].sort((a, b) => a - b)[Math.floor(js.length / 2)]?.toFixed(3),
       meanSectionContainment: +mean(scored.map(r => r.agreement.sectionContainment!)).toFixed(3),
+      // GROUP-level agreement — the honest headline. Section-level counts a
+      // shared system named by different codes as a disagreement; this does not.
+      groupLevel: (() => {
+        let matched = 0, onlyOne = 0, codeOnly = 0, tierOnly = 0;
+        for (const r of scored) {
+          for (const m of r.groupMatches ?? []) {
+            if (m.matched) { matched++; if (m.codesDiffer) codeOnly++; if (m.tiersDiffer) tierOnly++; }
+            else onlyOne++;
+          }
+        }
+        return {
+          groupsBothFound: matched,
+          groupsOnlyOnePassFound: onlyOne,
+          agreementRate: +(matched / (matched + onlyOne)).toFixed(3),
+          ofMatched_codesDiffer: codeOnly,
+          ofMatched_tiersDiffer: tierOnly,
+          note: "A matched pair with codesDiffer/tiersDiffer is a MILD question (which code, which tier), not a missed system. Section-level Jaccard conflates the two and therefore understates agreement.",
+        };
+      })(),
       meanDivisionJaccard: +mean(scored.map(r => r.agreement.divisionJaccard!)).toFixed(3),
       /** Low Jaccard but high containment = the passes differ in DEPTH, not substance. */
       depthNotSubstance: scored.filter(
