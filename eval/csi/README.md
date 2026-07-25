@@ -5,6 +5,7 @@
 | `baseline-old-engine.json` | what the OLD engine **emits** over all 471 pages | P0.1 |
 | `extract-corpus.sh` + `capture.ts` | the harness that produced it | P0.1 |
 | `LABELING_PROTOCOL.md` | what a **correct** label is — read before labeling anything | P1.1 |
+| `GRANULARITY_RUBRIC.md` | what counts as ONE group — the recall denominator, with worked examples | P1.2a |
 | `select-gold-frame.ts` | which pages get labeled, deterministically | P1.1 |
 | `gold-frame.json` | the resulting selection: 240 pages, 20 strata, dev/test split | P1.1 |
 

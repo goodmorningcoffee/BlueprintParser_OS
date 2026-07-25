@@ -142,6 +142,12 @@ without punishing a defensible choice between siblings.
 Groups are the unit of **recall**. Individual emitted codes are the unit of
 **precision**.
 
+**What counts as one group is defined in [`GRANULARITY_RUBRIC.md`](./GRANULARITY_RUBRIC.md)**
+— read it before labeling. It also fixes the cross-division case (§1.1 there):
+`division` is the division of `codes[0]`, and `acceptable_divisions` must be a
+superset of every division appearing in any group's `codes`, or the tagger is
+scored as making a cross-division error on a code this gold set calls correct.
+
 ### 4.2 `tier`
 
 - `primary` — the sheet is substantially about this. A tagger that misses it is broken.
@@ -410,9 +416,10 @@ produce different recall for identical tagger behavior.
   reports a sample statistic as a population one.
 - Report recall **overall and for `primary` groups alone** (§4.2).
 
-Before the pilot, write a **group-granularity rubric with worked examples** — one
-group per distinct construction system, not per mention, not per code. Without it,
-the pilot calibrates the labeler on codes while leaving the denominator free.
+The **group-granularity rubric** that fixes this denominator is
+[`GRANULARITY_RUBRIC.md`](./GRANULARITY_RUBRIC.md) — eight rules and three worked
+examples taken from real pilot pages. It is not optional reading: without it the
+pilot calibrates the labeler on codes while leaving the denominator free.
 
 ### 11.2 The −2 pt per-division gate cannot be read for most divisions
 
