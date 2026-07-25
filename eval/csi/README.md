@@ -16,6 +16,12 @@
 The baseline says what the engine *does*. The gold set is the only thing that can
 say what it *should have done*. Neither alone is an acceptance bar.
 
+**Before building the P2 knowledge base, read
+`claude_notes/CSI_REBUILD/S4_TSV_AUDIT.md`.** Two things there change the plan:
+the 26.4%-unreachable problem is a SCORING problem, not a data one (in-repo
+synonyms rescue only 5.6% of it), and `src/data/csi.tsv` supplies 785 free
+significant words as alternate titles for 212 existing codes.
+
 `baseline-old-engine.json` is the **pre-rebuild measurement** of the live CSI text
 engine. Everything the rebuild claims about precision is scored against this file.
 
