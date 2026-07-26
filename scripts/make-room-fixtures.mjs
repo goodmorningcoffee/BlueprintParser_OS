@@ -57,7 +57,7 @@
  * Output is GENERATED, never committed (test/fixtures/ is gitignored). Revert = delete it.
  */
 
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, degrees } from "pdf-lib";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -289,6 +289,108 @@ const CELLS = {
     };
   },
 
+  // ── FRAME VARIANTS ────────────────────────────────────────────────────────
+  // Identical geometry to `plain`, different page frame. The expected area is therefore
+  // IDENTICAL, which makes these a true invariance test: any difference is a frame bug.
+  // This is the fixture side of the `vector-frame-invariance.test.ts` PLAN §5 phase 1 wants.
+  // It only works because seeds are carried in PDF USER space — pdf.js's viewport.transform
+  // folds in /Rotate and CropBox, so one seed lands on the same physical point in every frame.
+  "plain-rot90"() {
+    const c = CELLS.plain();
+    return { ...c, page: { rotate: 90 }, rooms: c.rooms.map((r) => ({ ...r, id: "plain-rot90" })) };
+  },
+  "plain-rot270"() {
+    const c = CELLS.plain();
+    return { ...c, page: { rotate: 270 }, rooms: c.rooms.map((r) => ({ ...r, id: "plain-rot270" })) };
+  },
+  "plain-cropbox"() {
+    // CropBox != MediaBox, offset AND smaller. pdf.js builds the viewport from CropBox, so a
+    // user-space seed still resolves correctly; a device-space one would not.
+    const c = CELLS.plain();
+    return {
+      ...c,
+      page: { cropBox: { x: 100, y: 120, w: 1000, h: 600 } },
+      rooms: c.rooms.map((r) => ({ ...r, id: "plain-cropbox" })),
+    };
+  },
+
+  // ── E-SIZE HAIRLINE ───────────────────────────────────────────────────────
+  // 48" x 36" = 3456 x 2592 pt. PLAN wants this evaluated at mask dims 2000 AND 4000 because
+  // it is upstream's own "raster underneath" ceiling. It matters because of the item-1
+  // finding: the vector inset is a fixed 1 mask px per side, so error scales as 1/(mask px
+  // per pt). On this sheet that is 0.579 px/pt at mask 2000 (inset 3.46 pt) versus 1.157 at
+  // mask 4000 (inset 1.73 pt) — the error should HALVE. Run:
+  //   node scripts/oneclick-accuracy.mjs --manifest ... --mask-dim 2000   (then 4000)
+  // Room is 1400x900 = 14.1% of the sheet, safely under LEAK_FRACTION.
+  "e-size-hairline"() {
+    const P = { w: 3456, h: 2592 };
+    const B = { x0: 800, y0: 700, x1: 2200, y1: 1600 }; // 1400 x 900
+    const poly = rectPoly(B.x0, B.y0, B.x1, B.y1);
+    return {
+      page: { w: P.w, h: P.h },
+      draw: (page) => strokePoly(page, poly, 0.1),
+      rooms: [{
+        id: "e-size-hairline",
+        seed: { x: 1500, y: P.h - 1150 },
+        expect: "area",
+        poly,
+        wallWidthPt: 0.1,
+        note: "E-size sheet: run at --mask-dim 2000 AND 4000; error should halve as resolution doubles",
+      }],
+    };
+  },
+
+  // ── HIDDEN OPTIONAL-CONTENT LAYER ─────────────────────────────────────────
+  // PLAN §4.4 / risk #2 / U5. The ONE case where the vector path is strictly WORSE than the
+  // raster path it replaces, made into a fixture.
+  //
+  // pdf.js resolves optional content at PAINT time, so a hidden layer is absent from the
+  // rendered raster but PRESENT in the operator list. The extractor does not read marked
+  // content, so it traces linework the user cannot see. Here a hidden wall bisects the room:
+  //   vector  should return roughly HALF the room and report status ok — a confidently wrong
+  //           number, with nothing to warn on
+  //   legacy  should return the WHOLE room, because the hidden layer was never painted
+  // Hand-rolled rather than pdf-lib: OCGs need /OCProperties on the catalog and a BDC/EMC
+  // marked-content span, neither of which pdf-lib exposes. Same shape as the already-verified
+  // generator at _wf/pass3/probe6/make-ocg-pdf.mjs.
+  "hidden-ocg"() {
+    const poly = rectPoly(R.x0, R.y0, R.x1, R.y1);
+    const midX = (R.x0 + R.x1) / 2;
+    const content =
+      `${WALL} w 0 G\n` +
+      `${R.x0} ${R.y0} m ${R.x1} ${R.y0} l S\n` +
+      `${R.x1} ${R.y0} m ${R.x1} ${R.y1} l S\n` +
+      `${R.x1} ${R.y1} m ${R.x0} ${R.y1} l S\n` +
+      `${R.x0} ${R.y1} m ${R.x0} ${R.y0} l S\n` +
+      `/OC /MC0 BDC\n` +
+      `${midX} ${R.y0} m ${midX} ${R.y1} l S\n` +
+      `EMC\n`;
+    const objs = [];
+    objs[1] = `<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R] /D << /Order [5 0 R] /OFF [5 0 R] >> >> >>`;
+    objs[2] = `<< /Type /Pages /Kids [3 0 R] /Count 1 >>`;
+    objs[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Properties << /MC0 5 0 R >> >> /Contents 4 0 R >>`;
+    objs[4] = `<< /Length ${content.length} >>\nstream\n${content}endstream`;
+    objs[5] = `<< /Type /OCG /Name (A-WALL-DEMO) >>`;
+    let pdf = "%PDF-1.5\n";
+    const offsets = [];
+    for (let i = 1; i <= 5; i++) { offsets[i] = pdf.length; pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`; }
+    const xrefPos = pdf.length;
+    pdf += `xref\n0 6\n0000000000 65535 f \n`;
+    for (let i = 1; i <= 5; i++) pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+    return {
+      raw: Buffer.from(pdf, "latin1"),
+      rooms: [{
+        id: "hidden-ocg",
+        seed: dev(320, 395),           // LEFT half — the hidden wall runs down the middle
+        expect: "hidden-ocg",
+        poly,
+        wallWidthPt: WALL,
+        note: "hidden A-WALL-DEMO layer bisects the room: vector should trace it and return ~half; legacy should return the whole room",
+      }],
+    };
+  },
+
   hairline() {
     // 0.1 pt walls. At 2.451 mask px/pt a hairline is far under one mask pixel of width; it
     // survives only because buildMask burns every segment as a 1-px line regardless. The
@@ -316,15 +418,45 @@ for (const name of names) {
     process.exit(2);
   }
   const cell = CELLS[name]();
+  if (cell.raw) {
+    // Hand-rolled PDF (features pdf-lib does not expose, e.g. optional content groups).
+    const pdfPath = join(OUT, `${name}.pdf`);
+    writeFileSync(pdfPath, cell.raw);
+    fixtures.push({
+      id: name, pdf: pdfPath, page: 1, pageW: PAGE_W, pageH: PAGE_H, rotate: 0,
+      wallWidthPt: cell.rooms[0].wallWidthPt,
+      rooms: cell.rooms.map((r) => {
+        const t = r.wallWidthPt;
+        const holeArea = (r.holes || []).reduce((a, h) => a + h.w * h.h, 0);
+        const areaCenterline = shoelace(r.poly) - holeArea;
+        const areaInnerFace = innerFaceArea(r.poly, t) - holeArea;
+        return {
+          id: r.id, seed: r.seed, seedUser: { x: r.seed.x, y: PAGE_H - r.seed.y },
+          expect: r.expect, note: r.note ?? "", wallWidthPt: t,
+          areaCenterline, areaInnerFace,
+          predictedGapPct: 100 * (1 - areaInnerFace / areaCenterline),
+          holes: r.holes ?? [],
+        };
+      }),
+    });
+    console.log(`[fixtures] ${name.padEnd(16)} ${cell.raw.length.toString().padStart(6)} B  (raw PDF)`);
+    continue;
+  }
+  const cfg = cell.page || {};
+  const pw = cfg.w ?? PAGE_W;
+  const ph = cfg.h ?? PAGE_H;
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
-  const page = doc.addPage([PAGE_W, PAGE_H]);
+  const page = doc.addPage([pw, ph]);
   cell.draw(page, font);
+  if (cfg.rotate) page.setRotation(degrees(cfg.rotate));
+  if (cfg.cropBox) page.setCropBox(cfg.cropBox.x, cfg.cropBox.y, cfg.cropBox.w, cfg.cropBox.h);
   // A room label, so the text-layer seed path (detectRooms) has something to find, exactly as
   // a real sheet would carry.
   for (const r of cell.rooms) {
     page.drawText(r.id.toUpperCase(), {
-      x: R.x0 + 20, y: R.y1 - 30, size: 10, font, color: BLACK,
+      x: (cell.page?.w ? 850 : R.x0 + 20), y: (cell.page?.h ? cell.page.h - 900 : R.y1 - 30),
+      size: 10, font, color: BLACK,
     });
   }
   const bytes = await doc.save();
@@ -335,6 +467,9 @@ for (const name of names) {
     id: name,
     pdf: pdfPath,
     page: 1,
+    pageW: pw,
+    pageH: ph,
+    rotate: cfg.rotate ?? 0,
     wallWidthPt: cell.rooms[0].wallWidthPt,
     rooms: cell.rooms.map((r) => {
       const t = r.wallWidthPt;
@@ -344,6 +479,10 @@ for (const name of names) {
       return {
         id: r.id,
         seed: r.seed,
+        // PDF USER space. The harness prefers this: viewport.transform folds in /Rotate,
+        // CropBox and UserUnit, so the SAME seed lands on the same physical point in every
+        // frame variant. dev() is {x, pageH - y}, so this is its exact inverse.
+        seedUser: { x: r.seed.x, y: ph - r.seed.y },
         expect: r.expect,
         note: r.note ?? "",
         wallWidthPt: t,

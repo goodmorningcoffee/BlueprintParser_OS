@@ -353,6 +353,19 @@ if (manifestArg && !quiet) console.error(`[accuracy] manifest: ${manifestArg}`);
 // Oracles: prefer what the fixture GENERATOR emitted (it drew the geometry, so it knows the
 // exact rectilinear inset even for an L-shape). Fall back to w*h for hand-written manifests
 // like the built-in OT sample.
+// A room's seed may be given in PDF USER space (`seedUser`) or already in device space
+// (`seed`). Prefer user space: pdf.js's viewport.transform folds in /Rotate, CropBox offset
+// and UserUnit, so ONE user-space seed lands on the same physical point in every frame
+// variant. A device-space seed cannot do that — it would silently drift on a rotated page and
+// turn a frame bug into a "the click moved" non-result.
+function seedDeviceFor(room, vp, zoom) {
+  if (room.seedUser) {
+    const [dx, dy] = pdfjs.Util.applyTransform([room.seedUser.x, room.seedUser.y], vp.transform);
+    return { x: dx / zoom, y: dy / zoom }; // callers re-multiply by zoom
+  }
+  return room.seed;
+}
+
 function oraclesFor(fx, room) {
   if (room.areaCenterline != null && room.areaInnerFace != null) {
     return { areaCenterline: room.areaCenterline, areaInnerFace: room.areaInnerFace };
@@ -417,7 +430,7 @@ for (const fx of manifest.fixtures) {
       const t0 = performance.now();
       let r;
       try {
-        r = vectorLeg(geoC, vpC, room.seed, canonScale, stage);
+        r = vectorLeg(geoC, vpC, seedDeviceFor(room, vpC, canonScale), canonScale, stage);
       } catch (e) {
         r = { status: "exception", areaPt2: null, verts: 0, note: e?.message || String(e) };
       }
@@ -447,7 +460,7 @@ for (const fx of manifest.fixtures) {
       const { areaCenterline, areaInnerFace } = oraclesFor(fx, room);
       const stage = {};
       let r;
-      try { r = vectorLeg(geoS, vpS, room.seed, sc, stage); }
+      try { r = vectorLeg(geoS, vpS, seedDeviceFor(room, vpS, sc), sc, stage); }
       catch (e) { r = { status: "exception", areaPt2: null, verts: 0, note: e?.message || String(e) }; }
       const a = r.areaPt2;
       const maskPxPerPt = Math.min(sc, maskDim / Math.max(pageWpt, pageHpt));
@@ -491,7 +504,7 @@ for (const fx of manifest.fixtures) {
         const t0 = performance.now();
         let r;
         try {
-          r = legacyLeg(pageCanvas, room.seed, zoom, pageWpt, pageHpt, stage);
+          r = legacyLeg(pageCanvas, seedDeviceFor(room, vp, zoom), zoom, pageWpt, pageHpt, stage);
         } catch (e) {
           r = { status: "exception", areaPt2: null, verts: 0, note: e?.message || String(e) };
         }
@@ -562,7 +575,10 @@ for (const leg of legs) {
   const ok = mine.filter((r) => r.status === "ok");
   // Each leg is scored against ITS OWN oracle — that is the whole point of the dual oracle.
   const oracleCol = leg === "vector" ? "areaCenterline" : "areaInnerFace";
-  const scored = ok.filter((r) => r.expect !== "leak");
+  // "leak" and "hidden-ocg" cells are not supposed to yield a trustworthy area — including
+  // them would describe the fixture rather than the engine. They get the scorecard below.
+  const UNSCORED = new Set(["leak", "hidden-ocg"]);
+  const scored = ok.filter((r) => !UNSCORED.has(r.expect));
   const errs = scored
     .map((r) => signedErrNet(r, oracleCol))
     .filter((v) => v !== null)
@@ -589,6 +605,16 @@ for (const leg of legs) {
       ` (net-of-holes, area cells only, n=${errs.length}):` +
       `  median=${errs.length ? med(errs).toFixed(3) : "n/a"}%  worst=${errs.length ? Math.max(...errs).toFixed(3) : "n/a"}%`,
   );
+  // A >50% error on a cell that IS supposed to yield an area is not an accuracy datum, it is
+  // a failure. Naming them beats letting them set a "worst" that reads like a tolerance.
+  const blown = scored
+    .map((r) => ({ r, e: signedErrNet(r, oracleCol) }))
+    .filter((x) => x.e != null && Math.abs(x.e) > 50);
+  for (const { r, e } of blown) {
+    out.push(
+      `         !! ${r.fixture} — ${e > 0 ? "+" : ""}${e.toFixed(0)}% : did not measure the room at all`,
+    );
+  }
   if (leg === "vector") {
     out.push(
       "         ZOOM VARIANCE: 0.000% BY CONSTRUCTION — this path never reads display zoom.",
@@ -604,17 +630,29 @@ for (const leg of legs) {
 // ── REFUSAL BEHAVIOUR on cells that are SUPPOSED to fail ─────────────────────
 // This is the metric PLAN asks for as "refusal rate", and it is where the two engines differ
 // most sharply. A clean refusal is a good outcome; silently returning a number is not.
-const leakCells = rows.filter((r) => r.expect === "leak");
-if (leakCells.length) {
-  out.push("", " REFUSAL BEHAVIOUR — cells that SHOULD NOT return an area:");
-  for (const r of leakCells) {
+const trustCells = rows.filter((r) => r.expect === "leak" || r.expect === "hidden-ocg");
+if (trustCells.length) {
+  out.push("", " TRUST BEHAVIOUR — cells that SHOULD NOT yield a trustworthy area:");
+  for (const r of trustCells) {
     const a = netOf(r);
     const oracle = num(r.areaCenterline);
-    const verdict =
-      r.status !== "ok"
-        ? `REFUSED (${r.status}) — correct`
-        : `!! RETURNED AN AREA: ${a?.toFixed(0)} pt² for a ${oracle?.toFixed(0)} pt² room ` +
-          `(${(100 * (a / oracle - 1)).toFixed(0)}% over) — a confidently wrong number`;
+    let verdict;
+    if (r.status !== "ok") {
+      verdict = `REFUSED (${r.status}) — correct, the user is told`;
+    } else if (r.expect === "hidden-ocg") {
+      // Here the FULL room is the honest answer; a fraction of it means the engine traced
+      // linework the user cannot see and committed a wrong number with status ok.
+      const frac = a / oracle;
+      verdict =
+        frac < 0.75
+          ? `!! ${a?.toFixed(0)} pt² = ${(100 * frac).toFixed(0)}% of the ${oracle?.toFixed(0)} pt² room ` +
+            `— TRACED THE HIDDEN LAYER. Confidently wrong, status ok, no warning.`
+          : `${a?.toFixed(0)} pt² = ${(100 * frac).toFixed(0)}% — hidden layer NOT traced (correct)`;
+    } else {
+      verdict =
+        `!! RETURNED AN AREA: ${a?.toFixed(0)} pt² for a ${oracle?.toFixed(0)} pt² room ` +
+        `(${(100 * (a / oracle - 1)).toFixed(0)}% over) — a confidently wrong number`;
+    }
     out.push(`   ${String(r.fixture).padEnd(16)} ${String(r.leg).padEnd(7)} ${verdict}`);
   }
 }
@@ -646,12 +684,21 @@ if (sweepRows.length) {
 // produces the real one on real drawings; this is the SYNTHETIC preliminary, and it must be
 // labelled as such — U12 explicitly warns that real CAD walls are drawn as TWO lines, where
 // both engines flood the same interior and the gap may be far smaller.
+// Only over rooms where BOTH legs actually measured the room — within 10% of the centerline
+// oracle. Differencing a leak against a measurement is not a step change, it is a failure,
+// and letting one in dragged this range to -85.9% (the E-size cell, where the raster leg
+// returns the whole sheet).
+const MEASURED = (r) => {
+  const a = netOf(r);
+  const o = num(r.areaCenterline);
+  return a != null && o && Math.abs(a / o - 1) < 0.1;
+};
 const vecByRoom = new Map();
-for (const r of rows.filter((r) => r.leg === "vector" && r.status === "ok" && r.expect !== "leak")) {
+for (const r of rows.filter((r) => r.leg === "vector" && r.status === "ok" && MEASURED(r))) {
   vecByRoom.set(`${r.fixture}/${r.room}`, netOf(r));
 }
 const steps = [];
-for (const r of rows.filter((r) => r.leg === "legacy" && r.status === "ok" && r.expect !== "leak")) {
+for (const r of rows.filter((r) => r.leg === "legacy" && r.status === "ok" && MEASURED(r))) {
   const v = vecByRoom.get(`${r.fixture}/${r.room}`);
   const l = netOf(r);
   if (v != null && l) steps.push(100 * (v / l - 1));
