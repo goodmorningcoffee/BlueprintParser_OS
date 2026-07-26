@@ -259,7 +259,17 @@ function vectorLeg(geo, vp, seedPt, zoom, stage) {
   t = performance.now();
   const ring = oc.traceRegion(f, 1.5);
   stage.traceMs = performance.now() - t;
-  return { status: "ok", areaPt2: oc.ringArea(ring) / (zoom * zoom), verts: ring.length };
+  // ringArea is the OUTER contour and therefore INCLUDES any hole. The raster worker reports
+  // area NET of holes (it counts flood pixels). Comparing those two on a hole-bearing room is
+  // apples-to-oranges — the column-hole fixture is what surfaced this. So also derive the net
+  // area from the flood's own cell count: maskPxPerPt = ws * zoom.
+  const mpp = mask.ws * zoom;
+  return {
+    status: "ok",
+    areaPt2: oc.ringArea(ring) / (zoom * zoom),
+    areaNetPt2: f.count != null ? f.count / (mpp * mpp) : null,
+    verts: ring.length,
+  };
 }
 
 // Legacy: mirror processFill (bucket-fill.worker.ts:729) step for step.
@@ -304,7 +314,9 @@ function legacyLeg(pageCanvas, seedPt, zoom, pageWpt, pageHpt, stage) {
   const areaFraction = flood.area / (w * h);
   return {
     status: "ok",
+    // processFill:819 — already NET of holes (holes stay zero during the flood).
     areaPt2: areaFraction * pageWpt * pageHpt,
+    areaNetPt2: areaFraction * pageWpt * pageHpt,
     verts: simplified.length,
     otsu,
     adjusted,
@@ -338,13 +350,28 @@ const manifest = manifestArg
   : BUILTIN_MANIFEST;
 if (manifestArg && !quiet) console.error(`[accuracy] manifest: ${manifestArg}`);
 
+// Oracles: prefer what the fixture GENERATOR emitted (it drew the geometry, so it knows the
+// exact rectilinear inset even for an L-shape). Fall back to w*h for hand-written manifests
+// like the built-in OT sample.
+function oraclesFor(fx, room) {
+  if (room.areaCenterline != null && room.areaInnerFace != null) {
+    return { areaCenterline: room.areaCenterline, areaInnerFace: room.areaInnerFace };
+  }
+  const t = fx.wallWidthPt ?? room.wallWidthPt ?? 0;
+  const holeArea = (room.holes || []).reduce((s, h) => s + h.w * h.h, 0);
+  return {
+    areaCenterline: room.w * room.h - holeArea,
+    areaInnerFace: Math.max(0, room.w - t) * Math.max(0, room.h - t) - holeArea,
+  };
+}
+
 // ── CSV ──────────────────────────────────────────────────────────────────────
 const COLUMNS = [
   "fixture", "room", "leg", "zoom", "status",
-  "areaPt2", "areaCenterline", "areaInnerFace",
+  "areaPt2", "areaNetPt2", "areaCenterline", "areaInnerFace",
   "signedErrPct_centerline", "signedErrPct_innerFace", "predictedGapPct",
   "verts", "buildMaskMs", "binarizeMs", "floodMs", "traceMs", "totalMs",
-  "otsu", "otsuAdjusted", "solidRoomPath", "note",
+  "otsu", "otsuAdjusted", "solidRoomPath", "expect", "note",
 ];
 const cell = (v) => {
   const s = v === null || v === undefined ? "" : String(v);
@@ -385,9 +412,7 @@ for (const fx of manifest.fixtures) {
     const olC = await page.getOperatorList();
     const geoC = oc.extractVectorGeometry(olC, vpC.transform, pdfjs.OPS);
     for (const room of fx.rooms) {
-      const t = fx.wallWidthPt ?? room.wallWidthPt ?? 0;
-      const areaCenterline = room.w * room.h;
-      const areaInnerFace = Math.max(0, room.w - t) * Math.max(0, room.h - t);
+      const { areaCenterline, areaInnerFace } = oraclesFor(fx, room);
       const stage = {};
       const t0 = performance.now();
       let r;
@@ -400,6 +425,7 @@ for (const fx of manifest.fixtures) {
       emit({
         fixture: fx.id, room: room.id, leg: "vector", zoom: "canonical", status: r.status,
         areaPt2: a == null ? "" : a.toFixed(1),
+        areaNetPt2: r.areaNetPt2 == null ? "" : r.areaNetPt2.toFixed(1),
         areaCenterline: areaCenterline.toFixed(1), areaInnerFace: areaInnerFace.toFixed(1),
         signedErrPct_centerline: a == null ? "" : (100 * (a / areaCenterline - 1)).toFixed(3),
         signedErrPct_innerFace: a == null ? "" : (100 * (a / areaInnerFace - 1)).toFixed(3),
@@ -407,7 +433,7 @@ for (const fx of manifest.fixtures) {
         verts: r.verts ?? "", buildMaskMs: stage.buildMaskMs?.toFixed(1) ?? "", binarizeMs: "",
         floodMs: stage.floodMs?.toFixed(1) ?? "", traceMs: stage.traceMs?.toFixed(1) ?? "",
         totalMs: (performance.now() - t0).toFixed(1), otsu: "", otsuAdjusted: "",
-        solidRoomPath: "", note: `canonScale=${canonScale.toFixed(3)} maskPxPerPt=${(canonScale).toFixed(3)}`,
+        solidRoomPath: "", expect: room.expect ?? "", note: `canonScale=${canonScale.toFixed(3)} maskPxPerPt=${(canonScale).toFixed(3)}`,
       });
     }
   }
@@ -418,9 +444,7 @@ for (const fx of manifest.fixtures) {
     const olS = await page.getOperatorList();
     const geoS = oc.extractVectorGeometry(olS, vpS.transform, pdfjs.OPS);
     for (const room of fx.rooms) {
-      const t = fx.wallWidthPt ?? room.wallWidthPt ?? 0;
-      const areaCenterline = room.w * room.h;
-      const areaInnerFace = Math.max(0, room.w - t) * Math.max(0, room.h - t);
+      const { areaCenterline, areaInnerFace } = oraclesFor(fx, room);
       const stage = {};
       let r;
       try { r = vectorLeg(geoS, vpS, room.seed, sc, stage); }
@@ -430,13 +454,14 @@ for (const fx of manifest.fixtures) {
       emit({
         fixture: fx.id, room: room.id, leg: "vector-masksweep", zoom: sc, status: r.status,
         areaPt2: a == null ? "" : a.toFixed(1),
+        areaNetPt2: r.areaNetPt2 == null ? "" : r.areaNetPt2.toFixed(1),
         areaCenterline: areaCenterline.toFixed(1), areaInnerFace: areaInnerFace.toFixed(1),
         signedErrPct_centerline: a == null ? "" : (100 * (a / areaCenterline - 1)).toFixed(3),
         signedErrPct_innerFace: a == null ? "" : (100 * (a / areaInnerFace - 1)).toFixed(3),
         predictedGapPct: (100 * (1 - areaInnerFace / areaCenterline)).toFixed(3),
         verts: r.verts ?? "", buildMaskMs: stage.buildMaskMs?.toFixed(1) ?? "", binarizeMs: "",
         floodMs: stage.floodMs?.toFixed(1) ?? "", traceMs: stage.traceMs?.toFixed(1) ?? "",
-        totalMs: "", otsu: "", otsuAdjusted: "", solidRoomPath: "",
+        totalMs: "", otsu: "", otsuAdjusted: "", solidRoomPath: "", expect: room.expect ?? "",
         note: `maskPxPerPt=${maskPxPerPt.toFixed(3)} predictedInsetPt=${(2 / maskPxPerPt).toFixed(3)}`,
       });
     }
@@ -458,9 +483,7 @@ for (const fx of manifest.fixtures) {
     }
 
     for (const room of fx.rooms) {
-      const t = fx.wallWidthPt ?? room.wallWidthPt ?? 0;
-      const areaCenterline = room.w * room.h;
-      const areaInnerFace = Math.max(0, room.w - t) * Math.max(0, room.h - t);
+      const { areaCenterline, areaInnerFace } = oraclesFor(fx, room);
       const predictedGapPct = 100 * (1 - areaInnerFace / areaCenterline);
 
       for (const leg of legs.filter((l) => l === "legacy")) {
@@ -481,6 +504,7 @@ for (const fx of manifest.fixtures) {
           zoom,
           status: r.status,
           areaPt2: a === null || a === undefined ? "" : a.toFixed(1),
+          areaNetPt2: r.areaNetPt2 == null ? "" : r.areaNetPt2.toFixed(1),
           areaCenterline: areaCenterline.toFixed(1),
           areaInnerFace: areaInnerFace.toFixed(1),
           signedErrPct_centerline: a == null ? "" : (100 * (a / areaCenterline - 1)).toFixed(3),
@@ -495,6 +519,7 @@ for (const fx of manifest.fixtures) {
           otsu: r.otsu ?? "",
           otsuAdjusted: r.adjusted ?? "",
           solidRoomPath: r.solidRoom ?? "",
+          expect: room.expect ?? "",
           note: r.note ?? "",
         });
       }
@@ -514,12 +539,34 @@ const med = (a) => {
 };
 
 const out = ["", "─".repeat(78), " ACCURACY INSTRUMENT — per-leg summary", "─".repeat(78)];
+// Accuracy statistics are computed ONLY over rooms whose expected outcome is an area, and
+// ALWAYS net-of-holes on both sides. Two things this guards against, both found by running it:
+//   - the ring area INCLUDES holes while the raster worker's area excludes them, so on the
+//     column-hole cell the ring is byte-identical to the plain room and scoring it against a
+//     hole-subtracted oracle invents a false error;
+//   - an expect:"leak" cell is SUPPOSED to blow up. Letting door-gap into the median dragged
+//     the legacy "worst error" to 589%, which describes the fixture, not the engine.
+// Leak cells get their own scorecard below, which is the more useful thing anyway.
+const netOf = (r) => {
+  const n = num(r.areaNetPt2);
+  return n == null ? num(r.areaPt2) : n;
+};
+const signedErrNet = (r, oracleCol) => {
+  const a = netOf(r);
+  const oracle = num(r[oracleCol]);
+  return a == null || !oracle ? null : 100 * (a / oracle - 1);
+};
+
 for (const leg of legs) {
   const mine = rows.filter((r) => r.leg === leg);
   const ok = mine.filter((r) => r.status === "ok");
   // Each leg is scored against ITS OWN oracle — that is the whole point of the dual oracle.
-  const oracleCol = leg === "vector" ? "signedErrPct_centerline" : "signedErrPct_innerFace";
-  const errs = ok.map((r) => Math.abs(num(r[oracleCol]))).filter((v) => v !== null);
+  const oracleCol = leg === "vector" ? "areaCenterline" : "areaInnerFace";
+  const scored = ok.filter((r) => r.expect !== "leak");
+  const errs = scored
+    .map((r) => signedErrNet(r, oracleCol))
+    .filter((v) => v !== null)
+    .map(Math.abs);
 
   // Zoom variance: for each room, the spread of measured area across zooms, as a % of its
   // own median. A geometrically exact engine scores 0 here.
@@ -538,7 +585,8 @@ for (const leg of legs) {
       `  refusalRate=${mine.length ? ((100 * (mine.length - ok.length)) / mine.length).toFixed(1) : "n/a"}%`,
   );
   out.push(
-    `         |error| vs ${leg === "vector" ? "CENTERLINE" : "INNER-FACE"} oracle:` +
+    `         |error| vs ${leg === "vector" ? "CENTERLINE" : "INNER-FACE"} oracle` +
+      ` (net-of-holes, area cells only, n=${errs.length}):` +
       `  median=${errs.length ? med(errs).toFixed(3) : "n/a"}%  worst=${errs.length ? Math.max(...errs).toFixed(3) : "n/a"}%`,
   );
   if (leg === "vector") {
@@ -550,6 +598,24 @@ for (const leg of legs) {
       `         ZOOM VARIANCE (max-min as % of median, per room):` +
         `  median=${spreads.length ? med(spreads).toFixed(3) : "n/a"}%  worst=${spreads.length ? Math.max(...spreads).toFixed(3) : "n/a"}%`,
     );
+  }
+}
+
+// ── REFUSAL BEHAVIOUR on cells that are SUPPOSED to fail ─────────────────────
+// This is the metric PLAN asks for as "refusal rate", and it is where the two engines differ
+// most sharply. A clean refusal is a good outcome; silently returning a number is not.
+const leakCells = rows.filter((r) => r.expect === "leak");
+if (leakCells.length) {
+  out.push("", " REFUSAL BEHAVIOUR — cells that SHOULD NOT return an area:");
+  for (const r of leakCells) {
+    const a = netOf(r);
+    const oracle = num(r.areaCenterline);
+    const verdict =
+      r.status !== "ok"
+        ? `REFUSED (${r.status}) — correct`
+        : `!! RETURNED AN AREA: ${a?.toFixed(0)} pt² for a ${oracle?.toFixed(0)} pt² room ` +
+          `(${(100 * (a / oracle - 1)).toFixed(0)}% over) — a confidently wrong number`;
+    out.push(`   ${String(r.fixture).padEnd(16)} ${String(r.leg).padEnd(7)} ${verdict}`);
   }
 }
 
@@ -581,13 +647,13 @@ if (sweepRows.length) {
 // labelled as such — U12 explicitly warns that real CAD walls are drawn as TWO lines, where
 // both engines flood the same interior and the gap may be far smaller.
 const vecByRoom = new Map();
-for (const r of rows.filter((r) => r.leg === "vector" && r.status === "ok")) {
-  vecByRoom.set(`${r.fixture}/${r.room}`, num(r.areaPt2));
+for (const r of rows.filter((r) => r.leg === "vector" && r.status === "ok" && r.expect !== "leak")) {
+  vecByRoom.set(`${r.fixture}/${r.room}`, netOf(r));
 }
 const steps = [];
-for (const r of rows.filter((r) => r.leg === "legacy" && r.status === "ok")) {
+for (const r of rows.filter((r) => r.leg === "legacy" && r.status === "ok" && r.expect !== "leak")) {
   const v = vecByRoom.get(`${r.fixture}/${r.room}`);
-  const l = num(r.areaPt2);
+  const l = netOf(r);
   if (v != null && l) steps.push(100 * (v / l - 1));
 }
 if (steps.length) {
