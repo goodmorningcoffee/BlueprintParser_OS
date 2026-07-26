@@ -94,6 +94,8 @@
  *   Refusal rate is a reported metric, not an inconvenience to be filtered out.
  */
 
+// Side-effect import: teaches bare node the "@/" alias + extensionless .ts. MUST come first.
+import "./probes/_ts-resolve.mjs";
 import { readFileSync, existsSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 

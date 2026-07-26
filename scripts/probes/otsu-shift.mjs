@@ -16,13 +16,14 @@
  * The second column is RC2's actual magnitude. A 24-level threshold shift that moves the area
  * by 0.1% is a curiosity; one that moves it by 5% is a support ticket.
  *
- * ── ONE SUSPECT IS ALREADY CLEARED ──────────────────────────────────────────────────────
- * PLAN item 4 names "the dark-border case". Phase 0's fixture work already measured it and it
- * is NOT guilty: a dark platen border left the threshold at 129, identical to the clean scan.
- * The real shift found was between a VECTOR page and its own 150-DPI raster re-wrap — 153 vs
- * 129, 24 levels — i.e. the shift is about how the raster was PRODUCED, not what is drawn on
- * it. This probe therefore sweeps render scale / downscale ratio, which is the axis that
- * actually moves, and keeps the dark border only as a control.
+ * ── THE DARK BORDER *IS* GUILTY ON REAL SHEETS (this header previously said otherwise) ──
+ * PLAN item 4 names "the dark-border case". A synthetic fixture measured no shift at all — 129
+ * with the border and 129 without — and this file originally recorded it as cleared. THAT WAS
+ * WRONG, and this probe is what refuted it: on real sheets the border moves the threshold by
+ * 40 levels (VA p1, 181 -> 141) and 31 (VA p2, 175 -> 144). The synthetic was four lines on
+ * white, a histogram too one-sided for a dark band to move the between-class variance peak.
+ * A clean synthetic result is the easiest kind to over-generalize, precisely because it is
+ * unambiguous. The border is kept as a CONDITION here, not a control.
  *
  * Everything downstream of getImageData is the worker's OWN exported code
  * (bucketRgbaHistogram / bucketRgbaBinarize / floodFill), with its Otsu loop transcribed —
@@ -31,6 +32,8 @@
  *   node scripts/probes/otsu-shift.mjs <pdf> [page=1] [--seeds 3]
  */
 
+// Side-effect import: teaches bare node the "@/" alias + extensionless .ts. MUST come first.
+import "./_ts-resolve.mjs";
 import { readFileSync } from "node:fs";
 import { loadPdfjs, loadCanvas, enginePath } from "./_paths.mjs";
 
