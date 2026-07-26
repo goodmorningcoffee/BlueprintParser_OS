@@ -133,6 +133,7 @@ const quiet = bool("quiet");
 // RDP epsilon for the vector trace, in MASK px. PLAN: tightening it 10x surfaces the letter
 // holes the old slop collapsed — so it is a flag, and the letter-hole cell is measured at both.
 const vectorEps = Number(flag("vector-eps", "1.5"));
+const vaSeeds = flag("va-seeds");   // default template: test/va-seeds.json (TRACKED, not test/fixtures/)
 const maskSweep = (flag("mask-sweep", "") || "").split(",").map(Number).filter((z) => z > 0);
 
 // ── engine + worker resolution ───────────────────────────────────────────────
@@ -821,4 +822,118 @@ try {
   }
 } catch (e) {
   process.stderr.write(`PARITY: check could not run (${e.message})\n`);
+}
+
+// ── PHASE-1 GATE: the VA oracle ──────────────────────────────────────────────
+// PLAN §5 phase 1's last gate condition. Three assertions against three rooms of OpenTakeoff's
+// own VA finish plan, whose areas come from their changelog (treated as ratios + total, not
+// gospel). Requires hand-picked seeds — see notes/OWNER_VA_SEEDS.md and
+// scripts/probes/va-seed-picker.mjs. This block only runs with --va-seeds.
+if (vaSeeds) {
+  const spec = JSON.parse(readFileSync(vaSeeds, "utf8"));
+  const pdfPath = spec.pdf && existsSync(spec.pdf) ? spec.pdf : join(OT_CLONE, "demo/sample-finish-plan.pdf");
+  if (!existsSync(pdfPath)) {
+    console.error(`FATAL: VA drawing not found: ${pdfPath}`);
+    process.exit(2);
+  }
+  const doc = await pdfjs.getDocument({
+    data: new Uint8Array(readFileSync(pdfPath)),
+    isEvalSupported: false,
+    standardFontDataUrl: STANDARD_FONTS,
+  }).promise;
+  const page = await doc.getPage(spec.page ?? 1);
+  const vp1 = page.getViewport({ scale: 1 });
+  const canon = maskDim / Math.max(vp1.width, vp1.height);
+  const vp = page.getViewport({ scale: canon });
+  const geo = oc.extractVectorGeometry(await page.getOperatorList(), vp.transform, pdfjs.OPS);
+
+  const out = ["", "─".repeat(78), " PHASE-1 GATE — VA ORACLE (three assertions)", "─".repeat(78)];
+  const measured = [];
+  for (const room of spec.rooms) {
+    if (!room.seedUser || (room.seedUser.x === 0 && room.seedUser.y === 0)) {
+      console.error(`\nFATAL: room ${room.id} still has a placeholder seed (0,0).`);
+      console.error(`  Pick real points first — see notes/OWNER_VA_SEEDS.md. Refusing to`);
+      console.error(`  report a gate result from placeholder coordinates.\n`);
+      process.exit(2);
+    }
+    const [dx, dy] = pdfjs.Util.applyTransform([room.seedUser.x, room.seedUser.y], vp.transform);
+    const r = adapter.vectorBucketFill({
+      geo, imgW: vp.width, imgH: vp.height,
+      seedX: dx / vp.width, seedY: dy / vp.height,
+      maskDimension: maskDim,
+    });
+    measured.push({
+      id: room.id,
+      expectedSF: room.expectedSF,
+      status: r.type === "result" ? "ok" : (REFUSAL_CODE.get(r.error) ?? "error"),
+      pt2: r.type === "result" ? r.areaFraction * vp1.width * vp1.height : null,
+    });
+  }
+  for (const m of measured) {
+    out.push(`   room ${String(m.id).padEnd(5)} status=${m.status.padEnd(12)} ` +
+      `${m.pt2 == null ? "        —" : m.pt2.toFixed(0).padStart(9)} pt²   oracle ${m.expectedSF} SF`);
+  }
+
+  const ok = measured.filter((m) => m.pt2 != null);
+  if (ok.length !== measured.length) {
+    out.push("", " ⛔ FAIL — not every room measured; the assertions below need all three.");
+    process.exitCode = 1;
+  } else {
+    const totalPt2 = ok.reduce((a, m) => a + m.pt2, 0);
+    const totalSF = ok.reduce((a, m) => a + m.expectedSF, 0);
+
+    // (1) RATIOS — scale-free, so this isolates ENGINE error from sheet-scale error.
+    out.push("", " (1) room-area RATIOS within 1% (scale-free — isolates engine error):");
+    let ratiosPass = true;
+    for (const m of ok) {
+      const got = m.pt2 / totalPt2, want = m.expectedSF / totalSF;
+      const dev = 100 * (got / want - 1);
+      const p = Math.abs(dev) <= 1;
+      ratiosPass &&= p;
+      out.push(`     room ${String(m.id).padEnd(5)} share ${(100*got).toFixed(2)}% vs ${(100*want).toFixed(2)}%  ` +
+        `dev ${dev >= 0 ? "+" : ""}${dev.toFixed(2)}%  ${p ? "PASS" : "FAIL"}`);
+    }
+
+    // Scale: stated, or derived from the total. If DERIVED, assertions (2) and (3) are not
+    // independent evidence and must not be reported as if they were.
+    const derived = spec.sqftPerPt2 == null;
+    const sqftPerPt2 = derived ? totalSF / totalPt2 : spec.sqftPerPt2;
+    out.push("", derived
+      ? ` scale: NOT STATED in the manifest, so it was DERIVED from the oracle total\n` +
+        `        (${sqftPerPt2.toExponential(4)} SF/pt²). ⚠ Assertions (2) and (3) are therefore\n` +
+        `        NOT independent — (3) is true by construction. Only (1) is real evidence.\n` +
+        `        Add "sqftPerPt2" to va-seeds.json to make them independent.`
+      : ` scale: STATED as ${sqftPerPt2.toExponential(4)} SF/pt² — assertions (2) and (3) are independent.`);
+
+    // (2) per-room absolutes within 2%
+    out.push("", " (2) per-room ABSOLUTES within 2%:");
+    let absPass = true;
+    for (const m of ok) {
+      const sf = m.pt2 * sqftPerPt2;
+      const dev = 100 * (sf / m.expectedSF - 1);
+      const p = Math.abs(dev) <= 2;
+      absPass &&= p;
+      out.push(`     room ${String(m.id).padEnd(5)} ${sf.toFixed(1)} SF vs ${m.expectedSF} SF  ` +
+        `dev ${dev >= 0 ? "+" : ""}${dev.toFixed(2)}%  ${p ? "PASS" : "FAIL"}`);
+    }
+
+    // (3) sum within 2%
+    const gotTotal = totalPt2 * sqftPerPt2;
+    const totDev = 100 * (gotTotal / totalSF - 1);
+    const totPass = Math.abs(totDev) <= 2;
+    out.push("", ` (3) Σ within 2% of ${totalSF} SF:  ${gotTotal.toFixed(1)} SF  ` +
+      `dev ${totDev >= 0 ? "+" : ""}${totDev.toFixed(2)}%  ${totPass ? "PASS" : "FAIL"}` +
+      (derived ? "   (NOT independent — see scale note)" : ""));
+
+    const allPass = ratiosPass && absPass && totPass;
+    out.push("", ` ⇒ PHASE-1 VA GATE: ${allPass ? "PASS" : "FAIL"}`);
+    if (!allPass && ratiosPass) {
+      out.push("   Ratios pass but absolutes/Σ do not ⇒ this is a SCALE problem, not an engine");
+      out.push("   problem. Re-derive the sheet scale; the engine is tracking the drawing.");
+    }
+    if (!allPass) process.exitCode = 1;
+  }
+  out.push("─".repeat(78), "");
+  process.stderr.write(out.join("\n"));
+  await doc.destroy();
 }

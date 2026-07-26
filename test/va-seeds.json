@@ -1,0 +1,33 @@
+{
+  "pdf": "",
+  "page": 1,
+  "note": "PLACEHOLDER \u2014 the three seeds must be picked by hand; see gitignore/projects/bucketfill_rebuild/notes/OWNER_VA_SEEDS.md. This file lives in test/ rather than test/fixtures/ because test/fixtures/ is GITIGNORED and these coordinates are meant to be committed once and kept.",
+  "rooms": [
+    {
+      "id": "163",
+      "expectedSF": 154.6,
+      "seedUser": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "162",
+      "expectedSF": 184.6,
+      "seedUser": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "161",
+      "expectedSF": 240.7,
+      "seedUser": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "sqftPerPt2": null,
+  "sqftPerPt2_note": "Optional. If omitted the scale is DERIVED from the oracle total, which makes assertions (2) and (3) non-independent \u2014 (3) becomes true by construction. State it to get three independent assertions."
+}
