@@ -66,6 +66,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^0.1.97",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
