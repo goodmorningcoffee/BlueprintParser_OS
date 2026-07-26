@@ -128,6 +128,9 @@ const maxDim = Number(flag("max-dim", "1000")); // the worker's own default (pro
 const tolerance = Number(flag("tolerance", "30"));
 const dilation = Number(flag("dilation", "0"));
 const quiet = bool("quiet");
+// RDP epsilon for the vector trace, in MASK px. PLAN: tightening it 10x surfaces the letter
+// holes the old slop collapsed — so it is a flag, and the letter-hole cell is measured at both.
+const vectorEps = Number(flag("vector-eps", "1.5"));
 const maskSweep = (flag("mask-sweep", "") || "").split(",").map(Number).filter((z) => z > 0);
 
 // ── engine + worker resolution ───────────────────────────────────────────────
@@ -257,7 +260,7 @@ function vectorLeg(geo, vp, seedPt, zoom, stage) {
   if (f.status !== "ok") return { status: f.status, areaPt2: null, verts: 0 };
 
   t = performance.now();
-  const ring = oc.traceRegion(f, 1.5);
+  const ring = oc.traceRegion(f, vectorEps);
   stage.traceMs = performance.now() - t;
   // ringArea is the OUTER contour and therefore INCLUDES any hole. The raster worker reports
   // area NET of holes (it counts flood pixels). Comparing those two on a hole-bearing room is

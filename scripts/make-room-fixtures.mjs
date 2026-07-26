@@ -58,6 +58,7 @@
  */
 
 import { PDFDocument, rgb, StandardFonts, degrees } from "pdf-lib";
+import { createCanvas } from "@napi-rs/canvas";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -136,6 +137,71 @@ function strokePoly(page, poly, thickness, closed = true) {
   }
 }
 const rectPoly = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+
+// ── the 150-DPI rasterizer ───────────────────────────────────────────────────
+// This is what the step-zero @napi-rs/canvas devDependency was added for. It draws the room
+// geometry straight onto a canvas rather than round-tripping through pdf.js: the geometry is
+// ours, so drawing it directly is both deterministic and one fewer thing to be wrong about.
+// 150 DPI => 150/72 = 2.0833 px per pt, the density a real office scanner produces.
+const DPI = 150;
+const PX = DPI / 72;
+
+function rasterizeRoom(poly, wall, { negative = false, darkBorder = false } = {}) {
+  const w = Math.round(PAGE_W * PX);
+  const h = Math.round(PAGE_H * PX);
+  const cv = createCanvas(w, h);
+  const c = cv.getContext("2d");
+  c.fillStyle = "#fff";
+  c.fillRect(0, 0, w, h);
+  c.strokeStyle = "#000";
+  c.lineWidth = Math.max(1, wall * PX);
+  c.beginPath();
+  poly.forEach(([x, y], i) => {
+    const cx = x * PX, cy = (PAGE_H - y) * PX; // PDF y-up -> canvas y-down
+    if (i === 0) c.moveTo(cx, cy);
+    else c.lineTo(cx, cy);
+  });
+  c.closePath();
+  c.stroke();
+
+  if (darkBorder) {
+    // The classic flatbed artifact: a dark band where the platen lid did not cover the sheet.
+    // It matters because Otsu picks ONE global threshold from the whole histogram, so a large
+    // dark region drags it — PLAN §9 U3, the Otsu-shift magnitude.
+    c.fillStyle = "#1a1a1a";
+    const b = Math.round(0.035 * Math.min(w, h));
+    c.fillRect(0, 0, w, b);
+    c.fillRect(0, h - b, w, b);
+    c.fillRect(0, 0, b, h);
+    c.fillRect(w - b, 0, b, h);
+  }
+
+  if (negative) {
+    // White linework on black — a photographic negative or an inverted-polarity scan.
+    const img = c.getImageData(0, 0, w, h);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    c.putImageData(img, 0, 0);
+  }
+  return cv.toBuffer("image/png");
+}
+
+// A scan cell: the room exists ONLY as pixels. There is no vector geometry to extract, which
+// is the entire point — it is the case the raster fallback exists for.
+function scanCell(id, opts, note) {
+  const poly = rectPoly(R.x0, R.y0, R.x1, R.y1);
+  const png = rasterizeRoom(poly, WALL, opts);
+  return {
+    embedPng: png,
+    rooms: [{
+      id, seed: dev(445, 395), expect: "diagnostic", poly, wallWidthPt: WALL, note,
+    }],
+  };
+}
 
 // ── the cells ────────────────────────────────────────────────────────────────
 // Each returns { draw(page, font), rooms: [...] }. A room carries either an exact expected
@@ -391,6 +457,48 @@ const CELLS = {
     };
   },
 
+  // ── SCAN VARIANTS ─────────────────────────────────────────────────────────
+  // PLAN's "150-DPI scan re-wrap, negative, and dark-border variants". Predicted behaviour,
+  // which is what makes them tests rather than demos:
+  //   vector  MUST fail — a scan has no vector linework at all, so there is nothing to
+  //           extract. This is the case the raster fallback exists for, and the plan's
+  //           whole PDF-first-WITH-raster-fallback shape depends on it being true.
+  //   legacy  should succeed — binarizing pixels is exactly what it does.
+  "scan-150dpi": () =>
+    scanCell("scan-150dpi", {}, "150-DPI raster re-wrap: vector has NO geometry to extract; raster must carry this"),
+
+  // Inverted polarity. The worker binarizes with `bin[i] = pixel > threshold ? 255 : 0` and
+  // floods where bin is non-zero, i.e. through LIGHT pixels. On a negative the room interior
+  // is dark, so the seed lands on a "wall". PLAN §1's honesty box notes a 14-line polarity
+  // check ships regardless; this cell is what would justify it.
+  "scan-negative": () =>
+    scanCell("scan-negative", { negative: true }, "inverted polarity: interior is DARK, so the seed lands on what the binarizer calls a wall"),
+
+  // Dark platen border. Otsu takes ONE global threshold from the whole histogram, so a large
+  // dark region drags it — PLAN §9 U3.
+  "scan-dark-border": () =>
+    scanCell("scan-dark-border", { darkBorder: true }, "dark platen border drags the global Otsu threshold — U3"),
+
+  // ── LETTER-HOLE TEXT ISLAND ───────────────────────────────────────────────
+  // Text inside a room. Both engines treat ink as wall, so the flood goes AROUND the glyphs
+  // and each enclosed counter (the bowl of an O, D, P) becomes a hole. PLAN: "tightening
+  // epsilon 10x surfaces letter-holes the old slop collapsed" — so the measurement is the
+  // VERTEX COUNT and the area lost to text, at the default epsilon versus a tightened one.
+  // Compare with:  --vector-eps 1.5   vs   --vector-eps 0.15
+  "letter-hole"() {
+    const poly = rectPoly(R.x0, R.y0, R.x1, R.y1);
+    return {
+      draw: (page, font) => {
+        strokePoly(page, poly, WALL);
+        page.drawText("ROOM 100", { x: R.x0 + 60, y: R.y0 + 120, size: 90, font, color: BLACK });
+      },
+      rooms: [{
+        id: "letter-hole", seed: dev(280, 480), expect: "diagnostic", poly, wallWidthPt: WALL,
+        note: "90pt text inside the room; counters become holes. Measure verts at --vector-eps 1.5 vs 0.15",
+      }],
+    };
+  },
+
   hairline() {
     // 0.1 pt walls. At 2.451 mask px/pt a hairline is far under one mask pixel of width; it
     // survives only because buildMask burns every segment as a 1-px line regardless. The
@@ -448,12 +556,18 @@ for (const name of names) {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const page = doc.addPage([pw, ph]);
-  cell.draw(page, font);
+  if (cell.embedPng) {
+    const img = await doc.embedPng(cell.embedPng);
+    page.drawImage(img, { x: 0, y: 0, width: pw, height: ph });
+  } else {
+    cell.draw(page, font);
+  }
   if (cfg.rotate) page.setRotation(degrees(cfg.rotate));
   if (cfg.cropBox) page.setCropBox(cfg.cropBox.x, cfg.cropBox.y, cfg.cropBox.w, cfg.cropBox.h);
   // A room label, so the text-layer seed path (detectRooms) has something to find, exactly as
   // a real sheet would carry.
   for (const r of cell.rooms) {
+    if (cell.embedPng) break; // a scan page has no vector text, by definition
     page.drawText(r.id.toUpperCase(), {
       x: (cell.page?.w ? 850 : R.x0 + 20), y: (cell.page?.h ? cell.page.h - 900 : R.y1 - 30),
       size: 10, font, color: BLACK,
