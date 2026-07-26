@@ -35,7 +35,7 @@
 // Side-effect import: teaches bare node the "@/" alias + extensionless .ts. MUST come first.
 import "./_ts-resolve.mjs";
 import { readFileSync } from "node:fs";
-import { loadPdfjs, loadCanvas, enginePath } from "./_paths.mjs";
+import { loadPdfjs, loadCanvas, enginePath, loadDetectRooms } from "./_paths.mjs";
 
 globalThis.self ??= { addEventListener() {}, postMessage() {} };
 
@@ -43,7 +43,7 @@ const pdfjs = await loadPdfjs();
 const { createCanvas } = await loadCanvas();
 const REPO = new URL("../..", import.meta.url).pathname;
 const W = await import(`${REPO}/src/workers/bucket-fill.worker.ts`);
-const dr = await import(enginePath().replace("oneclick.ts", "detectRooms.ts"));
+const dr = await loadDetectRooms();
 
 const file = process.argv[2];
 if (!file) {

@@ -43,6 +43,28 @@ export function densityFixture() {
   return p;
 }
 
+/**
+ * `detectRooms.ts` is NOT vendored — §2.1's take list is oneclick.ts + rastermask.ts only, and
+ * BP2 has its own room-seeding path. It therefore always resolves from the OpenTakeoff clone.
+ *
+ * ⚠ DO NOT derive it from enginePath(). Both probes used to do
+ *     enginePath().replace("oneclick.ts", "detectRooms.ts")
+ * which worked only while the engine resolved to the clone. The moment phase 1 vendored the
+ * engine, enginePath() correctly switched to src/lib/oneclick/ — and the derived sibling pointed
+ * at a file that does not exist there. Product gates could not see it: this is probe-only code.
+ */
+export function detectRoomsPath() {
+  const p = join(OT_CLONE, "web/src/lib/detectRooms.ts");
+  if (!existsSync(p)) {
+    throw new Error(
+      `detectRooms.ts not found at ${p}\n` +
+        `  It is NOT vendored (see src/lib/oneclick/README.md). Set $BP_OT_CLONE.`,
+    );
+  }
+  return p;
+}
+export const loadDetectRooms = () => import(detectRoomsPath());
+
 export const pdfjsPath = () => join(REPO, "node_modules/pdfjs-dist/legacy/build/pdf.mjs");
 export const canvasPath = () => join(REPO, "node_modules/@napi-rs/canvas/index.js");
 export const loadPdfjs = () => import(pdfjsPath());

@@ -21,9 +21,21 @@
 //   limitations under the License.
 //
 // MODIFICATIONS  (Apache-2.0 §4(b) — this list IS the compliance artifact)
-// //   (none yet — vendored verbatim on 2026-07-26. Phase 1 adds two:
-//    the bbox lift out of the flood pass, and the scratch-buffer
-//    optimisation in its TWO-BUFFER form. Update this list when they land.)
+//   2026-07-26  (1) BBOX LIFTED OUT OF THE FLOOD PASS. floodPass already tracks the filled
+//               region's bounding box to apply MIN_THICK, then discards it. It is now returned
+//               on the "ok" result as minX/minY/maxX/maxY — names chosen to match
+//               BlueprintParser's SolidRoomRectangle, because we keep BP2's automatic hole
+//               detection and findHoleBorders(filled, w, h, bounds?) takes that rectangle.
+//               No behavioural change to the flood itself.
+//
+//   2026-07-26  (2) TWO REUSABLE SCRATCH BUFFERS for the region raster, replacing one
+//               `new Uint8Array(mw*mh)` per pass (~5.8 MB at mask dim 3000, up to twice per
+//               click). floodPass gains a `slot` parameter; floodRegion passes 0 for the strict
+//               pass and 1 for the escalated pass. Adds releaseFloodScratch().
+//               ⚠ TWO buffers, not one, is load-bearing: floodRegion returns r1 when the
+//               escalation is rejected, so a shared buffer would hand back r1's count with r2's
+//               larger pixels — a silently oversized polygon reported as "ok".
+//               Regression test: src/lib/__tests__/oneclick-flood-scratch.test.ts
 //
 // ⛔ VENDORED-DIRECTORY RULE: everything under src/lib/oneclick/ is third-party
 //    code under a DIFFERENT licence to the rest of this repository. Do not move
@@ -72,7 +84,14 @@ export type FloodResult =
   | { status: "boundary" }
   | { status: "leak" }
   | { status: "tiny"; count: number }
-  | { status: "ok"; region: Uint8Array; count: number; mw: number; mh: number; ws: number; hardHits?: number; softHits?: number; hatchFiltered?: boolean };
+  | { status: "ok"; region: Uint8Array; count: number; mw: number; mh: number; ws: number; hardHits?: number; softHits?: number; hatchFiltered?: boolean;
+      /* MODIFICATION 1 (BlueprintParser): the flood's bounding box, in MASK px. Upstream
+         computes this to apply MIN_THICK and then discards it. We keep BP2's automatic hole
+         detection and run it over this flood's region, and `findHoleBorders(filled, w, h,
+         bounds?)` takes exactly this rectangle — field names match BP2's SolidRoomRectangle so
+         it can be passed straight through. Lifting it out costs nothing: the values are
+         already tracked in the scanline loop. */
+      minX: number; minY: number; maxX: number; maxY: number };
 /** Caller's snap-grid lookup: nearest true endpoint to (x,y) within maxDist, or null. */
 export type NearestFn = (x: number, y: number, maxDist: number) => Point | null | undefined;
 
@@ -504,7 +523,31 @@ export function buildMask(segs: number[], imgW: number, imgH: number, maxDim = M
 // 3 = walls + hatch (the strict original behavior), 1 = walls only. hardHits/
 // softHits count blocking encounters so the caller can tell a wall-bounded
 // region from a hatch-bounded one.
-function floodPass(maskObj: MaskObj, ix: number, iy: number, barrier: number): FloodResult {
+// MODIFICATION 2 (BlueprintParser): two reusable scratch buffers instead of one allocation per
+// pass. At mask dim 3000 a region buffer is ~5.8 MB and floodRegion runs floodPass up to TWICE
+// per click, so the naive form churns ~11.6 MB per click through the GC.
+//
+// ⚠ IT MUST BE TWO BUFFERS, NOT ONE. floodRegion holds `r1` across the second pass and RETURNS
+// r1 when the escalation is rejected. With a single shared buffer, r2's flood — strictly larger,
+// since it removes hatch from the barrier — would have overwritten r1.region in place. The
+// returned result would carry r1's `count` with r2's pixels, and traceRegion would trace the
+// LARGER region: a silently oversized polygon, status "ok", no warning. Slot 0 is the strict
+// pass, slot 1 the escalated pass; they never alias.
+//
+// ⚠ THE REGION IS ONLY VALID UNTIL THE NEXT FLOOD ON THE SAME SLOT. Callers must consume
+// `region` (trace or copy it) before flooding again. BP2's adapter traces immediately.
+const _scratch: [Uint8Array | null, Uint8Array | null] = [null, null];
+function scratchRegion(slot: 0 | 1, n: number): Uint8Array {
+  const cur = _scratch[slot];
+  if (cur && cur.length === n) { cur.fill(0); return cur; }   // reused buffers are NOT zeroed
+  const buf = new Uint8Array(n);
+  _scratch[slot] = buf;
+  return buf;
+}
+/** Release both scratch buffers (page teardown / cache eviction). */
+export function releaseFloodScratch(): void { _scratch[0] = null; _scratch[1] = null; }
+
+function floodPass(maskObj: MaskObj, ix: number, iy: number, barrier: number, slot: 0 | 1 = 0): FloodResult {
   const { mask, mw, mh, ws } = maskObj;
   let sx = Math.round(ix * ws), sy = Math.round(iy * ws);
   if (sx < 0 || sy < 0 || sx >= mw || sy >= mh) return { status: "boundary" };
@@ -520,7 +563,7 @@ function floodPass(maskObj: MaskObj, ix: number, iy: number, barrier: number): F
     if (!found) return { status: "boundary" };
     sx = found[0]; sy = found[1];
   }
-  const region = new Uint8Array(mw * mh);
+  const region = scratchRegion(slot, mw * mh);   // MODIFICATION 2
   const cap = Math.floor(mw * mh * LEAK_FRACTION);
   let count = 0, leaked = false, hardHits = 0, softHits = 0;
   let bx0 = sx, bx1 = sx, by0 = sy, by1 = sy;
@@ -557,7 +600,9 @@ function floodPass(maskObj: MaskObj, ix: number, iy: number, barrier: number): F
   if (leaked) return { status: "leak" };
   // hatch/text slivers: plenty of cells but no room-like thickness
   if (count < TINY_PX || bx1 - bx0 + 1 < MIN_THICK || by1 - by0 + 1 < MIN_THICK) return { status: "tiny", count };
-  return { status: "ok", region, count, mw, mh, ws, hardHits, softHits };
+  // MODIFICATION 1: bbox lifted out (upstream discarded it after the MIN_THICK check).
+  return { status: "ok", region, count, mw, mh, ws, hardHits, softHits,
+           minX: bx0, minY: by0, maxX: bx1, maxY: by1 };
 }
 
 // The escalating fill. Pass 1 is the strict mask (walls + hatch — exactly the
@@ -579,7 +624,7 @@ function floodPass(maskObj: MaskObj, ix: number, iy: number, barrier: number): F
 // `sensitivity` (0..1) dials the moderate tier's escalateFrac/growthMax via
 // escalationParams; the default is the calibrated Balanced preset.
 export function floodRegion(maskObj: MaskObj, ix: number, iy: number, sensitivity: number = SENS_BALANCED): FloodResult {
-  const r1 = floodPass(maskObj, ix, iy, 3);
+  const r1 = floodPass(maskObj, ix, iy, 3, 0);   // MODIFICATION 2: strict pass -> slot 0
   if (!maskObj.softCount) return r1;
   if (r1.status === "leak") return r1;
   const { escalateFrac, growthMax } = escalationParams(sensitivity);
@@ -590,7 +635,7 @@ export function floodRegion(maskObj: MaskObj, ix: number, iy: number, sensitivit
     if (softFrac < escalateFrac) return r1;            // lightly hatch-bounded ⇒ strict is right
     if (softFrac < HATCH_BOUND_FRAC) growthCap = growthMax; // moderate ⇒ grow-but-verify
   }
-  const r2 = floodPass(maskObj, ix, iy, 1);
+  const r2 = floodPass(maskObj, ix, iy, 1, 1);   // MODIFICATION 2: escalated pass -> slot 1
   if (r2.status === "ok" && (r1.status !== "ok" || r2.count <= r1.count * growthCap)) {
     r2.hatchFiltered = true;
     return r2;

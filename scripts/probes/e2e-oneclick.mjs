@@ -17,12 +17,12 @@
 //
 // usage: node e2e-oneclick.mjs <pdf> [page=1] [maskDim=3000] [scale=2]
 import { readFileSync, statSync } from "node:fs";
-import { loadPdfjs, loadEngine, loadCanvas, enginePath, densityFixture } from "./_paths.mjs";
+import { loadPdfjs, loadEngine, loadCanvas, enginePath, densityFixture, loadDetectRooms } from "./_paths.mjs";
 
 
 const pdfjs = await loadPdfjs();
 const oc = await loadEngine();
-const dr = await import(enginePath().replace("oneclick.ts", "detectRooms.ts"));
+const dr = await loadDetectRooms();
 
 const file = process.argv[2];
 const pageNo = Number(process.argv[3] ?? 1);

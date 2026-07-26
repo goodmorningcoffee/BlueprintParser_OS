@@ -21,7 +21,7 @@
 //   limitations under the License.
 //
 // MODIFICATIONS  (Apache-2.0 §4(b) — this list IS the compliance artifact)
-// //   (none yet — vendored verbatim on 2026-07-26.)
+//   (none yet — vendored verbatim on 2026-07-26.)
 //
 // ⛔ VENDORED-DIRECTORY RULE: everything under src/lib/oneclick/ is third-party
 //    code under a DIFFERENT licence to the rest of this repository. Do not move
