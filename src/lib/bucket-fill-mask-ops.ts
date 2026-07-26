@@ -21,10 +21,25 @@ import type { SolidRoomRectangle } from "@/workers/bucket-fill.worker";
 
 // ─── Burn barriers & polygon exclusions ──────────────────────────
 
+/**
+ * Burn a thick line into a raster.
+ *
+ * `value` exists because the two engines encode "blocked" differently, and sharing one
+ * implementation is the whole reason these ops left the worker:
+ *   - the legacy worker's `bin` is 255 = passable / 0 = wall, so it burns **0** (the default,
+ *     which keeps every existing caller byte-identical);
+ *   - the vendored One-Click mask is a bitfield, 0 = open / bit 1 = wall / bit 2 = hatch, so the
+ *     vector adapter burns **1**.
+ * Assignment rather than OR is deliberate for the vector case: a user-drawn barrier crossing
+ * hatch should become a hard wall, which bit 1 alone is — leaving bit 2 set would keep it
+ * transparent to the escalated (walls-only) pass, i.e. the barrier would stop working exactly
+ * when the engine tried hardest to fill.
+ */
 export function burnLine(
   bin: Uint8Array, w: number, h: number,
   x1: number, y1: number, x2: number, y2: number,
-  thickness: number
+  thickness: number,
+  value = 0
 ) {
   const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
   const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
@@ -35,7 +50,7 @@ export function burnLine(
     for (let oy = -r; oy <= r; oy++) {
       for (let ox = -r; ox <= r; ox++) {
         const px = cx + ox, py = cy + oy;
-        if (px >= 0 && px < w && py >= 0 && py < h) bin[py * w + px] = 0;
+        if (px >= 0 && px < w && py >= 0 && py < h) bin[py * w + px] = value;
       }
     }
     if (cx === x2 && cy === y2) break;
@@ -45,9 +60,11 @@ export function burnLine(
   }
 }
 
+/** Fill a NORMALISED (0-1) polygon into a raster. See `burnLine` for why `value` exists. */
 export function fillPolygonOnBinary(
   bin: Uint8Array, w: number, h: number,
-  vertices: { x: number; y: number }[]
+  vertices: { x: number; y: number }[],
+  value = 0
 ) {
   if (vertices.length < 3) return;
   const n = vertices.length;
@@ -72,7 +89,7 @@ export function fillPolygonOnBinary(
     for (let k = 0; k < intersections.length - 1; k += 2) {
       const xa = Math.max(0, intersections[k]);
       const xb = Math.min(w - 1, intersections[k + 1]);
-      for (let x = xa; x <= xb; x++) bin[y * w + x] = 0;
+      for (let x = xa; x <= xb; x++) bin[y * w + x] = value;
     }
   }
 }
