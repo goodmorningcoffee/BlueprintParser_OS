@@ -154,6 +154,12 @@ globalThis.self ??= { addEventListener() {}, postMessage() {} };
 const pdfjs = await import(join(REPO, "node_modules/pdfjs-dist/legacy/build/pdf.mjs"));
 const oc = await import(enginePath);
 const W = await import(join(REPO, "src/workers/bucket-fill.worker.ts"));
+// ★ The vector leg drives the SHIPPING adapter, not the engine directly — see vectorLeg().
+const adapter = await import(join(REPO, "src/lib/bucket-fill-vector-adapter.ts"));
+/** Reverse of the adapter's exported refusal table: message -> short code, for the CSV. */
+const REFUSAL_CODE = new Map(
+  Object.entries(adapter.VECTOR_REFUSALS).map(([code, msg]) => [msg, code]),
+);
 const { createCanvas } = await import("@napi-rs/canvas");
 const STANDARD_FONTS = join(REPO, "node_modules/pdfjs-dist/standard_fonts/");
 
@@ -251,31 +257,57 @@ function downscaleAndBinarize(srcCanvas, maxDimension, tol) {
 // Vector: extract -> mask -> flood -> trace. Seeds and traced vertices are both in DEVICE px
 // (the engine applies its own `ws` mask scale internally and traceRegion converts back), so
 // pt^2 = ringArea / zoom^2.
-function vectorLeg(geo, vp, seedPt, zoom, stage) {
-  let t = performance.now();
-  const mask = oc.buildMask(geo.segs, vp.width, vp.height, maskDim, geo.meta);
-  stage.buildMaskMs = performance.now() - t;
+/** Shoelace over NORMALISED vertices → fraction of page area. */
+function normalisedRingFraction(vertices) {
+  let a = 0;
+  for (let i = 0; i < vertices.length; i++) {
+    const p = vertices[i], q = vertices[(i + 1) % vertices.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
 
-  t = performance.now();
-  const f = oc.floodRegion(mask, seedPt.x * zoom, seedPt.y * zoom, oc.SENS_BALANCED);
-  stage.floodMs = performance.now() - t;
-  if (f.status !== "ok") return { status: f.status, areaPt2: null, verts: 0 };
-
-  t = performance.now();
-  const ring = oc.traceRegion(f, vectorEps);
-  stage.traceMs = performance.now() - t;
-  // ringArea is the OUTER contour and therefore INCLUDES any hole. The raster worker reports
-  // area NET of holes (it counts flood pixels). Comparing those two on a hole-bearing room is
-  // apples-to-oranges — the column-hole fixture is what surfaced this. So also derive the net
-  // area from the flood's own cell count: maskPxPerPt = ws * zoom.
-  const mpp = mask.ws * zoom;
+/**
+ * The vector leg drives `src/lib/bucket-fill-vector-adapter.ts` — the code that will ACTUALLY
+ * SHIP — rather than calling buildMask/floodRegion/traceRegion itself.
+ *
+ * It used to call the engine directly, which measured a pipeline no user would ever run: no
+ * barrier burning, no hole detection, no mask-dim clamp, no status mapping. An instrument that
+ * measures a private path can certify a product path it never touched — and phase 3's flip is
+ * gated on this instrument.
+ *
+ * ⚠ PER-STAGE TIMINGS ARE DELIBERATELY GONE for this leg. buildMask/flood/trace are internal to
+ * the adapter now, and threading a timing callback through product code to satisfy a probe is
+ * the wrong direction (the tooling bends, not the source). Stage-level timing lives in
+ * scripts/probes/e2e-oneclick.mjs, which already breaks out docLoad / getOperatorList /
+ * extractVectorGeometry / buildMask / flood / trace. THIS harness measures ACCURACY.
+ */
+function vectorLeg(geo, vp, seedPt, zoom, stage, pageWpt, pageHpt) {
+  const tAdapter = performance.now();
+  const res = adapter.vectorBucketFill({
+    geo,
+    imgW: vp.width,
+    imgH: vp.height,
+    // NORMALISED seed — exactly what BucketFillRequest carries.
+    seedX: (seedPt.x * zoom) / vp.width,
+    seedY: (seedPt.y * zoom) / vp.height,
+    maskDimension: maskDim,
+    epsMaskPx: vectorEps,
+  });
+  stage.adapterMs = performance.now() - tAdapter;
+  if (res.type !== "result") {
+    // Map back through the adapter's OWN exported table rather than sniffing the prose.
+    return { status: REFUSAL_CODE.get(res.error) ?? "error", areaPt2: null, verts: 0 };
+  }
+  const pageArea = pageWpt * pageHpt;
   return {
     status: "ok",
-    areaPt2: oc.ringArea(ring) / (zoom * zoom),
-    areaNetPt2: f.count != null ? f.count / (mpp * mpp) : null,
-    verts: ring.length,
+    areaPt2: normalisedRingFraction(res.vertices) * pageArea, // outer ring, includes holes
+    areaNetPt2: res.areaFraction * pageArea,                  // net of holes
+    verts: res.vertices.length,
   };
 }
+
 
 // Legacy: mirror processFill (bucket-fill.worker.ts:729) step for step.
 function legacyLeg(pageCanvas, seedPt, zoom, pageWpt, pageHpt, stage) {
@@ -435,7 +467,7 @@ for (const fx of manifest.fixtures) {
       const t0 = performance.now();
       let r;
       try {
-        r = vectorLeg(geoC, vpC, seedDeviceFor(room, vpC, canonScale), canonScale, stage);
+        r = vectorLeg(geoC, vpC, seedDeviceFor(room, vpC, canonScale), canonScale, stage, pageWpt, pageHpt);
       } catch (e) {
         r = { status: "exception", areaPt2: null, verts: 0, note: e?.message || String(e) };
       }
@@ -448,8 +480,8 @@ for (const fx of manifest.fixtures) {
         signedErrPct_centerline: a == null ? "" : (100 * (a / areaCenterline - 1)).toFixed(3),
         signedErrPct_innerFace: a == null ? "" : (100 * (a / areaInnerFace - 1)).toFixed(3),
         predictedGapPct: (100 * (1 - areaInnerFace / areaCenterline)).toFixed(3),
-        verts: r.verts ?? "", buildMaskMs: stage.buildMaskMs?.toFixed(1) ?? "", binarizeMs: "",
-        floodMs: stage.floodMs?.toFixed(1) ?? "", traceMs: stage.traceMs?.toFixed(1) ?? "",
+        verts: r.verts ?? "", buildMaskMs: "", binarizeMs: "",
+        floodMs: "", traceMs: stage.adapterMs?.toFixed(1) ?? "",
         totalMs: (performance.now() - t0).toFixed(1), otsu: "", otsuAdjusted: "",
         solidRoomPath: "", expect: room.expect ?? "", note: `canonScale=${canonScale.toFixed(3)} maskPxPerPt=${(canonScale).toFixed(3)}`,
       });
@@ -465,7 +497,7 @@ for (const fx of manifest.fixtures) {
       const { areaCenterline, areaInnerFace } = oraclesFor(fx, room);
       const stage = {};
       let r;
-      try { r = vectorLeg(geoS, vpS, seedDeviceFor(room, vpS, sc), sc, stage); }
+      try { r = vectorLeg(geoS, vpS, seedDeviceFor(room, vpS, sc), sc, stage, pageWpt, pageHpt); }
       catch (e) { r = { status: "exception", areaPt2: null, verts: 0, note: e?.message || String(e) }; }
       const a = r.areaPt2;
       const maskPxPerPt = Math.min(sc, maskDim / Math.max(pageWpt, pageHpt));
@@ -477,8 +509,8 @@ for (const fx of manifest.fixtures) {
         signedErrPct_centerline: a == null ? "" : (100 * (a / areaCenterline - 1)).toFixed(3),
         signedErrPct_innerFace: a == null ? "" : (100 * (a / areaInnerFace - 1)).toFixed(3),
         predictedGapPct: (100 * (1 - areaInnerFace / areaCenterline)).toFixed(3),
-        verts: r.verts ?? "", buildMaskMs: stage.buildMaskMs?.toFixed(1) ?? "", binarizeMs: "",
-        floodMs: stage.floodMs?.toFixed(1) ?? "", traceMs: stage.traceMs?.toFixed(1) ?? "",
+        verts: r.verts ?? "", buildMaskMs: "", binarizeMs: "",
+        floodMs: "", traceMs: stage.adapterMs?.toFixed(1) ?? "",
         totalMs: "", otsu: "", otsuAdjusted: "", solidRoomPath: "", expect: room.expect ?? "",
         note: `maskPxPerPt=${maskPxPerPt.toFixed(3)} predictedInsetPt=${(2 / maskPxPerPt).toFixed(3)}`,
       });
