@@ -437,6 +437,11 @@ describe("AT2 exact ActiveTool representation", () => {
       "src/components/viewer/DrawingPreviewLayer.tsx:import",
       "src/components/viewer/LinearTab.tsx:import",
       "src/components/viewer/TakeoffPanel.tsx:import",
+      // [bucketfill P2] The vector-geometry prefetch controller reads whether the bucket-fill tool
+      // is armed. It borrows `selectActiveToolKey` — the same sanctioned accessor AreaTab uses —
+      // rather than selecting the whole `activeTool` object, which would re-render it on every
+      // tool-state change and is the pattern the canvas-topology freeze rejects outright.
+      "src/components/viewer/VectorGeometryPrefetchController.tsx:import",
       "src/queries/useYoloTags.ts:import",
       "src/stores/toolStore.ts:import",
       "src/stores/viewerCommands.ts:import",

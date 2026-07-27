@@ -35,6 +35,7 @@ import SymbolSearchPanel from "./SymbolSearchPanel";
 import ViewAllPanel from "./ViewAllPanel";
 import PageWindowLoaderController from "./PageWindowLoaderController";
 import TextractLoaderController from "./TextractLoaderController";
+import VectorGeometryPrefetchController from "./VectorGeometryPrefetchController";
 import {
   loadViewport,
   saveViewport,
@@ -548,6 +549,7 @@ export default function PDFViewer({
       {/* Keep loader rerenders and request lifetime out of this heavyweight component. */}
       <PageWindowLoaderController />
       <TextractLoaderController />
+      <VectorGeometryPrefetchController pdfDoc={pdfDoc} pageNumber={pageNumber} />
       {error ? (
         <div className="flex-1 flex items-center justify-center text-red-400">
           {error}
