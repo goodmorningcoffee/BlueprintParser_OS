@@ -55,6 +55,10 @@ import {
   type OpsTable,
   type VectorGeometry,
 } from "@/lib/oneclick/oneclick";
+import {
+  pageHasHiddenOptionalContent,
+  type OptionalContentConfigLike,
+} from "@/lib/pdf-optional-content";
 
 /** 4 pages: the current sheet plus its neighbours, at the measured 2.4 MB/page. */
 export const MAX_RETAINED_GEOMETRY_PAGES = 4;
@@ -83,6 +87,15 @@ export interface CachedPageGeometry extends VectorGeometry {
   /** Page size in PDF points, for the mask-resolution note below. */
   pageWidthPt: number;
   pageHeightPt: number;
+  /**
+   * ★ Does this page paint linework from a switched-off CAD layer?
+   *
+   * Computed HERE, at extraction, because the routing decision is synchronous and on the click
+   * path while `getOptionalContentConfig()` is async. Measured on our `hidden-ocg` fixture: an
+   * unguarded vector path returns exactly 50% of the room with status `ok` and no warning. The
+   * routing guard that consumes this is mandatory, not optional.
+   */
+  ocUnsafe: boolean;
 }
 
 export type GeometryUnavailableReason =
@@ -461,6 +474,22 @@ export async function ensurePageGeometry(
 
   try {
     const opList = await page.getOperatorList();
+
+    // Document-level and cached by pdf.js, so this is cheap after the first page. Failure is not
+    // evidence of a hidden layer — see `pageHasHiddenOptionalContent`, which fails OPEN on purpose
+    // because this predicate demotes a page rather than protecting one.
+    let occ: OptionalContentConfigLike | null = null;
+    try {
+      occ = (await doc.getOptionalContentConfig()) as unknown as OptionalContentConfigLike;
+    } catch {
+      occ = null;
+    }
+    const ocUnsafe = pageHasHiddenOptionalContent(
+      opList,
+      occ,
+      args.ops.beginMarkedContentProps,
+    );
+
     const raw = extractVectorGeometry(opList, viewport.transform, args.ops);
     const geometry: CachedPageGeometry = {
       // `points` deliberately emptied — see the header. The tripwire travels with the value.
@@ -474,6 +503,7 @@ export async function ensurePageGeometry(
       scale,
       pageWidthPt: base.width,
       pageHeightPt: base.height,
+      ocUnsafe,
     };
     const entry: PageGeometryEntry = { status: "ok", geometry };
     if (generationChanged(qc, token)) return abandon(entry);

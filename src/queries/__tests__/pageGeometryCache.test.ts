@@ -641,6 +641,7 @@ describe("pure helpers", () => {
       scale: 1,
       pageWidthPt: 1,
       pageHeightPt: 1,
+      ocUnsafe: false,
     } satisfies CachedPageGeometry;
     expect(estimateGeometryBytes(geo)).toBe(Math.round(1000 * 8.4 + 250));
   });
