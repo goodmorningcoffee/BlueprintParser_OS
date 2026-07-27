@@ -361,9 +361,16 @@ describe("AnnotationOverlay completed area-polygon render freeze", () => {
       ["set", "font", "bold 11px sans-serif"],
       ["call", "measureText", "-- SF"],
       ["set", "fillStyle", "rgba(0,0,0,0.75)"],
-      ["call", "fillRect", 41, 35.50000000000001, 38, 16],
+      // [BF-P2] Label anchor re-baselined when `polygonCentroid` became a shoelace AREA
+      // centroid instead of a vertex mean (`areaCalc.ts`). This 4-gon is the only shape in
+      // this fixture whose label actually moves: 0.874 px, from (60, 42.5) to
+      // (59.259259…, 42.962963…) in canvas px. Derived from the geometry and the drawing code
+      // — 0.32/(3·0.36) and 0.464/(3·0.36) on a 200x100 canvas — not copied from a failing run.
+      // The two TRIANGLES below are unchanged to ~1e-14, because a triangle's area centroid IS
+      // its vertex mean; that they did not move is a check on the new formula, not an accident.
+      ["call", "fillRect", 40.25925925925925, 35.96296296296296, 38, 16],
       ["set", "fillStyle", "#f97316"],
-      ["call", "fillText", "-- SF", 45, 47.50000000000001],
+      ["call", "fillText", "-- SF", 44.25925925925925, 47.96296296296296],
       ["call", "restore"],
       ["call", "save"],
       ["set", "fillStyle", "#0ea5e940"],
@@ -384,9 +391,12 @@ describe("AnnotationOverlay completed area-polygon render freeze", () => {
       ["set", "font", "bold 11px sans-serif"],
       ["call", "measureText", "0.5 SI"],
       ["set", "fillStyle", "rgba(0,0,0,0.75)"],
-      ["call", "fillRect", 28, 58, 44, 16],
+      // [BF-P2] Triangle: centroid == vertex mean exactly. Delta is 1.6e-14 px of float noise
+      // from the shoelace arithmetic, pinned literally because this file already pins that
+      // noise elsewhere (see 35.50000000000001 in the pre-existing values).
+      ["call", "fillRect", 28.000000000000014, 57.999999999999986, 44, 16],
       ["set", "fillStyle", "#0ea5e9"],
-      ["call", "fillText", "0.5 SI", 32, 70],
+      ["call", "fillText", "0.5 SI", 32.000000000000014, 69.99999999999999],
       ["call", "restore"],
       ["call", "save"],
       ["set", "fillStyle", "#a855f740"],
@@ -428,9 +438,10 @@ describe("AnnotationOverlay completed area-polygon render freeze", () => {
       ["set", "font", "bold 11px sans-serif"],
       ["call", "measureText", "12.3 SM"],
       ["set", "fillStyle", "rgba(0,0,0,0.75)"],
-      ["call", "fillRect", 105, 33.00000000000001, 50, 16],
+      // [BF-P2] Triangle: centroid == vertex mean exactly; 4.5e-14 px of float noise.
+      ["call", "fillRect", 105.00000000000006, 33, 50, 16],
       ["set", "fillStyle", "#a855f7"],
-      ["call", "fillText", "12.3 SM", 109, 45.00000000000001],
+      ["call", "fillText", "12.3 SM", 109.00000000000006, 45],
       ["call", "restore"],
     ]);
     expect(record.stackDepth()).toBe(0);

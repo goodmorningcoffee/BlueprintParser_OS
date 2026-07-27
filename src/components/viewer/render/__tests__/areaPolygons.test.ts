@@ -358,9 +358,15 @@ describe("drawAreaPolygons", () => {
       ["set", "font", "bold 11px sans-serif"],
       ["call", "measureText", "-- SC"],
       ["set", "fillStyle", "rgba(0,0,0,0.75)"],
-      ["call", "fillRect", 31, 33.00000000000001, 38, 16],
+      // [BF-P2] `polygonCentroid` became a shoelace AREA centroid (`areaCalc.ts`). This shape
+      // is a TRIANGLE, whose area centroid is exactly its vertex mean — so the label does not
+      // move: 1.665e-14 px, purely a different float rounding of 0.4 (the old mean produced
+      // 0.4000000000000001, the shoelace form produces 0.3999999999999999; both are neighbours
+      // of the same real number, and x is bit-identical at 31/35). Values derived from the
+      // geometry, not copied from a failing run.
+      ["call", "fillRect", 31, 32.99999999999999, 38, 16],
       ["set", "fillStyle", "#f97316"],
-      ["call", "fillText", "-- SC", 35, 45.00000000000001],
+      ["call", "fillText", "-- SC", 35, 44.99999999999999],
       ["call", "restore"],
     ]);
     expect(record.trace).not.toContainEqual(["call", "setLineDash", []]);
