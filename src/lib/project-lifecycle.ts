@@ -17,6 +17,7 @@ import {
 } from "@/queries/useProjectCatalogs";
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { seedTakeoffCache } from "@/queries/useTakeoff";
+import { clearGeometryProject } from "@/queries/pageGeometryCache";
 import { clearTextractProject } from "@/queries/textractCache";
 import {
   clearYoloTagsProject,
@@ -313,6 +314,13 @@ async function runProjectOpen(
       clearYoloTagsProject(queryClient, cleanupPublicId);
       if (!ownsRecord(queryClient, record)) return { status: "superseded" };
       clearCsiGraphProject(queryClient, cleanupPublicId);
+      if (!ownsRecord(queryClient, record)) return { status: "superseded" };
+      // [bucketfill P2] Extracted vector geometry is the heaviest per-page payload after Textract
+      // (~2.4 MB/page, 4 retained). Synchronous, unlike its Textract sibling: it is derived from
+      // an already-open document rather than fetched, so there is nothing in flight to cancel and
+      // therefore no await boundary for a same-id reopen to slip through. Tearing down here also
+      // releases each page's retained pdf.js operator list (~25.6 MB) via page.cleanup().
+      clearGeometryProject(queryClient, cleanupPublicId);
       if (!ownsRecord(queryClient, record)) return { status: "superseded" };
       await clearTextractProject(
         queryClient,

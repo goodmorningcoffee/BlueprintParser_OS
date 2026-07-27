@@ -77,6 +77,16 @@ export const queryKeys = {
   csiGraph: {
     all: (publicId: string) => ["project", publicId, "csiGraph"] as const,
   },
+  // [bucketfill P2] pageGeometry — extracted PDF vector linework, one entry per project/page.
+  // Derived locally from the open pdf.js document (see lib/pdf-document-registry.ts), never
+  // fetched, so it has no transport policy at all; a QueryClient coordinator enforces a 4-page
+  // LRU and a 24 MiB rail. Same page-number-LAST convention as ⑧ so project teardown can remove
+  // the whole domain by prefix.
+  pageGeometry: {
+    all: (publicId: string) => ["project", publicId, "pageGeometry"] as const,
+    page: (publicId: string, pageNumber: number) =>
+      ["project", publicId, "pageGeometry", pageNumber] as const,
+  },
 } as const;
 
 export type QueryKeys = typeof queryKeys;
