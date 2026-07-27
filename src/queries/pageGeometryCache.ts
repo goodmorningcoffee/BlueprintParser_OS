@@ -149,6 +149,11 @@ interface PageMetadata {
 interface ProjectCoordinator {
   pages: Map<number, PageMetadata>;
   protectedPages: Set<number>;
+  /**
+   * Bumped by `clearGeometryProject`. An extraction captures this before it awaits and refuses to
+   * publish if it changed — see `ensurePageGeometry`.
+   */
+  generation: number;
 }
 
 interface GeometryCoordinator {
@@ -171,7 +176,7 @@ function projectCoordinator(qc: QueryClient, publicId: string): ProjectCoordinat
   const coordinator = getCoordinator(qc);
   let project = coordinator.projects.get(publicId);
   if (!project) {
-    project = { pages: new Map(), protectedPages: new Set() };
+    project = { pages: new Map(), protectedPages: new Set(), generation: 0 };
     coordinator.projects.set(publicId, project);
   }
   return project;
@@ -198,6 +203,47 @@ function retainedTotals(project: ProjectCoordinator): { count: number; bytes: nu
   let bytes = 0;
   for (const metadata of project.pages.values()) bytes += metadata.estimatedBytes;
   return { count: project.pages.size, bytes };
+}
+
+/**
+ * Options for one page's entry.
+ *
+ * ⚠ `gcTime: Infinity` is load-bearing and was MISSING in the first version, which used a bare
+ * `qc.setQueryData`. That inherits react-query's default **5-minute** gcTime, and this domain has
+ * **no observers at all** — it is read imperatively by the controller — so `optionalRemove` deletes
+ * an idle, observer-less entry five minutes after it is written. The symptom is not a crash: arm
+ * the bucket tool, work on the page for six minutes, click, and the fill silently routes to raster
+ * while `geometryRetentionSnapshot` still reports the page resident and still charges its bytes
+ * against the 24 MiB rail. The two caches disagree and nothing says so.
+ *
+ * Retention here is owned by the explicit LRU and by project teardown — by a decision, not by a
+ * timer. `textractCache` sets an explicit `gcTime` for the same reason; this file simply failed to
+ * copy that part of the precedent.
+ */
+function pageGeometryQueryOptions(publicId: string, pageNumber: number) {
+  return {
+    queryKey: queryKeys.pageGeometry.page(publicId, pageNumber),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    // Geometry holds large typed arrays. A recursive structural-sharing walk over them would cost
+    // more than the extraction, and replacement semantics are what callers expect.
+    structuralSharing: false,
+  };
+}
+
+/** Write an entry with this domain's retention policy attached. */
+function setGeometryQueryData(
+  qc: QueryClient,
+  publicId: string,
+  pageNumber: number,
+  entry: PageGeometryEntry,
+): void {
+  const options = qc.defaultQueryOptions(pageGeometryQueryOptions(publicId, pageNumber));
+  const query = qc.getQueryCache().build(qc, options);
+  // build() returns an existing query WITHOUT replacing its options, so set them explicitly —
+  // otherwise a query first created by another path keeps the default 5-minute gcTime.
+  query.setOptions(options);
+  query.setData(entry, { manual: true });
 }
 
 /** Drop one page's query and coordinator row, releasing its op list if we hold the page. */
@@ -252,6 +298,28 @@ function touch(qc: QueryClient, publicId: string, pageNumber: number): void {
   if (metadata) metadata.lastAccess = ++coordinator.clock;
 }
 
+/** Snapshot of a project's liveness, captured before an extraction awaits. */
+export interface GeometryGeneration {
+  publicId: string;
+  generation: number;
+}
+
+/** Capture the current generation so a later publish can prove the project was never torn down. */
+function captureGeneration(qc: QueryClient, publicId: string): GeometryGeneration {
+  return { publicId, generation: projectCoordinator(qc, publicId).generation };
+}
+
+/**
+ * Has this project been torn down (or reopened) since `token` was captured?
+ *
+ * ⚠ Also true when the coordinator row is GONE — `projectCoordinator` would happily RECREATE it,
+ * which is exactly the resurrection this guard exists to prevent. Ask the map directly.
+ */
+function generationChanged(qc: QueryClient, token: GeometryGeneration): boolean {
+  const project = getCoordinator(qc).projects.get(token.publicId);
+  return !project || project.generation !== token.generation;
+}
+
 function publish(
   qc: QueryClient,
   publicId: string,
@@ -261,7 +329,7 @@ function publish(
 ): void {
   const coordinator = getCoordinator(qc);
   const project = projectCoordinator(qc, publicId);
-  qc.setQueryData(queryKeys.pageGeometry.page(publicId, pageNumber), entry);
+  setGeometryQueryData(qc, publicId, pageNumber, entry);
   project.pages.set(pageNumber, {
     lastAccess: ++coordinator.clock,
     // A sentinel costs nothing to keep and must not be able to evict a real page on size.
@@ -318,6 +386,19 @@ export function evictPageGeometry(qc: QueryClient, publicId: string, pageNumber:
   removePage(qc, publicId, pageNumber, true);
 }
 
+/**
+ * Return a result to the caller WITHOUT writing it to a cache the project no longer owns.
+ *
+ * ⚠ Deliberately does NOT call `page.cleanup()`. Once the document is destroyed, pdf.js refuses
+ * both `_abortOperatorList` and `#tryCleanup` on that page, so cleanup cannot free the operator
+ * list anyway — the only thing that reclaims it is dropping the reference, which is exactly what
+ * abandoning does. Retaining the page in a resurrected coordinator row is what pinned ~25.6 MB
+ * unreclaimably; not retaining it is the fix.
+ */
+function abandon(entry: PageGeometryEntry): PageGeometryEntry {
+  return entry;
+}
+
 export interface EnsurePageGeometryArgs {
   publicId: string;
   pageNumber: number;
@@ -363,6 +444,10 @@ export async function ensurePageGeometry(
     return { status: "unavailable", reason: "no-page" };
   }
 
+  // ★ Captured BEFORE the first await. Everything below is separated from the caller by ~1.2 s of
+  // parsing, which is ample time for the user to switch projects.
+  const token = captureGeneration(qc, publicId);
+
   let page: Awaited<ReturnType<typeof doc.getPage>>;
   try {
     page = await doc.getPage(pageNumber);
@@ -391,12 +476,14 @@ export async function ensurePageGeometry(
       pageHeightPt: base.height,
     };
     const entry: PageGeometryEntry = { status: "ok", geometry };
+    if (generationChanged(qc, token)) return abandon(entry);
     publish(qc, publicId, pageNumber, entry, page);
     return entry;
   } catch {
     // ★ THE SENTINEL HALF. A failed op list is deterministic; caching the negative result is what
     // stops every subsequent click from re-parsing a document that will never parse.
     const entry: PageGeometryEntry = { status: "unavailable", reason: "oplist-failed" };
+    if (generationChanged(qc, token)) return abandon(entry);
     publish(qc, publicId, pageNumber, entry, page);
     return entry;
   }
@@ -405,8 +492,17 @@ export async function ensurePageGeometry(
 /**
  * Exact domain teardown, called beside `clearTextractProject` in the project lifecycle.
  *
- * Synchronous, unlike its textract sibling: this domain has no in-flight transport to cancel, so
- * there is no await boundary and therefore no same-id-reopen race to guard against.
+ * Synchronous, unlike its textract sibling: there is no in-flight transport to CANCEL, so this
+ * function itself never straddles a same-id reopen the way `clearTextractProject` can (which is
+ * why that one takes a liveness predicate and this one does not).
+ *
+ * ⚠ AN EARLIER VERSION OF THIS COMMENT WENT FURTHER AND WAS WRONG. It claimed there is "no await
+ * boundary and therefore no same-id-reopen race to guard against". The teardown has none — but
+ * `ensurePageGeometry` crosses TWO (`getPage`, `getOperatorList`) and used to publish afterwards
+ * with no ownership check, so a project torn down mid-extraction had its coordinator row and query
+ * **recreated by the very write that teardown had just removed** — and `openProject` never revisits
+ * that publicId, so nothing would ever clear it again. It pinned a live `PDFPageProxy` whose
+ * operator list pdf.js can no longer reclaim once the document is destroyed. Hence `generation`.
  */
 export function clearGeometryProject(qc: QueryClient, publicId: string): void {
   if (!publicId) return;
@@ -418,7 +514,21 @@ export function clearGeometryProject(qc: QueryClient, publicId: string): void {
     for (const pageNumber of [...project.pages.keys()]) {
       removePage(qc, publicId, pageNumber, true);
     }
-    coordinator.projects.delete(publicId);
+    // ⚠ THE ROW IS KEPT, EMPTIED AND BUMPED — it is deliberately NOT deleted.
+    //
+    // My first version of this fence deleted it and bumped the counter first. That is useless
+    // against the case it was written for: a SAME-ID REOPEN recreates the row at `generation: 0`,
+    // which matches the stale token that also captured 0, so the fence passes and the stale
+    // extraction publishes into the NEW project's cache. (Found because mutating the bump away
+    // changed no test — a non-failing mutation meaning "your test is incomplete", not "this code
+    // is redundant".)
+    //
+    // Keeping the row makes the counter monotonic across reopens, which is the whole point. The
+    // cost is one small object per distinct publicId ever opened in this tab — a Map, a Set and a
+    // number — against the ~25.6 MB pinned page proxy it prevents.
+    project.generation += 1;
+    project.pages.clear();
+    project.protectedPages.clear();
   }
   qc.removeQueries({ queryKey: queryKeys.pageGeometry.all(publicId), exact: false });
 }

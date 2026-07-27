@@ -486,6 +486,138 @@ describe("pageGeometryCache — teardown", () => {
   });
 });
 
+describe("★★ the two defects a phase-2 integration audit found", () => {
+  /**
+   * Both were found by an adversarial multi-agent audit of the dark phase-2 chain (18 candidates,
+   * 2 survived refutation), and both are the same shape: **the coordinator and the query store
+   * silently disagree about what is resident.** Neither throws, neither logs, and both present as
+   * "vector randomly doesn't work".
+   */
+
+  it("★ HIGH: an in-flight extraction must NOT resurrect a torn-down project", async () => {
+    // ensurePageGeometry crosses two awaits (getPage, getOperatorList) — the ~1.2 s parse the whole
+    // cache exists to pay. If the user switches projects inside that window, clearGeometryProject
+    // runs and then the parse resolves and publishes. `publish` calls projectCoordinator(), which
+    // CREATES a missing row, and setQueryData, which re-inserts the query teardown just removed.
+    //
+    // The cost is not the geometry (an observer-less query self-reclaims). It is the PDFPageProxy
+    // pinned in the resurrected row: once the document is destroyed, pdf.js refuses both
+    // `_abortOperatorList` and `#tryCleanup` on that page, so its ~25.6 MB operator list can no
+    // longer be freed by ANY api — only by dropping the reference. And `openProject` never revisits
+    // that publicId, so nothing would ever clear it again.
+    let releaseOpList: (v: unknown) => void = () => {};
+    const { doc, pages } = controllableDoc({ numPages: 3 });
+    const page = await (doc as unknown as { getPage: (n: number) => Promise<FakePage> }).getPage(1);
+    page.getOperatorList.mockImplementation(
+      () => new Promise((resolve) => { releaseOpList = resolve; }),
+    );
+    registerPdfDocument("A", doc);
+    const qc = newClient();
+
+    const inFlight = ensurePageGeometry(qc, { publicId: "A", pageNumber: 1, ops: OPS_STUB });
+    await new Promise((r) => setTimeout(r, 0)); // let it reach the await
+
+    clearGeometryProject(qc, "A"); // user switches projects
+
+    releaseOpList({ fnArray: [], argsArray: [] });
+    const entry = await inFlight;
+
+    // The caller still gets an answer — abandoning is not failing.
+    expect(entry.status).toBe("ok");
+    // ...but nothing was written back into the project that no longer exists.
+    expect(geometryRetentionSnapshot(qc, "A").pages).toEqual([]);
+    expect(qc.getQueryData(queryKeys.pageGeometry.page("A", 1))).toBeUndefined();
+    // ...and the page proxy is not pinned, so its operator list can be garbage collected.
+    expect(pages.get(1)!.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("fences the sentinel path too, not just the success path", async () => {
+    let rejectOpList: (e: unknown) => void = () => {};
+    const { doc } = controllableDoc({ numPages: 2 });
+    const page = await (doc as unknown as { getPage: (n: number) => Promise<FakePage> }).getPage(1);
+    page.getOperatorList.mockImplementation(
+      () => new Promise((_res, rej) => { rejectOpList = rej; }),
+    );
+    registerPdfDocument("A", doc);
+    const qc = newClient();
+
+    const inFlight = ensurePageGeometry(qc, { publicId: "A", pageNumber: 1, ops: OPS_STUB });
+    await new Promise((r) => setTimeout(r, 0));
+    clearGeometryProject(qc, "A");
+    rejectOpList(new Error("corrupt"));
+
+    expect((await inFlight).status).toBe("unavailable");
+    // A PERMANENT sentinel written under a dead publicId would demote that page for any reopen
+    // inside the query's lifetime, for a reason that had nothing to do with the page.
+    expect(qc.getQueryData(queryKeys.pageGeometry.page("A", 1))).toBeUndefined();
+    expect(geometryRetentionSnapshot(qc, "A").pages).toEqual([]);
+  });
+
+  it("★ and survives a SAME-ID REOPEN, which is what the generation counter is actually for", async () => {
+    // The case my first fence missed. Deleting the coordinator row on teardown and bumping the
+    // counter first is useless: a reopen of the same publicId recreates the row at generation 0,
+    // matching a stale token that also captured 0 — the fence passes and the stale extraction
+    // publishes into the NEW project's cache, under a page number that may mean something else
+    // entirely. The row is therefore kept, emptied and bumped instead of deleted.
+    let releaseOpList: (v: unknown) => void = () => {};
+    const first = controllableDoc({ numPages: 3 });
+    const page = await (first.doc as unknown as { getPage: (n: number) => Promise<FakePage> })
+      .getPage(1);
+    page.getOperatorList.mockImplementation(
+      () => new Promise((resolve) => { releaseOpList = resolve; }),
+    );
+    registerPdfDocument("A", first.doc);
+    const qc = newClient();
+
+    const stale = ensurePageGeometry(qc, { publicId: "A", pageNumber: 1, ops: OPS_STUB });
+    await new Promise((r) => setTimeout(r, 0));
+
+    clearGeometryProject(qc, "A");
+    // Project A reopens — a different document, same publicId — and touches the coordinator, which
+    // is what recreates a deleted row.
+    const second = controllableDoc({ numPages: 3 });
+    registerPdfDocument("A", second.doc);
+    setGeometryProtectedPages(qc, "A", [1]);
+
+    releaseOpList({ fnArray: [], argsArray: [] });
+    await stale;
+
+    // The stale extraction must not have landed in the reopened project.
+    expect(geometryRetentionSnapshot(qc, "A").pages).toEqual([]);
+    expect(qc.getQueryData(queryKeys.pageGeometry.page("A", 1))).toBeUndefined();
+  });
+
+  it("still publishes normally when no teardown intervened", async () => {
+    // The fence must not become a blanket refusal — negative control for the two tests above.
+    const { doc } = controllableDoc({ numPages: 2 });
+    registerPdfDocument("A", doc);
+    const qc = newClient();
+    expect((await fill(qc, "A", 1)).status).toBe("ok");
+    expect(geometryRetentionSnapshot(qc, "A").pages).toEqual([1]);
+  });
+
+  it("★ MEDIUM: entries do not evaporate on react-query's default 5-minute gcTime", () => {
+    // This domain has NO observers — it is read imperatively. A bare `setQueryData` inherits the
+    // 5-minute default, so `optionalRemove` deletes an idle, observer-less entry while the
+    // coordinator still reports it resident and still charges its bytes against the 24 MiB rail.
+    // Symptom: arm the tool, work for six minutes, click, silently get raster.
+    const { doc } = controllableDoc({ numPages: 2 });
+    registerPdfDocument("A", doc);
+    const qc = newClient();
+    return fill(qc, "A", 1).then(() => {
+      const query = qc.getQueryCache().find({
+        queryKey: queryKeys.pageGeometry.page("A", 1),
+        exact: true,
+      });
+      expect(query).toBeDefined();
+      // gcTime is the load-bearing one and the only one asserted: `staleTime` lives on OBSERVER
+      // options, and this domain has neither observers nor a queryFn, so it is inert here. The
+      // source sets it anyway to state intent; asserting it would pin a property that does nothing.
+      expect(query!.options.gcTime).toBe(Infinity);
+    });
+  });
+});
+
 describe("pure helpers", () => {
   it("canonicalExtractionScale saturates the mask on the LONG side", () => {
     expect(canonicalExtractionScale(600, 400, 3000)).toBeCloseTo(5, 9);
