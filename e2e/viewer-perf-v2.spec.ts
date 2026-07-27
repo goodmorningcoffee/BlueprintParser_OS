@@ -1766,6 +1766,37 @@ test("viewer perf-v2 populated source-exact protocol", async ({
     if (response.status() === 429) http429.push(response.url());
   });
 
+  // [bucketfill P2] Pin the bucket-fill engine to raster for the whole perf protocol.
+  //
+  // ★ THIS IS WHAT MAKES THE BUCKET TRANSPORT-QUIESCENCE GATE SOUND, not merely lucky.
+  //
+  // `assertBucketTransportQuiescence` asserts an EXACT zero across four PDF-transport counters
+  // across the bucket-fill window. The app loads its document with `disableAutoFetch: true` and
+  // 1 MiB ranges, so pdf.js fetches page bytes lazily — which means extracting vector geometry
+  // for a page whose bytes are not resident ISSUES RANGE REQUESTS. The tool-armed geometry
+  // prefetcher fires in exactly that window.
+  //
+  // It is gated on this mode: a `raster` session extracts nothing at all, so the invariant holds
+  // BY CONSTRUCTION rather than by whether the prefetch happened to settle before the barrier.
+  // The alternative — teaching the app to detect that it is under test — would put a test-only
+  // branch into product code, which is worse than pinning a flag the product already supports.
+  //
+  // ⚠ The key is a LITERAL on purpose. This spec imports nothing from the app (only node builtins
+  // and @playwright/test) because it runs one harness checkout against TWO different app SHAs; an
+  // app-module import would break on whichever SHA predates it. Keep it in sync by hand with
+  // `BUCKET_FILL_MODE_STORAGE_KEY` in src/lib/bucket-fill-mode.ts.
+  //
+  // ⚠ Raster is also the product default today, so this pin is currently a no-op. It is written
+  // now so that phase 3's env flip to `auto` cannot silently change what this protocol measures.
+  await page.addInitScript(() => {
+    try {
+      window.localStorage.setItem("bp.bucketFillMode", "raster");
+    } catch {
+      // Storage is unavailable in some contexts; the product falls back to its own default, which
+      // is also raster. Never let this abort the run.
+    }
+  });
+
   await page.addInitScript(() => {
     type Entry = {
       commits: number;

@@ -15,6 +15,8 @@
  *      not a preference, and it is tested as one.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   resolveBucketFillMode,
@@ -137,6 +139,46 @@ describe("★ shouldPrefetchGeometry — the property the transport barrier rest
     // If someone adds a mode, ALL_MODES and the record above both fail to compile/match — the
     // matrix is the tripwire.
     expect(Object.keys(expected).sort()).toEqual([...ALL_MODES].sort());
+  });
+});
+
+describe("★ the e2e perf spec pins this override to raster — checked, not trusted", () => {
+  /**
+   * `e2e/viewer-perf-v2.spec.ts` sets this key to `raster` in an `addInitScript`, which is what
+   * makes its bucket transport-quiescence gate sound: a raster session extracts no geometry, so
+   * the prefetcher cannot issue the PDF range requests that gate forbids.
+   *
+   * The spec must use a STRING LITERAL — it imports nothing from the app, because one harness
+   * checkout runs against two different app SHAs and an app-module import would break on
+   * whichever predates it. That literal is therefore a hand-synced duplicate, which is precisely
+   * the kind of coupling that rots silently. This test is the sync.
+   */
+  const spec = readFileSync(
+    join(process.cwd(), "e2e/viewer-perf-v2.spec.ts"),
+    "utf8",
+  );
+
+  it("pins the exact storage key this module reads", () => {
+    expect(spec).toContain(`window.localStorage.setItem("${BUCKET_FILL_MODE_STORAGE_KEY}"`);
+  });
+
+  it("pins it to raster specifically, not merely to something", () => {
+    expect(spec).toContain(
+      `window.localStorage.setItem("${BUCKET_FILL_MODE_STORAGE_KEY}", "raster")`,
+    );
+  });
+
+  it("pins a value this module would actually accept", () => {
+    // Guards the other direction: renaming a mode without updating the spec would leave it
+    // setting a string that `resolveBucketFillMode` silently ignores, falling back to the
+    // default — which would still be raster today, so nothing would fail. It would fail the
+    // moment phase 3 flips the env default to `auto`, in the perf suite, months later.
+    const match = spec.match(
+      new RegExp(`localStorage\\.setItem\\("${BUCKET_FILL_MODE_STORAGE_KEY}",\\s*"([^"]+)"`),
+    );
+    expect(match).not.toBeNull();
+    expect(isBucketFillMode(match![1])).toBe(true);
+    expect(resolveBucketFillMode({ env: "auto", storage: match![1] })).toBe("raster");
   });
 });
 
