@@ -668,6 +668,16 @@ describe("bucketFillController exact worker/server transports and terminals", ()
         polygonBarriers: [{ vertices: POLYGON }],
         textBboxes: TEXT_BBOXES,
         maxDimension: 3000,
+        // [bucketfill P2] The one controller edit. Pinned by VALUE where it matters: `mode` must
+        // be the resolved default (raster — this ships dark) and `sensitivity` must be the
+        // engine's calibrated detent, NOT the Tolerance slider, until phase 4 makes it settable.
+        vector: {
+          publicId: expect.any(String),
+          pageNumber: expect.any(Number),
+          queryClient: expect.anything(),
+          mode: "raster",
+          sensitivity: 0.5,
+        },
       },
     );
     expect(fetchMock).not.toHaveBeenCalled();

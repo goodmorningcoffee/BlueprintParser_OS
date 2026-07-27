@@ -524,6 +524,16 @@ describe("BucketFill gesture freeze (real overlay, production mousedown)", () =>
         polygonBarriers: [{ vertices: eligibleVertices }],
         textBboxes,
         maxDimension: 3000,
+        // [bucketfill P2] The one controller edit. Pinned by VALUE where it matters: `mode` must
+        // be the resolved default (raster — this ships dark) and `sensitivity` must be the
+        // engine's calibrated detent, NOT the Tolerance slider, until phase 4 makes it settable.
+        vector: {
+          publicId: expect.any(String),
+          pageNumber: expect.any(Number),
+          queryClient: expect.anything(),
+          mode: "raster",
+          sensitivity: 0.5,
+        },
       },
     );
     const workerOptions = bucketClient.clientBucketFill.mock.calls[0]?.[2];
@@ -775,7 +785,9 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     expect(count(CONTROLLER, "clientBucketFill(")).toBe(1);
     expect(count(CONTROLLER, 'fetch("/api/bucket-fill"')).toBe(1);
     expect(count(CONTROLLER, "return true;")).toBe(7);
-    expect(CONTROLLER.match(/\n/g)).toHaveLength(278);
+    // [bucketfill P2] 278 -> 292: the one controller edit adds the `vector` options key (and its
+    // two imports). PLAN prices this bump explicitly as part of that commit.
+    expect(CONTROLLER.match(/\n/g)).toHaveLength(292);
     expect(AO.match(/\n/g)).toHaveLength(1571);
   });
 

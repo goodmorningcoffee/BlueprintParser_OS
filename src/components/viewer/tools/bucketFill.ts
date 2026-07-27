@@ -4,6 +4,8 @@
 // synchronous publication seams. Preview preparation, assignment, keyboard, rendering, and
 // cleanup remain on their shared ACCEPT-PARTIAL surfaces.
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
+import { resolveBucketFillMode } from "@/lib/bucket-fill-mode";
+import { SENS_BALANCED } from "@/lib/oneclick/oneclick";
 import { apiErrorMessage } from "@/lib/client-persist";
 import {
   claimLatestToolOperation,
@@ -264,6 +266,18 @@ export const bucketFillController: ToolController = Object.freeze({
           polygonBarriers: existingPolygons,
           textBboxes,
           maxDimension,
+          // [bucketfill P2] THE ONE CONTROLLER EDIT. Everything here is already captured at press
+          // scope above, so this adds no new reads and no new subscription — it hands the routing
+          // layer what it needs and changes nothing else. `sensitivity` is PINNED to the engine's
+          // calibrated middle detent for phases 2 and 3; it becomes user-settable in phase 4, and
+          // wiring the existing Tolerance slider to it here would silently redefine that knob.
+          vector: {
+            publicId: bucketPublicId,
+            pageNumber: bucketPageNumber,
+            queryClient,
+            mode: resolveBucketFillMode(),
+            sensitivity: SENS_BALANCED,
+          },
         },
       )
         .then(handleFillSuccess)

@@ -7,6 +7,13 @@
  */
 
 import type { BucketFillResult } from "@/workers/bucket-fill.worker";
+import type { QueryClient } from "@tanstack/react-query";
+import type { BucketFillMode } from "@/lib/bucket-fill-mode";
+import { routeBucketFill } from "@/lib/bucket-fill-routing";
+import { readGeometryEntry } from "@/queries/pageGeometryCache";
+import { maskCacheKey } from "@/lib/oneclick-worker-core";
+import { ensureVectorMask, vectorClientFill } from "@/lib/bucket-fill-vector-client";
+import { MASK_DIM_DEFAULT } from "@/lib/bucket-fill-vector-limits";
 
 let workerInstance: Worker | null = null;
 let nextRequestId = 1;
@@ -30,6 +37,21 @@ export interface ClientBucketFillOptions {
    *  before the flood so text inside rooms doesn't block the fill. */
   textBboxes?: { x: number; y: number; w: number; h: number }[];
   maxDimension?: number;
+  /**
+   * [bucketfill P2] Everything the vector path needs, passed down from the controller's press
+   * scope. Optional so every existing caller and every test mock keeps working untouched.
+   *
+   * ⛔ DARK BY DEFAULT. `mode` comes from `resolveBucketFillMode()`, whose default is `raster`, so
+   * `routeBucketFill` returns `raster` and this whole branch is unreachable until phase 3's env
+   * flip. The wiring lands now so the flip is a one-line change rather than a feature.
+   */
+  vector?: {
+    publicId: string;
+    pageNumber: number;
+    queryClient: QueryClient;
+    mode: BucketFillMode;
+    sensitivity: number;
+  };
 }
 
 export interface ClientBucketFillSuccess {
@@ -49,6 +71,46 @@ export async function clientBucketFill(
   seedPoint: { x: number; y: number },
   options: ClientBucketFillOptions
 ): Promise<ClientBucketFillSuccess> {
+  // ── routing: vector first when this page qualifies, raster otherwise ──────
+  //
+  // ★ THE FALLBACK IS A `return` FROM A TRY, NOT A SEPARATE CODE PATH. Anything the vector attempt
+  // cannot do — no cached geometry, a refusal, a wedged worker, a timeout — falls through to the
+  // raster code below unchanged. That is what makes this safe to ship dark: the raster path is not
+  // reached *through* the vector path, it simply still runs.
+  if (options.vector) {
+    const { publicId, pageNumber, queryClient, mode, sensitivity } = options.vector;
+    const entry = readGeometryEntry(queryClient, publicId, pageNumber);
+    const decision = routeBucketFill({
+      mode,
+      entry,
+      ocUnsafe: entry?.status === "ok" ? entry.geometry.ocUnsafe : false,
+    });
+    if (decision.engine === "vector" && entry?.status === "ok") {
+      const geo = entry.geometry;
+      const key = maskCacheKey(publicId, pageNumber, MASK_DIM_DEFAULT, "vector");
+      try {
+        await ensureVectorMask(key, {
+          segs: geo.segs,
+          meta: geo.meta,
+          imgW: geo.viewportWidth,
+          imgH: geo.viewportHeight,
+        });
+        return await vectorClientFill(key, {
+          seedX: seedPoint.x,
+          seedY: seedPoint.y,
+          sensitivity,
+          barriers: options.barriers,
+          polygonBarriers: options.polygonBarriers,
+        });
+      } catch {
+        // Deliberately silent. Phase 3 owns the status model that decides when a vector refusal
+        // should be SHOWN (a `leak` on a pure-vector sheet must offer the barrier tool rather than
+        // quietly returning a raster number). Until then, falling back is the whole behaviour, and
+        // announcing it would be announcing something the user cannot act on.
+      }
+    }
+  }
+
   if (!pageCanvas) {
     throw new Error("Page canvas not available");
   }
