@@ -34,8 +34,14 @@ the head of that file. That list is the compliance artifact; this table is a sum
 
 | file | modifications |
 |---|---|
-| `oneclick.ts` | none yet — vendored verbatim |
-| `rastermask.ts` | none yet — vendored verbatim |
+| `oneclick.ts` | **3** — (1) bbox lifted out of the flood pass and returned on the `ok` result; (2) two reusable scratch buffers for the region raster; (3) `LEAK_FRACTION` exported (one keyword, no behavioural change). Full reasoning in the file's own MODIFICATIONS list. |
+| `rastermask.ts` | none — vendored verbatim |
+
+⚠ This table had read *"none yet — vendored verbatim"* for both files from 2026-07-26 until
+2026-07-28, while `oneclick.ts` had in fact carried modifications (1) and (2) since the day it was
+vendored. The in-file list — which is the artifact §4(b) actually requires — was correct
+throughout, so the obligation was met; but a summary that contradicts it is worse than no summary,
+because it is the one a reader checks first. **Update both, or neither.**
 
 ### Attribution
 

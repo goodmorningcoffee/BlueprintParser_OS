@@ -37,6 +37,15 @@
 //               larger pixels — a silently oversized polygon reported as "ok".
 //               Regression test: src/lib/__tests__/oneclick-flood-scratch.test.ts
 //
+//   2026-07-28  (3) LEAK_FRACTION EXPORTED. One keyword; the value, the comment and every use
+//               are untouched, so there is NO behavioural change of any kind. Phase 3's status
+//               model must judge a RASTER retry by the same criterion the vector engine used to
+//               declare the leak in the first place — otherwise the two thresholds are separate
+//               constants that can drift apart silently, which is the exact failure class this
+//               arc keeps catching (a mirrored value nobody re-checks). Exporting makes
+//               "same criterion" true by construction instead of true by comment.
+//               Consumer: src/lib/bucket-fill-status.ts
+//
 // ⛔ VENDORED-DIRECTORY RULE: everything under src/lib/oneclick/ is third-party
 //    code under a DIFFERENT licence to the rest of this repository. Do not move
 //    files out of this directory, do not merge vendored code into app modules,
@@ -96,7 +105,7 @@ export type FloodResult =
 export type NearestFn = (x: number, y: number, maxDist: number) => Point | null | undefined;
 
 export const MASK_MAX_DIM = 3000;   // working raster cap (Uint8 ≈ 6–7 MB)
-const LEAK_FRACTION = 0.30;         // fill > 30% of the sheet ⇒ not an enclosed space
+export const LEAK_FRACTION = 0.30;  // fill > 30% of the sheet ⇒ not an enclosed space
 const TINY_PX = 30;                 // fill < 30 mask px ⇒ landed in dense linework
 const MIN_THICK = 4;                // region bbox thinner than 4 mask px ⇒ hatch sliver, not a room
 const CURVE_STEPS = 8;              // chords per bezier (door swings stay closed)
