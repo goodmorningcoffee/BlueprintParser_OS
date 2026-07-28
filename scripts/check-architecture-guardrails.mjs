@@ -309,8 +309,13 @@ const MAX_LINES_BASELINE = {
       reason: "viewer-hot-exception",
     },
     {
+      // [bucketfill P3] 806 -> 818: the knob honesty labels PLAN §5 phase 3 requires —
+      // Resolution/Tolerance/Dilation annotated as raster-only once vector can be the engine.
+      // One import, one derived flag, a 4-line comment and a 5-line conditional block; the note
+      // itself is APPENDED to the three tooltips (never prefixed) so the perf spec's
+      // `[title^=...]` selectors keep resolving. Comment cut to four lines before re-baselining.
       path: "src/components/viewer/AreaTab.tsx",
-      maxLines: 806,
+      maxLines: 818,
       reason: "viewer-tool",
     },
     {

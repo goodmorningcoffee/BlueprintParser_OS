@@ -15,6 +15,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { queryKeys } from "@/queries/queryKeys";
+import { resolveBucketFillMode, vectorMayRun } from "@/lib/bucket-fill-mode";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { AreaUnitSq, ClientTakeoffItem, AreaPolygonData, TakeoffGroup } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
@@ -518,6 +519,8 @@ export default memo(function AreaTab() {
   };
 
   const bucketFillActive = useToolStore((s) => selectActiveToolKey(s) === "bucketFill");
+  // [bucketfill P3] Read once per render: a dev/env override, not reactive state.
+  const knobsAreRasterOnly = vectorMayRun(resolveBucketFillMode());
   const setBucketFillActive = useToolStore((s) => s.setBucketFillActive);
   const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
   const setBucketFillBarrierMode = useToolStore((s) => s.setBucketFillBarrierMode);
@@ -628,6 +631,15 @@ export default memo(function AreaTab() {
                 ? "Click two points to draw a barrier line across a doorway"
                 : "Click inside a room to detect its boundary"}
             </div>
+            {/* [bucketfill P3] Knob honesty — these three tune the RASTER flood only. Hidden
+                while raster is the only engine (saying "raster only" then is noise). ⚠ The
+                tooltip note is APPENDED, never prefixed: the perf spec selects these sliders by
+                title prefix. Guarded by KnobTooltipSelectorContract.test.ts. */}
+            {knobsAreRasterOnly && (
+              <div className="text-[10px] italic text-[var(--muted)] leading-tight">
+                Raster only — these do not affect pages measured from vector linework.
+              </div>
+            )}
             {/* Resolution slider — 4 snap values (1000/2000/3000/4000 px).
                 Lower = instant but thin walls vanish on high-DPI plans.
                 Higher = preserves 1-pixel walls, ~150-250ms pause at 4000
@@ -636,7 +648,7 @@ export default memo(function AreaTab() {
             <div className="space-y-0.5">
               <div
                 className="flex items-center gap-1.5"
-                title="Max pixel dimension the worker floods on. 1000 = instant but walls under ~3px vanish on high-DPI plans. 2000/3000 = intermediate. 4000 = near-native PDF.js canvas resolution, preserves 1-pixel walls at ~150-250ms cost on big fills."
+                title="Max pixel dimension the worker floods on. 1000 = instant but walls under ~3px vanish on high-DPI plans. 2000/3000 = intermediate. 4000 = near-native PDF.js canvas resolution, preserves 1-pixel walls at ~150-250ms cost on big fills. Raster only — has no effect on pages measured from vector linework."
               >
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Resolution</span>
                 <input
@@ -673,7 +685,7 @@ export default memo(function AreaTab() {
               </div>
               <div
                 className="flex items-center gap-1.5"
-                title="How aggressively the fill pushes past faint pixels. Negative = extreme strictness (nearly every pixel becomes a wall). 0 = tighter than default. 30 = pure Otsu (default). Higher = ignores small gaps and extends further."
+                title="How aggressively the fill pushes past faint pixels. Negative = extreme strictness (nearly every pixel becomes a wall). 0 = tighter than default. 30 = pure Otsu (default). Higher = ignores small gaps and extends further. Raster only — has no effect on pages measured from vector linework."
               >
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Tolerance</span>
                 <input type="range" min={-20} max={80} step={1}
@@ -689,7 +701,7 @@ export default memo(function AreaTab() {
               </div>
               <div
                 className="flex items-center gap-1.5"
-                title="Gap-closing radius in pixels, applied to walls before flooding. 0 = no gap-closing, respects every single pixel. 1–10 = seal gaps of that many pixels (helps when line art has 1–2px breaks at door frames)."
+                title="Gap-closing radius in pixels, applied to walls before flooding. 0 = no gap-closing, respects every single pixel. 1–10 = seal gaps of that many pixels (helps when line art has 1–2px breaks at door frames). Raster only — has no effect on pages measured from vector linework."
               >
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Dilation</span>
                 <input type="range" min={0} max={10} step={1}
