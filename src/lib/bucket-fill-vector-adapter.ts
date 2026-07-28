@@ -44,7 +44,12 @@ import {
 } from "@/lib/oneclick/oneclick";
 import { findHoleBorders } from "@/lib/bucket-fill-mask-ops";
 import { burnLine, fillPolygonOnBinary } from "@/lib/bucket-fill-mask-ops";
-import { clampMaskDim, MASK_DIM_DEFAULT } from "@/lib/bucket-fill-vector-limits";
+import {
+  clampMaskDim,
+  MASK_DIM_DEFAULT,
+  isHoleSignificant,
+  polygonAreaAbs,
+} from "@/lib/bucket-fill-vector-limits";
 import { NO_SNAP } from "@/lib/bucket-fill-snapgrid";
 import type { BucketFillResult } from "@/workers/bucket-fill.worker";
 
@@ -203,6 +208,9 @@ export function vectorBucketFill(req: VectorFillRequest): VectorFillOutcome {
   const holes: { vertices: { x: number; y: number }[] }[] = [];
   for (const hb of holeBorders) {
     if (hb.length < MIN_VERTICES) continue;
+    // ★ Measured in MASK px, before the conversion below — the two thresholds are mask-px
+    // literals and mean nothing in normalised space. See bucket-fill-vector-limits.ts.
+    if (!isHoleSignificant(polygonAreaAbs(hb), flood.count)) continue;
     holes.push({
       vertices: hb.map((p) => ({ x: p.x / ws / imgW, y: p.y / ws / imgH })),
     });

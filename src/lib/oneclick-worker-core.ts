@@ -42,7 +42,12 @@ import {
   type Point,
 } from "@/lib/oneclick/oneclick";
 import { burnLine, fillPolygonOnBinary, findHoleBorders } from "@/lib/bucket-fill-mask-ops";
-import { clampMaskDim, MASK_DIM_DEFAULT } from "@/lib/bucket-fill-vector-limits";
+import {
+  clampMaskDim,
+  MASK_DIM_DEFAULT,
+  isHoleSignificant,
+  polygonAreaAbs,
+} from "@/lib/bucket-fill-vector-limits";
 import { NO_SNAP } from "@/lib/bucket-fill-snapgrid";
 import { VECTOR_REFUSALS, type VectorRefusal } from "@/lib/bucket-fill-vector-adapter";
 
@@ -271,6 +276,9 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
   const holes: { vertices: { x: number; y: number }[] }[] = [];
   for (const hb of holeBorders) {
     if (hb.length < MIN_VERTICES) continue;
+    // ★ MASK px, before conversion — the thresholds are mask-px literals. Same filter the adapter
+    // applies, from the same module, so the two vector callers cannot drift apart.
+    if (!isHoleSignificant(polygonAreaAbs(hb), flood.count)) continue;
     holes.push({ vertices: hb.map((p) => ({ x: p.x / ws / imgW, y: p.y / ws / imgH })) });
   }
 
