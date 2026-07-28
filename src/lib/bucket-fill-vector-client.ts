@@ -30,6 +30,47 @@ import {
   type OneclickRequest,
   type OneclickResponse,
 } from "@/lib/oneclick-worker-core";
+import type { VectorRefusal } from "@/lib/bucket-fill-vector-adapter";
+
+/**
+ * The engine ran and reached a conclusion — as distinct from the engine failing to run.
+ *
+ * ★ A SUBCLASS RATHER THAN A FIELD ON `Error`, so that `catch` sites which do not care keep working
+ * unchanged (it *is* an Error, with the same human-readable `message`), while the one site that
+ * does care can ask a single honest question. The status model's entire premise is that these two
+ * outcomes deserve opposite treatment: a verdict may be worth refusing on, a failure never is.
+ *
+ * ⚠ `instanceof` is deliberately NOT the test — see {@link isVectorRefusalError}.
+ */
+export class VectorRefusalError extends Error {
+  /** Structural brand: survives bundling, duplicate module instances and `instanceof` realms. */
+  readonly isVectorRefusal = true as const;
+  readonly code: VectorRefusal;
+
+  constructor(code: VectorRefusal, message: string) {
+    super(message);
+    this.name = "VectorRefusalError";
+    this.code = code;
+  }
+}
+
+/**
+ * Is this thrown value a vector VERDICT?
+ *
+ * ⚠ Brand check, not `instanceof`. `instanceof` fails across realms and across duplicate copies of
+ * a module — and this class is thrown inside a worker-transport path and caught in an app module,
+ * which is precisely where a bundler is most likely to produce two copies. A false negative here
+ * would silently downgrade every refusal to "a failure", restoring exactly the silent-fallback
+ * behaviour this work exists to remove — and nothing would break loudly enough to notice.
+ */
+export function isVectorRefusalError(e: unknown): e is VectorRefusalError {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { isVectorRefusal?: unknown }).isVectorRefusal === true &&
+    typeof (e as { code?: unknown }).code === "string"
+  );
+}
 
 /** Minimal structural type — lets tests inject a fake without a DOM Worker. */
 export interface VectorWorkerLike {
@@ -99,7 +140,12 @@ export function ensureVectorMask(key: string, input: VectorMaskInput): Promise<v
       if (data.type === "mask-error") {
         if (data.key !== key) return;
         worker.removeEventListener("message", handler);
-        reject(new Error(data.error));
+        // Carries a code for the same reason `fill` does. These two (`no-page`, `no-geometry`) are
+        // non-verdict refusals that the status model routes to a silent fallback — but it should
+        // reach that conclusion by reading the code, not by failing to find one.
+        reject(
+          data.code ? new VectorRefusalError(data.code, data.error) : new Error(data.error),
+        );
       }
       // Anything else (a concurrent `result`) belongs to another listener. Ignore it.
     }
@@ -187,6 +233,14 @@ export function vectorClientFill(
           areaFraction: data.areaFraction ?? 0,
           method: data.method || "client-vector",
         });
+        return;
+      }
+      // ★ A REFUSAL AND A FAILURE LEAVE BY THE SAME DOOR, SO THE VERDICT HAS TO RIDE ALONG.
+      // Both reject; only one of them is the engine telling us something true about this room. The
+      // status model cannot distinguish them from an `Error` alone, and recovering the verdict by
+      // matching the message text is exactly what VECTOR_REFUSALS-as-a-table exists to prevent.
+      if (data.type === "error" && data.code) {
+        reject(new VectorRefusalError(data.code, data.error));
         return;
       }
       reject(

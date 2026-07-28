@@ -44,7 +44,7 @@ import {
 import { burnLine, fillPolygonOnBinary, findHoleBorders } from "@/lib/bucket-fill-mask-ops";
 import { clampMaskDim, MASK_DIM_DEFAULT } from "@/lib/bucket-fill-vector-limits";
 import { NO_SNAP } from "@/lib/bucket-fill-snapgrid";
-import { VECTOR_REFUSALS } from "@/lib/bucket-fill-vector-adapter";
+import { VECTOR_REFUSALS, type VectorRefusal } from "@/lib/bucket-fill-vector-adapter";
 
 /** Bit 1 in the One-Click mask: a hard wall. Matches the adapter. */
 const MASK_BIT_WALL = 1;
@@ -119,7 +119,7 @@ export type OneclickRequest = MaskMessage | FillMessage | EvictMessage;
 
 export type OneclickResponse =
   | { type: "mask-ready"; key: string; maskBytes: number }
-  | { type: "mask-error"; key: string; error: string }
+  | { type: "mask-error"; key: string; error: string; code?: VectorRefusal }
   | {
       type: "result";
       requestId: number;
@@ -129,7 +129,21 @@ export type OneclickResponse =
       areaFraction: number;
       method: "client-vector";
     }
-  | { type: "error"; requestId: number; error: string; method?: "client-vector" }
+  /**
+   * ★ `code` carries the VERDICT; `error` carries the prose.
+   *
+   * The status model on the far side must tell "the engine ran and concluded this room leaks" apart
+   * from "the engine never ran" — and after `postMessage` the only other way to recover that is to
+   * match on the message text, which is exactly what {@link VECTOR_REFUSALS} being an exported
+   * table exists to prevent. Structured-clone carries a plain string fine.
+   */
+  | {
+      type: "error";
+      requestId: number;
+      error: string;
+      code?: VectorRefusal;
+      method?: "client-vector";
+    }
   | { type: "evicted"; keys: string[] };
 
 interface CachedMask {
@@ -164,11 +178,11 @@ export const MAX_RETAINED_MASKS = 4;
 
 function handleMask(state: OneclickWorkerState, msg: MaskMessage): OneclickResponse {
   if (!(msg.imgW > 0) || !(msg.imgH > 0)) {
-    return { type: "mask-error", key: msg.key, error: VECTOR_REFUSALS["no-page"] };
+    return { type: "mask-error", key: msg.key, error: VECTOR_REFUSALS["no-page"], code: "no-page" };
   }
   const segs = Array.from(msg.segs);
   if (segs.length === 0) {
-    return { type: "mask-error", key: msg.key, error: VECTOR_REFUSALS["no-geometry"] };
+    return { type: "mask-error", key: msg.key, error: VECTOR_REFUSALS["no-geometry"], code: "no-geometry" };
   }
   const maskDim = clampMaskDim(msg.maskDimension ?? MASK_DIM_DEFAULT);
   const maskObj = buildMask(segs, msg.imgW, msg.imgH, maskDim, msg.meta);
@@ -191,7 +205,7 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
   if (!cached) {
     // Not an error the user caused: the mask was evicted, or this page never sent one. The caller
     // re-sends `mask` and retries, or routes to raster.
-    return { type: "error", requestId: msg.requestId, error: VECTOR_REFUSALS["no-geometry"] };
+    return { type: "error", requestId: msg.requestId, error: VECTOR_REFUSALS["no-geometry"], code: "no-geometry" };
   }
 
   const { maskObj, imgW, imgH } = cached;
@@ -235,6 +249,7 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
       type: "error",
       requestId: msg.requestId,
       error: VECTOR_REFUSALS[flood.status],
+      code: flood.status,
       method: "client-vector",
     };
   }
@@ -245,6 +260,7 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
       type: "error",
       requestId: msg.requestId,
       error: VECTOR_REFUSALS.untraceable,
+      code: "untraceable",
       method: "client-vector",
     };
   }

@@ -87,7 +87,21 @@ export interface VectorFillRequest {
   epsMaskPx?: number;
 }
 
-export type VectorFillOutcome = Omit<BucketFillResult, "requestId">;
+/**
+ * ★ `code` is what makes a refusal MACHINE-READABLE across the worker boundary.
+ *
+ * `error` is prose for a human; `code` is the verdict for the status model (PLAN §5 phase 3), which
+ * must distinguish "the engine ran and concluded this room leaks" from "the engine never ran".
+ * Without it the only way to recover the verdict on the far side of `postMessage` is to match on
+ * the message text — and the whole reason {@link VECTOR_REFUSALS} is an exported table is so that
+ * nothing has to do that. Copy is allowed to change; a verdict is not.
+ *
+ * Optional because it is additive: every existing consumer of `BucketFillResult` ignores it, and
+ * the raster worker never sets it.
+ */
+export type VectorFillOutcome = Omit<BucketFillResult, "requestId"> & {
+  code?: VectorRefusal;
+};
 
 /** Barrier thickness in mask px. 3 matches the raster worker's own burn width. */
 const BARRIER_THICKNESS = 3;
@@ -128,12 +142,12 @@ export function vectorBucketFill(req: VectorFillRequest): VectorFillOutcome {
   const { geo, imgW, imgH } = req;
 
   if (!(imgW > 0) || !(imgH > 0)) {
-    return { type: "error", error: VECTOR_REFUSALS["no-page"] };
+    return { type: "error", error: VECTOR_REFUSALS["no-page"], code: "no-page" };
   }
   // A page with no linework is a scan (or a blank sheet). Say so rather than flooding the whole
   // page: this is precisely the case the raster fallback exists for, and the caller routes on it.
   if (geo.segs.length === 0) {
-    return { type: "error", error: VECTOR_REFUSALS["no-geometry"], method: "client-vector" };
+    return { type: "error", error: VECTOR_REFUSALS["no-geometry"], code: "no-geometry", method: "client-vector" };
   }
 
   const maskDim = clampMaskDim(req.maskDimension ?? MASK_DIM_DEFAULT);
@@ -162,7 +176,7 @@ export function vectorBucketFill(req: VectorFillRequest): VectorFillOutcome {
     req.sensitivity ?? SENS_BALANCED,
   );
   if (flood.status !== "ok") {
-    return { type: "error", error: VECTOR_REFUSALS[flood.status], method: "client-vector" };
+    return { type: "error", error: VECTOR_REFUSALS[flood.status], code: flood.status, method: "client-vector" };
   }
 
   // ── 1. outer contour: already IMAGE px, thanks to traceRegion's /ws ────────
@@ -176,7 +190,7 @@ export function vectorBucketFill(req: VectorFillRequest): VectorFillOutcome {
     SNAP_TOL_PX,
   );
   if (ring.length < MIN_VERTICES) {
-    return { type: "error", error: VECTOR_REFUSALS.untraceable, method: "client-vector" };
+    return { type: "error", error: VECTOR_REFUSALS.untraceable, code: "untraceable", method: "client-vector" };
   }
 
   // ── 3. holes: BP2's detector over their region, bounded by the lifted bbox ─
