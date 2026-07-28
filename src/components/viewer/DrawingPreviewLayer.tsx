@@ -746,7 +746,10 @@ export default memo(function DrawingPreviewLayer({
           cssScale={cssScale}
         />
       )}
-      {/* Bucket fill error banner — takes priority over HUDs */}
+      {/* Bucket fill message banner — takes priority over HUDs.
+          ★ TONE IS DERIVED, NOT STORED: a message WITH a preview is a caveat on a number the user
+          can still accept (amber); with no preview it is a refusal (red). Storing a tone would add
+          a freeze-pinned key and a second source of truth that can disagree with the first. */}
       {activeToolKey === "bucketFill" && bucketFillError && (
         <div
           style={{
@@ -757,8 +760,8 @@ export default memo(function DrawingPreviewLayer({
             transformOrigin: "top center",
             padding: "8px 14px",
             borderRadius: "6px",
-            background: "rgba(127, 29, 29, 0.92)",
-            border: "1px solid #ef4444",
+            background: bucketFillPreview ? "rgba(120, 78, 4, 0.94)" : "rgba(127, 29, 29, 0.92)",
+            border: `1px solid ${bucketFillPreview ? "#f59e0b" : "#ef4444"}`,
             color: "#fff",
             fontSize: "12px",
             fontWeight: 500,

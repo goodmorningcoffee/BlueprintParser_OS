@@ -334,8 +334,14 @@ const MAX_LINES_BASELINE = {
       // in areaCalc.ts, twice. Replacing both with the shared function made the LOGIC shorter;
       // only the import line is new. Bumped rather than absorbed, because a bug fix should not
       // have to argue with a ceiling.
+      // [bucketfill P3] 869 -> 872: net +3, of which the CODE is +0 — the banner's two style lines
+      // became conditional in place. The three added lines are the comment explaining why the tone
+      // is DERIVED from `bucketFillPreview` rather than stored: a message with a preview is a
+      // caveat on a number the user can still accept, one without is a refusal. Storing it would
+      // add a key to an exact-set store freeze and create a second source of truth that can
+      // disagree with the first. Comment cut to three lines before bumping, so this is the floor.
       path: "src/components/viewer/DrawingPreviewLayer.tsx",
-      maxLines: 869,
+      maxLines: 872,
       reason: "viewer-hot-exception",
     },
     {

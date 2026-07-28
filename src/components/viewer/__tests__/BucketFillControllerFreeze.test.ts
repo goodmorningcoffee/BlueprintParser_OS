@@ -21,6 +21,7 @@ import {
   ownsToolTailAuthority,
   registerToolTailCancellation,
 } from "@/lib/parse-tool-authority";
+import { BucketFillRefusedError } from "@/lib/bucket-fill-client";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useToolStore } from "@/stores/toolStore";
@@ -36,7 +37,16 @@ const bucketClient = vi.hoisted(() => ({
   findPageCanvas: vi.fn(),
 }));
 
-vi.mock("@/lib/bucket-fill-client", () => ({
+// ⚠ SPREAD THE REAL MODULE, then override only the two transports this suite drives.
+//
+// This factory used to list exactly those two exports and nothing else. When the controller began
+// importing one more symbol from this module, that symbol resolved to `undefined` here, calling it
+// threw inside the controller's `.catch`, and **the server fallback silently stopped running** —
+// which is precisely what W6 and this suite exist to pin. The pins did their job; the mock was the
+// thing that was wrong. Spreading the original makes a future export arrive automatically instead
+// of failing as a phantom behavioural regression.
+vi.mock("@/lib/bucket-fill-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/bucket-fill-client")>()),
   clientBucketFill: bucketClient.clientBucketFill,
   findPageCanvas: bucketClient.findPageCanvas,
 }));
@@ -736,6 +746,89 @@ describe("bucketFillController exact worker/server transports and terminals", ()
 
     request.resolve(response({ type: "unknown" }));
     await flushTail();
+  });
+
+  // ── [bucketfill P3] the status model's controller half ─────────────────────────────────
+  it("★ a REFUSAL does not reach the server — it is shown, not worked around", async () => {
+    const worker = deferred<never>();
+    bucketClient.findPageCanvas.mockReturnValue(Object.freeze({ fixture: "canvas" }));
+    bucketClient.clientBucketFill.mockReturnValue(worker.promise);
+    const { context } = seedLiveController();
+
+    expect(bucketFillController.onMouseDown(eventFor(), context)).toBe(true);
+
+    worker.reject(
+      new BucketFillRefusedError({
+        code: "vector-refused",
+        retryRaster: false,
+        message: "Fill escaped the room — the boundary has a gap.",
+        tone: "error",
+        offerBarrier: true,
+      }),
+    );
+    await flushTail();
+
+    // ⛔ THE WHOLE POINT. The engine concluded this space is not enclosed. Asking the server —
+    // which has no leak detection at all — would return an area and commit it, producing a
+    // confidently wrong number that looks exactly like success.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useToolStore.getState().bucketFillError).toBe(
+      "Fill escaped the room — the boundary has a gap.",
+    );
+    expect(useToolStore.getState().bucketFillPreview).toBeNull();
+    expect(useToolStore.getState().bucketFillLoading).toBe(false);
+  });
+
+  it("★ a caveated raster number arrives WITH its caveat, and stays acceptable", async () => {
+    const vertices = [
+      { x: 0.2, y: 0.2 },
+      { x: 0.4, y: 0.2 },
+      { x: 0.3, y: 0.4 },
+    ];
+    bucketClient.findPageCanvas.mockReturnValue(Object.freeze({ fixture: "canvas" }));
+    bucketClient.clientBucketFill.mockResolvedValue({
+      vertices,
+      holes: [],
+      holeCount: 0,
+      areaFraction: 0.12,
+      method: "client-raster",
+      notice: "The linework doesn't fully enclose that space — check the area.",
+    });
+    const { context } = seedLiveController();
+
+    expect(bucketFillController.onMouseDown(eventFor(), context)).toBe(true);
+    await flushTail();
+
+    // Both, together: the number is offered AND the caveat is visible. A preview with a message is
+    // what the banner reads as a warning rather than a refusal — no extra state carries the tone.
+    expect(useToolStore.getState().bucketFillPreview).toEqual({
+      vertices,
+      holes: undefined,
+      method: "client-raster",
+    });
+    expect(useToolStore.getState().bucketFillError).toBe(
+      "The linework doesn't fully enclose that space — check the area.",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary fill sets no message at all", async () => {
+    const vertices = [
+      { x: 0.2, y: 0.2 },
+      { x: 0.4, y: 0.2 },
+      { x: 0.3, y: 0.4 },
+    ];
+    bucketClient.findPageCanvas.mockReturnValue(Object.freeze({ fixture: "canvas" }));
+    bucketClient.clientBucketFill.mockResolvedValue({
+      vertices, holes: [], holeCount: 0, areaFraction: 0.12, method: "client-vector",
+    });
+    const { context } = seedLiveController();
+
+    expect(bucketFillController.onMouseDown(eventFor(), context)).toBe(true);
+    await flushTail();
+
+    expect(useToolStore.getState().bucketFillError).toBeNull();
+    expect(useToolStore.getState().bucketFillPreview).not.toBeNull();
   });
 
   it("retains nonempty holes and applies the exact server method fallback", async () => {

@@ -36,6 +36,7 @@ import {
   readGeometryForPage,
   readGeometryEntry,
   evictPageGeometry,
+  isGeometryPending,
   clearGeometryProject,
   setGeometryProtectedPages,
   geometryRetentionSnapshot,
@@ -644,5 +645,92 @@ describe("pure helpers", () => {
       ocUnsafe: false,
     } satisfies CachedPageGeometry;
     expect(estimateGeometryBytes(geo)).toBe(Math.round(1000 * 8.4 + 250));
+  });
+});
+
+/**
+ * [bucketfill P3] "Still preparing this sheet" — the census-driven state.
+ *
+ * PLAN assumed extraction cost ~1.2 s; the 789-page census measured p95 **5.6 s** and max
+ * **18.3 s**. Over that window a click gets a raster answer, and from the cache alone
+ * "never extracted" and "extracting right now" look identical — an absent entry either way. Only
+ * one of them resolves on its own, so only one is worth telling the user about.
+ */
+describe("isGeometryPending — the window a user can click inside", () => {
+  beforeEach(() => {
+    __resetPdfDocumentRegistry();
+  });
+
+  function docWithHeldOpList() {
+    let release: (() => void) | null = null;
+    const held = new Promise<void>((r) => { release = r; });
+    const doc = {
+      numPages: 1,
+      getPage: vi.fn(async () => ({
+        cleanup: vi.fn(),
+        getOperatorList: vi.fn(async () => {
+          await held;
+          return {
+            fnArray: [OPS_STUB.constructPath, OPS_STUB.stroke],
+            argsArray: [[[OPS_STUB.moveTo, OPS_STUB.lineTo], [0, 0, 5, 5], null], null],
+          };
+        }),
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 100 * scale, height: 80 * scale, transform: [scale, 0, 0, -scale, 0, 80 * scale],
+        }),
+      })),
+      getOptionalContentConfig: vi.fn(async () => ({ getGroups: () => ({}), isVisible: () => true })),
+    } as unknown as PDFDocumentProxy;
+    return { doc, release: () => release?.() };
+  }
+
+  it("is false before, TRUE while extracting, and false again after", async () => {
+    const qc = new QueryClient();
+    const { doc, release } = docWithHeldOpList();
+    registerPdfDocument("P", doc);
+
+    expect(isGeometryPending(qc, "P", 1)).toBe(false);
+
+    const inFlight = ensurePageGeometry(qc, { publicId: "P", pageNumber: 1, ops: OPS_STUB });
+    // ★ The window the user clicks inside. Without this the "still preparing" branch of the status
+    // model is unreachable code that reads as if it works.
+    expect(isGeometryPending(qc, "P", 1)).toBe(true);
+
+    release();
+    await inFlight;
+    expect(isGeometryPending(qc, "P", 1)).toBe(false);
+  });
+
+  it("closes the window even when extraction fails — a stuck message is worse than none", async () => {
+    const qc = new QueryClient();
+    const doc = {
+      numPages: 1,
+      getPage: vi.fn(async () => { throw new Error("page exploded"); }),
+    } as unknown as PDFDocumentProxy;
+    registerPdfDocument("P", doc);
+
+    await ensurePageGeometry(qc, { publicId: "P", pageNumber: 1, ops: OPS_STUB });
+    expect(isGeometryPending(qc, "P", 1)).toBe(false);
+  });
+
+  it("a CACHE HIT never opens the window — it does not await", async () => {
+    const qc = new QueryClient();
+    const { doc, release } = docWithHeldOpList();
+    registerPdfDocument("P", doc);
+    const first = ensurePageGeometry(qc, { publicId: "P", pageNumber: 1, ops: OPS_STUB });
+    release();
+    await first;
+
+    const second = ensurePageGeometry(qc, { publicId: "P", pageNumber: 1, ops: OPS_STUB });
+    expect(isGeometryPending(qc, "P", 1)).toBe(false);
+    await second;
+  });
+
+  it("is per page and per project, and never creates a coordinator row by asking", () => {
+    const qc = new QueryClient();
+    expect(isGeometryPending(qc, "never-opened", 7)).toBe(false);
+    // Asking about a project must not bring it into existence — a predicate that mutates the
+    // structure it reports on makes "ask" and "touch" the same operation.
+    expect(geometryRetentionSnapshot(qc, "never-opened").pages).toEqual([]);
   });
 });

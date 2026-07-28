@@ -163,6 +163,20 @@ interface ProjectCoordinator {
   pages: Map<number, PageMetadata>;
   protectedPages: Set<number>;
   /**
+   * Pages whose extraction is in flight RIGHT NOW.
+   *
+   * ★ EXISTS BECAUSE OF THE CENSUS, and it is not bookkeeping for its own sake. PLAN assumed
+   * extraction cost ~1.2 s; the 789-page census measured **p95 5.6 s and max 18.3 s**. Over that
+   * window a click gets a raster answer, and "we have not extracted this page" and "we are
+   * extracting it as you click" are indistinguishable from the cache alone — an absent entry looks
+   * identical either way. Only one of them resolves on its own, so only one of them is worth
+   * telling the user about.
+   *
+   * Deliberately NOT a react-query fetch state: this cache is written with bare `setQueryData` and
+   * has no observers, so `isFetching()` sees nothing.
+   */
+  extracting: Set<number>;
+  /**
    * Bumped by `clearGeometryProject`. An extraction captures this before it awaits and refuses to
    * publish if it changed — see `ensurePageGeometry`.
    */
@@ -189,7 +203,12 @@ function projectCoordinator(qc: QueryClient, publicId: string): ProjectCoordinat
   const coordinator = getCoordinator(qc);
   let project = coordinator.projects.get(publicId);
   if (!project) {
-    project = { pages: new Map(), protectedPages: new Set(), generation: 0 };
+    project = {
+      pages: new Map(),
+      protectedPages: new Set(),
+      extracting: new Set(),
+      generation: 0,
+    };
     coordinator.projects.set(publicId, project);
   }
   return project;
@@ -443,6 +462,43 @@ export async function ensurePageGeometry(
 ): Promise<PageGeometryEntry> {
   const { publicId, pageNumber } = args;
   if (!publicId) return { status: "unavailable", reason: "no-document" };
+
+  // A cache hit is not "pending" — it never awaits, so it must not open the window at all.
+  const hit = readGeometryEntry(qc, publicId, pageNumber);
+  if (hit) return hit;
+
+  // ⚠ `finally`, not a trailing delete: extraction has several early returns and can throw, and a
+  // page left marked as extracting forever would pin the "still preparing this sheet" message on
+  // it permanently — a stuck reassuring message is worse than none.
+  const project = projectCoordinator(qc, publicId);
+  project.extracting.add(pageNumber);
+  try {
+    return await extractPageGeometry(qc, args);
+  } finally {
+    project.extracting.delete(pageNumber);
+  }
+}
+
+/**
+ * Is this page's geometry being extracted right now?
+ *
+ * Read-only by construction — it must never create a coordinator row, because a *predicate* that
+ * mutates the structure it reports on would make "ask about a page" and "touch a page" the same
+ * operation.
+ */
+export function isGeometryPending(
+  qc: QueryClient,
+  publicId: string,
+  pageNumber: number,
+): boolean {
+  return coordinators.get(qc)?.projects.get(publicId)?.extracting.has(pageNumber) ?? false;
+}
+
+async function extractPageGeometry(
+  qc: QueryClient,
+  args: EnsurePageGeometryArgs,
+): Promise<PageGeometryEntry> {
+  const { publicId, pageNumber } = args;
 
   const cached = readGeometryEntry(qc, publicId, pageNumber);
   if (cached) return cached;

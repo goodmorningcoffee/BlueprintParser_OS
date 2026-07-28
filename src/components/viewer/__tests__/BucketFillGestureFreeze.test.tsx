@@ -40,7 +40,10 @@ const bucketClient = vi.hoisted(() => ({
   findPageCanvas: vi.fn(),
 }));
 
-vi.mock("@/lib/bucket-fill-client", () => ({
+// ⚠ Spread the real module — see the note in BucketFillControllerFreeze.test.ts. A two-export
+// factory silently disabled the server fallback the moment the controller imported a third symbol.
+vi.mock("@/lib/bucket-fill-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/bucket-fill-client")>()),
   clientBucketFill: bucketClient.clientBucketFill,
   findPageCanvas: bucketClient.findPageCanvas,
 }));
@@ -787,7 +790,17 @@ describe("BucketFill seam topology pins (POST-move: controller is sole mousedown
     expect(count(CONTROLLER, "return true;")).toBe(7);
     // [bucketfill P2] 278 -> 292: the one controller edit adds the `vector` options key (and its
     // two imports). PLAN prices this bump explicitly as part of that commit.
-    expect(CONTROLLER.match(/\n/g)).toHaveLength(292);
+    // [bucketfill P3] 292 -> 307: the status model's controller half, which PLAN §5 phase 3 prices
+    // as part of shipping statuses. Three changes, and the first is the load-bearing one:
+    //   (a) the `.catch` now distinguishes a REFUSAL from a transport failure. It previously sent
+    //       everything to the server raster path — which for a refusal fetches a number anyway and
+    //       commits it, defeating the refusal while looking like success;
+    //   (b) `handleFillSuccess` carries an optional `notice` so a caveated raster number arrives
+    //       WITH its caveat rather than silently;
+    //   (c) one more import.
+    // Comments were cut to the minimum that still states (a) before re-baselining, so this is the
+    // true floor rather than the first number that happened to pass.
+    expect(CONTROLLER.match(/\n/g)).toHaveLength(307);
     expect(AO.match(/\n/g)).toHaveLength(1571);
   });
 

@@ -3,7 +3,7 @@
 // lifted; the separately frozen lifecycle-entry and exact loading-abandon repairs guard their
 // synchronous publication seams. Preview preparation, assignment, keyboard, rendering, and
 // cleanup remain on their shared ACCEPT-PARTIAL surfaces.
-import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
+import { clientBucketFill, findPageCanvas, isBucketFillRefusedError } from "@/lib/bucket-fill-client";
 import { resolveBucketFillMode } from "@/lib/bucket-fill-mode";
 import { SENS_BALANCED } from "@/lib/oneclick/oneclick";
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -177,6 +177,7 @@ export const bucketFillController: ToolController = Object.freeze({
       vertices: { x: number; y: number }[];
       holes?: { vertices: { x: number; y: number }[] }[];
       method: string;
+      notice?: string;
     }) => {
       consumeBucketFill(() =>
         useToolStore.setState({
@@ -186,6 +187,12 @@ export const bucketFillController: ToolController = Object.freeze({
             holes: data.holes && data.holes.length > 0 ? data.holes : undefined,
             method: data.method,
           },
+          // ★ Rides on the EXISTING field: `bucketFillError` is inside an exact-set freeze and this
+          // phase prices no store-shape change. The banner derives tone from what is already true
+          // — a message WITH a preview is a caveat, one without is a refusal. No auto-clear timer
+          // (unlike handleFillError): it must outlive reading, since the user is still deciding
+          // whether to accept the number it warns about. It clears with the preview.
+          ...(data.notice ? { bucketFillError: data.notice } : {}),
         }),
       );
     };
@@ -281,8 +288,16 @@ export const bucketFillController: ToolController = Object.freeze({
         },
       )
         .then(handleFillSuccess)
-        .catch(() => {
-          if (ownsBucketFill()) serverFallback();
+        .catch((error) => {
+          if (!ownsBucketFill()) return;
+          // ⛔ A REFUSAL IS NOT A TRANSPORT FAILURE. This catch used to send everything to the
+          // server, which for a refusal fetches an area anyway and commits it — the silent-commit
+          // behaviour PLAN §5 phase 3 removes, wearing the face of success.
+          if (isBucketFillRefusedError(error)) {
+            handleFillError(error.decision.message ?? "Bucket fill refused");
+            return;
+          }
+          serverFallback();
         });
     } else {
       serverFallback();

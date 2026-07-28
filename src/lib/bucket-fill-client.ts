@@ -10,10 +10,53 @@ import type { BucketFillResult } from "@/workers/bucket-fill.worker";
 import type { QueryClient } from "@tanstack/react-query";
 import type { BucketFillMode } from "@/lib/bucket-fill-mode";
 import { routeBucketFill } from "@/lib/bucket-fill-routing";
-import { readGeometryEntry } from "@/queries/pageGeometryCache";
+import { readGeometryEntry, isGeometryPending } from "@/queries/pageGeometryCache";
 import { maskCacheKey } from "@/lib/oneclick-worker-core";
-import { ensureVectorMask, vectorClientFill } from "@/lib/bucket-fill-vector-client";
+import {
+  ensureVectorMask,
+  vectorClientFill,
+  isVectorRefusalError,
+} from "@/lib/bucket-fill-vector-client";
 import { MASK_DIM_DEFAULT } from "@/lib/bucket-fill-vector-limits";
+import {
+  decideBucketFillStatus,
+  classifySheet,
+  isRasterRetryPlausible,
+  rasterRetryRejected,
+  type StatusDecision,
+  type VectorAttempt,
+} from "@/lib/bucket-fill-status";
+
+/**
+ * The fill did not happen, and the user is being told why rather than handed another engine's
+ * number.
+ *
+ * ⛔ **THE CALLER MUST NOT TREAT THIS AS A TRANSPORT FAILURE.** `tools/bucketFill.ts` catches a
+ * rejected `clientBucketFill` and falls back to the SERVER raster path — which for a refusal would
+ * fetch a number anyway and commit it, defeating the refusal completely while looking like it
+ * worked. That is the exact silent-commit behaviour PLAN §5 phase 3 says no sheet class keeps.
+ *
+ * Brand-checked rather than `instanceof` for the same reason as `VectorRefusalError`: a duplicate
+ * module copy must not silently downgrade a refusal into a fallback.
+ */
+export class BucketFillRefusedError extends Error {
+  readonly isBucketFillRefusal = true as const;
+  readonly decision: StatusDecision;
+
+  constructor(decision: StatusDecision) {
+    super(decision.message ?? "Bucket fill refused");
+    this.name = "BucketFillRefusedError";
+    this.decision = decision;
+  }
+}
+
+export function isBucketFillRefusedError(e: unknown): e is BucketFillRefusedError {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { isBucketFillRefusal?: unknown }).isBucketFillRefusal === true
+  );
+}
 
 let workerInstance: Worker | null = null;
 let nextRequestId = 1;
@@ -60,6 +103,14 @@ export interface ClientBucketFillSuccess {
   holeCount: number;
   areaFraction: number;
   method: string;
+  /**
+   * A caveat that must be shown WITH this number — never instead of it, and never dropped.
+   *
+   * This is how "no sheet class keeps today's silent-commit behaviour" is honoured on the paths
+   * that still produce an area: the vector engine said something the user should know (it leaked,
+   * or the sheet is still being read) and raster answered anyway. Absent on an ordinary fill.
+   */
+  notice?: string;
 }
 
 /**
@@ -77,6 +128,8 @@ export async function clientBucketFill(
   // cannot do — no cached geometry, a refusal, a wedged worker, a timeout — falls through to the
   // raster code below unchanged. That is what makes this safe to ship dark: the raster path is not
   // reached *through* the vector path, it simply still runs.
+  let status: StatusDecision | null = null;
+
   if (options.vector) {
     const { publicId, pageNumber, queryClient, mode, sensitivity } = options.vector;
     const entry = readGeometryEntry(queryClient, publicId, pageNumber);
@@ -85,6 +138,12 @@ export async function clientBucketFill(
       entry,
       ocUnsafe: entry?.status === "ok" ? entry.geometry.ocUnsafe : false,
     });
+    // A sheet we could not read is treated as pure-vector: that is the CONSERVATIVE side, because
+    // `mixed` is the class that permits a raster retry after a leak verdict.
+    const sheetClass =
+      entry?.status === "ok" ? classifySheet(entry.geometry) : ("pure-vector" as const);
+    const geometryPending = isGeometryPending(queryClient, publicId, pageNumber);
+
     if (decision.engine === "vector" && entry?.status === "ok") {
       const geo = entry.geometry;
       const key = maskCacheKey(publicId, pageNumber, MASK_DIM_DEFAULT, "vector");
@@ -95,6 +154,7 @@ export async function clientBucketFill(
           imgW: geo.viewportWidth,
           imgH: geo.viewportHeight,
         });
+        // The good path: a vector number, no caveat, nothing to say.
         return await vectorClientFill(key, {
           seedX: seedPoint.x,
           seedY: seedPoint.y,
@@ -102,13 +162,25 @@ export async function clientBucketFill(
           barriers: options.barriers,
           polygonBarriers: options.polygonBarriers,
         });
-      } catch {
-        // Deliberately silent. Phase 3 owns the status model that decides when a vector refusal
-        // should be SHOWN (a `leak` on a pure-vector sheet must offer the barrier tool rather than
-        // quietly returning a raster number). Until then, falling back is the whole behaviour, and
-        // announcing it would be announcing something the user cannot act on.
+      } catch (e) {
+        // ★ THE DISTINCTION THE WHOLE PHASE TURNS ON, and the only place it can be made: a coded
+        // refusal is a VERDICT the engine reached; anything else is a failure it never got to.
+        const attempt: VectorAttempt = isVectorRefusalError(e)
+          ? { kind: "refused", refusal: e.code }
+          : { kind: "error" };
+        status = decideBucketFillStatus({ attempt, sheetClass, geometryPending });
       }
+    } else if (decision.engine === "raster") {
+      status = decideBucketFillStatus({
+        attempt: { kind: "not-run", reason: decision.reason },
+        sheetClass,
+        geometryPending,
+      });
     }
+
+    // Refuse BEFORE the raster path runs. Doing it after would mean paying for a fill we have
+    // already decided not to show — and, worse, having a number in hand at the moment of refusal.
+    if (status && !status.retryRaster) throw new BucketFillRefusedError(status);
   }
 
   if (!pageCanvas) {
@@ -133,13 +205,36 @@ export async function clientBucketFill(
       worker.removeEventListener("message", handler);
       const data = e.data;
       if (data.type === "result" && data.vertices && data.vertices.length >= 3) {
-        resolve({
+        const result: ClientBucketFillSuccess = {
           vertices: data.vertices,
           holes: data.holes ?? [],
           holeCount: data.holeCount ?? 0,
           areaFraction: data.areaFraction ?? 0,
           method: data.method || "client-raster",
-        });
+        };
+
+        // ★★ THE BACKSTOP, and it is scoped on purpose.
+        //
+        // It applies ONLY when the vector engine already said this space leaks and we retried
+        // raster anyway. In that situation we have an independent verdict that the boundary is
+        // open, so a raster fill covering a third of the sheet is not a room — it is the same
+        // escape measured by an engine with no leak detection of its own. Both phase-0
+        // confidently-wrong cases fail this decisively (`door-gap` and `e-size-hairline` each
+        // return essentially the whole sheet).
+        //
+        // ⚠ Deliberately NOT applied to ordinary raster fills. Today's default engine is raster
+        // for everyone, and adding a global plausibility gate here would change production
+        // behaviour for every user while the vector path is still dark — a much larger change
+        // than this phase is scoped to make, and one that belongs to phase 5's convergence.
+        if (
+          status?.code === "vector-leak-raster-retry" &&
+          !isRasterRetryPlausible(result.areaFraction)
+        ) {
+          reject(new BucketFillRefusedError(rasterRetryRejected()));
+          return;
+        }
+
+        resolve(status?.message ? { ...result, notice: status.message } : result);
       } else {
         reject(new Error(data.error || "Bucket fill returned no result"));
       }
