@@ -8,6 +8,7 @@ import { useToolStore, type ToolStoreData } from "@/stores/toolStore";
 // sharing) — group writes never reach it (two-hook split, TAKEOFF_IMPL/SPEC.md §2.2/§7.3).
 import { useTakeoffItems } from "@/queries/useTakeoff";
 import { selectActiveToolKey } from "@/lib/active-tool-state";
+import { polygonCentroid } from "@/lib/areaCalc";
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 import BucketFillAssignDialog from "./BucketFillAssignDialog";
 import SplitPreviewActions from "./SplitPreviewActions";
@@ -454,8 +455,10 @@ export default memo(function DrawingPreviewLayer({
 
       // Method label near centroid — append "(N holes)" when present so the
       // user immediately sees that courtyards were detected and excluded.
-      const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length * width;
-      const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length * height;
+      // [P3] AREA centroid, not a vertex mean (drifts with vertex density) — see areaCalc.ts.
+      const labelCentroid = polygonCentroid(verts);
+      const cx = labelCentroid.x * width;
+      const cy = labelCentroid.y * height;
       ctx.font = "bold 11px sans-serif";
       const baseLabel = bucketFillPreview.method === "vector" ? "Vector" : "Raster";
       const label = holes.length > 0 ? `${baseLabel} · ${holes.length} hole${holes.length === 1 ? "" : "s"}` : baseLabel;
@@ -616,12 +619,10 @@ export default memo(function DrawingPreviewLayer({
     splitLineA, splitLineB, splitPreview,
     bucketFillPendingPolygon]);
 
-  // Compute centroid for accept/cancel buttons
+  // Centroid for accept/cancel buttons. [P3] Area centroid — same reason as the label above.
   const previewCentroid = activeToolKey === "bucketFill" && bucketFillPreview ? (() => {
-    const verts = bucketFillPreview.vertices;
-    const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length * width;
-    const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length * height;
-    return { x: cx, y: cy };
+    const c = polygonCentroid(bucketFillPreview.vertices);
+    return { x: c.x * width, y: c.y * height };
   })() : null;
 
   // Canvas always mounts — stable ref, stable useEffect timing. Empty canvas is cheap;

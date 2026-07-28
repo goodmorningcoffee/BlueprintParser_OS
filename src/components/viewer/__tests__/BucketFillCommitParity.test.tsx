@@ -78,10 +78,9 @@ const PENDING = {
   unit: "SF",
   bbox: [0.2, 0.2, 0.4, 0.5] as [number, number, number, number],
   /**
-   * ⚠ Present on the PENDING polygon and deliberately NOT asserted in the POST body below —
-   * because `commitBucketFill` does not persist it. That is today's truth, and phase 3's
-   * "persist `method` on the annotation" item is exactly the change that will make this test's
-   * body assertion fail. When it does, that is the feature landing, not a regression.
+   * [bucketfill P3] Now PERSISTED. This comment previously said it was not, and predicted that
+   * the phase-3 item would make the body assertion fail. It did, on the first run after the
+   * change. Left as a record that the prediction was written down before the fact.
    */
   method: "client-raster",
 };
@@ -228,8 +227,68 @@ describe("★ BucketFillCommitParity — both paths persist the same annotation"
         holes: PENDING.holes,
         areaSqUnits: PENDING.areaSqUnits,
         unit: PENDING.unit,
+        // [bucketfill P3] `method` now persists. This assertion FAILED when the field landed,
+        // which is exactly what the note on PENDING predicted — the feature arriving, not a
+        // regression. Provenance is what makes the mixed-provenance window auditable.
+        method: "client-raster",
       },
     });
+  });
+
+  it("★ carries `method` identically on BOTH paths, so provenance survives either route", async () => {
+    // Provenance is only useful if it is the same regardless of how the item was created. If the
+    // create path lost it, half of a project's history would read as unknown for a reason that has
+    // nothing to do with which engine measured it.
+    const qcA = newClient();
+    seed(qcA, [item(EXISTING_ID)]);
+    primeStores();
+    const viewA = renderDialog(qcA);
+    fireEvent.click(screen.getByText(NAME));
+    await waitFor(() => expect(annotationPosts()).toHaveLength(1));
+    const a = annotationPosts()[0].body as { data: { method?: string } };
+    viewA.unmount();
+
+    captured = [];
+    const qcB = newClient();
+    seed(qcB, []);
+    primeStores();
+    renderDialog(qcB);
+    fireEvent.change(screen.getByPlaceholderText("New item name"), { target: { value: NAME } });
+    fireEvent.click(screen.getByText("Create & Assign"));
+    await waitFor(() => expect(annotationPosts()).toHaveLength(1));
+    const b = annotationPosts()[0].body as { data: { method?: string } };
+
+    expect(a.data.method).toBe("client-raster");
+    expect(b.data.method).toBe(a.data.method);
+  });
+
+  it("★ writes NO method when the pending polygon has none — absent means UNKNOWN, not raster", async () => {
+    // Every annotation written before this field existed has no `method`. Defaulting a missing
+    // value to "raster" anywhere downstream would silently relabel history as measured-by-raster,
+    // which is precisely the claim the field exists to make checkable.
+    const noMethod = { ...PENDING } as Record<string, unknown>;
+    delete noMethod.method;
+    const qc = newClient();
+    seed(qc, [item(EXISTING_ID)]);
+    act(() => {
+      useSessionStore.setState({ publicId: PUBLIC_ID, isDemo: false });
+      useViewerCoreStore.setState({ pageNumber: PAGE });
+      useToolStore.setState({ bucketFillPendingPolygon: noMethod as never });
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <BucketFillAssignDialog
+          pendingPolygon={noMethod as never}
+          width={1000}
+          height={800}
+          cssScale={1}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByText(NAME));
+    await waitFor(() => expect(annotationPosts()).toHaveLength(1));
+    const body = annotationPosts()[0].body as { data: Record<string, unknown> };
+    expect(body.data.method).toBeUndefined();
   });
 
   it("omits `holes` entirely when there are none, on both paths alike", async () => {

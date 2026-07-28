@@ -562,6 +562,11 @@ function useBucketFillCommit(
         ...(pending.holes && pending.holes.length > 0 ? { holes: pending.holes } : {}),
         areaSqUnits: pending.areaSqUnits,
         unit: pending.unit,
+        // [bucketfill P3] Provenance travels with the measurement. Written unconditionally rather
+        // than only when vector: a row with no `method` must keep meaning "written before this
+        // field existed", so defaulting a missing value to "raster" later would silently relabel
+        // history.
+        method: pending.method,
       };
       const tempId = -Date.now();
       const optimistic: ClientAnnotation = {

@@ -276,6 +276,7 @@ export interface AreaPolygonData {
   holes?: { vertices: { x: number; y: number }[] }[];
   areaSqUnits: number;
   unit: AreaUnitSq;
+  method?: string; // [P3] engine provenance; absent = UNKNOWN (pre-field row), never "raster"
 }
 
 export interface TextractWord {

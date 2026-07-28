@@ -329,8 +329,13 @@ const MAX_LINES_BASELINE = {
       reason: "viewer-tool",
     },
     {
+      // [bucketfill P3] 868 -> 869: net +1, and it is the `polygonCentroid` IMPORT. The §3.4
+      // consumer sweep found this file re-implementing the vertex-mean centroid bug already fixed
+      // in areaCalc.ts, twice. Replacing both with the shared function made the LOGIC shorter;
+      // only the import line is new. Bumped rather than absorbed, because a bug fix should not
+      // have to argue with a ceiling.
       path: "src/components/viewer/DrawingPreviewLayer.tsx",
-      maxLines: 868,
+      maxLines: 869,
       reason: "viewer-hot-exception",
     },
     {
@@ -409,8 +414,12 @@ const MAX_LINES_BASELINE = {
       reason: "viewer-command-owner",
     },
     {
+      // [bucketfill P3] 1163 -> 1164: ONE line for `AreaPolygonData.method`, the engine-provenance
+      // field PLAN §5 phase 3 requires. Bumped deliberately rather than absorbed: the field is
+      // mandatory, and the comment documenting it was cut to a trailing one-liner first so the
+      // bump is the true minimum. This ceiling exists to stop drift, not to block a required field.
       path: "src/types/index.ts",
-      maxLines: 1163,
+      maxLines: 1164,
       reason: "legacy-schema-catalog",
     },
     {

@@ -699,7 +699,7 @@ describe("commitBucketFill", () => {
     expect(persistFetchMock).not.toHaveBeenCalled();
   });
 
-  it("writes cache before clearing pending, keeps demo local, and omits empty holes/method", () => {
+  it("writes cache before clearing pending, keeps demo local, omits empty holes, and PERSISTS method", () => {
     const client = freshClient();
     setViewerStoreStateForTest({
       isDemo: true,
@@ -740,7 +740,16 @@ describe("commitBucketFill", () => {
       },
     });
     expect(created.data).not.toHaveProperty("holes");
-    expect(created.data).not.toHaveProperty("method");
+    // [bucketfill P3] `method` is now PERSISTED — PLAN §5 phase 3 prices this change explicitly.
+    // Until now the pending polygon carried provenance and the commit path dropped it, so a
+    // project could not be asked afterwards which engine measured which area. Once vector is on
+    // for some sheets and not others that question becomes unanswerable without this field, and
+    // it is also the denominator for the fallback-fire-rate question.
+    //
+    // ⚠ `holes` stays absent here and that asymmetry is deliberate: holes are conditionally
+    // spread only when non-empty, while method is written unconditionally so that a MISSING value
+    // keeps meaning "written before this field existed" rather than "raster".
+    expect(created.data).toHaveProperty("method", "pdf-vector");
   });
 
   it("uses invocation-time state and surfaces the exact G6 error for an empty publicId", async () => {
@@ -811,7 +820,7 @@ describe("commitBucketFill", () => {
     expect(readAnnotations(client, "A").map((row) => row.id)).toEqual([TEMP_ID]);
   });
 
-  it("POSTs non-empty holes without method, then reconciles only the optimistic id", async () => {
+  it("POSTs non-empty holes WITH method, then reconciles only the optimistic id", async () => {
     const client = freshClient();
     const save = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(save.promise);
@@ -832,6 +841,8 @@ describe("commitBucketFill", () => {
       holes,
       areaSqUnits: 120,
       unit: "sqft",
+      // [bucketfill P3] provenance now travels with the persisted row
+      method: "pdf-vector",
     };
     expect(persistFetchMock).toHaveBeenCalledWith("/api/annotations", {
       projectId: "A",
