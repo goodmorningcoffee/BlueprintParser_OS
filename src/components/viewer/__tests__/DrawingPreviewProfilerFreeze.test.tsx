@@ -125,6 +125,55 @@ describe("DrawingPreviewLayer active-tool render budget", () => {
     expect((cancel as HTMLButtonElement).disabled).toBe(true);
   });
 
+  // ── [bucketfill P3] the provenance badge ──────────────────────────────────────────────
+  //
+  // ⚠ THIS TEST EXISTS BECAUSE THE BADGE SHIPPED DEAD. The label compared
+  // `method === "vector"`, and no producer has ever emitted that string — the real values are
+  // `client-vector`, `client-raster` and `server-raster`. So the branch was always false and every
+  // fill was labelled "Raster". It was invisible because that label was CORRECT for the only
+  // engine that could run; the moment the vector path goes live it silently mislabels every vector
+  // fill, on the very feature whose point is knowing which engine measured your room.
+  //
+  // Asserting the rendered text is what makes this real — the predicate alone had unit tests while
+  // the component still used the dead comparison, and everything was green.
+  it("★ labels a VECTOR fill 'Vector' — the badge is not a dead string compare", () => {
+    act(() => useToolStore.setState({
+      activeTool: { kind: "bucketFill" },
+      bucketFillPreview: {
+        vertices: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.4, y: 0.1 },
+          { x: 0.4, y: 0.4 },
+        ],
+        method: "client-vector",
+      },
+    }));
+
+    render(<DrawingPreviewLayer width={100} height={100} cssScale={1} />, { wrapper });
+
+    expect(fillText).toHaveBeenCalledWith("Vector", expect.anything(), expect.anything());
+    expect(fillText).not.toHaveBeenCalledWith("Raster", expect.anything(), expect.anything());
+  });
+
+  it("labels a raster fill 'Raster', so the badge discriminates rather than always saying one", () => {
+    act(() => useToolStore.setState({
+      activeTool: { kind: "bucketFill" },
+      bucketFillPreview: {
+        vertices: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.4, y: 0.1 },
+          { x: 0.4, y: 0.4 },
+        ],
+        method: "client-raster",
+      },
+    }));
+
+    render(<DrawingPreviewLayer width={100} height={100} cssScale={1} />, { wrapper });
+
+    expect(fillText).toHaveBeenCalledWith("Raster", expect.anything(), expect.anything());
+    expect(fillText).not.toHaveBeenCalledWith("Vector", expect.anything(), expect.anything());
+  });
+
   it("makes a ready Split button closure inert after a same-kind activation successor", () => {
     const readyPreview = {
       targetAnnotationId: 44,

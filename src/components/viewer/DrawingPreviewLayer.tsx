@@ -9,6 +9,7 @@ import { useToolStore, type ToolStoreData } from "@/stores/toolStore";
 import { useTakeoffItems } from "@/queries/useTakeoff";
 import { selectActiveToolKey } from "@/lib/active-tool-state";
 import { polygonCentroid } from "@/lib/areaCalc";
+import { isVectorMethod } from "@/lib/bucket-fill-mode";
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 import BucketFillAssignDialog from "./BucketFillAssignDialog";
 import SplitPreviewActions from "./SplitPreviewActions";
@@ -460,7 +461,8 @@ export default memo(function DrawingPreviewLayer({
       const cx = labelCentroid.x * width;
       const cy = labelCentroid.y * height;
       ctx.font = "bold 11px sans-serif";
-      const baseLabel = bucketFillPreview.method === "vector" ? "Vector" : "Raster";
+      // [P3] Predicate, not `=== "vector"`: nothing emits that, so the branch shipped DEAD.
+      const baseLabel = isVectorMethod(bucketFillPreview.method) ? "Vector" : "Raster";
       const label = holes.length > 0 ? `${baseLabel} · ${holes.length} hole${holes.length === 1 ? "" : "s"}` : baseLabel;
       const tw = ctx.measureText(label).width;
       ctx.fillStyle = "rgba(0,0,0,0.7)";

@@ -340,8 +340,14 @@ const MAX_LINES_BASELINE = {
       // caveat on a number the user can still accept, one without is a refusal. Storing it would
       // add a key to an exact-set store freeze and create a second source of truth that can
       // disagree with the first. Comment cut to three lines before bumping, so this is the floor.
+      // [bucketfill P3] 872 -> 874: net +2 — one import and one comment line. The preview badge
+      // compared `method === "vector"`, a string NO producer has ever emitted (the real values are
+      // client-vector / client-raster / server-raster), so the branch shipped dead and every fill
+      // was labelled "Raster". Invisible because that label was correct for the only engine that
+      // could run; live vector would have silently mislabelled every vector fill. Comment cut to
+      // one line before bumping.
       path: "src/components/viewer/DrawingPreviewLayer.tsx",
-      maxLines: 872,
+      maxLines: 874,
       reason: "viewer-hot-exception",
     },
     {

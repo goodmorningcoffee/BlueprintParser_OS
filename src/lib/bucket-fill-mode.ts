@@ -147,3 +147,41 @@ export function vectorMayRun(mode: BucketFillMode): boolean {
 export function shouldPrefetchGeometry(mode: BucketFillMode, toolArmed: boolean): boolean {
   return toolArmed && vectorMayRun(mode);
 }
+
+// ── [bucketfill P3] which ENGINE produced a polygon ─────────────────────────────────────
+//
+// ⚠ THIS EXISTS BECAUSE A SHIPPED BRANCH WAS DEAD. `DrawingPreviewLayer` labels the preview
+// `bucketFillPreview.method === "vector" ? "Vector" : "Raster"`, and PLAN recorded that badge as
+// "free — the branch already ships". It does ship. It can also never fire: **no producer emits the
+// string `"vector"`.** The three that exist are `client-vector` (adapter + worker #2),
+// `client-raster` (legacy worker) and `server-raster` (the API fallback), so the comparison is
+// always false and every fill has always been labelled "Raster".
+//
+// It was invisible because the label was correct for the only engine that could run. The moment
+// the vector path goes live it silently mislabels every vector fill — a provenance claim that is
+// wrong, on the exact feature whose selling point is knowing which engine measured your room.
+//
+// So the test is a PREDICATE over the real values rather than an equality against a string nobody
+// produces. `method` is persisted on the annotation (phase 3) and read back by anything auditing
+// the mixed-provenance window, so the same predicate has to serve both.
+
+/** Every `method` value a bucket fill can carry. Persisted, so treat these as a wire format. */
+export const BUCKET_FILL_METHODS = {
+  clientVector: "client-vector",
+  clientRaster: "client-raster",
+  serverRaster: "server-raster",
+} as const;
+
+export type BucketFillMethod =
+  (typeof BUCKET_FILL_METHODS)[keyof typeof BUCKET_FILL_METHODS];
+
+/**
+ * Did the VECTOR engine produce this polygon?
+ *
+ * Accepts `undefined`/unknown strings and answers `false`: rows written before `method` existed
+ * mean UNKNOWN, and unknown must never be reported as vector. Erring the other way would relabel
+ * history — the same reasoning that keeps `method` absent rather than defaulted on old rows.
+ */
+export function isVectorMethod(method: string | null | undefined): boolean {
+  return method === BUCKET_FILL_METHODS.clientVector;
+}
