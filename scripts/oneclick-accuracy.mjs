@@ -83,11 +83,11 @@
  * ── HONESTY NOTES ───────────────────────────────────────────────────────────────────────
  * - The legacy leg drives the worker's REAL exported primitives (bucketRgbaHistogram,
  *   bucketRgbaBinarize, morphClose, detectSolidRoomRectangle, floodSolidRoomRectangle,
- *   floodFill, traceBorder, findHoleBorders). Only its two PRIVATE steps are reimplemented
- *   here — `downscaleAndBinarize` and `douglasPeucker`, neither of which is exported. Both
- *   reimplementations are transcribed from the worker and marked MIRROR: below. If the worker
- *   changes, they must change with it; the parity check at the end of this file is what
- *   catches that.
+ *   floodFill, traceBorder, findHoleBorders). Only its two PRIVATE steps are reimplemented —
+ *   `downscaleAndBinarize` and `douglasPeucker`, neither of which is exported. Those mirrors,
+ *   the flood/trace sequence they sit in, and the sha256 PARITY pin that catches drift all live
+ *   in `scripts/probes/_legacy-mirror.mjs`, shared with `scripts/corpus-differential.mjs` so
+ *   that "the legacy leg" is ONE sequence rather than two copies drifting apart.
  * - `standardFontDataUrl` is wired. Without it the raster leg binarizes different text ink
  *   than production does, which silently changes what the flood stops at.
  * - Rows are emitted for refusals and errors too, never dropped, with the status verbatim.
@@ -126,7 +126,7 @@ const manifestArg = flag("manifest");
 const zooms = (flag("zooms", "0.5,1,2") || "").split(",").map(Number).filter((z) => z > 0);
 const legs = (flag("legs", "vector,legacy") || "").split(",").map((s) => s.trim());
 const maskDim = Number(flag("mask-dim", "3000"));
-const maxDim = Number(flag("max-dim", "1000")); // the worker's own default (processFill:730)
+const maxDim = Number(flag("max-dim", "1000")); // the worker's own default (processFill:558)
 const tolerance = Number(flag("tolerance", "30"));
 const dilation = Number(flag("dilation", "0"));
 const quiet = bool("quiet");
@@ -148,13 +148,14 @@ if (!enginePath) {
   process.exit(2);
 }
 
-// The worker registers a global message listener at import time. In node there is no `self`,
-// so shim it BEFORE importing; without this the import throws and the legacy leg cannot run.
-globalThis.self ??= { addEventListener() {}, postMessage() {} };
+// The shared legacy mirror shims `globalThis.self` and re-exports the worker module, so
+// importing it is also how the worker becomes loadable under bare node.
+const { downscaleAndBinarize, legacyFloodAndTrace, checkParity } = await import(
+  "./probes/_legacy-mirror.mjs"
+);
 
 const pdfjs = await import(join(REPO, "node_modules/pdfjs-dist/legacy/build/pdf.mjs"));
 const oc = await import(enginePath);
-const W = await import(join(REPO, "src/workers/bucket-fill.worker.ts"));
 // ★ The vector leg drives the SHIPPING adapter, not the engine directly — see vectorLeg().
 const adapter = await import(join(REPO, "src/lib/bucket-fill-vector-adapter.ts"));
 /** Reverse of the adapter's exported refusal table: message -> short code, for the CSV. */
@@ -163,96 +164,6 @@ const REFUSAL_CODE = new Map(
 );
 const { createCanvas } = await import("@napi-rs/canvas");
 const STANDARD_FONTS = join(REPO, "node_modules/pdfjs-dist/standard_fonts/");
-
-// ── MIRROR: worker `douglasPeucker` (bucket-fill.worker.ts:547) — NOT exported ───────────
-// Transcribed, not approximated. Perpendicular distance to the chord, with the degenerate
-// zero-length chord falling back to point distance, and the same [0,1] clamp on t.
-function douglasPeucker(points, epsilon) {
-  if (points.length <= 2) return points;
-  let maxDist = 0,
-    maxIdx = 0;
-  const start = points[0],
-    end = points[points.length - 1];
-  const ldx = end.x - start.x,
-    ldy = end.y - start.y;
-  const lenSq = ldx * ldx + ldy * ldy;
-  for (let i = 1; i < points.length - 1; i++) {
-    let dist;
-    if (lenSq === 0) {
-      const ddx = points[i].x - start.x,
-        ddy = points[i].y - start.y;
-      dist = Math.sqrt(ddx * ddx + ddy * ddy);
-    } else {
-      const t = Math.max(
-        0,
-        Math.min(1, ((points[i].x - start.x) * ldx + (points[i].y - start.y) * ldy) / lenSq),
-      );
-      const ddx = points[i].x - (start.x + t * ldx),
-        ddy = points[i].y - (start.y + t * ldy);
-      dist = Math.sqrt(ddx * ddx + ddy * ddy);
-    }
-    if (dist > maxDist) {
-      maxDist = dist;
-      maxIdx = i;
-    }
-  }
-  if (maxDist > epsilon) {
-    const left = douglasPeucker(points.slice(0, maxIdx + 1), epsilon);
-    const right = douglasPeucker(points.slice(maxIdx), epsilon);
-    return [...left.slice(0, -1), ...right];
-  }
-  return [start, end];
-}
-
-// ── MIRROR: worker `downscaleAndBinarize` (bucket-fill.worker.ts:114) — NOT exported ─────
-// The worker takes an ImageBitmap and an OffscreenCanvas; here the page is rendered with
-// @napi-rs/canvas instead. Everything downstream of getImageData is the worker's own
-// EXPORTED code (bucketRgbaHistogram / bucketRgbaBinarize) plus its Otsu loop transcribed
-// verbatim, including the `threshold + (30 - tolerance)` adjustment and the clamp.
-function downscaleAndBinarize(srcCanvas, maxDimension, tol) {
-  const ow = srcCanvas.width,
-    oh = srcCanvas.height;
-  const ratio = Math.min(maxDimension / ow, maxDimension / oh, 1);
-  const w = Math.round(ow * ratio);
-  const h = Math.round(oh * ratio);
-
-  const canvas = createCanvas(w, h);
-  const ctx = canvas.getContext("2d");
-  // The worker draws onto a transparent backing store; a PDF render is opaque white, so match
-  // production by painting white first. Without this, antialiased edges composite against
-  // transparent black and the Otsu histogram sees ink that production never sees.
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(srcCanvas, 0, 0, w, h);
-  const rgba = ctx.getImageData(0, 0, w, h).data;
-  const n = w * h;
-
-  const { hist, filterSafe } = W.bucketRgbaHistogram(rgba, n, true);
-
-  let sum = 0;
-  for (let value = 0; value < hist.length; value++) sum += value * hist[value];
-  let sumB = 0,
-    wB = 0,
-    maxVar = 0,
-    threshold = 0;
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t];
-    if (wB === 0) continue;
-    const wF = n - wB;
-    if (wF === 0) break;
-    sumB += t * hist[t];
-    const mB = sumB / wB;
-    const mF = (sum - sumB) / wF;
-    const between = wB * wF * (mB - mF) * (mB - mF);
-    if (between > maxVar) {
-      maxVar = between;
-      threshold = t;
-    }
-  }
-  const adjustedThreshold = Math.max(0, Math.min(255, threshold + (30 - tol)));
-  const bin = W.bucketRgbaBinarize(rgba, n, adjustedThreshold);
-  return { bin, w, h, otsu: threshold, adjusted: adjustedThreshold, filterSafe };
-}
 
 // ── the two legs ─────────────────────────────────────────────────────────────
 // Vector: extract -> mask -> flood -> trace. Seeds and traced vertices are both in DEVICE px
@@ -310,7 +221,8 @@ function vectorLeg(geo, vp, seedPt, zoom, stage, pageWpt, pageHpt) {
 }
 
 
-// Legacy: mirror processFill (bucket-fill.worker.ts:729) step for step.
+// Legacy: the shared legacy leg (scripts/probes/_legacy-mirror.mjs), which mirrors processFill
+// (bucket-fill.worker.ts:556) step for step. This wrapper only adds the pt² conversion.
 function legacyLeg(pageCanvas, seedPt, zoom, pageWpt, pageHpt, stage) {
   let t = performance.now();
   const { bin, w, h, otsu, adjusted } = downscaleAndBinarize(pageCanvas, maxDim, tolerance);
@@ -322,43 +234,21 @@ function legacyLeg(pageCanvas, seedPt, zoom, pageWpt, pageHpt, stage) {
   const seedPx = Math.max(0, Math.min(w - 1, Math.round((seedPt.x / pageWpt) * w)));
   const seedPy = Math.max(0, Math.min(h - 1, Math.round((seedPt.y / pageHpt) * h)));
 
-  const radius = dilation <= 0 ? 0 : Math.ceil(dilation / 2);
-  const solidRoom = W.detectSolidRoomRectangle(bin, w, h, radius);
-  const closed = radius > 0 && !solidRoom ? W.morphClose(bin, w, h, radius) : bin;
+  const r = legacyFloodAndTrace(bin, w, h, seedPx, seedPy, dilation);
+  stage.floodMs = r.floodMs;
+  stage.traceMs = r.traceMs;
+  if (r.status !== "ok") return { ...r, areaPt2: null, otsu, adjusted };
 
-  t = performance.now();
-  const canUseSolid =
-    solidRoom !== null &&
-    seedPx >= solidRoom.minX &&
-    seedPx <= solidRoom.maxX &&
-    seedPy >= solidRoom.minY &&
-    seedPy <= solidRoom.maxY;
-  const flood = canUseSolid
-    ? W.floodSolidRoomRectangle(solidRoom, w, h)
-    : W.floodFill(closed, w, h, seedPx, seedPy);
-  stage.floodMs = performance.now() - t;
-
-  if (flood.area < 20) return { status: "error:no-region", areaPt2: null, verts: 0, otsu, adjusted };
-
-  t = performance.now();
-  const border = W.traceBorder(flood.filled, w, h, flood.firstIndex);
-  if (border.length < 3) return { status: "error:untraceable", areaPt2: null, verts: 0, otsu, adjusted };
-  const epsilon = Math.max(w, h) * 0.005;
-  const simplified = douglasPeucker(border, epsilon);
-  stage.traceMs = performance.now() - t;
-  if (simplified.length < 3) return { status: "error:too-few-verts", areaPt2: null, verts: 0, otsu, adjusted };
-
-  // processFill:819 — areaFraction is net of holes, counted as pixels were first marked.
-  const areaFraction = flood.area / (w * h);
+  const areaPt2 = r.areaFraction * pageWpt * pageHpt;
   return {
     status: "ok",
-    // processFill:819 — already NET of holes (holes stay zero during the flood).
-    areaPt2: areaFraction * pageWpt * pageHpt,
-    areaNetPt2: areaFraction * pageWpt * pageHpt,
-    verts: simplified.length,
+    // processFill:646 — already NET of holes (holes stay zero during the flood).
+    areaPt2,
+    areaNetPt2: areaPt2,
+    verts: r.verts,
     otsu,
     adjusted,
-    solidRoom: canUseSolid,
+    solidRoom: r.solidRoom,
   };
 }
 
@@ -765,64 +655,8 @@ out.push(
 );
 process.stderr.write(out.join("\n"));
 
-// ── PARITY CHECK — the claim in the header made real ─────────────────────────
-// The legacy leg reimplements the worker's two PRIVATE steps. If the worker changes them and
-// these mirrors do not, every legacy number silently becomes wrong while still looking fine.
-// There is no import that can catch it (the functions are not exported), so pin their SOURCE.
-// A mismatch is LOUD but not fatal: the run still happened, the numbers are just suspect.
-const PINNED = {
-  // sha256 of the exact function text in src/workers/bucket-fill.worker.ts, recorded 2026-07-26.
-  downscaleAndBinarize: "ad9b86c4c38ebf0f",
-  douglasPeucker: "f1c4091ddcc464b3",
-};
-function extractFn(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start === -1) return null;
-  let i = src.indexOf("{", start), depth = 0;
-  for (let j = i; j < src.length; j++) {
-    if (src[j] === "{") depth++;
-    else if (src[j] === "}") {
-      depth--;
-      if (depth === 0) return src.slice(start, j + 1);
-    }
-  }
-  return null;
-}
-try {
-  const { createHash } = await import("node:crypto");
-  const workerSrc = readFileSync(join(REPO, "src/workers/bucket-fill.worker.ts"), "utf8");
-  const drift = [];
-  const actual = {};
-  for (const name of Object.keys(PINNED)) {
-    const fn = extractFn(workerSrc, name);
-    if (!fn) {
-      drift.push(`${name}: NOT FOUND in the worker (renamed or removed?)`);
-      continue;
-    }
-    const h = createHash("sha256").update(fn).digest("hex").slice(0, 16);
-    actual[name] = h;
-    if (PINNED[name] !== "PIN_ME" && PINNED[name] !== h) {
-      drift.push(`${name}: worker=${h} pinned=${PINNED[name]} — the MIRROR in this file is STALE`);
-    }
-  }
-  if (Object.values(PINNED).includes("PIN_ME")) {
-    process.stderr.write(
-      "PARITY: pins not yet set. Record these in PINNED at the bottom of this script:\n" +
-        Object.entries(actual).map(([k, v]) => `    ${k}: "${v}",\n`).join("") + "\n",
-    );
-  } else if (drift.length) {
-    process.stderr.write(
-      "\n!! PARITY DRIFT — the legacy leg no longer mirrors the worker !!\n" +
-        drift.map((d) => "   " + d).join("\n") +
-        "\n   Re-transcribe the MIRROR: blocks in this file before trusting any legacy number.\n\n",
-    );
-    process.exitCode = 3;
-  } else if (!quiet) {
-    process.stderr.write("PARITY: legacy mirrors match the worker source.\n\n");
-  }
-} catch (e) {
-  process.stderr.write(`PARITY: check could not run (${e.message})\n`);
-}
+// ── PARITY: the shared mirror still matches the worker (exit 3 on drift) ─────
+await checkParity({ quiet });
 
 // ── PHASE-1 GATE: the VA oracle ──────────────────────────────────────────────
 // PLAN §5 phase 1's last gate condition. Three assertions against three rooms of OpenTakeoff's
