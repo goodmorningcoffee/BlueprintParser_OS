@@ -31,6 +31,7 @@ import {
   type OneclickResponse,
 } from "@/lib/oneclick-worker-core";
 import type { VectorRefusal } from "@/lib/bucket-fill-vector-adapter";
+import { recordMaskTiming } from "@/lib/bucket-fill-perf";
 
 /**
  * The engine ran and reached a conclusion — as distinct from the engine failing to run.
@@ -134,6 +135,8 @@ export function ensureVectorMask(key: string, input: VectorMaskInput): Promise<v
       if (data.type === "mask-ready") {
         if (data.key !== key) return;
         worker.removeEventListener("message", handler);
+        // Phase-2 dev instrumentation (PLAN §9 U1). A no-op unless the table is armed.
+        if (data.maskMs !== undefined) recordMaskTiming(key, data.maskMs);
         resolve();
         return;
       }
@@ -232,6 +235,8 @@ export function vectorClientFill(
           holeCount: data.holeCount ?? 0,
           areaFraction: data.areaFraction ?? 0,
           method: data.method || "client-vector",
+          msFlood: data.floodMs,
+          msTrace: data.traceMs,
         });
         return;
       }

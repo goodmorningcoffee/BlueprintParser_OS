@@ -123,7 +123,7 @@ export interface EvictMessage {
 export type OneclickRequest = MaskMessage | FillMessage | EvictMessage;
 
 export type OneclickResponse =
-  | { type: "mask-ready"; key: string; maskBytes: number }
+  | { type: "mask-ready"; key: string; maskBytes: number; maskMs?: number }
   | { type: "mask-error"; key: string; error: string; code?: VectorRefusal }
   | {
       type: "result";
@@ -133,6 +133,16 @@ export type OneclickResponse =
       holeCount: number;
       areaFraction: number;
       method: "client-vector";
+      /**
+       * Phase-2 dev instrumentation (PLAN §9 U1). OPTIONAL and always present in practice — they
+       * are plain numbers on a structured-clone message, cost nothing to produce, and the alternative
+       * (a second timing channel, or the main thread timing a postMessage round-trip) would measure
+       * transport rather than the stage. The worker does not decide whether anyone wants them; it
+       * reports, and `bucket-fill-perf.ts` decides whether to print. Keeping the gate OUT of here is
+       * what lets this module stay a pure function over explicit state, as its header requires.
+       */
+      floodMs?: number;
+      traceMs?: number;
     }
   /**
    * ★ `code` carries the VERDICT; `error` carries the prose.
@@ -190,7 +200,9 @@ function handleMask(state: OneclickWorkerState, msg: MaskMessage): OneclickRespo
     return { type: "mask-error", key: msg.key, error: VECTOR_REFUSALS["no-geometry"], code: "no-geometry" };
   }
   const maskDim = clampMaskDim(msg.maskDimension ?? MASK_DIM_DEFAULT);
+  const tMask = performance.now();
   const maskObj = buildMask(segs, msg.imgW, msg.imgH, maskDim, msg.meta);
+  const maskMs = performance.now() - tMask;
 
   state.masks.set(msg.key, { maskObj, imgW: msg.imgW, imgH: msg.imgH });
 
@@ -202,7 +214,7 @@ function handleMask(state: OneclickWorkerState, msg: MaskMessage): OneclickRespo
     state.masks.delete(oldest);
   }
 
-  return { type: "mask-ready", key: msg.key, maskBytes: maskObj.mask.byteLength };
+  return { type: "mask-ready", key: msg.key, maskBytes: maskObj.mask.byteLength, maskMs };
 }
 
 function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickResponse {
@@ -243,12 +255,14 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
   // `floodRegion` reads `.mask`, so hand it the working buffer without mutating the cache entry.
   const floodInput: MaskObj = hasBarriers ? { ...maskObj, mask: workingMask } : maskObj;
 
+  const tFlood = performance.now();
   const flood = floodRegion(
     floodInput,
     msg.seedX * imgW,
     msg.seedY * imgH,
     msg.sensitivity ?? SENS_BALANCED,
   );
+  const floodMs = performance.now() - tFlood;
   if (flood.status !== "ok") {
     return {
       type: "error",
@@ -259,7 +273,9 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
     };
   }
 
+  const tTrace = performance.now();
   const ring = snapVertices(traceRegion(flood, msg.epsMaskPx), NO_SNAP, SNAP_TOL_PX);
+  const traceMs = performance.now() - tTrace;
   if (ring.length < MIN_VERTICES) {
     return {
       type: "error",
@@ -291,6 +307,8 @@ function handleFill(state: OneclickWorkerState, msg: FillMessage): OneclickRespo
     holeCount: holes.length,
     areaFraction: flood.count / (mw * mh),
     method: "client-vector",
+    floodMs,
+    traceMs,
   };
 }
 

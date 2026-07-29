@@ -46,6 +46,7 @@ import {
   shouldPrefetchGeometry,
   type BucketFillMode,
 } from "@/lib/bucket-fill-mode";
+import { setBucketFillPerfMode } from "@/lib/bucket-fill-perf";
 import type { OpsTable } from "@/lib/oneclick/oneclick";
 
 export interface VectorGeometryPrefetchArgs {
@@ -96,6 +97,15 @@ export function useVectorGeometryPrefetch(
   const [mode] = useState<BucketFillMode>(
     () => args.modeOverride ?? resolveBucketFillMode(),
   );
+
+  // ★ The phase-2 perf table's mode gate, armed HERE and not only on the click path.
+  // Geometry extraction runs from this hook on tool-arm, BEFORE any click — so if the only setter
+  // were `clientBucketFill`, `msParse` and `msWalk` would still be unarmed when the page was
+  // parsed, and the table would print "—" for exactly the two columns PLAN §5 phase 2's gate
+  // names (msParse is the ~1.2 s number the whole seam exists to pay once). Setting it during
+  // render is safe: it is an idempotent write of a value this hook already resolved, and
+  // `setBucketFillPerfMode` touches nothing but a module-level variable read by dev-only code.
+  setBucketFillPerfMode(mode);
 
   // Attempts are tracked in a ref, not state: recording one must never trigger a render, and this
   // is a de-duplication ledger rather than anything the UI reads.

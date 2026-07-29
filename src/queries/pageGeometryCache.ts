@@ -50,6 +50,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/queries/queryKeys";
 import { getPdfDocument } from "@/lib/pdf-document-registry";
 import { MASK_DIM_DEFAULT } from "@/lib/bucket-fill-vector-limits";
+import { recordGeometryTiming, perfEnabled } from "@/lib/bucket-fill-perf";
 import {
   extractVectorGeometry,
   type OpsTable,
@@ -529,7 +530,12 @@ async function extractPageGeometry(
   const viewport = page.getViewport({ scale });
 
   try {
+    // Phase-2 dev instrumentation (PLAN §9 U1). `perfEnabled()` is false in production and false in
+    // a `raster` session, and then no clock is read at all — see bucket-fill-perf.ts.
+    const armed = perfEnabled();
+    const tParse = armed ? performance.now() : 0;
     const opList = await page.getOperatorList();
+    const msParse = armed ? performance.now() - tParse : 0;
 
     // Document-level and cached by pdf.js, so this is cheap after the first page. Failure is not
     // evidence of a hidden layer — see `pageHasHiddenOptionalContent`, which fails OPEN on purpose
@@ -546,7 +552,9 @@ async function extractPageGeometry(
       args.ops.beginMarkedContentProps,
     );
 
+    const tWalk = armed ? performance.now() : 0;
     const raw = extractVectorGeometry(opList, viewport.transform, args.ops);
+    if (armed) recordGeometryTiming(publicId, pageNumber, { msParse, msWalk: performance.now() - tWalk });
     const geometry: CachedPageGeometry = {
       // `points` deliberately emptied — see the header. The tripwire travels with the value.
       points: [],
