@@ -98,7 +98,7 @@
  *
  * ── USAGE ───────────────────────────────────────────────────────────────────────────────
  *   node scripts/corpus-differential.mjs --dir /path/to/pdfs [--out results.csv]
- *        [--seeds-per-page 12] [--min-cells 25] [--max-pages N] [--pdf substr]
+ *        [--seeds-per-page 12] [--min-cells 25] [--from-page 1] [--max-pages N] [--pdf substr]
  *        [--mask-dim 3000] [--max-dim 1000] [--tolerance 30] [--dilation 0]
  *        [--render-long-side 2000 | --render-scale 2.0] [--page-budget-ms 180000]
  *        [--resume] [--render DIR] [--summary-json path.json] [--quiet]
@@ -173,6 +173,8 @@ const renderDir = flag("render");
 const seedsPerPage = numFlag("seeds-per-page", 12);
 const minCells = numFlag("min-cells", 25);
 const maxPages = numFlag("max-pages", Infinity);
+/** First page to measure, 1-based. Exists so a single suspect page can be reproduced directly. */
+const fromPage = numFlag("from-page", 1);
 const pdfFilter = flag("pdf");
 const maskDim = numFlag("mask-dim", 3000);
 const maxDim = numFlag("max-dim", 1000); // the worker's own default (processFill:558)
@@ -206,6 +208,12 @@ const IOU_SAME = numFlag("iou-same", 0.9);
  * (measured: 4.8x for a whole-outside flood, 100x+ for a speck that escaped into a table).
  */
 const ESCAPE_X = numFlag("escape-x", 3);
+/**
+ * Overlays written per page, most-divergent first (lowest IoU, then largest |Δ|).
+ * Unbounded, this allocated a full-size native canvas per disagreement and SIGKILLed the run.
+ */
+const renderMaxPerPage = numFlag("render-max-per-page", 3);
+let overlaysSkipped = 0;
 
 // ── product code under test ──────────────────────────────────────────────────
 import { REPO, enginePath, loadPdfjs } from "./probes/_paths.mjs";
@@ -500,6 +508,24 @@ if (outArg && resume && existsSync(outArg) && existsSync(donePath)) {
         (dropped ? `, ${dropped} incomplete/torn row(s) discarded (their pages will re-run)` : ""),
     );
   }
+  // ⚠ REWRITE, don't just skip. Discarding orphan rows from `rows` fixes THIS run's summary but
+  // leaves them in the FILE — and the page that owns them is about to be re-measured and marked
+  // complete. A later --resume would then accept both copies and silently double-count that page.
+  // Found by reasoning through a second resume after the first one; the sidecar is the authority,
+  // so the file is made to match it.
+  if (dropped) {
+    try {
+      writeFileSync(outArg, COLUMNS.join(",") + "\n" +
+        rows.map((o) => COLUMNS.map((c) => cell(o[c])).join(",")).join("\n") + "\n");
+      console.error(`[differential] --resume: rewrote ${outArg} without the ${dropped} orphan row(s)`);
+    } catch (e) {
+      console.error(
+        `FATAL: could not rewrite ${outArg} to drop orphan rows (${e?.message ?? e}).\n` +
+          "  Continuing would leave duplicates for any re-measured page. Refusing.",
+      );
+      process.exit(2);
+    }
+  }
 } else if (outArg) {
   writeFileSync(outArg, COLUMNS.join(",") + "\n");
   writeFileSync(donePath, `#params ${paramStamp}\n`);
@@ -571,10 +597,10 @@ for (const file of pdfs) {
     console.error(`[differential] ${id}: could not open (${e?.message ?? e}) — skipped`);
     continue;
   }
-  const nPages = Math.min(doc.numPages, maxPages);
+  const nPages = Math.min(doc.numPages, fromPage - 1 + maxPages);
   if (!quiet) console.error(`[differential] ${id}: ${doc.numPages} page(s), running ${nPages}`);
 
-  for (let pageNo = 1; pageNo <= nPages; pageNo++) {
+  for (let pageNo = fromPage; pageNo <= nPages; pageNo++) {
     if (done.has(`${id}|${pageNo}`)) { pagesSkipped++; continue; }
     const tPage = performance.now();
     let page = null;
@@ -825,36 +851,60 @@ for (const file of pdfs) {
  * region" without a deployed app.
  */
 async function renderOverlays(id, pageNo, page, vp1, items, gw, gh) {
+  // ⚠ THIS FUNCTION KILLED A 177-PAGE RUN. Two defects, both measured on bundle_a p57:
+  //   1. The legacy mask was painted CELL BY CELL — up to gw*gh = 667,000 `fillRect` calls per
+  //      overlay, times 11 overlays on that page. It is now one `putImageData` onto a gw*gh
+  //      scratch canvas, composited with a single scaled `drawImage`.
+  //   2. A FRESH full-size canvas was allocated per item: 1700x1133x4 ≈ 7.7 MB of NATIVE memory
+  //      that V8 does not account for, so nothing pressured it to collect. Twelve per page, plus
+  //      a PNG buffer each. The process was SIGKILLed with no stack and no log line. One canvas
+  //      is now reused for the whole page, and the base render is redrawn onto it per item.
+  // Overlays are also capped per page (--render-max-per-page): a dense sheet does not need a
+  // dozen pictures, it needs the most extreme few.
+  const ranked = [...items].sort((a, b) => {
+    const ai = a.iouVal ?? -1, bi = b.iouVal ?? -1;      // lowest IoU = most divergent first
+    if (ai !== bi) return ai - bi;
+    return Math.abs(b.deltaPct ?? 0) - Math.abs(a.deltaPct ?? 0);
+  }).slice(0, renderMaxPerPage);
+  if (items.length > ranked.length) overlaysSkipped += items.length - ranked.length;
+  if (!ranked.length) return;
+
   const RS = 1700 / Math.max(vp1.width, vp1.height);
   const rvp = page.getViewport({ scale: RS });
-  const canvas = createCanvas(Math.ceil(rvp.width), Math.ceil(rvp.height));
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvasContext: ctx, viewport: rvp }).promise;
+  const W = Math.ceil(rvp.width), H = Math.ceil(rvp.height);
+  const base = createCanvas(W, H);
+  const bctx = base.getContext("2d");
+  bctx.fillStyle = "#fff";
+  bctx.fillRect(0, 0, W, H);
+  await page.render({ canvasContext: bctx, viewport: rvp }).promise;
 
-  for (const it of items) {
-    const c2 = createCanvas(canvas.width, canvas.height);
-    const g = c2.getContext("2d");
-    g.drawImage(canvas, 0, 0);
+  // ONE overlay canvas, reused. ONE mask canvas at grid resolution, reused.
+  const out = createCanvas(W, H);
+  const g = out.getContext("2d");
+  const maskCanvas = createCanvas(gw, gh);
+  const mctx = maskCanvas.getContext("2d");
+  const maskImg = mctx.createImageData(gw, gh);
 
-    // legacy region: the flood mask, painted cell by cell (it has no polygon at this stage)
+  for (const it of ranked) {
+    g.clearRect(0, 0, W, H);
+    g.drawImage(base, 0, 0);
+
+    // legacy region: one ImageData at grid resolution, one scaled composite
     if (it.lres.status === "ok" && it.lres.filled) {
-      const cw = canvas.width / gw, ch = canvas.height / gh;
-      g.fillStyle = "rgba(225,29,72,0.28)";
-      for (let y = 0; y < gh; y++) {
-        for (let x = 0; x < gw; x++) {
-          if (it.lres.filled[y * gw + x]) g.fillRect(x * cw, y * ch, cw + 0.6, ch + 0.6);
-        }
+      const d = maskImg.data;
+      const filled = it.lres.filled;
+      for (let i = 0, o = 0; i < filled.length; i++, o += 4) {
+        if (filled[i]) { d[o] = 225; d[o + 1] = 29; d[o + 2] = 72; d[o + 3] = 72; }
+        else { d[o + 3] = 0; }
       }
+      mctx.putImageData(maskImg, 0, 0);
+      g.drawImage(maskCanvas, 0, 0, gw, gh, 0, 0, W, H);
     }
     // vector polygon: normalised vertices straight onto the render
     if (it.vres.type === "result") {
       const path = (vs) => {
         g.beginPath();
-        vs.forEach((v, i) =>
-          i ? g.lineTo(v.x * canvas.width, v.y * canvas.height)
-            : g.moveTo(v.x * canvas.width, v.y * canvas.height));
+        vs.forEach((v, i) => (i ? g.lineTo(v.x * W, v.y * H) : g.moveTo(v.x * W, v.y * H)));
         g.closePath();
       };
       path(it.vres.vertices);
@@ -871,14 +921,14 @@ async function renderOverlays(id, pageNo, page, vp1, items, gw, gh) {
       }
     }
     // the seed
-    const sx = it.nx * canvas.width, sy = it.ny * canvas.height;
+    const sx = it.nx * W, sy = it.ny * H;
     g.beginPath(); g.arc(sx, sy, 11, 0, Math.PI * 2);
     g.fillStyle = "#fff"; g.fill();
     g.lineWidth = 4; g.strokeStyle = "#111"; g.stroke();
     g.beginPath(); g.arc(sx, sy, 4, 0, Math.PI * 2); g.fillStyle = "#111"; g.fill();
 
     g.fillStyle = "rgba(0,0,0,0.8)";
-    g.fillRect(0, 0, canvas.width, 62);
+    g.fillRect(0, 0, W, 62);
     g.fillStyle = "#fff";
     g.font = "bold 20px sans-serif";
     g.fillText(`${id} p${pageNo} seed ${it.seedIdx} — ${it.verdict}`, 12, 26);
@@ -890,8 +940,14 @@ async function renderOverlays(id, pageNo, page, vp1, items, gw, gh) {
         `   ·   Δ ${it.deltaPct == null ? "—" : (it.deltaPct >= 0 ? "+" : "") + it.deltaPct.toFixed(1) + "%"}`,
       12, 50,
     );
-    writeFileSync(join(renderDir, `${id}_p${String(pageNo).padStart(3, "0")}_s${it.seedIdx}_${it.verdict}.png`),
-      c2.toBuffer("image/png"));
+    try {
+      writeFileSync(
+        join(renderDir, `${id}_p${String(pageNo).padStart(3, "0")}_s${it.seedIdx}_${it.verdict}.png`),
+        out.toBuffer("image/png"),
+      );
+    } catch (e) {
+      process.stderr.write(`\n!! overlay write failed for ${id} p${pageNo} s${it.seedIdx}: ${e?.message ?? e}\n`);
+    }
   }
 }
 
@@ -1129,6 +1185,13 @@ if (pageProblems.length) {
   if (pageProblems.length > 25) out.push(`   … and ${pageProblems.length - 25} more (see the CSV)`);
 }
 
+if (renderDir && overlaysSkipped) {
+  out.push(
+    "",
+    ` OVERLAYS: capped at ${renderMaxPerPage}/page (most divergent first) — ${overlaysSkipped} not drawn.`,
+    "   Every one of them is still a row in the CSV; only the picture was skipped.",
+  );
+}
 out.push("═".repeat(80), "");
 process.stderr.write(out.join("\n"));
 
