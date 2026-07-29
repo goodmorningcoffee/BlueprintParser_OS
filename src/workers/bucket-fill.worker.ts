@@ -46,6 +46,7 @@ export interface BucketFillRequest {
   polygonBarriers: { vertices: { x: number; y: number }[] }[];
   /** Textract word bounding boxes, normalized 0-1 [x, y, w, h]. Set to white
    *  (passable) before flood so the fill isn't blocked by text inside rooms. */
+  /** ⛔ ACCEPTED AND NEVER READ — see `eraseBboxToWhite` below. Phase 4 owns wiring it. */
   textBboxes?: { x: number; y: number; w: number; h: number }[];
   maxDimension?: number;
 }
@@ -535,8 +536,19 @@ function douglasPeucker(points: { x: number; y: number }[], epsilon: number): { 
 
 // ─── Main pipeline ───────────────────────────────────────────────
 
-/** Set every pixel inside the normalized bbox to 1 (white / passable). Used to
- *  erase OCR text so the flood sweeps through those pixels instead of stopping. */
+/**
+ * Set every pixel inside the normalized bbox to 1 (white / passable).
+ *
+ * ⛔ **DEAD CODE. NOTHING CALLS THIS**, here or anywhere else in the repo — verified by grep across
+ * `src/`, tests and scripts, 2026-07-29. The sentence that used to end this comment,
+ * *"Used to erase OCR text so the flood sweeps through those pixels instead of stopping"*,
+ * described an intent, not a behaviour: `processFill` never invokes it, so **text is a wall on the
+ * raster path** and a room label can stop a flood.
+ *
+ * Left in place deliberately rather than deleted: wiring it up is the `textBboxes` feature, which
+ * PLAN assigns to **phase 4**, and deleting it now would quietly remove the thing that phase has to
+ * connect. See `bucket-fill-client.ts`'s `textBboxes` field for the other half of this.
+ */
 function eraseBboxToWhite(
   bin: Uint8Array,
   w: number,

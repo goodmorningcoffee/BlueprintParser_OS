@@ -77,8 +77,25 @@ export interface ClientBucketFillOptions {
   dilation: number;
   barriers: { x1: number; y1: number; x2: number; y2: number }[];
   polygonBarriers: { vertices: { x: number; y: number }[] }[];
-  /** OCR text bounding boxes (normalized 0-1 [x, y, w, h]). Burned to passable
-   *  before the flood so text inside rooms doesn't block the fill. */
+  /**
+   * OCR text bounding boxes (normalized 0-1 [x, y, w, h]).
+   *
+   * ⛔ **ACCEPTED AND THEN IGNORED — this comment used to claim the opposite.** It said they were
+   * *"burned to passable before the flood so text inside rooms doesn't block the fill"*. That is
+   * false and was false when written: `bucket-fill.worker.ts` declares the field on its request
+   * (`:49`) and **never reads it**, and the function that would do the burning,
+   * `eraseBboxToWhite` (`:540`), has **zero callers anywhere in the repo** — its own doc-comment
+   * describes a use that does not happen. On the raster path **text really is a wall**, and a room
+   * label really can stop a flood.
+   *
+   * The whole chain exists and ends nowhere: `tools/bucketFill.ts` computes these from textract
+   * words, this client forwards them into the worker message, and the worker drops them.
+   *
+   * ⚠ THE COMMENT IS THE FIX HERE, NOT THE BEHAVIOUR. Making the burn real is a product change
+   * PLAN assigns to **phase 4**, which owns `textBboxes` (it is named there alongside the toggle
+   * and the knobs). Adjudicated against `questions_for_chris/Q06_divergence_log.md` §D3 and
+   * confirmed by grep before this edit: declaration-only, no callers, field unread.
+   */
   textBboxes?: { x: number; y: number; w: number; h: number }[];
   maxDimension?: number;
   /**
