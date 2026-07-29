@@ -1113,6 +1113,50 @@ if (deltas.length) {
   );
 }
 
+// ── FIELD RESOLUTION: the sample's own limit, measured rather than assumed ───
+// The neutral field is built at the legacy grid (<= --max-dim, default 1000 px on the long side)
+// while the vector engine works at up to 3000. A region whose enclosure rests on features finer
+// than a few grid cells is therefore something the FIELD calls enclosed and the vector engine,
+// at 3x the resolution, may correctly see as open. Measured: the worst |Δ| in this corpus are all
+// 30-63 cell regions with 1-3 px clearance where legacy sits still (escape 1.0x) and vector floods
+// out 1000-2400x. That is the sampler's resolution showing through, not an engine defect.
+//
+// ⚠ THIS IS NOT A SIZE FLOOR ON THE ENGINE (CANON rule 7). Every click stays in the CSV and in the
+// headline above. This section reports the same numbers over the subset the field can actually
+// resolve, so a reader can see whether the conclusion depends on the artifact. If the two agree,
+// the finding is robust; if they diverge, the divergence is the finding.
+const RELIABLE_CLEARANCE = 3;   // grid px — below this the "wall" is at the field's resolution limit
+const RELIABLE_CELLS = 64;      // grid cells
+const reliable = clicks.filter(
+  (r) => num(r.clearancePx) >= RELIABLE_CLEARANCE && num(r.regionCells) >= RELIABLE_CELLS,
+);
+const thin = clicks.filter(
+  (r) => !(num(r.clearancePx) >= RELIABLE_CLEARANCE && num(r.regionCells) >= RELIABLE_CELLS),
+);
+function popLine(pop, label) {
+  if (!pop.length) return `   ${label.padEnd(34)} n=0`;
+  const ag = pop.filter(isAgreement).length;
+  const le = pop.filter((r) => num(r.legEscapeX) > ESCAPE_X);
+  const ve = pop.filter((r) => num(r.vecEscapeX) > ESCAPE_X).length;
+  const held = le.filter((r) => r.vecStatus === "ok" && num(r.vecEscapeX) <= ESCAPE_X).length;
+  const ref = le.filter((r) => r.vecStatus !== "ok").length;
+  const is = pop.map((r) => num(r.iou)).filter((v) => v != null);
+  return `   ${label.padEnd(34)} n=${String(pop.length).padStart(5)}   agree ${pct(ag, pop.length).padStart(6)}` +
+    `   escaped: leg ${pct(le.length, pop.length).padStart(6)} / vec ${pct(ve, pop.length).padStart(6)}` +
+    `   on leg-escape vec held ${pct(held + ref, le.length).padStart(6)}` +
+    `   med IoU ${is.length ? med(is).toFixed(3) : " n/a"}`;
+}
+out.push(
+  "",
+  ` FIELD RESOLUTION — does the conclusion depend on regions the sampler cannot resolve?`,
+  `   (reliable = clearance ≥ ${RELIABLE_CLEARANCE} grid px AND ≥ ${RELIABLE_CELLS} cells. A SAMPLER limit, not an engine one.)`,
+  popLine(clicks, "ALL vector-capable clicks"),
+  popLine(reliable, "FIELD-RELIABLE"),
+  popLine(thin, "THIN/TINY (field-limited)"),
+  "   ⇒ If the first two rows tell the same story, the finding survives the artifact. The third",
+  "     row is where the 1000 px field, not the engine, is deciding what counts as enclosed.",
+);
+
 // ── by region size. A pooled agreement rate over a sample dominated by specks says nothing
 // about the rooms an estimator actually clicks, and CANON rule 7 forbids solving that by
 // excluding the small ones. Report both instead.
@@ -1214,7 +1258,10 @@ if (summaryJson) {
       vector: 0,
       vectorIsZeroByConstruction: true,
       why: "floodRegion caps at LEAK_FRACTION and returns status 'leak' beyond it (oneclick.ts:576,607)",
-      onLegacyLeaks: { vectorRefused: lImpVecRefused, vectorBounded: lImpVecBounded },
+      onLegacyLeaks: {
+        vectorRefused: lImp.filter((r) => r.vecStatus !== "ok").length,
+        vectorBounded: lImp.filter((r) => r.vecStatus === "ok").length,
+      },
     },
     bothPlausible: {
       n: both.length,
