@@ -426,7 +426,7 @@ const COLUMNS = [
   "pageWpt", "pageHpt", "segCount", "softSegs", "imageFrac", "gridW", "gridH", "otsu", "filterSafe",
   "vecStatus", "vecAreaFrac", "vecVerts", "vecHoles", "vecMs",
   "legStatus", "legAreaFrac", "legVerts", "legMs", "legSolidRoom",
-  "deltaPct", "iou", "vecEscapeX", "legEscapeX", "verdict", "note",
+  "deltaPct", "iou", "vecEscapeX", "legEscapeX", "vecFieldX", "legFieldX", "verdict", "note",
 ];
 const cell = (v) => {
   const s = v === null || v === undefined ? "" : String(v);
@@ -474,6 +474,25 @@ const paramStamp = JSON.stringify({
   renderLongSide, renderScaleOverride, agreePct: AGREE_PCT, iouSame: IOU_SAME, escapeX: ESCAPE_X,
 });
 if (outArg && resume && existsSync(outArg) && existsSync(donePath)) {
+  // ⛔⛔ SCHEMA CHECK FIRST — THIS GUARD EXISTS BECAUSE ITS ABSENCE DESTROYED A COMPLETED RUN.
+  // The recovery path below treats an unparseable row as "torn" and rewrites the file without it.
+  // That is right for a row half-written at a SIGKILL. It is catastrophically wrong when the
+  // COLUMN SET has changed: every row then fails the length check at once, and the rewrite empties
+  // a 2,124-row CSV that took 40 minutes to produce. Measured on 2026-07-29 by adding two columns
+  // and re-running with --resume.
+  // A schema change is not recoverable by re-measuring a few pages, so it must never reach the
+  // repair logic. Refuse, and say what to do.
+  const priorHeader = readFileSync(outArg, "utf8").split("\n", 1)[0];
+  if (priorHeader !== COLUMNS.join(",")) {
+    console.error(
+      "FATAL: --resume against a CSV written with a DIFFERENT COLUMN SET.\n" +
+        `  file:   ${priorHeader}\n  script: ${COLUMNS.join(",")}\n` +
+        "  The two cannot be merged, and repairing row-by-row would empty the file.\n" +
+        "  Use a fresh --out (and a fresh .done sidecar), or check out the script revision\n" +
+        "  that wrote this CSV.",
+    );
+    process.exit(2);
+  }
   const sidecar = readFileSync(donePath, "utf8").split("\n").filter(Boolean);
   const stampLine = sidecar.find((l) => l.startsWith("#params"));
   const priorStamp = stampLine ? stampLine.slice(8) : null;
@@ -514,10 +533,25 @@ if (outArg && resume && existsSync(outArg) && existsSync(donePath)) {
   // Found by reasoning through a second resume after the first one; the sidecar is the authority,
   // so the file is made to match it.
   if (dropped) {
+    // Second guard: a repair that keeps NOTHING is not a repair. Torn rows are a handful at the
+    // tail; losing every row means the assumption behind this code path is wrong.
+    if (!rows.length) {
+      console.error(
+        `FATAL: --resume would discard ALL ${dropped} row(s) in ${outArg} and leave it empty.\n` +
+          "  That is not a torn-tail repair, it is a systemic mismatch. Refusing to write.\n" +
+          "  Use a fresh --out, or delete the .done sidecar to re-measure from scratch.",
+      );
+      process.exit(2);
+    }
     try {
+      // Third guard: keep the previous file until the new one is safely written.
+      writeFileSync(outArg + ".bak", readFileSync(outArg));
       writeFileSync(outArg, COLUMNS.join(",") + "\n" +
         rows.map((o) => COLUMNS.map((c) => cell(o[c])).join(",")).join("\n") + "\n");
-      console.error(`[differential] --resume: rewrote ${outArg} without the ${dropped} orphan row(s)`);
+      console.error(
+        `[differential] --resume: rewrote ${outArg} without the ${dropped} orphan row(s)` +
+          ` (previous file kept at ${outArg}.bak)`,
+      );
     } catch (e) {
       console.error(
         `FATAL: could not rewrite ${outArg} to drop orphan rows (${e?.message ?? e}).\n` +
@@ -680,7 +714,7 @@ for (const file of pdfs) {
           segCount, softSegs, imageFrac: imageFrac.toFixed(4), gridW: gw, gridH: gh, otsu, filterSafe,
           vecStatus: "", vecAreaFrac: "", vecVerts: "", vecHoles: "", vecMs: "",
           legStatus: "", legAreaFrac: "", legVerts: "", legMs: "", legSolidRoom: "",
-          deltaPct: "", iou: "", vecEscapeX: "", legEscapeX: "", verdict: "no-seedable-region",
+          deltaPct: "", iou: "", vecEscapeX: "", legEscapeX: "", vecFieldX: "", legFieldX: "", verdict: "no-seedable-region",
           note: `${all.length} free region(s), none eligible`,
         });
       }
@@ -694,7 +728,7 @@ for (const file of pdfs) {
             segCount, softSegs, imageFrac: imageFrac.toFixed(4), gridW: gw, gridH: gh, otsu, filterSafe,
             vecStatus: "", vecAreaFrac: "", vecVerts: "", vecHoles: "", vecMs: "",
             legStatus: "", legAreaFrac: "", legVerts: "", legMs: "", legSolidRoom: "",
-            deltaPct: "", iou: "", vecEscapeX: "", legEscapeX: "", verdict: "page-budget-exceeded",
+            deltaPct: "", iou: "", vecEscapeX: "", legEscapeX: "", vecFieldX: "", legFieldX: "", verdict: "page-budget-exceeded",
             note: `stopped after ${s}/${picked.length} seeds at ${(performance.now() - tPage).toFixed(0)} ms`,
           });
           break;
@@ -759,16 +793,24 @@ for (const file of pdfs) {
           iouVal = iou(vBuf, lres.filled);
         }
 
-        // ── ESCAPE RATIO: an oracle-free leak detector, and a better one than a fixed 30% ──
-        // The neutral field already decided how big the space around this seed is. An engine that
-        // stays inside it returns roughly that area; an engine that escapes returns a multiple of
-        // it. Measured on corpus-project p3, legacy returned 0.1743 of the sheet from a 36,639-cell seed
-        // region — the same 0.1743 it returns when seeded in the page margin, i.e. it flooded the
-        // whole outside. LEAK_FRACTION never caught it, because on that sheet the outside is only
-        // 17% of the page. The escape ratio catches it at 4.8x.
-        // ⚠ A ratio slightly above 1 is EXPECTED and is not an escape: the neutral field is the
-        // union of both engines' ink, so it excludes wall thickness that a centreline flood
-        // legitimately covers.
+        // ── FIELD RATIO: how far each engine's answer is from the neutral field's region ──
+        // ⛔⛔ THIS IS NOT A CORRECTNESS DETECTOR, AND IT WAS BRIEFLY PRESENTED AS ONE.
+        // The field is built ON the legacy grid FROM the legacy binarization, plus vector ink
+        // block-ORed down from 3000 px (which DILATES every vector hairline to a full grid cell).
+        // So the field is systematically CLOSER TO LEGACY: measured on this corpus, legacy sits
+        // within 1.1x of the field on 58% of clicks, vector on 38%. A high ratio therefore means
+        // "this engine disagrees with the field about where the boundary is" — which is often, but
+        // NOT reliably, a leak.
+        // ★ THE EXHIBIT, and the reason this warning exists — bundle_a p24 seed 10:
+        //   the seed is in a large open room of a floor plan. VECTOR traced the room
+        //   interior (10.58% of sheet) — the right answer. LEGACY returned 0.019%, an invisible
+        //   speck, trapped by hatch. The field region was a 126-cell pocket between hatch strokes,
+        //   so this metric scored LEGACY as having "held" (1.000x) and charged VECTOR 560x.
+        //   It credited the engine that failed and penalised the engine that succeeded.
+        //   43% of vector's flagged clicks on this corpus match that signature.
+        // ⇒ Use it to FIND clicks worth looking at (with --render). Never as a score.
+        // ⚠ A ratio slightly above 1 is EXPECTED: the field is the union of both engines' ink, so
+        // it excludes wall thickness that a centreline flood legitimately covers.
         const regionFracVal = reg.count / cells;
         const vecEscapeX = vFrac != null && regionFracVal > 0 ? vFrac / regionFracVal : null;
         const legEscapeX = lFrac != null && regionFracVal > 0 ? lFrac / regionFracVal : null;
@@ -798,6 +840,10 @@ for (const file of pdfs) {
           iou: iouVal == null ? "" : iouVal.toFixed(4),
           vecEscapeX: vecEscapeX == null ? "" : vecEscapeX.toFixed(3),
           legEscapeX: legEscapeX == null ? "" : legEscapeX.toFixed(3),
+          // Same two ratios, kept under names that do not editorialise. `*EscapeX` is retained
+          // for compatibility with rows already written; both columns carry the same numbers.
+          vecFieldX: vecEscapeX == null ? "" : vecEscapeX.toFixed(3),
+          legFieldX: legEscapeX == null ? "" : legEscapeX.toFixed(3),
           verdict,
           note: vres._msg ?? lres._msg ?? "",
         });
@@ -835,7 +881,7 @@ for (const file of pdfs) {
         imageFrac: "", gridW: "", gridH: "", otsu: "", filterSafe: "",
         vecStatus: "", vecAreaFrac: "", vecVerts: "", vecHoles: "", vecMs: "",
         legStatus: "", legAreaFrac: "", legVerts: "", legMs: "", legSolidRoom: "",
-        deltaPct: "", iou: "", vecEscapeX: "", legEscapeX: "", verdict: "page-error", note: e?.message ?? String(e),
+        deltaPct: "", iou: "", vecEscapeX: "", legEscapeX: "", vecFieldX: "", legFieldX: "", verdict: "page-error", note: e?.message ?? String(e),
       });
       try { page?.cleanup(); } catch {}
     }
@@ -1055,6 +1101,10 @@ const vecEsc = escaped("vecEscapeX");
 const legEscVecRefused = legEsc.filter((r) => r.vecStatus !== "ok").length;
 const legEscVecEscaped = legEsc.filter((r) => num(r.vecEscapeX) > ESCAPE_X).length;
 const legEscVecHeld = legEsc.length - legEscVecRefused - legEscVecEscaped;
+/** Vector's base rate, so the conditional figure above can never be read without its comparator. */
+const vecUncond = clicks.filter(
+  (r) => r.vecStatus !== "ok" || (num(r.vecEscapeX) != null && num(r.vecEscapeX) <= ESCAPE_X),
+).length;
 out.push(
   "",
   ` CONFIDENTLY WRONG — status ok, no warning, and the answer is not the space that was clicked:`,
@@ -1063,17 +1113,27 @@ out.push(
   `       returns status "leak" beyond it (oneclick.ts:576,607). That zero is not evidence, and`,
   `       the threshold is blind besides: a sheet whose outside void is 17% of the page hides a`,
   `       total leak underneath it.`,
-  `   (b) ESCAPED THE CLICKED SPACE by >${ESCAPE_X}x its neutral-field region — the real detector:`,
+  `   (b) DIVERGED from its neutral-field region by >${ESCAPE_X}x  —  ⚠ NOT A CORRECTNESS MEASURE:`,
   `       legacy ${legEsc.length}/${clicks.length} = ${pct(legEsc.length, clicks.length)}`,
   `       vector ${vecEsc.length}/${clicks.length} = ${pct(vecEsc.length, clicks.length)}`,
+  `       ⛔ The field is built ON the legacy grid FROM the legacy binarization (plus vector ink`,
+  `          block-ORed down from 3000 px, which DILATES every vector hairline), so it sits closer`,
+  `          to legacy BY CONSTRUCTION — measured here, legacy is within 1.1x of the field on 58%`,
+  `          of clicks, vector on 38%. A KNOWN INVERSION: bundle_a p24 s10 — vector traced the room`,
+  `          interior correctly (10.6% of sheet) and was charged 560x; legacy returned a 0.019%`,
+  `          speck, hatch-trapped, and scored 1.000x "held". Use (b) to FIND clicks worth looking`,
+  `          at with --render. Never quote it as a score. (a) is the measure that stands alone.`,
 );
 if (legEsc.length) {
   out.push(
-    ` RC4 AS AN ACTUAL MEASUREMENT — on the ${legEsc.length} click(s) where LEGACY escaped:`,
-    `   vector REFUSED and said so           ${legEscVecRefused}  = ${pct(legEscVecRefused, legEsc.length)}`,
-    `   vector stayed in the clicked space   ${legEscVecHeld}  = ${pct(legEscVecHeld, legEsc.length)}`,
-    `   vector escaped too                   ${legEscVecEscaped}  = ${pct(legEscVecEscaped, legEsc.length)}`,
-    `   ⇒ the first two rows are the port's thesis holding; the third is it not holding.`,
+    ` WHERE LEGACY DIVERGED (n=${legEsc.length}) — what vector did on the same click:`,
+    `   [vector's UNCONDITIONAL refuse-or-stay rate over all ${clicks.length} clicks: ${pct(vecUncond, clicks.length)}]`,
+    `   vector refused and said so           ${legEscVecRefused}  = ${pct(legEscVecRefused, legEsc.length)}`,
+    `   vector stayed near the field region  ${legEscVecHeld}  = ${pct(legEscVecHeld, legEsc.length)}`,
+    `   vector diverged too                  ${legEscVecEscaped}  = ${pct(legEscVecEscaped, legEsc.length)}`,
+    `   ⚠ Compare against vector's UNCONDITIONAL rate before reading this as a win: on this corpus`,
+    `     the conditional figure is LOWER than the unconditional one, i.e. the clicks that break`,
+    `     legacy also break vector more often than average. The two are correlated, not independent.`,
   );
 }
 
