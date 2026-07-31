@@ -2,9 +2,33 @@
 //
 // Why this exists: env vars were folklore — SES silently dead in prod (FROM
 // unset + no IAM), LAMBDA_CV gating subtle, and CLOUDWATCH_LOG_GROUP defaulting
-// to a group that doesn't exist. This module is the single documented list of
-// every variable the app reads, validated once at server start
-// (src/instrumentation.ts).
+// to a group that doesn't exist. This module is the documented list of the
+// variables that are VALIDATED once at server start (src/instrumentation.ts).
+//
+// ⚠ It is NOT the list of every variable the app reads — that is what this header
+// claimed until 2026-07-31, and it was 78% true. Measured that day (every
+// `process.env.X` under src/, comments stripped): 36 declared here, 43 read by
+// production code. The TEN that are read and not declared:
+//
+//   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY   8 files each — s3/textract/yolo/
+//                                              lambda-cv/toggles + 3 services.
+//                                              Supplied by the task role in prod.
+//   PROJECT_ASSET_EVENT_QUEUE_URL              project-asset-deletion + -object-events;
+//                                              its presence SWITCHES the sweep cadence.
+//   NEXT_PUBLIC_BUCKET_FILL_MODE               bucket-fill-mode.ts (build-time inlined)
+//   NEXT_PUBLIC_TABLE_PARSE_DEBUG              AutoParseTab.tsx      (build-time inlined)
+//   NEXT_RUNTIME                               instrumentation.ts — Next.js injects it,
+//                                              and it gates the call to assertEnv() itself
+//   BP_TEST_S3_ENDPOINT                        s3.ts — test-only, production ignores it
+//   BP_REQUIRE_TEST_DB, BP_TEST_DATABASE_URL,  read only by the test harness under
+//   AWS_EC2_METADATA_DISABLED                  src/test/, never by shipped code
+//
+// The two NEXT_PUBLIC_* vars CANNOT move here even in principle: Next.js inlines
+// `process.env.NEXT_PUBLIC_*` at build time only when referenced statically, so routing
+// them through a validated object would silently yield undefined (bucket-fill-mode.ts
+// says so at its own read site). Declaring the rest is a real change to what boot
+// validation covers, not a comment fix — so it is left as an owner decision, and this
+// header now states the gap instead of denying it.
 //
 // Behavior: in production a missing REQUIRED var fails the boot fast with a
 // named list (better than a 3am stack trace from deep inside a handler).
@@ -75,7 +99,7 @@ const optional = z.object({
   SES_FROM_EMAIL: opt,
 
   // ops/misc (code defaults noted)
-  GEOIP_DB_PATH: opt, // default /data/GeoLite2-Country.mmdb
+  GEOIP_DB_PATH: opt, // code default is ./geo/GeoLite2-Country.mmdb, i.e. path.join(process.cwd(), "geo", …) in geo.ts — NOT /data/…, which was never a path this code used
   CLOUDWATCH_LOG_GROUP: opt, // [jul23 P5.3 U5] code default is /ecs/blueprintparser-app (cw-logs.ts) — legacy name, moves with the beaver-* owner cutover. (Prior note here named a phantom code default that never existed.)
   LOG_LEVEL: opt, // default info
   ALLOW_MODEL_UPLOAD: opt, // default false — weights-upload kill-switch
