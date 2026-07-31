@@ -172,13 +172,11 @@ export function assembleContextWithConfig(
 
   const defaultPct = 100 / Math.max(enabled.length, 1);
   const sectionBudgets: Record<string, number> = {};
-  let totalAllocated = 0;
 
   for (const s of enabled) {
     const id = s.id ?? "";
     const pct = (id ? pctConfig[id] : undefined) ?? defaultPct;
     if (id) sectionBudgets[id] = Math.floor(budget * pct / 100);
-    totalAllocated += pct;
   }
 
   // If using custom % and total < 100, distribute remainder as overflow

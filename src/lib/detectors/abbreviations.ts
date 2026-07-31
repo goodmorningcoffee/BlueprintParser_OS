@@ -230,15 +230,11 @@ function getAbbrDict(): Map<string, AbbrEntry> {
     ["WTR", { meaning: "Water", trade: "general" }],
     ["WWF", { meaning: "Welded Wire Fabric", trade: "general" }],
     // Structural
-    ["BRG", { meaning: "Bearing", trade: "general" }],
     ["CLJ", { meaning: "Control Joint", trade: "general" }],
     ["DL", { meaning: "Dead Load", trade: "general" }],
     ["EBF", { meaning: "Eccentric Braced Frame", trade: "general" }],
-    ["EJ", { meaning: "Expansion Joint", trade: "general" }],
-    ["FTG", { meaning: "Footing", trade: "general" }],
     ["LL", { meaning: "Live Load", trade: "general" }],
     ["MOM", { meaning: "Moment", trade: "general" }],
-    ["OC", { meaning: "On Center", trade: "general" }],
     ["OMF", { meaning: "Ordinary Moment Frame", trade: "general" }],
     ["SMF", { meaning: "Special Moment Frame", trade: "general" }],
     ["TJI", { meaning: "Truss Joist", trade: "general" }],
@@ -317,11 +313,11 @@ function detect(ctx: DetectorContext): TextAnnotation[] {
     // Dictionary match
     const entry = dict.get(stripped) || dict.get(upper);
     if (entry) {
-      const cat: AnnotationCategory = entry.trade === "general" ? "abbreviation"
-        : entry.trade === "codes" ? "codes"
-        : entry.trade === "rooms" ? "rooms"
-        : entry.trade === "trade" ? "trade"
-        : "abbreviation";
+      // NB: the dictionary's `trade` is carried into `meta.trade` below but does NOT select
+      // the annotation category — every dictionary hit is emitted as "abbreviation". A
+      // five-way trade→category mapping used to be computed here and thrown away unread;
+      // it was deleted 2026-07-31 rather than wired up, because wiring it would reclassify
+      // existing detections.
       results.push(makeAnnotation("abbreviation", "abbreviation",
         [words[i]], [i], words[i].confidence * 0.85,
         { note: entry.meaning, meta: { trade: entry.trade } }));

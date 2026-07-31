@@ -18,7 +18,7 @@ export function splitPolygonByLine(
 ): { left: Pt[]; right: Pt[] } | null {
   if (polygon.length < 3) return null;
 
-  type Hit = { edgeIndex: number; point: Pt; t: number };
+  type Hit = { edgeIndex: number; point: Pt };
   const hits: Hit[] = [];
 
   const n = polygon.length;
@@ -27,7 +27,7 @@ export function splitPolygonByLine(
     const v2 = polygon[(i + 1) % n];
     const inter = intersectLineWithSegment(lineA, lineB, v1, v2);
     if (inter) {
-      hits.push({ edgeIndex: i, point: inter.point, t: inter.t });
+      hits.push({ edgeIndex: i, point: inter.point });
     }
   }
 

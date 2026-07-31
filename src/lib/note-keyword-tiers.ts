@@ -43,11 +43,11 @@ export const TIER2_KEYWORDS = [
   "DEMO",
   "KEY",
 
-  // Spec section markers
+  // Spec section markers ("GENERAL" is a spec marker too, but it is already listed
+  // among the note subtypes above and findFirstMatch dedupes by value anyway)
   "PART 1",
   "PART 2",
   "PART 3",
-  "GENERAL",
 
   // Schedule subtypes
   "DOOR SCHEDULE",

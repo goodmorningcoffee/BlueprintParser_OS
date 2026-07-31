@@ -49,7 +49,7 @@ import type {
 import { mergeBbox, wordsToText } from "@/lib/ocr-utils";
 import { clusterByTolerance } from "@/lib/geom/cluster-by-tolerance";
 import { UnionFind } from "@/lib/geom/union-find";
-import { iou, maxContainment, intersectionArea } from "@/lib/geom/overlap-signals";
+import { iou, maxContainment } from "@/lib/geom/overlap-signals";
 import {
   topKInscribedRects,
   rasterizeBboxes,
@@ -649,9 +649,6 @@ export function classifyTextRegions(
       finalRegions: regions,
     });
   }
-
-  // Silence "unused" warnings on the intersection/types exported for future stages
-  void intersectionArea;
 
   return regions;
 }

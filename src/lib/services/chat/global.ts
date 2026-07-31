@@ -10,7 +10,6 @@ import { resolveLLMConfig } from "@/lib/llm/resolve";
 import { streamChatResponse } from "@/lib/llm/stream";
 import {
   buildSystemPrompt,
-  buildCsiGraphSection,
   assembleContextWithConfig,
   getContextBudget,
   type ContextSection,

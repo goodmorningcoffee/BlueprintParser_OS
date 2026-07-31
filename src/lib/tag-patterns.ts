@@ -134,7 +134,7 @@ export function detectTagPatterns(
 
   // Step 3: Build TagGroup objects, filter by min instances
   const results: TagGroup[] = [];
-  for (const [key, g] of groupMap) {
+  for (const g of groupMap.values()) {
     const confidence = g.instances.length >= minInstances ? "confirmed" : "possible";
     if (confidence === "possible" && g.instances.length < 2) continue;
 

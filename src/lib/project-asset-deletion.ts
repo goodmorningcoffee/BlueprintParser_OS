@@ -16,6 +16,9 @@ const INVALIDATION_POLL_SECONDS = 60;
 const HOT_WATCH_SECONDS = 60 * 60;
 const COLD_WATCH_SECONDS = 24 * 60 * 60;
 const HOT_WATCH_DAYS = 7;
+/** Units conversion, NOT a sweep cadence. Kept separate from COLD_WATCH_SECONDS so that
+ *  retuning the cold sweep cannot silently resize the 7-day hot-watch window. */
+const SECONDS_PER_DAY = 24 * 60 * 60;
 const MAX_RETRY_SECONDS = 24 * 60 * 60;
 const ATTENTION_FAILURE_COUNT = 12;
 const MAX_PHASE_TRANSITIONS_PER_ATTEMPT = 8;
@@ -151,7 +154,7 @@ async function purgeBothPrefixes(
 
 function watchDelaySeconds(row: DeletionRow): number | null {
   const ageMs = Date.now() - row.createdAt.getTime();
-  if (ageMs < HOT_WATCH_DAYS * COLD_WATCH_SECONDS * 1_000) {
+  if (ageMs < HOT_WATCH_DAYS * SECONDS_PER_DAY * 1_000) {
     return HOT_WATCH_SECONDS;
   }
   // Terminalize only when durable ObjectCreated delivery can reopen the permanent tombstone.

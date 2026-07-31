@@ -155,7 +155,6 @@ function validateCandidate(text: string): { valid: boolean; penalty: number } {
 // ═══════════════════════════════════════════════════════════════════
 
 function labelAnchoredSearch(
-  words: TextractWord[],
   regionWords: TextractWord[],
 ): Candidate[] {
   const candidates: Candidate[] = [];
@@ -378,7 +377,7 @@ export function extractDrawingNumber(
   if (regionWords.length === 0) return null;
 
   // Strategy 1: Label-anchored search (highest priority)
-  const labelCandidates = labelAnchoredSearch(allWords, regionWords);
+  const labelCandidates = labelAnchoredSearch(regionWords);
 
   // Strategy 2: Regex pattern match
   const regexCandidates = regexSearch(regionWords, allWords, searchRegion);

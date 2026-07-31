@@ -60,7 +60,6 @@ function detect(ctx: DetectorContext): TextAnnotation[] {
 
     // Scale: SCALE: 1/4" = 1'-0" or SCALE: NTS
     if (win.group.length >= 2) {
-      const upper = txt.toUpperCase();
       if (RE_SCALE_PREFIX.test(win.group[0].text)) {
         const rest = win.group.slice(1).map(w => w.text).join("").replace(/\s/g, "");
         if (RE_SCALE_NTS.test(rest) || RE_SCALE_RATIO.test(rest) || RE_SCALE_FRACTION.test(rest)) {

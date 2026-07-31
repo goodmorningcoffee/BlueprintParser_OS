@@ -119,13 +119,20 @@ function regionPriority(className: string): number {
 
 /**
  * Build structured LLM context from spatial mapping results.
+ *
+ * ⚠ `pageNumber` and `drawingNumber` are currently UNCONSUMED. They existed only to build a
+ * `pageLabel` local that nothing ever read — deleted 2026-07-31. The signature is left alone
+ * on purpose: the sole caller (`services/chat/scoped.ts`) already prefixes its own section
+ * header with the page label, so the likelier original intent was to emit the label *here*
+ * rather than to take the parameters at all. Either resolution — drop the two parameters, or
+ * emit the label into `text` — changes an exported signature or the LLM's input, so it is an
+ * owner call rather than a craft fix.
  */
 export function buildSpatialContext(
   pageNumber: number,
   drawingNumber: string | null,
   result: SpatialMappingResult
 ): string {
-  const pageLabel = drawingNumber || `Page ${pageNumber}`;
   let text = "";
 
   for (const region of result.regions) {
