@@ -5,7 +5,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/deliciousnoodles/BlueprintParser.git"
+    "url": "https://github.com/goodmorningcoffee/BlueprintParser_OS.git"
   },
   "scripts": {
     "dev": "next dev --turbopack",

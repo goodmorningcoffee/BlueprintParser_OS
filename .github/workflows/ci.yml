@@ -1,8 +1,10 @@
 # [refactor jun12 P0.1] CI gate — first automation this repo has had.
 # Gates: architecture ratchets, typecheck, unit tests, production build, and a blocking
-# no-growth lint baseline. Ordinary lint debt remains honestly frozen at 60 errors / 54 warnings;
-# cleanup passes and can lower the future ceiling, while growth fails. Node is PINNED to 20 to match
-# Dockerfile (node:20-alpine); vitest is known-broken under node 24 (ERR_INTERNAL_ASSERTION).
+# no-growth lint baseline. Ordinary lint debt remains honestly frozen at whatever
+# scripts/lint-baseline.json records; cleanup passes and can lower the future ceiling, while growth
+# fails. The gate is exact by file+rule+severity+count, so a fix that merely RELOCATES a warning
+# fails it too. Node is PINNED to 20 to match Dockerfile (node:20-alpine); vitest is known-broken
+# under node 24 (ERR_INTERNAL_ASSERTION).
 # Deploys stay manual (deploy.sh, owner-run) — CI is the gate, not the trigger.
 name: ci
 
@@ -80,7 +82,7 @@ jobs:
         run: npm run build
 
   lint:
-    # Blocking no-growth ratchet over the accepted 60-error / 54-warning baseline.
+    # Blocking no-growth ratchet over the accepted baseline in scripts/lint-baseline.json.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

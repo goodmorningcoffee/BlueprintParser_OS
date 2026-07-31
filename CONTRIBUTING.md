@@ -4,7 +4,8 @@ Thanks for your interest in contributing! This guide covers everything you need 
 
 ## Prerequisites
 
-- **Node.js 20+**
+- **Node.js 20 exactly** — pinned by `.nvmrc`; vitest is known-broken under node 24
+  (`ERR_INTERNAL_ASSERTION`), so "20 or newer" is not a safe reading
 - **Docker** (for PostgreSQL via docker-compose)
 - **npm** (comes with Node.js)
 
@@ -17,8 +18,8 @@ Optional (for full pipeline features):
 ## Local Development Setup
 
 ```bash
-git clone https://github.com/deliciousnoodles/BlueprintParser.git
-cd BlueprintParser/blueprintparser_2
+git clone https://github.com/goodmorningcoffee/BlueprintParser_OS.git
+cd BlueprintParser_OS
 cp .env.example .env.local       # Edit DATABASE_URL and NEXTAUTH_SECRET
 docker compose up -d              # Start PostgreSQL
 npm install
@@ -26,11 +27,16 @@ npm run db:migrate                # Loopback development database only
 npm run dev                       # http://localhost:3000
 ```
 
-Create an admin account via the registration page, or use the bootstrap script:
+Create an admin account via the registration page, or use the first-run setup script, which also
+initializes the database:
 
 ```bash
-bash root_admin.sh
+bash scripts/setup.sh
 ```
+
+`root_admin.sh` is **not** the local bootstrap. It is the owner break-glass helper: it sources
+`.deploy.env`, drives ECS Exec against the deployed cluster, and can only list, promote, or demote
+an account that already exists.
 
 ## Code Style
 
@@ -52,17 +58,29 @@ Tests live in `__tests__/` directories next to the code they test. We use Vitest
 
 ```
 src/
-  app/          # Next.js App Router pages + API routes
+  app/          # Next.js App Router pages + API routes (route files are thin shells)
+  server/       # HTTP shell + services. Routes are declared with defineRoute(); every
+                #   project write goes through the withProjectWrite capability
+  queries/      # TanStack Query layer. Canonical keys live in queryKeys.ts;
+                #   stores do not fetch
   components/   # React components (viewer/, dashboard/, auth/)
   lib/          # Core business logic (processing, detection, parsing)
   stores/       # Zustand state management
-  types/        # Shared TypeScript types
   hooks/        # Custom React hooks
+  types/        # Shared TypeScript types
   data/         # Static data files (CSI masterformat)
-scripts/        # Python scripts (YOLO, OpenCV, template matching)
+  workers/      # Web workers (bucket fill, one-click)
+  test/         # Test harness, seeds, global setup
+scripts/        # Build/CI gate scripts (.mjs), Python CV scripts (.py),
+                #   operator shell scripts (.sh)
 infrastructure/ # Terraform IaC for AWS deployment
 drizzle/        # Database migrations
 ```
+
+`server/` and `queries/` are the two layers the P0–P5 refactor introduced, and they carry the
+contracts the gates enforce — new mutations belong in `server/`, not in `lib/`. Putting one in the
+wrong layer is caught by `npm run check:architecture` and
+`npm run check:project-security-policy` rather than by review.
 
 See the [README](README.md) for detailed architecture documentation.
 

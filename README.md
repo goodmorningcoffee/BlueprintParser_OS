@@ -111,8 +111,8 @@ BlueprintParser is a small step in that direction, and hopefully contributes tow
 ## Quick Start (Local Development)
 
 ```bash
-git clone https://github.com/goodmorningcoffee/BlueprintParser.git
-cd BlueprintParser/blueprintparser_2
+git clone https://github.com/goodmorningcoffee/BlueprintParser_OS.git
+cd BlueprintParser_OS
 cp .env.example .env.local       # Edit DATABASE_URL, NEXTAUTH_SECRET at minimum
 docker compose up -d              # PostgreSQL on port 5433
 npm install
@@ -128,14 +128,23 @@ Works without AWS credentials — PDF viewing, annotations, table parsing, QTO, 
 | Script                            | Purpose                                                                                                        | When to Use                                    |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | `scripts/setup.sh`                | First-time setup — runs migrations and creates root admin account                                              | After cloning, once PostgreSQL is running      |
+| `scripts/test-db.sh`              | Start/stop/status a user-owned PostgreSQL cluster on `:5433` for the route and migration-boundary tests        | Before running the test suite locally          |
 | `install_setup.sh`                | Interactive config wizard; schema setup is allowed only for a loopback development database                    | Local setup, or updating service configuration |
+| `entrypoint.sh`                   | Container entrypoint. The **first positional argument** selects the mode: `app`, `worker`, `migrate`, `schema-check`, `schema-readiness`, `janitor`. `app` and `worker` assert the schema is current and **never migrate** | Inside the image; not run by hand              |
 | `deploy.sh`                       | Publish an immutable app image, then activate digest-pinned task definitions after migration-history admission | Ordinary AWS production deployments            |
 | `scripts/p2-schema-cutover.sh`    | Verify zero writers/readiness, bind and retire old revisions, migrate, and verify restoration                  | One-time P2 schema compatibility boundary      |
+| `scripts/rollback.sh`             | Read-only/advisory. Resolves digests and prints the exact owner command sequence to rebind a prior image; mutates nothing | Planning a rollback (execution is owner-gated) |
 | `deploy-yolo.sh`                  | Build and push YOLO inference container to ECR                                                                 | When updating YOLO models or inference code    |
+| `aws_tools.sh`                    | AWS operations TUI. Diagnosis is read-only and is the default; `pause`/`resume`/`grace`/`redeploy` are guarded mutations behind a typed confirmation. `pause` suspends autoscaling and sets desired count to 0 — **resume before any Terraform apply** | Explaining an ALB 503; deliberate web-service pause |
 | `hardening.sh`                    | Retired fail-closed tombstone; performs no AWS action                                                           | Never; manage reviewed controls through Terraform |
-| `root_admin.sh`                   | Create/reset root admin account on a running instance                                                          | Emergency admin access recovery                |
+| `root_admin.sh`                   | Owner break-glass over ECS Exec: list root-admin status, promote one exact email, demote one exact email. It cannot create an account and has no password-reset channel | Emergency root-admin access recovery           |
 | `scripts/cost-control.sh`         | Read-only ECS, Step Functions, and SageMaker status report                                                     | Production cost and writer-state inspection    |
-| `scripts/sagemaker-killswitch.sh` | Emergency stop all SageMaker resources                                                                         | If costs spike unexpectedly                    |
+| `scripts/sagemaker-killswitch.sh` | Retired fail-closed tombstone; runs no AWS command and exits 64                                                | Never; a working kill switch must deny `sagemaker:*` at the SageMaker execution role |
+
+This table covers 13 of the repository's 20 shell scripts. The seven not listed —
+`deploy-label-studio.sh`, `deploy-lambda.sh`, `ecs-health.sh`, `ecs-tune.sh`, `setup-lambda-iam.sh`,
+`scripts/record-battery-green.sh`, `scripts/setup-label-studio.sh` — each state their contract in
+their own header comment.
 
 ### Full Setup (with AWS)
 
@@ -363,7 +372,7 @@ revocation.
 
 | File                        | Purpose                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `.env.example`              | All environment variables with descriptions. Copy to `.env.local` and fill in your values.              |
+| `.env.example`              | The environment variables needed for local development, with descriptions. Copy to `.env.local` and fill in your values. Not an exhaustive list of everything the code reads — the server validates its env contract at boot in `src/lib/env.ts`. |
 | `.deploy.env.example`       | AWS deployment variables (ECS, ECR, S3 bucket names). Copy to `.deploy.env` for production deploy.      |
 | `infrastructure/terraform/` | Full AWS infrastructure as code. Copy `backend.hcl.example` outside the repo, set untracked `terraform.tfvars`, and initialize with `-backend-config=/owner/private/beaver-backend.hcl`. |
 
@@ -403,7 +412,7 @@ revocation.
                   v                v         v   v             v
            +------+------+  +-----+---+ +---+---+--+  +-------+--------+
            |  RDS PG 16  |  | Textract| | Secrets  |  | Step Functions  |
-           |  (14 tables)|  | (OCR)   | | Manager  |  | (orchestrator)  |
+           | (schema.ts) |  | (OCR)   | | Manager  |  | (orchestrator)  |
            +-------------+  +---------+ +----------+  +-------+--------+
                                                                |
                                                                v
@@ -741,7 +750,11 @@ Viewer state is split into explicit owners: `sessionStore` owns project identity
 
 ---
 
-## Admin Dashboard (9 Tabs)
+## Admin Dashboard
+
+The tabs below are the ones most contributors need. They are **a subset, not the full set** — the
+authoritative list is the `TABS` array in `src/app/admin/AdminTabs.tsx`, and several tabs there are
+`rootOnly` and therefore invisible to ordinary admins.
 
 | Tab               | Purpose                                                                                                  |
 | ----------------- | -------------------------------------------------------------------------------------------------------- |
@@ -759,7 +772,12 @@ All customization lives in admin — code provides defaults only. Different comp
 
 ---
 
-## Database Schema (14 tables)
+## Database Schema — core tables
+
+These are the tables a contributor meets first. They are **a subset, not the whole schema** — the
+full set is declared in `src/lib/db/schema.ts`, and the newest layer (the runtime-state family:
+`runtimeCounters`, `loginLockouts`, `manualIpBans`, `abuseEvents`, `opLog`) is introduced by
+`drizzle/0039_runtime_state.sql`.
 
 | Table              | Purpose             | Key Fields                                                            |
 | ------------------ | ------------------- | --------------------------------------------------------------------- |
@@ -845,7 +863,8 @@ All communicate via JSON stdin/stdout. Called with `execFile` (not `exec`) — n
 
 ## Local Development
 
-Prerequisites: Node.js 20+, Docker
+Prerequisites: Node.js 20 exactly (see `.nvmrc` — vitest is known-broken under node 24 with
+`ERR_INTERNAL_ASSERTION`), Docker
 
 ```bash
 docker compose up -d          # PostgreSQL on port 5433
@@ -867,13 +886,13 @@ Works without AWS credentials — PDF viewing, annotations, QTO, search all func
 | **State**      | Zustand 5 (session/UI/core/tool/residual owners with narrow selectors) + TanStack Query (project-keyed server collections) |
 | **Rendering**  | pdfjs-dist 4 (PDF), HTML5 Canvas (7 overlay layers), CSS transform zoom                                                    |
 | **Styling**    | Tailwind 4, 3 dark themes (Midnight/Slate/Graphite)                                                                        |
-| **Database**   | PostgreSQL 16, Drizzle ORM, 15 migrations                                                                                  |
+| **Database**   | PostgreSQL 16, Drizzle ORM (migration history in `drizzle/meta/_journal.json`)                                             |
 | **Auth**       | NextAuth 5 (credentials), bcrypt, JWT                                                                                      |
 | **AI/LLM**     | Multi-provider (Groq/Anthropic/OpenAI/Custom), streaming SSE, priority-ordered context                                     |
 | **CV**         | OpenCV (table lines, keynotes), Tesseract (fallback OCR), YOLOv8/ultralytics                                               |
 | **Search**     | PostgreSQL tsvector + GIN index, ts_rank + ts_headline, global cross-project                                               |
 | **Infra**      | Terraform, ECS Fargate, private S3 + CloudFront deny gate, RDS, SageMaker, Step Functions                                  |
-| **Monitoring** | CloudWatch alarms, one-day private ALB access logs, GuardDuty, WAF, CloudTrail                                             |
+| **Monitoring** | CloudWatch alarms, one-day private ALB access logs. WAF / GuardDuty / CloudTrail are owner-managed and are **not** created by this IaC — see Security Model |
 
 ---
 
