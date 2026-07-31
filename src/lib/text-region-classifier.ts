@@ -31,8 +31,10 @@
  * Reuses `ocr-utils.ts` helpers (`mergeBbox`, `isSameLine`, etc.) and
  * `spatial-constants.ts` tunables. No new npm deps.
  *
- * Runs during upload processing (see processing.ts:383-428) and via admin
- * reprocess `?scope=intelligence` (see admin/reprocess/route.ts:394-496).
+ * Runs during upload processing (`lib/processing.ts`) and via admin reprocess
+ * `?scope=intelligence` (`server/services/reprocess.ts` — the API route of that name is a
+ * thin shell and holds none of this). Cited by symbol rather than line: the previous
+ * line ranges here pointed at unrelated code after the route bodies moved into services.
  */
 
 import type {
@@ -518,8 +520,16 @@ export interface ClassifyTextRegionsOptions {
 
 /**
  * Classify text regions on a page from Textract LINE + WORD data.
- * Signature preserved from the pre-rewrite classifier so call sites
- * (processing.ts:385, admin/reprocess/route.ts:431) are unchanged.
+ *
+ * The two required parameters are unchanged from the pre-rewrite classifier, so 2-argument
+ * call sites still compile — but the signature is NOT frozen: it gained an optional third
+ * parameter, `opts?: ClassifyTextRegionsOptions`, which drives the debug bundle.
+ *
+ * Production call sites (by symbol, not line — the previous citations had rotted; both files
+ * named there are wrong, and one of them is now a 24-line route shell):
+ *  - `lib/processing.ts` — upload processing, 2-arg.
+ *  - `server/services/reprocess.ts` — admin reprocess `?scope=intelligence`, and it DOES pass
+ *    the third argument (`{ debug, pageNumber, onDebug }`).
  */
 export function classifyTextRegions(
   textractData: TextractPageData,

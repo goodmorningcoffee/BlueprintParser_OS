@@ -2,7 +2,21 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { LLMClient, LLMStreamOptions, LLMToolUseOptions, ToolStreamEvent } from "./types";
 import { LLMError } from "./types";
 
-/** Retry with exponential backoff on 429 rate limit errors */
+/**
+ * Retry with exponential backoff on 429 rate limit errors.
+ *
+ * ⚠ MEASURED 2026-07-31 — the 429 branch below is UNREACHABLE from both of this file's call
+ * sites. Each wraps `this.client.messages.stream({...})`, which returns a `MessageStream`
+ * *synchronously*; `Promise.resolve(stream)` is an already-resolved promise that cannot
+ * reject. The HTTP failure surfaces later, at `for await (const event of stream)` or
+ * `stream.finalMessage()` — both OUTSIDE this `try`. So 429s go straight to
+ * `toDetailedError`, and neither the `retry-after` parse nor the backoff ever runs.
+ *
+ * What this DOES still catch is a synchronous throw from `.stream()` itself (bad params).
+ * Moving the retry around `finalMessage()` would change behaviour on a paid third-party
+ * call path ⇒ owner call, not a craft fix. Comment corrected so nobody budgets for a
+ * rate-limit guarantee that is not there.
+ */
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {

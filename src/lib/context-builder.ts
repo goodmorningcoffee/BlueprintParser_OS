@@ -49,25 +49,46 @@ export interface ContextSection {
   priority: number;
 }
 
-/** Stable section IDs for config references (headers are dynamic, IDs are stable) */
+/**
+ * Stable section IDs for config references (headers are dynamic, IDs are stable).
+ *
+ * `defaultPriority` is DISPLAY-ONLY. Assembly never reads it — the priority that actually
+ * orders a section is the one its producer passes to `sections.push(...)`. The only readers
+ * are `LlmContextTab` (slider default) and the docs demo `SectionPrioritySliders`.
+ * Measured 2026-07-31: six entries disagreed with the priority their producer pushes
+ * (`yolo-counts`, `csi-codes`, `parsed-tables`, `csi-parsed`, `csi-spatial`,
+ * `spatial-context`) and were corrected to match. The other fourteen already agreed.
+ *
+ * ⚠ This table is NOT exhaustive in either direction, and the admin panel renders one
+ * control row per key, so the gaps are user-visible:
+ *  - FOUR ids name sections that no code path produces — `yolo-detail`,
+ *    `heuristic-inferences`, `tag-patterns`, `qto-results`. Admins get four controls that
+ *    govern nothing.
+ *  - THREE produced sections have no entry: `ENSEMBLE TABLE REGIONS` and
+ *    `YOLO DENSITY REGIONS` (both below, in `assemblePageIntelligenceSections`) and
+ *    `CSI CODES ACROSS PROJECT` (`services/chat/scoped.ts`).
+ * Reconciling either gap removes or adds an admin control and is an owner call, not a
+ * comment fix. See also the note on `assembleContextWithConfig` about which producers
+ * attach ids at all.
+ */
 export const SECTION_REGISTRY: Record<string, { label: string; defaultPriority: number; description: string }> = {
   "project-report": { label: "Project Intelligence Report", defaultPriority: 0.5, description: "Auto-generated project summary with discipline breakdown" },
-  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 3.0, description: "Object counts by class per page with confidence" },
+  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 1.0, description: "Object counts by class per page with confidence" },
   "yolo-detail": { label: "YOLO Annotation Detail", defaultPriority: 3.2, description: "Per-annotation bbox locations + class descriptions + CSI tags" },
   "csi-graph": { label: "CSI Network Graph", defaultPriority: 1.0, description: "Project-wide division relationships and clusters" },
   "page-classification": { label: "Page Classification", defaultPriority: 1.5, description: "Discipline, drawing type, series" },
   "user-annotations": { label: "User Annotations", defaultPriority: 2.0, description: "User-drawn markups with notes" },
   "takeoff-notes": { label: "Takeoff Notes", defaultPriority: 3.0, description: "Quantity takeoff items with estimator notes" },
   "cross-refs": { label: "Cross-References", defaultPriority: 3.5, description: "Sheet-to-sheet reference links" },
-  "csi-codes": { label: "CSI Codes", defaultPriority: 1.0, description: "CSI MasterFormat codes detected on page" },
+  "csi-codes": { label: "CSI Codes", defaultPriority: 4.0, description: "CSI MasterFormat codes detected on page" },
   "text-annotations": { label: "Text Annotations", defaultPriority: 5.0, description: "Phone, email, equipment tags, dimensions, abbreviations (37 types)" },
   "note-blocks": { label: "Note Blocks", defaultPriority: 5.5, description: "General notes extracted from drawings" },
-  "parsed-tables": { label: "Parsed Tables/Keynotes", defaultPriority: 1.8, description: "Structured schedule data with headers + sample rows" },
+  "parsed-tables": { label: "Parsed Tables/Keynotes", defaultPriority: 5.8, description: "Structured schedule data with headers + sample rows" },
   "detected-regions": { label: "Detected Regions", defaultPriority: 6.0, description: "Classified table/schedule regions from heuristics" },
-  "csi-parsed": { label: "CSI from Parsed Data", defaultPriority: 1.2, description: "CSI codes extracted from parsed schedules" },
+  "csi-parsed": { label: "CSI from Parsed Data", defaultPriority: 6.2, description: "CSI codes extracted from parsed schedules" },
   "heuristic-inferences": { label: "Heuristic Inferences", defaultPriority: 1.5, description: "Rule-based detections with evidence chains" },
-  "csi-spatial": { label: "CSI Spatial Distribution", defaultPriority: 1.0, description: "Zone-based heatmap of CSI divisions on page" },
-  "spatial-context": { label: "Spatial OCR→YOLO Context", defaultPriority: 2.0, description: "OCR text mapped into YOLO spatial regions" },
+  "csi-spatial": { label: "CSI Spatial Distribution", defaultPriority: 7.0, description: "Zone-based heatmap of CSI divisions on page" },
+  "spatial-context": { label: "Spatial OCR→YOLO Context", defaultPriority: 8.0, description: "OCR text mapped into YOLO spatial regions" },
   "tag-patterns": { label: "Tag Patterns", defaultPriority: 5.5, description: "Repeating YOLO+OCR groups (e.g., circles with T-## text)" },
   "qto-results": { label: "QTO Workflow Results", defaultPriority: 9.0, description: "Auto-QTO tag counts and page locations" },
   "raw-ocr": { label: "Raw OCR Text", defaultPriority: 10.0, description: "Full OCR text (fallback, often truncated)" },
@@ -105,6 +126,23 @@ export const SECTION_PRESETS: Record<string, Record<string, number>> = {
 
 /**
  * Enhanced context assembly with section config + percentage allocation.
+ *
+ * ⚠ EVERY knob here keys on `ContextSection.id`, and `id` is OPTIONAL. Measured 2026-07-31:
+ * the admin LLM/Context panel therefore governs the **preview only**.
+ *  - `server/services/llm-preview.ts` attaches an id to all of its pushes ⇒ config applies.
+ *  - `services/chat/scoped.ts` — the production chat path — pushes **no ids at all**, and
+ *    neither does this module's own `assemblePageIntelligenceSections`. With no ids,
+ *    `disabledSections` filters nothing, `priorityOverrides` overrides nothing, and
+ *    `sectionBudgets` stays empty, so every section's budget is 0 and `overflowBudget`
+ *    absorbs the whole budget. Assembly degrades to "priority order until the budget runs
+ *    out" — which still works, which is why this was never noticed.
+ *  - `services/chat/global.ts` passes no config at all (consistent, but unconfigurable).
+ * Wiring ids into the chat path would change context assembly for every company that has
+ * touched the panel ⇒ owner call, not a craft fix.
+ *
+ * ⚠ ALIASING: when `config?.disabledSections` is falsy, `enabled` is the caller's SAME array
+ * reference — so the priority-override loop mutates the caller's section objects and the sort
+ * below reorders the caller's array in place. Callers must not reuse the array afterwards.
  */
 export function assembleContextWithConfig(
   sections: ContextSection[],

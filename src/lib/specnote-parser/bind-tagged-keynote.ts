@@ -11,8 +11,14 @@ import { RE_TAG_PREFIX, type LineFeature } from "./shared";
  * Safety guards:
  * - Require ≥2 rows
  * - Require tag-column X uniformity (stddev of first-word right edge ≤
- *   2% of region width). This is what separates a true tagged list from
- *   stray tag-like tokens in prose (e.g. "refer to D-02 for details").
+ *   0.02 — i.e. 2% of PAGE width, not of region width). This is what separates
+ *   a true tagged list from stray tag-like tokens in prose (e.g. "refer to D-02
+ *   for details").
+ *   ⚠ The coordinates are never renormalized to the region: `buildLineFeatures`
+ *   copies `line.bbox` straight out of Textract, `parse-notes.ts` feeds it a plain
+ *   filter of the page's lines, and Textract geometry is page-normalized 0–1. So
+ *   the guard is proportionally TIGHTER on a narrow region than on a full-page one.
+ *   Whoever next tunes this number needs that, and the old wording said the opposite.
  */
 export function bindTaggedKeynoteGrid(
   lines: readonly LineFeature[],

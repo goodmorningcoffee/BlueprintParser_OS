@@ -7,11 +7,16 @@ import type { ResolvedLLMConfig } from "./types";
 /**
  * Resolve which LLM provider/model/key to use for a chat request.
  *
- * Hierarchy:
- *   1. User-specific config (llm_configs with userId, future)
- *   2. Company-wide config (llm_configs with userId=NULL)
- *   3. Environment variables (GROQ_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY)
- *   4. Env overrides (LLM_PROVIDER + LLM_MODEL + LLM_BASE_URL)
+ * Hierarchy — in the order the function actually checks them (re-derived from the body
+ * 2026-07-31; the previous version of this list had tiers 3 and 4 the wrong way round and
+ * omitted 2b entirely, which inverts the answer for anyone who sets both an API key and
+ * LLM_PROVIDER):
+ *   1.  User-specific config (llm_configs with userId, future)
+ *   2.  Company-wide config (llm_configs with userId=NULL)
+ *   2b. Demo fallback — demo sessions prefer the cheapest provider to control costs, and
+ *       this is consulted BEFORE either env tier
+ *   3.  Env overrides (LLM_PROVIDER + LLM_MODEL + LLM_BASE_URL) — these WIN over a bare key
+ *   4.  Whichever env key is set (GROQ_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY)
  *
  * Returns null if no LLM is configured anywhere.
  */

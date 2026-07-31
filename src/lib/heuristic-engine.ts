@@ -11,6 +11,25 @@
  * All rules are JSON data, not code. Built-in rules ship as defaults.
  * Users can modify, disable, or add custom rules via admin UI.
  * Stored in companies.pipeline_config.heuristics[].
+ *
+ * ⚠ THE SCORING WEIGHTS AND `minConfidence` ARE ONE CALIBRATION, NOT TWO KNOBS.
+ * `scoreRule` sums an unnamed ladder of additive weights — measured 2026-07-31:
+ *   +0.30 required YOLO classes present   +0.25 required keywords matched
+ *   +0.20 spatial condition satisfied     +0.15 "overlap" boost (see the note at its site)
+ *   +0.15 OCR text-region type present    +0.15 required CSI divisions present
+ *   +0.10 YOLO booster class              +0.05 booster keyword
+ * — caps at `Math.min(score, 0.99)`, and the caller drops anything below the rule's own
+ * `minConfidence`, which is 0.5 for six of the nine BUILT_IN_RULES and 0.4 for the other
+ * three. Because rules are
+ * user-authored JSON, ADDING A SCORING TERM OR NUDGING A WEIGHT SILENTLY SHIFTS THE FIRING
+ * THRESHOLD OF EVERY BUILT-IN AND CUSTOM RULE AT ONCE. Re-tune `minConfidence` in the same
+ * change, or the ladder and the threshold drift apart with nothing to detect it — there are
+ * no unit tests on this module.
+ *
+ * Contrast `composite-classifier.ts` in this same directory, which names its thresholds
+ * (`MERGE_IOU_THRESHOLD`, `CONFIRMATION_OVERLAP_THRESHOLD`) and ships a confidence table.
+ * The spatial literals below (0.03 X-centre alignment, 0.3 bbox-overlap fraction, 0.1
+ * default proximity) are this file's equivalents and are still unnamed.
  */
 
 import type {
@@ -433,7 +452,15 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
       score += 0.25;
       evidence.push(`Required keywords: ${rule.textKeywordsRequired.join(", ")}`);
 
-      // Overlap boost: keywords inside a YOLO bbox
+      // ⚠ MISNOMER — no overlap is computed here. No bbox, coordinate or word position
+      // participates; this fires when a rule *asks* for overlap and any required YOLO class
+      // is present anywhere on the page. It is co-extensive with the +0.3 class boost above:
+      // `yoloRequired.some(...)` is false when `yoloRequired` is empty, and when it is
+      // non-empty that boost has already fired or the rule returned early — so this +0.15
+      // never adds information the score does not already carry.
+      // Left in place deliberately: the evidence string below is persisted into the
+      // `pageIntelligence` jsonb of historical rows, and `minConfidence` on all nine
+      // BUILT_IN_RULES is tuned against observed scores. Retiring it is an owner call.
       if (rule.overlapRequired && ctx.yoloDetections) {
         if (rule.yoloRequired.some(cls => yoloByClass.has(cls))) {
           score += 0.15;

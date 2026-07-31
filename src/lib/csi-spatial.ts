@@ -357,6 +357,13 @@ export function computeCsiSpatialMap(
 
     for (const [div, codesSet] of divMap) {
       const codes = Array.from(codesSet).sort();
+      // ⚠ UNITS: `count` and `totalInstances` are DISTINCT CODES per zone, not occurrences —
+      // `addCode` bins into a Set, so a code seen forty times in one zone counts once.
+      // ⚠ NAME COLLISION: `csi-graph.ts` exports a `totalInstances` that genuinely IS an
+      // occurrence count (it increments per annotation). Two exported fields, same name,
+      // different units, in adjacent modules. Renaming this one is a data-shape change —
+      // `csiSpatialMap` is persisted into the `pageIntelligence` jsonb and has client
+      // readers — so the name stays and this comment carries the distinction.
       const count = codes.length;
       totalInstances += count;
 

@@ -156,7 +156,16 @@ function scoreRegionForCategory(
     evidence.push(`Heuristic: ${matchingInference.ruleName} (${Math.round(matchingInference.confidence * 100)}%)`);
   }
 
-  // Column/row structure boost for table categories
+  // ⛔ DEAD BRANCH — this boost has never fired since the 2026-04-24 region-type rename.
+  // No CATEGORY_PATTERNS entry uses `"table-like"` (the seven entries use
+  // `notes-key-value` ×2, `schedule-table` ×3, `notes-numbered`, `spec-dense-columns`), and
+  // `pattern` reaches this function from exactly one place — the CATEGORY_PATTERNS loop in
+  // `classifyTables`. It is dead from the other direction too: `classifyTables` migrates
+  // legacy `"table-like"` regions to `"schedule-table"` (`migrateTextRegions`) before
+  // scoring. So neither the +0.1 nor the `Structure:` evidence string below can be produced.
+  // Restoring it (flip the literal to `"schedule-table"`) is a SCORING CHANGE on a module
+  // with no test file — owner call, not a craft fix. The live `requiredRegionType`
+  // comparison is the separate `region.type === pattern.requiredRegionType` above.
   if (pattern.requiredRegionType === "table-like" && region.columnCount && region.rowCount) {
     if (region.columnCount >= 3 && region.rowCount >= 3) {
       score += 0.1;

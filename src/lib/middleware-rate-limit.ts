@@ -153,6 +153,10 @@ const RATE_RULES: RateRule[] = [
     windowMs: 60 * 60 * 1000,
     keyType: "user",
   },
+  // Effectively unlimited on purpose: the real cap on YOLO runs is the daily quota
+  // `checkYoloQuota` (10/day/company), enforced in the yolo service before the model is
+  // invoked. This bucket exists only so the path has a named rule rather than falling to the
+  // general IP backstop; it is not the abuse control. Neighbouring pattern rules run 3–200.
   {
     pattern: "/api/yolo/run",
     method: "POST",

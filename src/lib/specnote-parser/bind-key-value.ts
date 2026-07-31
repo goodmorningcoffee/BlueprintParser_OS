@@ -44,6 +44,14 @@ export function bindKeyValueGrid(
     if (meaningful) {
       const key = sorted.slice(0, splitIdx).map((w) => w.text).join(" ").trim();
       const value = sorted.slice(splitIdx).map((w) => w.text).join(" ").trim();
+      // ⚠ BORROWED THRESHOLD — hidden coupling. `KV_RIGHT_COL_MAX_LEN` is a
+      // *text-region-classifier* threshold: there it gates `meanRightColLen` when deciding
+      // whether a region is `notes-key-value`. Here it is reused as a per-line KEY-length
+      // gate, a different quantity in a different module. Tuning the classifier's
+      // sensitivity therefore silently moves this binder's rendered column boundary, with
+      // nothing connecting the two.
+      // Note also that BOTH branches push the identical row — the guard's ONLY effect is
+      // whether `splitX` joins `splitXs`, and hence the median `colBoundaries` below.
       if (key.length > 0 && key.length <= KV_RIGHT_COL_MAX_LEN) {
         rows.push({ Key: key, Value: value });
         const splitX = (sorted[splitIdx - 1].bbox[0] + sorted[splitIdx - 1].bbox[2] + sorted[splitIdx].bbox[0]) / 2;

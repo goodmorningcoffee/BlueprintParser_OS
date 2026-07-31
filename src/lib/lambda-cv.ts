@@ -235,12 +235,13 @@ interface ShapeParseFanOutOpts {
   onBatchComplete?: (batchIdx: number, shapeCount: number) => void;
 }
 
-// NOTE: unlike `fanOutTemplateMatch`, current callers of
-// `fanOutShapeParse` (src/app/api/shape-parse/route.ts:76) don't pass
-// `onBatchComplete` — Shape Parse scanAll has no progress stream today.
-// The UI just spins during a multi-minute scan. To add progress, the
-// route would need to switch to a ReadableStream response (same pattern
-// as symbol-search/route.ts) and thread onBatchComplete through.
+// NOTE: unlike `fanOutTemplateMatch`, neither current caller of `fanOutShapeParse` passes
+// `onBatchComplete` — Shape Parse scanAll has no progress stream today. The UI just spins
+// during a multi-minute scan. The two callers are `server/services/shape-parse.ts` and
+// `server/services/reprocess.ts`; the `/api/shape-parse` route is a 22-line shell and holds
+// none of this. To add progress, the SERVICE would switch to a ReadableStream response and
+// thread `onBatchComplete` through — the pattern to copy is in
+// `server/services/symbol-search.ts`, not in that route, which is likewise now a shell.
 export async function fanOutShapeParse(
   opts: ShapeParseFanOutOpts
 ): Promise<FanOutResult<KeynoteShapeData>> {

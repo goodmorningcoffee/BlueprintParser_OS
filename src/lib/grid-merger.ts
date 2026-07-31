@@ -29,7 +29,7 @@ export interface MethodResult {
 export interface MethodDebug {
   /** Wall-clock duration from method invocation to return, in ms */
   durationMs?: number;
-  /** Full subprocess stderr (capped at 10KB), for Python-backed methods */
+  /** Full subprocess stderr (last 10,000 chars — not 10 KB), for Python-backed methods */
   stderr?: string;
   /** Subprocess exit code, for Python-backed methods */
   exitCode?: number;
@@ -71,15 +71,7 @@ export interface MergedGrid {
   mergerNotes?: MergerNotes;
 }
 
-/**
- * Merge multiple parsing method results into a single best grid.
- *
- * Algorithm:
- * 1. Rank methods by scoreForBase (confidence + tag-column coherence bonus)
- * 2. Use the highest-ranked grid as base
- * 3. For each cell: check agreement, fill empties, flag disagreements
- * 4. Compute final confidence boosted by agreement rate
- */
+/** Hard caps on grid dimensions, applied before any merge work. */
 const MAX_ROWS = 10000;
 const MAX_COLS = 500;
 
@@ -161,6 +153,15 @@ export interface MergeOptions {
   editDistanceThreshold?: number;
 }
 
+/**
+ * Merge multiple parsing method results into a single best grid.
+ *
+ * Algorithm:
+ * 1. Rank methods by scoreForBase (confidence + tag-column coherence bonus)
+ * 2. Use the highest-ranked grid as base
+ * 3. For each cell: check agreement, fill empties, flag disagreements
+ * 4. Compute final confidence boosted by agreement rate
+ */
 export function mergeGrids(results: MethodResult[], options?: MergeOptions): MergedGrid {
   const editDistThreshold = options?.editDistanceThreshold ?? 2;
   // Phase I.1.e: structured filter notes for the debug UI

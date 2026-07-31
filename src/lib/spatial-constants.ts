@@ -20,7 +20,19 @@ export const COL_X_GAP_MIN = 0.03;
 // Used by text-region-classifier.ts. Consolidated here so thresholds
 // can be audited in one place and adjusted without code-diving.
 
-/** Stage B: Y-gap tolerance = factor × median line height. */
+/**
+ * Stage B: Y-gap tolerance = factor × line height × a PER-CONSUMER multiplier.
+ *
+ * ⚠ The "audit in one place" promise above does not hold for this constant — the value here
+ * is never the effective tolerance. Three consumers, three multipliers (measured 2026-07-31):
+ *  - `text-region-classifier.ts` (server): `FACTOR × medianLineHeight × 8` ⇒ effective 4.0,
+ *    against a *measured* median line height.
+ *  - `PDFPage.tsx` (client): `FACTOR × 0.035 × 8` for spec pages, `FACTOR × 0.025 × 4`
+ *    otherwise — against *hardcoded* stand-ins for the line height, not a measured one.
+ * ⛔ DO NOT fold the multipliers into this constant. Setting it to 4.0 to "match the server"
+ * multiplies BOTH client multipliers by 8. The three consumers genuinely disagree, and the
+ * client and server Stage-B region proposals are therefore not the same algorithm.
+ */
 export const CLUSTER_Y_TOLERANCE_FACTOR = 0.5;
 
 /** Stage B: X-bound tolerance for column-band clustering (normalized). */

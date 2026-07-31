@@ -435,7 +435,10 @@ async function execScanYoloClassTexts(yoloClass: string, yoloModel: string | und
     note: a.note, source: a.source as ClientAnnotation["source"], data: a.data ?? null,
   }));
 
-  // Only load textract for pages that have matching annotations
+  // Load textract for pages that have matching annotations — but ONLY up to 50 of them.
+  // ⚠ Above 50, the `sql`1=1`` fallback below drops the page predicate entirely and selects
+  // `textractData` for EVERY page in the project, i.e. the opposite of page-scoped, at
+  // exactly the scale where it matters. (Same fallback duplicated in `execDetectTagPatterns`.)
   const relevantPages = [...new Set(clientAnns.map((a) => a.pageNumber))];
   const textractMap: Record<number, TextractPageData> = {};
   if (relevantPages.length > 0) {
@@ -520,7 +523,9 @@ async function execDetectTagPatterns(ctx: ToolContext) {
 
   if (allAnns.length === 0) return { patterns: [] };
 
-  // Only load textract for pages that have YOLO annotations
+  // Load textract for pages that have YOLO annotations — but ONLY up to 50 of them; past
+  // that the `sql`1=1`` fallback below loads every page in the project. Same degradation as
+  // `execScanYoloClassTexts` above, and neither the 50 nor the fallback is explained anywhere.
   const yoloPages = [...new Set(allAnns.map((a) => a.pageNumber))];
   const pageRows = await db
     .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })

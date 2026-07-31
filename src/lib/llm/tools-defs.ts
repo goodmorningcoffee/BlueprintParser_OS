@@ -64,7 +64,12 @@ export const BP_TOOLS: ToolDefinition[] = [
         pageNumber: { type: "number", description: "Filter to specific page (optional)" },
         className: { type: "string", description: "Filter by YOLO class name like 'door_single', 'circle', 'tables' (optional)" },
         source: { type: "string", enum: ["yolo", "user", "takeoff"], description: "Filter by annotation source (optional)" },
-        minConfidence: { type: "number", description: "Minimum confidence 0-1 (optional, default 0.25)" },
+        // No default: the executor applies this filter only when the value is present, so
+        // omitting it means NO confidence floor, not 0.25. This description ships to the
+        // model in the tool schema, so an invented default misleads the LLM at run time as
+        // well as the next maintainer. Matches the honest wording on the other
+        // `minConfidence` property in this file.
+        minConfidence: { type: "number", description: "Minimum confidence 0-1 (optional)" },
       },
     },
   },

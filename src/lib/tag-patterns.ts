@@ -26,7 +26,12 @@ export interface TagGroup {
   yoloClass: string;             // "circle"
   textPattern: string;           // "T-##"
   regexPattern: string;          // "T-\\d+"
-  displayName: string;           // "Circle Tags (T-series)"
+  // ⚠ Reads "circle tags (T--series)" in practice, not "Circle Tags (T-series)": the emitter
+  // interpolates the raw yoloClass (lowercase) and `extractPrefix`'s output, which KEEPS the
+  // trailing separator ("T-01" → "T-"), then appends "-series". `id` and `textPattern` above
+  // are accurate because `id` strips non-alphanumerics; only this line forgot to.
+  // Fixing the render instead of the comment changes user-visible text ⇒ owner call.
+  displayName: string;           // "circle tags (T--series)"
   instances: TagInstance[];
   pageCount: number;
   uniqueValues: string[];        // ["T-01", "T-02", ...]
