@@ -293,12 +293,28 @@ export function classifyPageRegions(
       sources: ["yolo:drawings"],
       pageNumber,
     };
-    // If this annotation merges with an existing drawings region AND the
-    // existing one came from a different model, bump to 0.95. This is the
-    // "yolo_medium ∩ yolo_primitive" high-confidence case.
+    // Multi-model agreement bump: if ≥2 distinct YOLO models produced overlapping
+    // "drawings" boxes here, raise confidence to 0.95 — the "yolo_medium ∩
+    // yolo_primitive" high-confidence case. The real test is the
+    // `countDistinctModels(...) >= 2` below; `d.modelName` only screens out annotations
+    // that do not know which model produced them.
+    //
+    // ⚠ Two conjuncts were removed from this guard on 2026-07-31 because both were
+    // provably constant — neither ever excluded anything (proof in the commit message):
+    //   • `mergedWith` — mergeOrInsert is declared `: ClassifiedRegion` and returns an
+    //     object on both paths, so it is never falsy.
+    //   • `mergedWith.sources.some(s => s === "yolo:drawings")` — `drawings` starts
+    //     empty, its ONLY writer is the mergeOrInsert call immediately below, every
+    //     region that call inserts is built with sources:["yolo:drawings"], and the
+    //     merge path UNIONS sources rather than replacing them. So it holds for every
+    //     element, always.
+    // ⚠ The comment this replaced said the branch required the annotation to MERGE with
+    // a pre-existing region. The code never tested that: "merged" vs "freshly inserted"
+    // would be `mergedWith !== region`, which is not what was written, and the sources
+    // check does not approximate it. Adding that test would change which regions get the
+    // bump ⇒ owner call, not a craft fix.
     const mergedWith = mergeOrInsert(drawings, region);
-    if (mergedWith && d.modelName && mergedWith.sources.some((s) => s === "yolo:drawings")) {
-      // Multi-model agreement: confidence bump
+    if (d.modelName) {
       const distinctModels = countDistinctModels(drawingsAnnotations, mergedWith.bbox);
       if (distinctModels >= 2) {
         mergedWith.confidence = Math.max(mergedWith.confidence, 0.95);
