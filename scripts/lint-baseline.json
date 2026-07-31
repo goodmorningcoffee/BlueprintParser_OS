@@ -48,7 +48,6 @@
     { "file": "src/components/viewer/TakeoffCsvModal.tsx", "rule": "react-hooks/refs", "severity": "error", "count": 1 },
     { "file": "src/components/viewer/TextAnnotationOverlay.tsx", "rule": "react-hooks/exhaustive-deps", "severity": "warning", "count": 1 },
     { "file": "src/components/viewer/ViewAllPanel.tsx", "rule": "react-hooks/exhaustive-deps", "severity": "warning", "count": 7 },
-    { "file": "src/lib/tag-mapping/primitives/scope.ts", "rule": null, "severity": "warning", "count": 1 },
     { "file": "src/queries/useAnnotationGroups.ts", "rule": "react-hooks/preserve-manual-memoization", "severity": "error", "count": 2 },
     { "file": "src/queries/useTakeoff.ts", "rule": "react-hooks/preserve-manual-memoization", "severity": "error", "count": 6 }
   ]

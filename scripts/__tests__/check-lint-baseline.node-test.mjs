@@ -27,9 +27,24 @@ function snapshot(entries, fatalCount = 0) {
   };
 }
 
+// These three totals are an ABSOLUTE pin on scripts/lint-baseline.json, deliberately
+// stricter than check-lint-baseline.mjs itself: the gate is directional (a shrink is an
+// "improvement" and exits 0), whereas this test fails on ANY change to the ledger,
+// shrink included. That asymmetry is the point — the gate stops debt growing, this test
+// stops the ledger being edited without someone noticing.
+//
+// ⇒ Lowering these numbers is legitimate ONLY as the record of a real, measured shrink,
+// applied in the same commit as the source change that caused it. Never edit them to make
+// an unrelated failure go away.
+//
+// 2026-07-31 · 50→49 tuples, 52→51 warnings. Deleted the dead
+// `// eslint-disable-next-line no-console` at src/lib/tag-mapping/primitives/scope.ts,
+// which ESLint itself reported as "Unused eslint-disable directive (no problems were
+// reported from 'no-console')" — `no-console` is not enabled by eslint.config.mjs at all.
+// The file now lints 0 errors / 0 warnings. Error total is unchanged at 60.
 test("the checked-in baseline is exact, canonical, and complete", () => {
   assert.equal(baseline.schemaVersion, 1);
-  assert.equal(baseline.entries.length, 50);
+  assert.equal(baseline.entries.length, 49);
   assert.equal(
     baseline.entries
       .filter((entry) => entry.severity === "error")
@@ -40,7 +55,7 @@ test("the checked-in baseline is exact, canonical, and complete", () => {
     baseline.entries
       .filter((entry) => entry.severity === "warning")
       .reduce((total, entry) => total + entry.count, 0),
-    52,
+    51,
   );
 });
 

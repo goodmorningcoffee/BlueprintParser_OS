@@ -41,8 +41,9 @@ export function buildScope(
 
   // Trades: allow-all for now. Log once so the signal is visible during
   // development without spamming production.
+  // (No eslint-disable needed: `no-console` is not enabled by this repo's config, so a
+  // directive here is itself reported as unused. Do not re-add one unless the rule lands.)
   if (opts.trades && opts.trades.length > 0) {
-    // eslint-disable-next-line no-console
     console.info(
       `[tag-mapping/scope] trades filter requested (${opts.trades.join(",")}) but ` +
       `sheet-trade classifier is not built yet — allow-all`,
