@@ -12,13 +12,14 @@
  * express. The service resolves access itself.
  *
  * kind:"stream" on POST: the engines' SSE Response (and the demo-gate's flat 403
- * NextResponse) ride the `result instanceof Response` passthrough (defineRoute.ts:248,
- * fires before the kind check); the kind only arms the INTERNAL safety net. DELETE is
+ * NextResponse) ride defineRoute's `result instanceof Response` passthrough, which fires
+ * before the kind check; the kind only arms the INTERNAL safety net. DELETE is
  * a plain json route: {success:true} wrapped by the shell = byte-identical to legacy.
  *
  * body:zLooseBody — the shell owns POST body-parse (sanctioned diff E); the service
- * runs the legacy field cascade itself. Path must stay /api/ai/chat: middleware.ts:152
- * rate-limits POST /api/ai/chat (30/user/hr) and feature-map.ts:41 keys on it.
+ * runs the legacy field cascade itself. Path must stay /api/ai/chat: the RATE_RULES entry in
+ * lib/middleware-rate-limit.ts caps POST /api/ai/chat at 30/user/hr, and EXACT_MAP in
+ * lib/admin-logs/feature-map.ts keys on the same literal.
  */
 
 import { defineRoute } from "@/server/api/defineRoute";

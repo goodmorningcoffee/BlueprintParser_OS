@@ -1,13 +1,31 @@
 /**
  * api-utils.ts
  *
- * Shared API route utilities — auth checks, validation, error responses.
- * Extracts the 4-line auth pattern repeated in 56 routes into reusable functions.
+ * ⚠️ THIS IS NOT WHERE ROUTE AUTH LIVES ANY MORE. The file predates the route shell; it was
+ * written to collapse the `const { session, error } = await requireAuth()` preamble that every
+ * fat route repeated. THAT IDIOM IS RETIRED — route auth is DECLARED on the spec
+ * (`auth: "none" | "session" | "admin" | "root" | "webhookSecret" | {project}`) in
+ * server/api/defineRoute.ts and resolved by the shell before the handler runs.
  *
- * Usage:
- *   const { session, error } = await requireAuth();
- *   if (error) return error;
- *   // session is typed and guaranteed non-null
+ * What is still load-bearing here:
+ *   • resolveProjectAccess — the project-access ENGINE: authenticate → look up the project →
+ *     enforce tenancy (cross-tenant returns 404, indistinguishable from missing — no existence
+ *     leak) → resolve scope. server/api/access.ts wraps it as resolveProjectOrThrow, and
+ *     defineRoute's declarative `{project}` auth delegates to that wrapper. This is the
+ *     real contract, and it is the reason this file is still imported.
+ *   • AuthSession / ProjectAccessRow / ProjectAccessScope — the shared types. Most files that
+ *     import this module take only these.
+ *   • requireAdmin — one production consumer: app/api/auto-detect-tables/route.ts.
+ *   • apiError — the OLD flat {error: string} body. The shell's envelope is a DIFFERENT shape
+ *     ({error:{code,message}}) and lives in server/api/envelope.ts. Do not confuse them.
+ *   • checkProjectAccess and parseBboxMinMax — no production call sites, but both are exercised
+ *     by lib/__tests__/access-control.test.ts, and server/api/schemas.ts's zBboxMinMax is
+ *     defined as mirroring parseBboxMinMax EXACTLY. Neither is safe to delete.
+ *
+ * requireAuth and requireRootAdmin have ZERO references anywhere in src/; each is marked
+ * @deprecated at its declaration. They are kept because route and service headers across
+ * src/app/api and src/server still name requireAuth as the legacy shape they were folded from.
+ * Removing them is an owner call, not a mechanical cleanup.
  */
 
 import { NextResponse } from "next/server";
@@ -40,6 +58,10 @@ export interface AuthSession {
 
 /**
  * Require authenticated session. Returns typed session or error response.
+ *
+ * @deprecated Zero call sites in src/. The live equivalent is `auth: "session"` on
+ * defineRoute, which throws UNAUTHORIZED before the handler runs. Kept only because route and
+ * service headers still name requireAuth as the legacy shape they were folded from.
  */
 export async function requireAuth(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
@@ -69,6 +91,9 @@ export async function requireAdmin(): Promise<
 
 /**
  * Require root admin role. Returns typed session or error response.
+ *
+ * @deprecated Zero call sites in src/. The live equivalent is `auth: "root"` on defineRoute
+ * (requireSession("root") → FORBIDDEN "Root admin only" for a company-admin).
  */
 export async function requireRootAdmin(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }

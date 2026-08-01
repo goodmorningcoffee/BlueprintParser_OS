@@ -6,7 +6,7 @@
 // access + demo gate, PDF fetch + template crop, branch dispatch, and the two NDJSON streams.
 // The inline python3/OpenCV crop moved VERBATIM to @/lib/template-crop (its own mockable seam).
 // The FIRST stream-kind fold: the NDJSON Response rides the shell's `result instanceof Response`
-// passthrough (defineRoute.ts:248) — once this fn returns the Response, EVERYTHING in-stream
+// passthrough (it fires before the kind check) — once this fn returns, EVERYTHING in-stream
 // (progress / done / {type:"error"} at HTTP 200) is emitted here byte-identically to legacy and
 // is invisible to the shell. Errors that must carry an HTTP status are thrown BEFORE the
 // Response is constructed.
@@ -26,10 +26,10 @@
 //     passthrough (demo-features.ts owns that 403's shape everywhere; labeling's FQ-8 was the
 //     precedent and has since been retired — this flips only when demo-features itself migrates).
 //     ⚠️ "Failed to fetch PDF" / "No page images available" are ApiError("INTERNAL", msg) 500s
-//     whose CONTROLLED messages surface verbatim — the shell forwards ANY ApiError's message
-//     (defineRoute.ts:254-255) even though envelope.ts:42's JSDoc claims INTERNAL is always
-//     generic (known doc/code contradiction, also noted at S015). The char test pins both
-//     strings; if the docstring is ever enforced, those pins break loudly — resolve there.
+//     whose CONTROLLED messages surface verbatim — defineRoute's catch forwards ANY ApiError's
+//     message. That is the DOCUMENTED contract, not a contradiction: envelope.ts's ApiError
+//     JSDoc states it explicitly (DR003 FIX-2; also noted at S015). The char test pins both
+//     strings, and the surfacing is load-bearing — do NOT "fix" it to be generic.
 //   B leak-drop: legacy's catch-all `apiError(err.message, 500)` (old route.ts:430) leaked
 //     arbitrary internals (pg/S3/fs/python messages) — an unexpected throw now hits the shell's
 //     generic INTERNAL 500; real cause logged server-side with requestId. The legacy
@@ -74,8 +74,8 @@
 //         paths — collapsing them into cleaned throws is server-side hygiene, HTTP-invisible.)
 //
 // PERF/ops pins: Content-Type application/x-ndjson + Transfer-Encoding chunked + Cache-Control
-// no-cache ride on the returned Response untouched. middleware.ts:63 rate-limits the path via
-// ABUSIVE_ROUTE_PREFIXES — the route file must stay at /api/symbol-search. The sole consumer
+// no-cache ride on the returned Response untouched. middleware.ts rate-limits the path via its
+// ABUSIVE_ROUTE_PREFIXES list — the route file must stay at /api/symbol-search. The sole consumer
 // (SymbolSearchPanel) holds a 10-min AbortController.
 
 import { db } from "@/lib/db";

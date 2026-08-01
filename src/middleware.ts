@@ -13,6 +13,14 @@ import {
   isRateLimited,
   pruneExpiredRateBuckets,
 } from "@/lib/middleware-rate-limit";
+// TEST-FACING RE-EXPORT, deliberate — not an accident and not dead code. These symbols live in
+// lib/middleware-rate-limit.ts and lib/trusted-client-ip.ts; they are surfaced here because two
+// test files address them through the "@/middleware" specifier:
+// lib/__tests__/middleware-rate-rules.test.ts and lib/__tests__/middleware-rate-admission.test.ts.
+// (Four test files import "@/middleware"; the other two take only the `middleware` function and
+// never touch this block — consumers of THIS block are 2, not 4.) Nothing in production imports
+// from this module: Next loads middleware.ts by convention. Deleting the block breaks those two
+// test files, so do not "clean it up".
 export {
   findRateRule,
   isGeneralBucketExempt,
@@ -188,9 +196,8 @@ export async function middleware(request: NextRequest) {
   const userAgent = request.headers.get("user-agent") || "";
   const startTs = Date.now();
 
-  // Stable 24h session ID for grouping requests by visitor in CloudWatch
-  // Logs Insights queries. See /home/vscode/.claude/plans/admin-logs-tab-root-only.md
-  // for the rationale (dedicated cookie beats NextAuth-cookie-hash for anon users).
+  // Stable 24h session ID for grouping requests by visitor in CloudWatch Logs Insights
+  // queries. A dedicated cookie beats hashing the NextAuth cookie: anon users have none.
   let sessionId = request.cookies.get(SESSION_COOKIE)?.value;
   const sessionIsNew = !sessionId;
   if (!sessionId) sessionId = crypto.randomUUID();

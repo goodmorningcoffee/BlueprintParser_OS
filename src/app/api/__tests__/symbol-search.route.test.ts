@@ -293,7 +293,7 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     h.downloadFromS3.mockRejectedValueOnce(new Error("private S3 unavailable"));
     const { status, body: resBody } = await readJson(await call(body(project.id)));
     expect(status).toBe(500);
-    expect(resBody).toEqual({ error: { code: "INTERNAL", message: "Failed to fetch PDF" } }); // [S024 fold: A] flipped — message PRESERVED (controlled string, not a leak-drop; pins the envelope.ts:42 doc/code contradiction — the shell DOES surface INTERNAL ApiError messages)
+    expect(resBody).toEqual({ error: { code: "INTERNAL", message: "Failed to fetch PDF" } }); // [S024 fold: A] flipped — message PRESERVED (controlled string, not a leak-drop; pins the envelope.ts INTERNAL-message surfacing contract — the shell DOES surface INTERNAL ApiError messages)
   });
 
   it("local path, ALL page images fail → 500 'No page images available'", async () => {

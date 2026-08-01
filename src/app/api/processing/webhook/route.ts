@@ -3,7 +3,7 @@
  *
  * [refactor jul6 S035] Thin shell — behavior lives in services/processing-routes.ts
  * (processingWebhook). auth:"webhookSecret" — THE FIRST consumer of the shell's spec;
- * checkWebhookSecret (defineRoute.ts:111-129) was authored as a replica of this route's
+ * checkWebhookSecret (in server/api/defineRoute.ts) was authored as a replica of this route's
  * legacy inline check and the S035 freeze verified branch parity behaviorally
  * (Unauthorized / Missing timestamp / Webhook expired — statuses+messages identical;
  * envelope flip = diff A). body:zLooseBody (diff E; note the S033 systemic trait:

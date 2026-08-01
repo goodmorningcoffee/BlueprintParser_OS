@@ -22,8 +22,8 @@
 //     drops undefined). scanAll no-pages → {keynotes:[],byPage:{},warnings:["No pages found"]}.
 //   • SQ-4 single-page: padded page_NNNN.png; png-fail → original.pdf + rasterizePage(pdf,
 //     pageNumber, 300) fallback; both-fail → CONTROLLED "Failed to load page image" 500
-//     (message KEPT at fold as ApiError INTERNAL — surfaces per defineRoute.ts:254, the
-//     known envelope.ts:42 contradiction, S024-pinned pattern); "Page image unavailable"
+//     (message KEPT at fold as ApiError INTERNAL — defineRoute's catch forwards any ApiError's
+//     message, the DOCUMENTED contract in envelope.ts, S024-pinned pattern); "Page image unavailable"
 //     defensive 500 likely unreachable (kept).
 //   • SQ-5 regionBbox (MinMax): sharp crop only when cropW>10 && cropH>10, else SILENT
 //     full-page (offsets 0/0/1/1); crop throw → warn + full page. Remap: offset +
@@ -259,7 +259,7 @@ describe.skipIf(!dbUp)("single-page mode (SQ-4/5/6)", () => {
     r = await readJson(await call({ projectId: project.id, pageNumber: 2 }));
     expect(r.status).toBe(500);
     // [S028 fold: A applied — CONTROLLED message KEPT] ApiError("INTERNAL",msg) SURFACES via
-    // defineRoute.ts:254 (the known envelope.ts:42 contradiction, S024 pin class; P1-review item)
+    // defineRoute's catch — the DOCUMENTED contract in envelope.ts's ApiError JSDoc, S024 pin class
     expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Failed to load page image" } });
   });
 

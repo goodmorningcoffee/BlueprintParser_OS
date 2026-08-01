@@ -12,7 +12,7 @@
 //     dispatch. All route-level errors are FLAT {error:string} at legacy.
 //   • FC-2 `if (!message)` is a FALSY check — "", 0, null all → "message required".
 //   • FC-3 isDemo = access.scope === "demo", NOT project.isDemo: same-company members (and
-//     root) on a demo project get their REAL scope (api-utils.ts:190-199 carve-out) → NO demo
+//     root) on a demo project get their REAL scope (resolveProjectAccess's allowDemo carve-out) → NO demo
 //     gate, COMPANY quota; only anon/cross-company callers get demo scope. Diverges from
 //     symbol-search (which used project.isDemo) — do NOT harmonize.
 //   • FC-4 scope:"global" while SIGNED OUT falls through the global branch (session?.user

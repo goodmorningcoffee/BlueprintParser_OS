@@ -56,11 +56,23 @@ export interface ProjectAuthSpec {
 }
 
 export type AuthSpec =
+  /**
+   * No auth AT THE SHELL — which is NOT a synonym for "public". This is the spec the
+   * validate-before-auth folds use: the legacy route ran its field cascade before the 401 and
+   * that ordering is frozen, so the SERVICE calls auth() itself (services/labeling.ts,
+   * services/symbol-search.ts, services/ai-chat.ts). Genuinely public routes use it too.
+   * Read the route header before assuming a "none" route is unauthenticated.
+   */
   | "none"
+  /** Any signed-in user — requireSession(); no session → UNAUTHORIZED 401. */
   | "session"
+  /** Company-admin OR root: requireSession("admin") passes role === "admin" OR isRootAdmin. */
   | "admin"
+  /** Root ONLY: requireSession("root") passes isRootAdmin; a company-admin gets FORBIDDEN 403. */
   | "root"
+  /** checkWebhookSecret: constant-time Bearer compare + fresh x-webhook-timestamp. No session. */
   | "webhookSecret"
+  /** Declarative project auth (ProjectAuthSpec above) — delegates to resolveProjectAccess. */
   | { project: ProjectAuthSpec };
 
 // ── route spec + handler context ─────────────────────────────────────────────
@@ -70,11 +82,23 @@ export interface RouteContext<B, Q> {
   params: Record<string, string>;
   body: B;
   query: Q;
-  /** Authenticated session, or null for public/demo/webhook routes. */
+  /**
+   * Authenticated session, or null. The TYPE is nullable for every auth spec; the GUARANTEE is
+   * not. Under auth "session" / "admin" / "root", requireSession has ALREADY thrown
+   * UNAUTHORIZED by the time the handler runs, so `session` is non-null there — that is what
+   * licenses the bare `session!` that route handlers across src/app/api rely on.
+   * Assert it; do NOT add a runtime `if (!session)` branch, which is dead code that reads like
+   * a live path. Under `auth:{project}` session may legitimately be null (an unauthenticated
+   * demo read); under "none" and "webhookSecret" it always is.
+   *
+   * Narrowing this per-spec so the `!` disappears is a generic-signature change to
+   * RouteContext/RouteSpec that touches every defineRoute call site in src/. It is a real
+   * improvement and an OWNER CALL — not a mechanical one.
+   */
   session: AuthSession | null;
-  /** The resolved project (project-auth routes only), else null. */
+  /** The resolved project — non-null under `auth:{project}` ONLY; null under every other spec. */
   project: ProjectAccessRow | null;
-  /** The resolved access scope (project-auth routes only), else null. */
+  /** The resolved access scope — non-null under `auth:{project}` ONLY; null under every other spec. */
   scope: ProjectAccessScope | null;
   /** Per-request id, also used in the server-side 500 log line. */
   requestId: string;
@@ -82,7 +106,21 @@ export interface RouteContext<B, Q> {
 
 export interface RouteSpec<B, Q> {
   auth: AuthSpec;
-  /** json (default) = envelope the return value. stream|raw = handler returns a Response, passed through. */
+  /**
+   * json (default) = envelope the return value. stream|raw = the handler returns a Response and
+   * the shell passes it through.
+   *
+   * stream and raw are RUNTIME-IDENTICAL. `kind` is consulted in exactly one place — the
+   * post-handler check in the shell below — where both values arm the same "handler did not
+   * return a Response" safety net. The split is a convention for readers, not behaviour:
+   *   stream = a streamed body, NDJSON or SSE (symbol-search, admin/reprocess, ai/chat)
+   *   raw    = an asset/binary body whose own headers must survive (label-assets,
+   *            project-assets)
+   * Picking the wrong one of those two is harmless. Leaving kind at json for a handler that
+   * returns a Response is ALSO harmless: the `result instanceof Response` passthrough fires
+   * BEFORE the kind check. kind only decides what happens when a Response was expected and
+   * something else came back.
+   */
   kind?: "json" | "stream" | "raw";
   body?: z.ZodType<B>;
   query?: z.ZodType<Q>;
@@ -123,8 +161,11 @@ async function safeParseJsonBody(req: Request): Promise<unknown> {
 }
 
 /**
- * Webhook-secret auth — replicates processing/webhook/route.ts EXACTLY: constant-time
- * `Bearer <secret>` compare + a fresh x-webhook-timestamp (≤5min old, ≤1min in the future).
+ * Webhook-secret auth — was AUTHORED as an exact replica of the legacy inline check in
+ * processing/webhook/route.ts (that route is a thin shell now and no longer has one):
+ * constant-time `Bearer <secret>` compare + a fresh x-webhook-timestamp (≤5min old, ≤1min in
+ * the future). Branch parity was verified behaviorally by the S035 freeze,
+ * app/api/__tests__/processing.route.test.ts.
  */
 function checkWebhookSecret(req: Request): void {
   const authHeader = req.headers.get("authorization");

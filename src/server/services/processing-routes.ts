@@ -3,7 +3,7 @@
 // processing-routes.ts — @/lib/processing (the ingest ENGINE, byte-untouched) keeps its
 // name. Char: __tests__/processing.route.test.ts (PQ5-1..PQ5-3).
 //   • webhook: the shell's FIRST auth:"webhookSecret" consumer — checkWebhookSecret
-//     (defineRoute.ts:111-129) was authored as a replica of this route's inline check;
+//     (in server/api/defineRoute.ts) was authored as a replica of this route's inline check;
 //     the freeze verified branch parity behaviorally (statuses+messages identical;
 //     envelope flip = diff A). The service owns everything AFTER auth: dbId lookup 404 →
 //     page upsert loop (parseTextractResponse/extractRawText engines; search_vector raw

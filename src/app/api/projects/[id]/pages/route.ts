@@ -6,7 +6,7 @@
 // range-before-auth precedence. So the service validates the range imperatively, THEN resolves access
 // (the same reason all five pages/* handlers are auth:"none"). The service returns a RAW NextResponse
 // so its Cache-Control header survives the shell's `result instanceof Response` passthrough
-// (defineRoute.ts:248). See getPageWindow's docstring for the full frozen-quirk + sanctioned-diff list.
+// (it fires before the kind check). See getPageWindow's docstring for the frozen-quirk + diff list.
 import { defineRoute } from "@/server/api/defineRoute";
 import { getPageWindow } from "@/server/services/pages";
 

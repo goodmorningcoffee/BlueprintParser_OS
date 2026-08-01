@@ -2,7 +2,7 @@
 // [refactor jul6 S035] CHARACTERIZATION for the processing family (webhook POST + dev POST),
 // written as THE FREEZE before the P1.5 fold onto services/processing-routes.ts. The webhook
 // becomes the shell's FIRST auth:"webhookSecret" consumer — checkWebhookSecret
-// (defineRoute.ts:111-129) was AUTHORED as a replica of this route's inline check (its JSDoc
+// (in server/api/defineRoute.ts) was AUTHORED as a replica of this route's inline check (its JSDoc
 // says so); this freeze verifies the parity BEHAVIORALLY branch-by-branch. Engines mocked
 // (@/lib/textract parse fns; @/lib/processing processProject); REAL DB. Frozen:
 //   • PQ5-1 webhook auth ladder (all flat 401s → envelope at fold, diff A): bad/missing

@@ -32,9 +32,9 @@
 //       client call-point surfaces ONLY the message text (status-blind — verified across all 7
 //       consumers: persistFetch→apiErrorMessage is envelope-agnostic, no consumer branches on the
 //       promote status), so the status change is invisible while the guidance message survives.
-//       ⚠️ These MUST be NON-INTERNAL ApiErrors: the shell forwards an INTERNAL ApiError's message
-//       verbatim at 500 (defineRoute.ts:254-255, contra the envelope.ts:42 JSDoc) and SCRUBS a plain
-//       Error to a generic 500 — only a 4xx ApiError both preserves the message AND sets the status.
+//       ⚠️ These MUST be NON-INTERNAL ApiErrors: defineRoute's catch forwards an INTERNAL ApiError's
+//       message verbatim at 500 (the documented contract — see envelope.ts's ApiError JSDoc) and
+//       SCRUBS a plain Error to a generic 500 — only a 4xx ApiError preserves message AND status.
 //   (C) leak-drop on the GENERIC catch: any OTHER (unexpected) throw — a DB error, a binder bug —
 //       now falls to the shell's generic INTERNAL 500 (real cause logged server-side, never leaked).
 //       The legacy "Promote failed" fallback literal is retired (the shell's "Internal server error"

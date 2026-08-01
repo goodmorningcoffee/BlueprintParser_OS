@@ -14,8 +14,8 @@
 //     length>0?…:undefined. No-pages → {keynotes:[],byPage:{},warnings:["No pages found"]}.
 //   • SQ-4 padded page_NNNN.png → original.pdf + rasterizePage(pdf, pageNumber, 300)
 //     fallback; both-fail → ApiError("INTERNAL","Failed to load page image") — the message
-//     SURFACES at 500 through defineRoute.ts:254 (KNOWN envelope.ts:42 contradiction,
-//     S024 pin class — char-pinned; resolve doc-vs-code at P1 review). "Page image
+//     SURFACES at 500 through defineRoute's catch, which forwards any ApiError's message
+//     (the DOCUMENTED contract in envelope.ts's JSDoc; S024 pin class, char-pinned). "Page image
 //     unavailable" defensive INTERNAL likewise kept.
 //   • SQ-5 crop only when cropW>10 && cropH>10 else SILENT full page; crop throw → warn +
 //     full page; remap offset+coord*regionSize on bbox AND contour.

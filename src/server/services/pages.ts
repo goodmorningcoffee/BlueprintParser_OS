@@ -270,7 +270,7 @@ export async function getPageTextract(req: Request) {
  *  param; NO allowDemo (the demo twin demo/projects/[id]/pages is the public read — folded LATER).
  *
  *  Like getPageTextract this returns a RAW NextResponse so the Cache-Control header survives the
- *  shell's `result instanceof Response` passthrough (defineRoute.ts:248, before the kind check) — a
+ *  shell's `result instanceof Response` passthrough (it fires BEFORE the kind check) — a
  *  plain object would be json-enveloped and DROP the header. The mutable composite must revalidate:
  *  a fresh max-age replayed pre-write annotations/page intelligence after reload or range revisit.
  *  `private, no-cache` retains private storage/conditional-revalidation semantics without allowing

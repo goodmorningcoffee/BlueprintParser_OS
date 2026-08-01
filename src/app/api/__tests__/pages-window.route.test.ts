@@ -251,8 +251,8 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
   // the remaining sanctioned diff + frozen quirks so a future drift surfaces RED.
 
   it("unexpected DB error → leak-free INTERNAL 500 (sanctioned diff B; legacy had NO try/catch → raw leaky 500)", async () => {
-    // The shell's outer catch (defineRoute.ts:253-263) logs the real cause server-side and returns a
-    // GENERIC body — the thrown err.message must NEVER reach the client. Mirrors the S018 closer.
+    // The shell's outer catch (in server/api/defineRoute.ts) logs the real cause server-side and returns
+    // a GENERIC body — the thrown err.message must NEVER reach the client. Mirrors the S018 closer.
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
     asUser(user);

@@ -11,12 +11,12 @@
  * assertDemoFeatureEnabled gate. The service resolves access itself (S023 map-tags play).
  *
  * kind:"stream": the service's NDJSON Response rides the `result instanceof Response`
- * passthrough (defineRoute.ts:248, fires before the kind check); the kind arms the
+ * passthrough in defineRoute (it fires before the kind check); the kind arms the
  * INTERNAL safety net if the handler ever returns a non-Response.
  *
  * body:zLooseBody — the shell owns body-parse (sanctioned diff E); the service runs the
- * legacy field cascade itself. The route file must stay at this path: middleware.ts:63
- * rate-limits /api/symbol-search via ABUSIVE_ROUTE_PREFIXES.
+ * legacy field cascade itself. The route file must stay at this path: middleware.ts
+ * rate-limits /api/symbol-search via its ABUSIVE_ROUTE_PREFIXES list.
  */
 
 import { defineRoute } from "@/server/api/defineRoute";

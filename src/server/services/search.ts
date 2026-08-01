@@ -11,7 +11,7 @@
 //     recipe — declarative auth would resolve access BEFORE the field 400 and invert precedence).
 //     resolveProjectAccess is called WITHOUT allowDemo — a signed-out caller on a DEMO project gets
 //     401, NOT a public read (demo search lives in /api/demo/search, folded later in P1.4). It DOES
-//     root-bypass (the engine, api-utils.ts:216), so a root admin reads ANY company's project (200)
+//     root-bypass (resolveProjectAccess's root-admin branch), so a root admin reads ANY company's project (200)
 //     — the OPPOSITE of the qto/takeoff-LIST manual-lookup routes (which 404 root cross-company).
 //     Frozen exactly: missing→404, signed-out→401, wrong-company-non-root→404, root-any→200, own→200.
 //   • globalSearch = CROSS-PROJECT search. Legacy was AUTH-FIRST (requireAuth before the q 400), so

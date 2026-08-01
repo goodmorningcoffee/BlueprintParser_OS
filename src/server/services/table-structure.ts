@@ -8,8 +8,8 @@
 //   • UQ-2 SANCTIONED message truncation (pre-flagged S026 recon; symbol-search
 //     precedent): the inner PDF-download catch's leaky "Failed to fetch PDF: ${msg}"
 //     500 → ApiError("INTERNAL","Failed to fetch PDF") — the surviving string is
-//     byte-identical to the S024-pinned message; it SURFACES via defineRoute.ts:254
-//     (known envelope.ts:42 contradiction, S024 pin class).
+//     byte-identical to the S024-pinned message; it SURFACES via defineRoute's catch, which
+//     forwards any ApiError's message (documented in envelope.ts's JSDoc; S024 pin class).
 //   • UQ-3 the 200-WITH-ERROR-KEY soft path: tatrResult.error → HTTP 200
 //     {error, cells:[], rows:[], columns:[], confidence:0} — a SUCCESS-path body
 //     (in-band engine error). Must NEVER be converted to the envelope.
