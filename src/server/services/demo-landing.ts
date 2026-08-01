@@ -102,52 +102,29 @@ export async function getDemoDomainKnowledge(): Promise<Response> {
 
 // ── demo/admin ───────────────────────────────────────────────────────────────
 
-// 3 mock YOLO models for demo
+// 3 mock YOLO models for demo — MINIMAL BY CONTRACT. Only the four fields
+// getDemoAdminBundle actually projects: {id, name, type, isDefault}. These rows once also
+// carried config/classes/classCsiCodes/classKeywords; nothing read them (the sole consumer
+// maps the four fields, PublicDemoModel declares no `config`, and DA-2 pins the response
+// key-set negatively), so they were deleted. Do not restore them.
 const MOCK_MODELS = [
   {
     id: 9001,
     name: "yolo_doors",
     type: "yolo",
     isDefault: true,
-    config: {
-      confidence: 0.10,
-      iou: 0.60,
-      imageSize: 1280,
-      maxDetections: 2000,
-      classes: ["door_single", "door_double", "door_sliding", "door_swing_arc", "door_frame"],
-      classCsiCodes: { door_single: ["08 11 16"], door_double: ["08 11 16"], door_sliding: ["08 32 13"], door_frame: ["08 11 00"] },
-      classKeywords: { door_single: ["door", "entrance"], door_double: ["double door"], door_sliding: ["sliding door", "pocket door"] },
-    },
   },
   {
     id: 9002,
     name: "yolo_general",
     type: "yolo",
     isDefault: false,
-    config: {
-      confidence: 0.15,
-      iou: 0.55,
-      imageSize: 1280,
-      maxDetections: 2000,
-      classes: ["window", "toilet", "sink", "elevator", "staircase", "column", "fire_extinguisher", "sprinkler", "light_fixture"],
-      classCsiCodes: { window: ["08 51 00"], toilet: ["22 42 16"], sink: ["22 42 13"], elevator: ["14 21 00"], staircase: ["06 43 00"] },
-      classKeywords: { window: ["window", "glazing"], toilet: ["WC", "lavatory"], elevator: ["elev", "lift"] },
-    },
   },
   {
     id: 9003,
     name: "yolo_electrical",
     type: "yolo",
     isDefault: false,
-    config: {
-      confidence: 0.12,
-      iou: 0.50,
-      imageSize: 2048,
-      maxDetections: 3000,
-      classes: ["receptacle", "switch", "panel_board", "junction_box", "conduit_run", "luminaire", "exit_sign", "smoke_detector"],
-      classCsiCodes: { receptacle: ["26 27 26"], switch: ["26 27 23"], panel_board: ["26 24 16"], luminaire: ["26 51 00"] },
-      classKeywords: { receptacle: ["outlet", "plug"], switch: ["switch"], panel_board: ["panel", "breaker"] },
-    },
   },
 ];
 

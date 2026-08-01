@@ -11,8 +11,10 @@
 // anticipated "merge-mode flag" materialized as `touchUpdatedAt`: the six clones' ONLY
 // write-semantics divergence is that heuristics + text-annotations set
 // companies.updatedAt and the other four do NOT (frozen per-route; no harmonizing
-// in-fold). The read-modify-write is non-atomic exactly like legacy — the concurrent-PUT
-// lost-update hazard is pre-existing (H2 class, P1-review ledger).
+// in-fold). The read-modify-write is ATOMIC as of [refactor jul23 P4.1 U11]: the local
+// writePipelineConfig delegates to updatePipelineConfig (company-config.ts), which wraps
+// read+merge+write in db.transaction under SELECT ... FOR UPDATE on the companies row.
+// That closed the legacy concurrent-PUT lost update (H2 class, P1-review ledger).
 //
 // PRESERVED QUIRKS (each pinned in the freeze):
 //   • csi PUT has NO validation — the raw JSON body IS the stored value (scalars/null
@@ -69,8 +71,8 @@ async function writePipelineConfig(
   opts: { touchUpdatedAt?: boolean } = {},
 ): Promise<void> {
   // [refactor jul23 P4.1 U11] delegate to the companies-row FOR-UPDATE wrapper: the
-  // read+spread+write is now ATOMIC, closing the non-atomic lost-update flagged at
-  // :14-15 (H2 class). Merge semantics BYTE-IDENTICAL — the mutator does the SAME
+  // read+spread+write is now ATOMIC, closing the non-atomic lost-update recorded in this
+  // file's SHARED CORE header (H2 class). Merge semantics BYTE-IDENTICAL — the mutator does the SAME
   // top-level spread `{...current, ...patch}` and the SAME touchUpdatedAt split; the
   // six route callers are untouched. (Previously: unlocked readPipelineConfig →
   // `{...existing, ...patch}` → bare db.update — reproduced verbatim in the mutator.)
@@ -124,7 +126,10 @@ export async function getLlmConfig(session: AuthSession): Promise<unknown> {
     const { readFile } = await import("fs/promises");
     const { join: joinPath } = await import("path");
     defaultDomainKnowledge = await readFile(joinPath(process.cwd(), "src/data/domain-knowledge.md"), "utf-8");
-  } catch { /* file not found in production — try dist path */ }
+  } catch {
+    // Missing file → defaultDomainKnowledge stays "" and is returned as "". There is NO
+    // dist-path fallback in this function; the two-path loop belongs to getCsiConfig below.
+  }
 
   return { llm: config.llm || {}, defaultDomainKnowledge };
 }
@@ -185,8 +190,9 @@ export async function getCsiConfig(session: AuthSession): Promise<unknown> {
  * (D-5). PUT stays REPLACE for the 10 config fields (omitted field = cleared — matches
  * CsiTab's send-everything contract), but the upload route's server-owned pointer triple
  * (customDatabaseS3Key/Name/Codes) is re-attached here so a client body can neither wipe it
- * (a stale tab's untyped spread) nor inject a foreign one (I-7 belt). Pre-existing non-atomic
- * RMW (H2 class, :14-15) unchanged in kind. getCsiConfig untouched (CSI-2/CSI-3 hold).
+ * (a stale tab's untyped spread) nor inject a foreign one (I-7 belt). The RMW was still
+ * non-atomic when C1 landed; updatePipelineConfig (company-config.ts) has since made it
+ * atomic. getCsiConfig untouched (CSI-2/CSI-3 hold).
  */
 export async function putCsiConfig(session: AuthSession, body: CsiConfigPutBody): Promise<unknown> {
   // [refactor jul23 P4.1 U11] [G-class latent-race fix] fold the triple-lift INTO the

@@ -1,13 +1,16 @@
 // [refactor jul23 P4.1 U11] Company-scoped pipelineConfig FOR-UPDATE write wrapper.
 //
-// WHY (Stage B): every companies.pipelineConfig writer has been a NON-ATOMIC
-// read-modify-write since the S037 fold — the H2/DR002 lost-update class the code
-// already self-flags (company-settings.ts:14-15, csi-upload.ts:20-25 header,
-// llm-config.ts:22-23 header). Two concurrent admin PUTs to DIFFERENT subtrees
+// WHY (Stage B): every companies.pipelineConfig writer WAS a NON-ATOMIC read-modify-write
+// from the S037 fold until this wrapper landed — the H2/DR002 lost-update class, recorded
+// in company-settings.ts's SHARED CORE header. (An earlier draft of this line also cited
+// the csi-upload.ts and llm-config.ts headers as "self-flagging" it. Measured: csi-upload.ts
+// mentions no race at all, and llm-config.ts's header note is about the PUT jsonb
+// spread-merge. Do not re-add those two citations.)
+// Two concurrent admin PUTs to DIFFERENT subtrees
 // (e.g. a demo toggle + a csi threshold) both read the same base, then the second
-// UPDATE silently clobbers the first subtree's change. This wrapper closes that the
-// SAME way pages.ts (DR002) and regions.ts:160-171 (promote) close it for project
-// rows: a `SELECT ... FOR UPDATE` on the companies row inside `db.transaction`, so
+// UPDATE silently clobbers the first subtree's change. This wrapper closes that the SAME
+// way pages.ts (updatePageIntelligence, DR002) and regions.ts (promoteRegion) close it for
+// project rows: a `SELECT ... FOR UPDATE` on the companies row inside `db.transaction`, so
 // concurrent writers SERIALIZE (the second blocks, then RE-READS the first's
 // committed state) instead of racing. Last-write-wins PER SUBTREE stays the frozen
 // merge semantic — no write is ever TORN, and no sibling subtree is silently lost.
@@ -23,7 +26,7 @@
 // I-1 (async-outside-lock): callers that do S3 / cache / formData work
 // (csi-upload.ts uploadCsiDatabase / revertCsiDatabase) keep that work OUTSIDE this
 // wrapper — the mutator must stay pure/synchronous CPU; no async detect/S3
-// dependency runs while the row lock is held (the regions.ts:155-158 precedent).
+// dependency runs while the row lock is held (the promoteRegion precedent, regions.ts).
 import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -49,7 +52,7 @@ export type PipelineConfig = NonNullable<typeof companies.$inferSelect.pipelineC
  *                   revert do NOT).
  *
  * Empty-default: a missing/null column reads as `{}` (matches readPipelineConfig's
- * `company?.pipelineConfig || {}` — company-settings.ts:56).
+ * `company?.pipelineConfig || {}` in company-settings.ts).
  */
 export async function updatePipelineConfig(
   companyId: number,
@@ -61,7 +64,7 @@ export async function updatePipelineConfig(
       .select({ pipelineConfig: companies.pipelineConfig })
       .from(companies)
       .where(eq(companies.id, companyId))
-      .for("update") // ← the regions.ts:170 / pages.ts:170 row lock, on companies
+      .for("update") // ← the promoteRegion / updatePageIntelligence row lock, on companies
       .limit(1);
     const current = (row?.pipelineConfig || {}) as PipelineConfig;
     const updated = mutate(current);

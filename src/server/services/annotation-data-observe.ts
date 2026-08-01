@@ -35,9 +35,20 @@ import {
  * Shapes currently under log-mode observation. U1 wired scale-calibration (the
  * pattern-prover: single shape, single writer, own source enum). U2-U4 add the three
  * remaining client takeoff shapes (count-marker, linear-polyline, area-polygon) — same
- * single-sink mechanism, one concern per landed unit. The allowlist still grows one
- * frozen unit at a time: U5 adds symbol-search (and extends observation to the batch
- * sink), and U6+ bring empty-markup + the server-pipeline / mutate-in-place sinks.
+ * single-sink mechanism, one concern per landed unit. U5 added symbol-search (plus the
+ * batch sink), U6 empty-markup, U7 the two server-pipeline families (shape-parse,
+ * yolo-detection).
+ *
+ * SHAPE AXIS CLOSED: this set is all 8 non-`unknown` members of AnnotationDataKind — every
+ * SHAPE_SCHEMAS key except `unknown`, which is definitionally unobservable. A future entry
+ * here would mean a NEW shape was registered, not that an old one was finally wired.
+ *
+ * SINK AXIS NOT CLOSED (measured, not inherited). Observed data sinks: createAnnotation
+ * (batch + single), updateAnnotation, yolo, reprocess (fanout + sequential), lib/processing,
+ * reprocessCsi. STILL UNOBSERVED: splitAnnotation (annotations.ts — rewrites the source
+ * row's `data` and inserts the new half's) and execCreateMarkup (lib/llm/tools.ts — inserts
+ * `data: {}`). Both write shapes already on this allowlist, so wiring them is mechanical,
+ * but it would start emitting canary warns from surfaces that emit none today: owner call.
  */
 const OBSERVED_SHAPES: ReadonlySet<AnnotationDataKind> = new Set([
   "scale-calibration",

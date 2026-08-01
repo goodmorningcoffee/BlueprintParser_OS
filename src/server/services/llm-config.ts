@@ -231,8 +231,8 @@ export async function updateLlmSettings(session: AuthSession, body: Record<strin
   const { systemPrompt } = body as { systemPrompt?: string };
 
   // [refactor jul23 P4.1 U11] migrate the non-atomic `llm.systemPrompt` RMW onto the
-  // companies-row FOR-UPDATE wrapper. This closes the cross-writer H2 race flagged at
-  // :22-23 with putLlmConfig — both mutate the `llm` subtree from DIFFERENT routes
+  // companies-row FOR-UPDATE wrapper. This closes the cross-writer H2 race between this
+  // route and putLlmConfig (company-settings.ts) — both mutate the `llm` subtree from DIFFERENT routes
   // (/api/admin/llm-config PUT here vs /api/admin/llm/config PUT there), so a concurrent
   // pair previously let one silently clobber the other. Merge semantics BYTE-IDENTICAL:
   // `{...current, llm: {...existingLlm, systemPrompt: systemPrompt || undefined}}`,

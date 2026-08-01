@@ -3,12 +3,14 @@
 //
 // TWO tests, one per stage of the U11 sequence (root commits them separately):
 //
-//  • STAGE-A CHARACTERIZATION (this file's first `it`, lands at HEAD before the
-//    wrapper): documents TODAY'S lost-update. Every pipelineConfig writer is a
-//    NON-ATOMIC read-modify-write (company-settings.ts:65-76 writePipelineConfig +
-//    its 6 callers; llm-config.ts updateLlmSettings; csi-upload.ts upload/revert):
-//    two concurrent PUTs to DIFFERENT subtrees both read the same base, then the
-//    second UPDATE clobbers the first subtree — one write is silently LOST.
+//  • STAGE-A CHARACTERIZATION (this file's first `it`, written before the wrapper
+//    landed): documents the PRE-U11 lost-update. Back then every pipelineConfig writer
+//    was a NON-ATOMIC read-modify-write (writePipelineConfig + its 6 callers;
+//    llm-config.ts updateLlmSettings; csi-upload.ts upload/revert): two concurrent PUTs
+//    to DIFFERENT subtrees both read the same base, then the second UPDATE clobbers the
+//    first subtree — one write is silently LOST.
+//    ⚠ Stage A still PASSES today, but only because it reproduces that shape in a LOCAL
+//    mirror (below) — production no longer behaves this way. Do not read it as current.
 //
 //  • STAGE-B PROOF (second `it`, lands WITH the wrapper): the same two concurrent
 //    different-subtree writes routed through the REAL updatePipelineConfig wrapper
@@ -70,9 +72,11 @@ describe.skipIf(!dbUp)("[P4.1 U11] pipelineConfig concurrent different-subtree w
     const company = await createCompany({ pipelineConfig: BASE as never });
     const barrier = makeBarrier(2);
 
-    // Faithful mirror of writePipelineConfig (company-settings.ts:65-76): UNLOCKED
-    // read → top-level spread → write. The barrier forces both reads before either
-    // write, making the clobber deterministic (the real racing routes are not).
+    // Faithful mirror of the PRE-U11 writePipelineConfig (company-settings.ts): UNLOCKED
+    // read → top-level spread → write. The real writePipelineConfig now delegates to
+    // updatePipelineConfig and is locked, so this mirror is the only place that shape
+    // still exists. The barrier forces both reads before either write, making the
+    // clobber deterministic (the real racing routes are not).
     async function unlockedRmw(patch: Record<string, unknown>): Promise<void> {
       const [row] = await db
         .select({ pc: companies.pipelineConfig })

@@ -2,6 +2,9 @@ import type { NormalizedPoint } from "@/lib/annotation-split-contract";
 import { orient2d } from "robust-predicates";
 
 const SPLIT_SEGMENT_INTERSECTION_TOLERANCE = 1e-12;
+// Sweep-space robustness floor for chooseSweepShear: the smallest x-projection, as a
+// fraction of the edge's own length, that a sheared edge is allowed to have. Below this,
+// edgeYAt's (x - left.x) / (right.x - left.x) divides by a span dominated by rounding.
 const SWEEP_MINIMUM_RELATIVE_X_PROJECTION = 1e-6;
 
 type SweepPoint = Readonly<{
@@ -93,6 +96,28 @@ function edgeYAt(edge: BoundaryEdge, x: number): number {
   return edge.left.y + progress * (edge.right.y - edge.left.y);
 }
 
+/**
+ * Choose a horizontal shear `s` for the sweep: hasSimplePolygonBoundary reads each point at
+ * x' = x + s*y (y unchanged) when it builds the edge list.
+ *
+ * WHY: `edgeYAt` interpolates with (x - left.x) / (right.x - left.x), so an edge that is
+ * NEARLY vertical in sweep space divides by a near-zero span and its status-tree ordering
+ * degenerates into rounding noise. One shear moves every edge away from vertical at once.
+ *
+ * DERIVATION: the shear maps an edge's x-delta to dx' = dx + s*dy, so the edge is exactly
+ * vertical at s = -dx/dy, and its relative x-projection |dx'| / hypot(dx, dy) drops below
+ * SWEEP_MINIMUM_RELATIVE_X_PROJECTION exactly on the interval
+ *     -dx/dy  ±  (SWEEP_MINIMUM_RELATIVE_X_PROJECTION * hypot(dx, dy)) / |dy|.
+ * Every non-horizontal edge contributes one such FORBIDDEN interval, clamped to the search
+ * domain [0, 1]; horizontal edges (dy === 0) are shear-invariant and forbid nothing. The
+ * scan below then takes the WIDEST uncovered gap and returns its midpoint — the value with
+ * the largest margin to the nearest forbidden interval.
+ *
+ * If the forbidden intervals happen to cover [0, 1] the widest gap is empty and this
+ * returns 0 (no shear). That costs margin, not correctness: an exactly-vertical edge never
+ * enters the status tree — it is dispatched as a "vertical" event and range-queried by
+ * invalidVerticalStatusIntersection — so `edgeYAt` is never asked about it.
+ */
 function chooseSweepShear(polygon: readonly NormalizedPoint[]): number {
   const forbidden: Array<Readonly<{ start: number; end: number }>> = [];
   for (let index = 0; index < polygon.length; index += 1) {
@@ -140,6 +165,15 @@ function chooseSweepShear(polygon: readonly NormalizedPoint[]): number {
  * vertical order of active non-vertical edges cannot change. Therefore an intersecting pair must
  * become neighbors at an insertion or removal. Exact vertical edges are range-queried against the
  * same status tree; a valid polygon produces only its two neighboring endpoint hits.
+ *
+ * TWO PRE-SWEEP DEGENERACY REJECTIONS also return false, and neither is a self-intersection:
+ *   1. any two vertices closer together than SPLIT_SEGMENT_INTERSECTION_TOLERANCE (found by
+ *      the tolerance-cell scan over the whole vertex list, before any edge is built);
+ *   2. any vertex that coincides with its successor, or whose two incident edges are exactly
+ *      collinear (robustOrientation === 0) with both neighbours on the SAME side of it — a
+ *      zero-width spike the sweep's edge ordering has no answer for.
+ * A caller that must distinguish "self-intersecting" from "degenerate" cannot use this
+ * predicate alone. Splitting the return into a reason would be a behaviour change: owner call.
  */
 export function hasSimplePolygonBoundary(
   polygon: readonly NormalizedPoint[],
