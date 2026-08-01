@@ -7,9 +7,10 @@
 // is correct, not an oversight — RD-U10 / recon §3):
 //
 //   • NO region write carries the in-blob version tag `v` at HEAD. promoteRegion persists
-//     either server-binder output (regions.ts:231-235/271-280) or the client's overrides.data
-//     VERBATIM (regions.ts:286) — neither stamps `v`; updatePageIntelligence persists the
-//     shallow-merged PI verbatim (pages.ts:190) — no `v` stamp either. No region upgrader
+//     either server-binder output (the spec/grid `regionData = {…}` literals in promoteRegion)
+//     or the client's overrides.data VERBATIM (its Parser-Save branch) — neither stamps `v`;
+//     updatePageIntelligence's tx UPDATE writes the shallow-merged PI as-is — no `v` stamp
+//     either. No region upgrader
 //     exists (RD-K defers them), and REGION_DATA_VERSION is referenced by NO writer. A v-gate
 //     would therefore be 100% INERT — every leg dead code.
 //   • WORSE, it could not even be built correctly yet: the region schemas are bare `.loose()`

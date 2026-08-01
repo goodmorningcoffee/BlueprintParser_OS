@@ -260,7 +260,7 @@ export async function yoloRun(
         );
       }
 
-      // Regenerate config.yaml from DB config before running — ensures admin changes take effect
+      // Regenerate config.yaml from DB config so admin changes take effect. TWIN template in models.ts registerModel.
       const conf = model.config?.confidence ?? 0.1;
       const iouVal = model.config?.iou ?? 0.6;
       const imgSize = model.config?.imageSize ?? 1280;
@@ -306,7 +306,7 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
       // Atomically check the per-company net cap AND optional per-user sub-cap and
       // RESERVE the pages (advisory-locked, so concurrent runs can't both slip
       // past). Root admin bypasses the block (god-mode); its usage is recorded
-      // below for visibility. Reserved-tenant isolation for root lands in slice 4.
+      // below for visibility, but is NOT isolated per reserved tenant (future work).
       let reservationId: number | undefined;
       if (!session.user.isRootAdmin) {
         const cap = await reserveSagemakerPages(

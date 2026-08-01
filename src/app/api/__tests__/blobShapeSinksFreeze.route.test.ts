@@ -603,7 +603,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] POST /api/regions/promote — Parser-Save verb
   });
 });
 
-describe.skipIf(!dbUp)("[P4.1 U0] PATCH /api/pages/intelligence — shallow-merge sink (pages.ts:177-186)", () => {
+describe.skipIf(!dbUp)("[P4.1 U0] PATCH /api/pages/intelligence — shallow-merge sink (pages.ts updatePageIntelligence)", () => {
   it("shallow-merges pageIntelligence: sibling keys survive, a nested object under a shared key is REPLACED WHOLESALE (not deep-merged)", async () => {
     const { user, project } = await createWorld();
     const page = await createPage(project.id, 1, {

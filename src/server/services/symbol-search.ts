@@ -23,8 +23,8 @@
 // Sanctioned diffs ONLY (stream bodies byte-identical):
 //   A envelope flips {error:string} → {error:{code,message}} on the pre-stream errors; messages
 //     byte-verbatim. EXCEPTION: the demo-gate 403 NextResponse is returned VERBATIM via the
-//     passthrough (demo-features.ts owns that 403's shape everywhere — labeling FQ-8 precedent,
-//     services/labeling.ts:319; it flips only when demo-features itself migrates).
+//     passthrough (demo-features.ts owns that 403's shape everywhere; labeling's FQ-8 was the
+//     precedent and has since been retired — this flips only when demo-features itself migrates).
 //     ⚠️ "Failed to fetch PDF" / "No page images available" are ApiError("INTERNAL", msg) 500s
 //     whose CONTROLLED messages surface verbatim — the shell forwards ANY ApiError's message
 //     (defineRoute.ts:254-255) even though envelope.ts:42's JSDoc claims INTERNAL is always

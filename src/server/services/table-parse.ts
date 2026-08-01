@@ -378,10 +378,10 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
   // Phase I.1.b: total parse wall-clock duration
   const totalDurationMs = Date.now() - parseStartedAt;
 
-  // Phase I.1.g: ALWAYS write to the ring buffer with FULL methodResults,
-  // regardless of the request's debugMode flag. This way the admin debug page
-  // can show complete history even for parses that didn't request debug data.
-  // The public API response still respects debugMode (see below).
+  // Phase I.1.g: ALWAYS record the parse with FULL methodResults, regardless of
+  // the request's debugMode flag. This way the admin debug page can show complete
+  // history even for parses that didn't request debug data. (Storage is the shared
+  // op_log table via parse-history — see the awaited addToHistory below.)
   const historyEntry: ParseHistoryEntry = {
     id: randomUUID(),
     timestamp: new Date(parseStartedAt).toISOString(),

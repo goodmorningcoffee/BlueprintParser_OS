@@ -2,8 +2,8 @@
 // [refactor jun17 P1.3] CHARACTERIZATION — POST /api/pages/update (page rename).
 // No P0.3 char file existed for the pages family; this freezes today's behavior incl. the
 // param-name lie (the body field `projectId` carries a publicId UUID string), the additive
-// publicId field, the blind composite-WHERE no-op (missing page → 200, no 404), and that update
-// has NO demo write-gate (the deliberate asymmetry vs pages/intelligence). Authored against the
+// publicId field, the blind composite-WHERE no-op (missing page → 200, no 404), and the demo
+// write-gate: L5 pins signed-out/member/admin/root ALL at 403 (assertProjectWritable). Authored
 // post-migration {error:{code,message}} envelope (committed with the migration).
 import { describe, expect, inject, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";

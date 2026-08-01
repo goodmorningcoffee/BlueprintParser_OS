@@ -50,16 +50,16 @@
 //        leading non-digit reaches the NaN-500. Swapping to Number() would flip "5abc" 404→500.
 //   FQ-3 security repair: delete retires the Label Studio project before the DB row and propagates
 //        provider failure so publication/project deletion remain blocked and retryable.
-//   FQ-5 create: demo kill-switch bypass predicate is isRootAdmin (create gate) but the rate-limit
-//        bypass predicate is role==="admin" — TWO DIFFERENT predicates; a member-role root admin
-//        bypasses the demo gate but NOT the rate limit. Do NOT unify.
+//   FQ-5 create: the rate-limit bypass predicate is role==="admin", NOT isRootAdmin — so a
+//        member-role root admin bypasses the OWNERSHIP lookup but NOT the rate limit. Do NOT
+//        unify. (FQ-5's demo half died with FQ-8: no role bypasses the demo denial now.)
 //   FQ-6 create rate limit counts a ROLLING 24h window (NOW() - INTERVAL '1 day'), not a calendar
 //        day, despite the "/day" message.
 //   FQ-7 was retired by the P2 close review: page selections are now strict finite integers inside
 //        the project range, so malformed requests cannot mint broken page_NaN tasks.
-//   FQ-8 create demo gate returns the assertDemoFeatureEnabled NextResponse VERBATIM (shell
-//        Response-passthrough) — that module still speaks the legacy {error:string} envelope and
-//        owns it until IT migrates.
+//   FQ-8 was retired by the P2 close review: create no longer calls assertDemoFeatureEnabled at
+//        all. A demo target is denied by assertProjectWritable — the standard FORBIDDEN
+//        {error:{code,message}}, pinned in labeling-create.route.test.ts. No Response is returned.
 //   [LB-1] retired by the P2 close review: sources use canonical padded page keys and imported
 //        tasks receive revocable app URLs backed by unique immutable snapshot objects.
 
@@ -416,12 +416,11 @@ export async function deleteLabelingSession(
 /**
  * POST /api/labeling/create — create Label Studio project(s) from a BP project's page images.
  * HEAVY path (sharp/S3/Label Studio), covered with provider/S3 boundary integration fixtures.
- * Returns the demo-gate NextResponse verbatim via the shell's Response passthrough (FQ-8).
+ * A demo target is denied up front by assertProjectWritable (FQ-8 retired — no Response return).
  */
 export async function createLabelingSessions(
   body: Record<string, unknown>,
 ): Promise<
-  | Response
   | {
       success: true;
       sessions: Array<{
@@ -504,8 +503,8 @@ export async function createLabelingSessions(
     { kind: "labeling-session-create", idempotencyKey: String(project.id) },
     async (mutationLease) => {
       // Rate limit: max 10 labeling sessions per company per day (admin bypasses).
-      // FQ-5: bypass predicate here is role==="admin" (NOT isRootAdmin — different from the demo
-      // gate above). FQ-6: rolling 24h window despite the "/day" wording.
+      // FQ-5: bypass predicate here is role==="admin" (NOT isRootAdmin — different from the
+      // ownership lookup above). FQ-6: rolling 24h window despite the "/day" wording.
       if (session.user.role !== "admin") {
         const todayCount = await db.execute(
           sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions

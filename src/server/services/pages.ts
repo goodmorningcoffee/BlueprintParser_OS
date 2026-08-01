@@ -91,8 +91,8 @@ import { serializePageWindowIntelligence } from "@/server/services/page-window-s
 //
 /** Rename a single page. publicId-ONLY (the param-name lie: the body field `projectId` carries a
  *  publicId UUID string — PageSidebar sends `projectId: publicId`). NEW additive `publicId` field
- *  also accepted; a truthy one wins, else the legacy `projectId`-as-publicId. NO allowDemo (a demo
- *  project is reachable only by its owning company / root via the auth path — no extra demo gate).
+ *  also accepted; a truthy one wins, else the legacy `projectId`-as-publicId. Resolved with
+ *  allowDemo:true, then assertProjectWritable denies EVERY role on a demo project with one 403.
  *  Frozen quirk: a blind composite-WHERE update with NO page-existence read — a missing page is a
  *  silent 0-row no-op that STILL returns {success:true} (PageSidebar is fire-and-forget). */
 export async function updatePageName(body: Record<string, unknown>) {
@@ -112,9 +112,10 @@ export async function updatePageName(body: Record<string, unknown>) {
 
   // BOTH fields are publicIds → resolveByPublicId (never resolveByDbId — Number('<uuid>')=NaN
   // would 400 every PageSidebar save). Truthy publicId wins, else the legacy projectId.
-  // [refactor jul8 P1-review N-2] DELIBERATELY no allowDemo: this is a WRITE — a future
-  // "harmonize the resolvers" pass must NOT add allowDemo:true here without an isDemo→403
-  // gate, or it opens a demo write (demo-never-writes invariant).
+  // [refactor jul8 P1-review N-2 → superseded by the P2 authority pass] allowDemo:true is
+  // DELIBERATE: a demo project must resolve for EVERY caller role so the denial below is one
+  // project-derived 403 rather than a role-dependent 401/404. assertProjectWritable — NOT the
+  // absence of allowDemo — is what upholds demo-never-writes here, so do not remove it.
   const { project } = await resolveByPublicId(publicId || projectId, { allowDemo: true });
   const writeCapability = assertProjectWritable(project);
 
@@ -600,9 +601,11 @@ export async function getPageThumbnail(idParam: string, pageParam: string): Prom
 // ── POST /api/pages/textract-rerun ───────────────────────────────────────────────────────────────
 //
 /** Force-refresh the cached Textract result for one page (debug/diagnostic). dbId from the body
- *  `projectId` PLUS a NEW optional `publicId`; NO allowDemo plus an explicit isDemo write gate.
- *  NO allowDemo alone blocks only public demo access: an authenticated owner/root can still resolve
- *  the project, so the explicit gate is what prevents an expensive demo DB/AWS write. Gate order:
+ *  `projectId` PLUS a NEW optional `publicId`; resolved with allowDemo:true, then an explicit
+ *  isDemo 403 that now DUPLICATES assertProjectWritable's identical FORBIDDEN — kept as-is
+ *  (collapsing them is an owner call, not a craft edit). Omitting allowDemo would block only
+ *  PUBLIC demo access — an authenticated owner/root still resolves the project — so a gate on
+ *  the resolved row is what prevents an expensive demo DB/AWS write. Gate order:
  *  field 400 → access → demo 403 → no-dataUrl 404 → page-not-found 404 → S3 download → Textract →
  *  write → success. The S3-download 500 keeps its specific (non-leaking) wording; the Textract
  *  catch drops its err.message leak (sanctioned diff B). */
@@ -683,8 +686,9 @@ export async function rerunPageTextract(body: Record<string, unknown>) {
 // ── POST /api/pages/csi-recompute ────────────────────────────────────────────────────────────────
 //
 /** Force-refresh cached CSI detection for one page from its stored Textract data (no S3/Textract
- *  round-trip). dbId from the body `projectId` PLUS a NEW optional `publicId`; NO allowDemo.
- *  Frozen gate order: field 400 → access → page-not-found 404 → no-OCR-data 400 → detect → write →
+ *  round-trip). dbId from the body `projectId` PLUS a NEW optional `publicId`; allowDemo:true so
+ *  assertProjectWritable can issue ONE role-independent 403 on a demo project. Frozen gate order:
+ *  field 400 → access → demo 403 → page-not-found 404 → no-OCR-data 400 → detect → write →
  *  success. detectCsiCodes is called 2-arg (rawText, words) so triggers populate (drives the
  *  stats). The detect catch drops its err.message leak (sanctioned diff B). */
 export async function recomputePageCsi(body: Record<string, unknown>) {

@@ -38,8 +38,8 @@
 //     every field 400/404/429/413 firing AFTER the shell's 401.
 //
 // Frozen quirks deliberately kept (do NOT "fix" them) — see each function.
-// NO `allowDemo` anywhere in this family: a non-owner signed-in user gets 404 on a demo project (the core
-// projects routes have no demo carve-out; legacy used requireAuth + companyId scope, never allowDemo).
+// `allowDemo`: GET [id] and the collection GET/POST pass NONE (auth:"session"), so a non-owner signed-in
+// user gets 404 on a demo project. PUT/DELETE DO pass allowDemo:true — see updateProject's gate note.
 
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -127,7 +127,7 @@ async function loadProjectWithRootBypass(
  * Response, before the kind gate). Frozen quirks: `.catch(()=>[])` swallowers on takeoffItems +
  * takeoffGroups ONLY (pages + chatMessages have none — asymmetry preserved); both `summaries` (pi.summaries)
  * and the full `projectIntelligence` exposed as separate `|| null` keys; `dbId` (numeric) exposed alongside
- * `id` (publicId); Cache-Control private max-age=60.
+ * `id` (publicId); Cache-Control `private, no-store`.
  */
 export async function getProject(
   idParam: string,
@@ -236,12 +236,12 @@ export async function getProject(
  * 200). loadProjectWithRootBypass must NOT be reused (it requires a session for companyId scoping and has
  * no isDemo path). To keep the paths from drifting together: this returns ONLY the 11 demo fields — it must
  * NEVER add getProject's authed-only `address`/`takeoffItems`/`takeoffGroups`/`chatMessages`, and must NEVER
- * drop the demo-only `demoConfig`. It sets NO Cache-Control (the legacy demo route set none, UNLIKE
- * getProject's `private, max-age=60`) — do not add one.
+ * drop the demo-only `demoConfig`. Cache-Control is `public, no-store` (added by the P2 authority pass;
+ * the legacy demo route set none) — getProject sets `private, no-store`. Both are pinned by route tests.
  *
- * Returns a NextResponse purely for byte-identical passthrough faithfulness to the legacy body (the shell
- * forwards any Response before its kind gate — defineRoute.ts:248); a plain object would be enveloped
- * identically. (NOT to "allow a Cache-Control header" — a CLEAN fold adds none.)
+ * Returns a NextResponse — originally only for byte-identical passthrough faithfulness to the legacy body
+ * (the shell forwards any Response before its kind gate, in defineRoute's routeHandler), since a plain
+ * object envelopes identically. It is now load-bearing: only a Response can carry the Cache-Control above.
  *
  * Sanctioned diffs (the P1.3/P1.4 family recipe): (a) the 404 envelope flips {error:"Not found"} →
  * {error:{code,message}} (the shell does it — the thrown notFound() is a NOT_FOUND ApiError); (b) a non-uuid
@@ -327,8 +327,8 @@ export async function getDemoProject(idParam: string): Promise<Response> {
 // ── GET /api/demo/projects ─────────────────────────────────────────────────────────
 //
 /**
- * List the public demo gallery — every isDemo=true project, oldest-first. Returns a BARE ARRAY (the shell
- * passes it through unwrapped) of EXACTLY 5 public fields per item: {id, name, numPages, status, thumbnailUrl}.
+ * List the public demo gallery — every isDemo=true project, oldest-first. The WIRE BODY is a BARE ARRAY of
+ * EXACTLY 5 public fields per item {id, name, numPages, status, thumbnailUrl}, in a Cache-Control-bearing NextResponse.
  *
  * DELIBERATELY ISOLATED from listProjects (the authed company/root list) — exactly as getDemoProject is from
  * getProject: NO session param, NO companyId scope, NO root-bypass; the SOLE gate is WHERE isDemo=true (a

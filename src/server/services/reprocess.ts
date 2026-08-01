@@ -551,7 +551,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               rawText: pages.rawText,
               csiCodes: pages.csiCodes,
               textAnnotations: pages.textAnnotations,
-              parsedRegions: pages.pageIntelligence,
+              storedIntelligence: pages.pageIntelligence,
             })
             .from(pages)
             .where(eq(pages.projectId, project.id))
@@ -613,7 +613,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               // non-computed key) on every page of every project. Start from the
               // existing intelligence with computed keys cleared instead; same merge
               // semantics as yolo/load. See src/lib/intelligence-merge.ts.
-              let pageIntelligence: Record<string, unknown> = carryNonComputedIntelligence(page.parsedRegions);
+              let pageIntelligence: Record<string, unknown> = carryNonComputedIntelligence(page.storedIntelligence);
               // Page intelligence: classification, cross-refs, note blocks
               const intel = analyzePageIntelligence(page.drawingNumber, textractData, csiCodes);
               if (intel.classification || intel.crossRefs || intel.noteBlocks) {
@@ -651,8 +651,8 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               }
 
               // Composite page region classifier — fires only if YOLO data exists.
-              // Mirrors /api/yolo/load:269-295 so the intelligence reprocess keeps
-              // classifiedRegions in sync with the current YOLO state.
+              // Mirrors the per-page enrichment loop in services/yolo.ts `yoloLoad`, so the
+              // intelligence reprocess keeps classifiedRegions in sync with the current YOLO state.
               if (pageYolo && pageYolo.length > 0) {
                 try {
                   const regions = classifyPageRegions({
@@ -663,7 +663,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                       modelName: d.modelName,
                     })),
                     textRegions: textRegions as Parameters<typeof classifyPageRegions>[0]["textRegions"],
-                    parsedRegions: (page.parsedRegions as any)?.parsedRegions,
+                    parsedRegions: (page.storedIntelligence as any)?.parsedRegions,
                     legacyClassifiedTables: pageIntelligence.classifiedTables as ClassifiedTable[] | undefined,
                   });
                   const hasRegions = regions.tables.length > 0 || regions.titleBlocks.length > 0 || regions.drawings.length > 0;
@@ -705,10 +705,10 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                     // [refactor jun12 G3b] was `intel.parsedRegions` — the freshly
                     // rebuilt object never had that key, so parsed-region votes were
                     // silently absent from every reprocess ensemble. Read from the
-                    // page's existing intelligence, same as the composite classifier.
+                    // page's STORED intelligence, same as the composite classifier.
                     // (Post-G3 the carried-over key also lives on pageIntelligence,
                     // but read the source of truth, not a side effect of the merge.)
-                    parsedRegions: (page.parsedRegions as any)?.parsedRegions,
+                    parsedRegions: (page.storedIntelligence as any)?.parsedRegions,
                   });
                   if (votes.length > 0) {
                     const ensembleRegions = reduceRegionVotes(page.pageNumber, votes, ensembleConfig as any);
@@ -851,7 +851,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                   if (ann.note) existingNotes[`${ann.type}:${ann.text}`] = ann.note;
                 }
               }
-            } catch { /* textAnnotations column may not exist */ }
+            } catch { /* legacy migration-safety swallow (column now exists) — kept verbatim */ }
 
             // Re-run CSI detection (before text annotations, since CSI feeds into them).
             // Pass Textract words so trigger bboxes are recorded on each detected code.
@@ -868,7 +868,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               if (existingNotes[key]) ann.note = existingNotes[key];
             }
 
-            // Update page — use try-catch for textAnnotations column
+            // Update page — legacy two-step write; see the fallback in the catch below.
             try {
               await withProjectWrite(writeCapability, project.id, async (tx) => {
                 await tx
@@ -880,7 +880,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                   .where(eq(pages.id, page.id));
               });
             } catch {
-              // textAnnotations column may not exist — just update csiCodes
+              // Legacy migration-safety fallback (column now exists) — retry csiCodes only.
               await withProjectWrite(writeCapability, project.id, async (tx) => {
                 await tx
                   .update(pages)

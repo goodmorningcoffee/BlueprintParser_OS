@@ -94,8 +94,9 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
   });
 
   it("SANCTIONED diff D: a non-integer dbId projectId → 400 'Invalid project id' (was pg int-cast 500)", async () => {
-    // [detector-review jun17] resolveByDbId's Number.isInteger(>0) guard (services/pages.ts:74-78) had
-    // ZERO coverage — without this, regressing it back to a pg int-cast 500 keeps the suite green.
+    // [detector-review jun17] resolveByDbId's Number.isInteger(>0) guard — which lives in
+    // server/api/access.ts, hoisted out of services/pages.ts by PR-C1 — had ZERO coverage: without
+    // this, regressing it back to a pg int-cast 500 keeps the suite green.
     // (0 is excluded: it is falsy → trips the field-400 instead, exercised by "missing pageNumber".)
     const { user } = await createWorld();
     asUser(user);

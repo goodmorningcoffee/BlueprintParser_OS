@@ -27,8 +27,8 @@
 //         "Page has no OCR data for spec binding"                              500 → 400 VALIDATION
 //         "Could not detect spec section headers in region — try …"           500 → 400 VALIDATION
 //         "Could not bind grid from textRegion — try …"                       500 → 400 VALIDATION
-//       Grounded in the pages.ts mapping authority (pages.ts:170 "Page not found"→NOT_FOUND;
-//       pages.ts:336-337 the near-identical "no OCR data" sibling→VALIDATION). FAITHFUL because every
+//       Grounded in the pages.ts mapping authority (updatePageIntelligence's "Page not found"→NOT_FOUND;
+//       recomputePageCsi's near-identical "no OCR data" sibling→VALIDATION). FAITHFUL because every
 //       client call-point surfaces ONLY the message text (status-blind — verified across all 7
 //       consumers: persistFetch→apiErrorMessage is envelope-agnostic, no consumer branches on the
 //       promote status), so the status change is invisible while the guidance message survives.
@@ -156,8 +156,8 @@ export async function promoteRegion(body: Record<string, unknown>) {
   const writeCapability = assertProjectWritable(project);
 
   // [refactor jul9 P2-A C1] Resolve the company CSI context (async DB/S3) BEFORE opening
-  // the tx that holds the FOR UPDATE row lock at :159 (I-1 — no async detect-dep work may
-  // run while the lock is held). The engine stays sync and receives the resolved bundle.
+  // the tx below, whose page SELECT takes a FOR UPDATE row lock (I-1 — no async detect-dep
+  // work may run while the lock is held). The engine stays sync and receives the resolved bundle.
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
   const result = await withProjectWrite(writeCapability, project.id, async (tx) => {

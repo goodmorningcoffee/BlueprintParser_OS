@@ -346,7 +346,7 @@ describe.skipIf(!dbUp)("POST /api/labeling/create", () => {
     expect(rows[0].companyId).toBe(company.id);
   });
 
-  // ── demo gate (FQ-8 passthrough + FQ-5 predicate) ──────────────────────────
+  // ── demo gate (canonical all-role read-only denial) ───────────────────────
 
   it("demo project + plain member → canonical project-derived read-only denial", async () => {
     const { company, user } = await createWorld();

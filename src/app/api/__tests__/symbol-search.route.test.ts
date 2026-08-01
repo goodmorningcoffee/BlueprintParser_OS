@@ -260,8 +260,8 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     expect(gated.body).toEqual({
       error: "Symbol Search is disabled for demo users. Sign in to use this feature.",
     }); // does NOT flip at fold — the assertDemoFeatureEnabled NextResponse is returned VERBATIM
-    // via the shell passthrough (demo-features.ts owns this 403's shape; labeling FQ-8 precedent,
-    // services/labeling.ts:319). Flips only when demo-features itself migrates.
+    // via the shell passthrough (demo-features.ts owns this 403's shape; labeling's FQ-8 was the
+    // precedent and is now retired). Flips only when demo-features itself migrates.
 
     await db
       .update(companies)

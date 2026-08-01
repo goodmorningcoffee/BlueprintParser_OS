@@ -105,7 +105,7 @@ describe.skipIf(!dbUp)("GET /api/pages/textract", () => {
 
   it("FROZEN NaN-query quirk: a present-but-non-numeric/zero ?projectId → field-400 (before access)", async () => {
     // [detector-review jun17] getPageTextract reads ?projectId via Number(searchParams) with NO zod
-    // query schema (services/pages.ts:204-217 — deliberate: z.coerce would change this). Number("abc")
+    // query schema (its declaration in services/pages.ts — deliberate: z.coerce would change this). Number("abc")
     // =NaN and Number("0")=0 are BOTH falsy → the field-400 "Missing projectId or pageNumber" fires
     // BEFORE resolveByDbId's "Invalid project id" AND before the access branch. Pin the message + its
     // precedence so a future query-schema "cleanup" can't silently alter the PERF-SACRED GET.
