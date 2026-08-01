@@ -194,9 +194,9 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
           {reprocessing ? "Reprocessing..." : "Full Reprocess (OCR + CSI + Intelligence)"}
         </button>
         <p className="text-[10px] text-[var(--muted)] w-full">
-          "Reprocess Page Names" re-extracts drawing numbers using label-anchored search + regex + YOLO title block validation. Uses existing OCR data.
-          "Reprocess Intelligence" re-runs only the analysis layers on existing OCR/CSI data (fast).
-          "Full Reprocess" re-runs everything including CSI detection and text annotations (slower).
+          &ldquo;Reprocess Page Names&rdquo; re-extracts drawing numbers using label-anchored search + regex + YOLO title block validation. Uses existing OCR data.
+          &ldquo;Reprocess Intelligence&rdquo; re-runs only the analysis layers on existing OCR/CSI data (fast).
+          &ldquo;Full Reprocess&rdquo; re-runs everything including CSI detection and text annotations (slower).
         </p>
       </div>
 

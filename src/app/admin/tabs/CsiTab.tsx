@@ -208,8 +208,8 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
         <details className="text-[10px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded p-2">
           <summary className="cursor-pointer text-[var(--accent)] font-medium">How the three tiers work</summary>
           <div className="mt-2 space-y-1.5">
-            <p><strong className="text-[var(--fg)]">Tier 1 — Exact Phrase (95%):</strong> Finds the full CSI description as consecutive words in the OCR text. Example: "hollow metal door" matches CSI 08 11 16. Always 95% confidence. Cannot be tuned.</p>
-            <p><strong className="text-[var(--fg)]">Tier 2 — Scattered Words (up to Tier 2 Weight):</strong> Finds CSI words scattered in text, not consecutive. "door" + "metal" + "hollow" in any order. Higher weight = accept more scattered matches. Only activates when the CSI description has enough significant words (Tier 2 Min Words).</p>
+            <p><strong className="text-[var(--fg)]">Tier 1 — Exact Phrase (95%):</strong> Finds the full CSI description as consecutive words in the OCR text. Example: &ldquo;hollow metal door&rdquo; matches CSI 08 11 16. Base confidence 95%, then multiplied by the Tier 1 word-count weight below.</p>
+            <p><strong className="text-[var(--fg)]">Tier 2 — Scattered Words (up to Tier 2 Weight):</strong> Finds CSI words scattered in text, not consecutive. &ldquo;door&rdquo; + &ldquo;metal&rdquo; + &ldquo;hollow&rdquo; in any order. Higher weight = accept more scattered matches. Only activates when the CSI description has enough significant words (Tier 2 Min Words).</p>
             <p><strong className="text-[var(--fg)]">Tier 3 — Anchor Keywords (up to Tier 3 Weight):</strong> For long CSI descriptions, matches only the rarest/most distinctive words. Lower confidence. Only activates for descriptions with many words (Tier 3 Min Words).</p>
             <p><strong className="text-[var(--fg)]">Confidence Threshold:</strong> Matches below this score are discarded. Lower = more matches but noisier. Higher = fewer but more precise.</p>
           </div>
@@ -310,7 +310,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
         <details className="text-[10px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded p-2">
           <summary className="cursor-pointer text-[var(--accent)] font-medium">How annotation tagging works</summary>
           <div className="mt-2 space-y-1.5">
-            <p><strong className="text-[var(--fg)]">Keyword Overlap:</strong> What % of the CSI description's significant words must appear in the annotation text. At 60%, "hollow metal door frame" (4 significant words) needs 3 matching words in the annotation.</p>
+            <p><strong className="text-[var(--fg)]">Keyword Overlap:</strong> What % of the CSI description&apos;s significant words must appear in the annotation text. At 60%, &ldquo;hollow metal door frame&rdquo; (4 significant words) needs 3 matching words in the annotation.</p>
             <p><strong className="text-[var(--fg)]">Min Word Matches:</strong> Absolute minimum — even if the % threshold is met, this many words must match. Prevents false positives on short descriptions.</p>
             <p><strong className="text-[var(--fg)]">Max Tags per Annotation:</strong> Caps how many CSI codes are attached to one annotation. Keeps LLM context focused. At 2, each annotation gets at most 2 CSI codes even if more match.</p>
           </div>

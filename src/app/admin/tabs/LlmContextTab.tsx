@@ -351,7 +351,7 @@ export default function LlmContextTab({ projects, demoMode = false }: LlmContext
 
           <div className="text-[10px] text-[var(--muted)] space-y-1">
             <div>Template variables: <code className="text-[var(--accent)]">{"{{project_name}}"}</code> <code className="text-[var(--accent)]">{"{{page_count}}"}</code> <code className="text-[var(--accent)]">{"{{company_name}}"}</code></div>
-            <div>The following is always appended: "DATA PROVIDED:" summary + "cite actual page numbers" instruction.</div>
+            <div>The following is always appended: &quot;DATA PROVIDED:&quot; summary + &quot;cite actual page numbers&quot; instruction.</div>
           </div>
 
           <button

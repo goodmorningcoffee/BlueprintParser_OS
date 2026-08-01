@@ -42,14 +42,24 @@ function snapshot(entries, fatalCount = 0) {
 // which ESLint itself reported as "Unused eslint-disable directive (no problems were
 // reported from 'no-console')" — `no-console` is not enabled by eslint.config.mjs at all.
 // The file now lints 0 errors / 0 warnings. Error total is unchanged at 60.
+//
+// 2026-08-01 · 49→44 tuples, 60→31 errors (batch A4a). Retired all 29
+// `react/no-unescaped-entities` findings in five admin tabs — CsiTab.tsx (11),
+// PageIntelligenceTab.tsx (6), HeuristicsTab.tsx (4), LlmContextTab.tsx (4),
+// TableParseTab.tsx (4) — by escaping raw `"` and `'` in JSX text as `&ldquo;`/`&rdquo;`
+// (quoted UI labels and example phrases), `&quot;` (string and code literals) and
+// `&apos;`. Character-level only; not one line moved in any of the five files.
+// CsiTab.tsx and HeuristicsTab.tsx keep their `react-hooks/immutability` rows, and four
+// `react/no-unescaped-entities` rows survive elsewhere (demo/page.tsx, LoginForm.tsx,
+// CsiPanel.tsx, PageIntelligencePanel.tsx). Warning total is unchanged at 51.
 test("the checked-in baseline is exact, canonical, and complete", () => {
   assert.equal(baseline.schemaVersion, 1);
-  assert.equal(baseline.entries.length, 49);
+  assert.equal(baseline.entries.length, 44);
   assert.equal(
     baseline.entries
       .filter((entry) => entry.severity === "error")
       .reduce((total, entry) => total + entry.count, 0),
-    60,
+    31,
   );
   assert.equal(
     baseline.entries

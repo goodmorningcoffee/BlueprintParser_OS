@@ -777,7 +777,7 @@ function DebugToggleCard() {
       <div className="mt-4 text-[11px] text-[var(--muted)] space-y-1">
         <div>
           <strong>Per-browser fallback:</strong> developers can flip debug mode on for just their browser by running{" "}
-          <code className="text-[var(--accent)]">localStorage.setItem("bp2_debug_table_parse", "1")</code> in DevTools.
+          <code className="text-[var(--accent)]">localStorage.setItem(&quot;bp2_debug_table_parse&quot;, &quot;1&quot;)</code> in DevTools.
           Either path (this toggle OR localStorage) enables full per-method results.
         </div>
         <div>

@@ -367,7 +367,7 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
 
             {pageNaming.enabled && yoloModels.length > 0 && modelsWithTitleBlock.length === 0 && (
               <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-400/20 rounded px-3 py-2">
-                None of your YOLO models have a class containing "title". You can still select any class, but typical title block classes are: title_block, title_area, etc.
+                None of your YOLO models have a class containing &quot;title&quot;. You can still select any class, but typical title block classes are: title_block, title_area, etc.
               </div>
             )}
 
@@ -698,7 +698,7 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                   {/* CSI Divisions Required */}
                   <div>
                     <label className="text-[10px] text-[var(--muted)] block mb-1">
-                      CSI Divisions Required (comma-separated, e.g. "08, 09" — rule only fires if these divisions are on the page)
+                      CSI Divisions Required (comma-separated, e.g. &quot;08, 09&quot; — rule only fires if these divisions are on the page)
                     </label>
                     <input
                       type="text"
