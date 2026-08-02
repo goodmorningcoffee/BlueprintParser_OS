@@ -63,8 +63,9 @@ export function Section13ApiReference() {
             trigger YOLO inference. The request body is{" "}
             <InlineCode>{"{ projectId, modelId }"}</InlineCode> and the response
             returns the SageMaker execution ID. Watch it via{" "}
-            <InlineCode>GET /api/yolo/status</InlineCode>. Results ingest via
-            the webhook.
+            <InlineCode>GET /api/yolo/status</InlineCode>. Results are ingested
+            by the admin page itself once that poll reports Completed &mdash;
+            there is no webhook on this path.
           </li>
           <li>
             <InlineCode>POST /api/processing/webhook</InlineCode> is the

@@ -259,7 +259,7 @@ _bp-public/                            // reserved; no current publisher`}
           BP falls back to Tesseract for OCR, the local filesystem for images
           (or a dev-mode S3 emulator if you prefer), and nothing for YOLO.
           LLM chat still works if you have a Groq free-tier key. The table
-          parsers (img2table, Camelot, TATR) all run locally from{" "}
+          parsers (img2table, OpenCV line detection, TATR) all run locally from{" "}
           <InlineCode>scripts/</InlineCode>. Bucket Fill runs locally. Auto-QTO
           runs locally given a parsed schedule. The only hard dependency on AWS
           is YOLO inference.

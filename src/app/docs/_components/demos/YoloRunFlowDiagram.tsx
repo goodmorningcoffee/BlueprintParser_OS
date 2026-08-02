@@ -1,5 +1,5 @@
 /** End-to-end YOLO run flow: admin button click → SageMaker Processing job →
- *  S3 output → webhook ingest → annotations table + CSI/heuristic re-run.
+ *  S3 output → admin-page poll, then load → annotations table + CSI/heuristic re-run.
  *  Verified against src/lib/yolo.ts startYoloJob() and POST /api/yolo/load. */
 export function YoloRunFlowDiagram() {
   return (
@@ -9,7 +9,7 @@ export function YoloRunFlowDiagram() {
         className="w-full h-auto text-[var(--fg)]"
         fill="currentColor"
         role="img"
-        aria-label="YOLO run flow: admin → SageMaker → S3 → webhook → annotations"
+        aria-label="YOLO run flow: admin → SageMaker → S3 → admin-page load → annotations"
       >
         <defs>
           <marker id="yarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -60,11 +60,11 @@ export function YoloRunFlowDiagram() {
         {/* Drop down to row 2 from S3 */}
         <line x1="855" y1="144" x2="855" y2="200" stroke="currentColor" strokeWidth="1.6" opacity="0.5" markerEnd="url(#yarr)" />
 
-        {/* Row 2 — webhook ingest */}
+        {/* Row 2 — admin-page load */}
         <g>
           <rect x="700" y="200" width="230" height="74" rx="6" fill="none" stroke="#22c55e" strokeWidth="1.8" />
           <text x="815" y="224" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#22c55e">POST /api/yolo/load</text>
-          <text x="815" y="242" textAnchor="middle" fontSize="10" opacity="0.75">webhook on job complete</text>
+          <text x="815" y="242" textAnchor="middle" fontSize="10" opacity="0.75">admin page loads after poll</text>
           <text x="815" y="258" textAnchor="middle" fontSize="9" opacity="0.55" fontFamily="monospace">normalize → annotations</text>
         </g>
         <line x1="700" y1="237" x2="650" y2="237" stroke="currentColor" strokeWidth="1.6" opacity="0.5" markerEnd="url(#yarr)" />
@@ -89,7 +89,7 @@ export function YoloRunFlowDiagram() {
           <rect x="30" y="200" width="140" height="74" rx="6" fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.55" strokeDasharray="3 3" />
           <text x="100" y="222" textAnchor="middle" fontSize="11" fontWeight="bold" opacity="0.75">UI polls</text>
           <text x="100" y="240" textAnchor="middle" fontSize="10" opacity="0.6" fontFamily="monospace">/api/yolo/status</text>
-          <text x="100" y="256" textAnchor="middle" fontSize="9" opacity="0.5">~5s while job runs</text>
+          <text x="100" y="256" textAnchor="middle" fontSize="9" opacity="0.5">10s while job runs</text>
         </g>
 
         {/* Safety toggles row */}

@@ -13,7 +13,7 @@ export function DeploymentTierTable() {
           <span key="a">
             Docker Compose, <InlineCode>postgres:16</InlineCode>, no AWS
           </span>,
-          "Upload, viewer, CSI detect, table parse (img2table/Camelot/TATR), LLM chat via Groq free tier, heuristics, QTO (manual), Bucket Fill",
+          "Upload, viewer, CSI detect, table parse (img2table/OpenCV lines/TATR), LLM chat via Groq free tier, heuristics, QTO (manual), Bucket Fill",
           "Textract (falls back to Tesseract), SageMaker YOLO, CloudFront, S3 durability",
         ],
         [

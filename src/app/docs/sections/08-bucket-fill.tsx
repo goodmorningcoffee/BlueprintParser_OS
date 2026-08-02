@@ -191,16 +191,25 @@ export function Section08BucketFill() {
           algorithm rather than Otsu, so its results can differ on low-contrast
           images. It&apos;s a safety net, not the preferred path.
         </p>
-        <CodeBlock lang="json" caption="BucketFillResult — same shape for worker and server">
+        <CodeBlock lang="json" caption="BucketFillResult — the Web Worker result shape, from src/workers/bucket-fill.worker.ts">
 {`{
+  "requestId": 7,
   "type": "result",
-  "polygon": [{ "x": 0.142, "y": 0.388 }, ...],
-  "holes": [[{ "x": 0.32, "y": 0.51 }, ...]],   // evenodd-compatible
-  "vertexCount": 24,
-  "areaFraction": 0.017,     // decorative — use computeRealArea()
-  "retryHistory": [...]      // present only when worker retried
+  "vertices": [{ "x": 0.142, "y": 0.388 }, ...],
+  "holes": [{ "vertices": [{ "x": 0.32, "y": 0.51 }, ...] }],   // evenodd-compatible
+  "holeCount": 1,
+  "areaFraction": 0.017     // decorative — use computeRealArea()
 }`}
         </CodeBlock>
+        <p>
+          The server fallback returns the same field names with three exceptions:
+          it has no <InlineCode>requestId</InlineCode> (there is no worker message
+          to correlate), it adds a <InlineCode>vertexCount</InlineCode>, and each
+          hole may carry its own <InlineCode>areaFraction</InlineCode>. Both tag
+          the result with a <InlineCode>method</InlineCode> string. Neither shape
+          has a <InlineCode>polygon</InlineCode> field, and neither records retry
+          attempts &mdash; the fill is one pass, as described above.
+        </p>
       </SubSection>
 
       <SubSection title="Scale calibration and computeRealArea">

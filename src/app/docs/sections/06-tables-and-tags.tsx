@@ -62,17 +62,27 @@ export function Section06TablesAndTags() {
           table region on the canvas and click <strong>Process Regions</strong>.
           The backend runs a multi-method parse pipeline and merges the results
           into a single grid. Each method is a fallback for the others &mdash; a
-          grid-line-heavy schedule is easy for Camelot; a crowded CAD-printed one
-          is easier for TATR or img2table.
+          grid-line-heavy schedule is easy for img2table and the OpenCV line
+          pass, which both key off ruled lines; a scan without them falls back to
+          the OCR word-position and Textract table methods.
         </p>
         <TableEl
           headers={["Method", "Strengths", "Implementation"]}
           rows={[
-            ["img2table", "Fast, handles grid-based tables well, returns cell-level bboxes.", <InlineCode key="1">src/lib/img2table-extract.ts</InlineCode>],
-            ["TATR (Table Transformer)", "Transformer-based structure inference. Robust to scanned / image-only tables.", <InlineCode key="3">src/lib/tatr-structure.ts</InlineCode>],
-            ["OCR grid detect", "OpenCV line detection + OCR word clustering. Pure-image fallback.", <InlineCode key="4">src/lib/ocr-grid-detect.ts</InlineCode>],
+            ["OCR word positions", "Clusters Textract word boxes into rows and columns. Needs no ruled lines at all.", <InlineCode key="1">methodOcrPositions</InlineCode>],
+            ["Textract tables", "Reuses the table model Textract already ran, when a cached table overlaps the region.", <InlineCode key="2">resolveTextractTables</InlineCode>],
+            ["OpenCV line detection", "Finds ruled lines on the rasterised page. Strongest on grid-heavy schedules.", <InlineCode key="3">methodOpenCvLines</InlineCode>],
+            ["img2table", "Hough transform + morphology, with skew correction and merged-cell detection.", <InlineCode key="4">extractWithImg2Table</InlineCode>],
           ]}
         />
+        <p className="text-[13px] text-[var(--muted)]">
+          The first three live in{" "}
+          <InlineCode>src/lib/services/table-parse.ts</InlineCode> and img2table
+          in <InlineCode>src/lib/img2table-extract.ts</InlineCode>. TATR is a
+          separate route &mdash; see{" "}
+          <InlineCode>POST /api/table-structure</InlineCode> in the API reference
+          &mdash; and is not part of this merge pipeline.
+        </p>
         <p>
           Results are merged via{" "}
           <InlineCode>src/lib/grid-merger.ts</InlineCode> and persisted through{" "}

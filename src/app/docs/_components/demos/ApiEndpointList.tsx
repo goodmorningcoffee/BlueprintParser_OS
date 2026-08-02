@@ -118,7 +118,7 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
     id: "tables",
     label: "Table Parse & Shape",
     endpoints: [
-      { method: "POST", path: "/api/table-parse", auth: "session", desc: "Run the multi-method parser (Camelot / img2table / TATR / OCR grid) and return the merged grid." },
+      { method: "POST", path: "/api/table-parse", auth: "session", desc: "Run the multi-method merge pipeline (OCR word positions, Textract tables, OpenCV lines, img2table) and return the merged grid." },
       { method: "POST", path: "/api/table-parse/propose", auth: "session", desc: "Propose row/column boundaries for a user-drawn region (Guided Parse)." },
       { method: "POST", path: "/api/table-structure", auth: "session", desc: "Raw TATR (Table Transformer) structure inference for debugging." },
       { method: "POST", path: "/api/regions/promote", auth: "session", desc: "Commit a parsed schedule, keynote, notes, or spec region into page intelligence and refresh derived summaries." },
@@ -150,7 +150,7 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
     endpoints: [
       { method: "POST", path: "/api/yolo/run", auth: "admin", desc: "Start a SageMaker Processing job for a project and model. The ONLY way to run YOLO." },
       { method: "GET", path: "/api/yolo/status", auth: "admin", desc: "Poll job status by execution id." },
-      { method: "POST", path: "/api/yolo/load", auth: "session", desc: "Ingest YOLO results from S3 into the annotations table (called by the webhook)." },
+      { method: "POST", path: "/api/yolo/load", auth: "admin", desc: "Ingest YOLO results from S3 into the annotations table. There is no webhook: the admin page calls this itself once its status poll reports Completed." },
       { method: "DELETE", path: "/api/admin/yolo-purge", auth: "admin", desc: "Purge all YOLO annotations for a project." },
     ],
   },

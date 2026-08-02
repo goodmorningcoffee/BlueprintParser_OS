@@ -9,7 +9,7 @@ const LANES = [
       { label: "Admin clicks Run", sub: "AiModelsTab.tsx" },
       { label: "POST /api/yolo/run", sub: "SageMaker job ID" },
       { label: "SageMaker Processing", sub: "ml.g4dn.xlarge" },
-      { label: "POST /api/yolo/load", sub: "webhook on complete" },
+      { label: "POST /api/yolo/load", sub: "admin page after poll" },
       { label: "annotations rows", sub: "source = yolo" },
       { label: "viewer re-renders", sub: "canvas + DetectionPanel" },
     ],

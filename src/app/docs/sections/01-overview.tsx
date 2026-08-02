@@ -143,7 +143,7 @@ export function Section01Overview() {
           purely which external services are configured. A development machine with
           Docker and a Groq free-tier API key can run the full viewer against a
           locally-hosted PostgreSQL instance, parse tables with img2table and
-          Camelot, and chat with an LLM, all without a single AWS credential. Add
+          TATR, and chat with an LLM, all without a single AWS credential. Add
           an S3 bucket and page images become durable; add the full Terraform
           stack and you get CloudFront, Textract, Step Functions, and Label Studio;
           add a SageMaker Processing role and a YOLO ECR image and YOLO object
@@ -169,8 +169,9 @@ export function Section01Overview() {
           Anthropic, OpenAI, and Groq SDKs, plus a generic OpenAI-compatible
           endpoint for Ollama and self-hosted models. The CSI network graph is
           rendered with <InlineCode>d3-force</InlineCode>. Python sidecars
-          (pdfplumber, Camelot, img2table, TATR, OpenCV, Tesseract, and the YOLO
-          inference container) are spawned from TypeScript via stdin/stdout JSON.
+          (img2table, TATR, OpenCV, Tesseract, and the YOLO inference container)
+          are spawned from TypeScript via stdin/stdout JSON; pdfplumber ships in
+          the image as an img2table dependency, not as a sidecar of its own.
           AWS deployment is codified in <InlineCode>infrastructure/terraform/</InlineCode> &mdash;
           17 files totaling the full stack including ECS, RDS, private S3, Step Functions,
           IAM, Secrets Manager, and the deny-all CloudFront viewer gate.

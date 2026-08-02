@@ -27,8 +27,9 @@ export function Section05YoloPipeline() {
         <strong>only shows and hides already-loaded detections</strong>. It does
         not kick off inference. To actually run YOLO, you go to{" "}
         <InlineCode>Admin → AI Models</InlineCode>, pick a model and a project, and
-        click Run. The backend launches a SageMaker Processing job and webhook-
-        ingests the results when the job finishes. Running YOLO costs money
+        click Run. The backend launches a SageMaker Processing job; the admin
+        page polls until the job completes, then loads the results itself &mdash;
+        there is no webhook. Running YOLO costs money
         (GPU instance hours) and is gated behind a per-company feature toggle and
         an admin-only permission.
       </Callout>
@@ -63,14 +64,18 @@ export function Section05YoloPipeline() {
         <p>
           While the job runs (usually a few minutes per project on an{" "}
           <InlineCode>ml.g4dn.xlarge</InlineCode>), the admin UI polls{" "}
-          <InlineCode>GET /api/yolo/status</InlineCode> every ~5 seconds and shows
+          <InlineCode>GET /api/yolo/status</InlineCode> every 10 seconds and shows
           live status, execution ID, and CloudWatch logs. When the container
-          finishes, it writes per-page detection JSONs to S3; a webhook hits{" "}
+          finishes, it writes per-page detection JSONs to S3; the next poll sees
+          status <InlineCode>Completed</InlineCode>, waits three seconds for those
+          writes to settle, and the same admin browser tab calls{" "}
           <InlineCode>POST /api/yolo/load</InlineCode>, which reads the JSONs,
           normalizes them into the <InlineCode>annotations</InlineCode> table
           (with <InlineCode>source = &quot;yolo&quot;</InlineCode>), and triggers a
           refresh of the CSI spatial heatmap + heuristic engine in YOLO-augmented
-          mode.
+          mode. Because that ingest is driven by the polling tab rather than by a
+          webhook, closing the admin page before the job finishes leaves the
+          detections in S3 until the page is re-opened and resumes the poll.
         </p>
         <Figure
           kind="live"

@@ -25,7 +25,7 @@ const TERMS = [
   {
     term: "Schedule",
     plain: "A tabular block on a drawing listing every item of a type (door schedule, window schedule, finish schedule). Each row = one unique tag value.",
-    bp: "Detected by table-classifier, parsed with img2table/Camelot/TATR/ocr-grid-detect, stored as pages.page_intelligence.parsedRegions[] with type=\"schedule\".",
+    bp: "Detected by table-classifier, parsed with img2table/opencv-lines/TATR/ocr-grid-detect, stored as pages.page_intelligence.parsedRegions[] with type=\"schedule\".",
   },
   {
     term: "Trade",
