@@ -493,7 +493,7 @@ export function Section02Viewer() {
           <InlineCode>Export PDF</InlineCode> is present but disabled &mdash;
           it&apos;s the obvious future feature.
         </p>
-        <Figure kind="live" caption="MenuDropdownDemo — items verbatim from ViewerToolbar.tsx:288–331." size="sm">
+        <Figure kind="live" caption="MenuDropdownDemo — a static rendition of the Menu dropdown, from the menuOpen block in ViewerToolbar.tsx." size="sm">
           <MenuDropdownDemo />
         </Figure>
       </SubSection>

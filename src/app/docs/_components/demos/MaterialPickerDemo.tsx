@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 
-/** Materials from AutoQtoTab.tsx:14-20. Icon letters + labels + scheduleCategory
- *  are verbatim so the docs stay in sync with the wizard. */
+/** MATERIALS hand-copied from src/components/viewer/AutoQtoTab.tsx. Icon
+ *  letters, labels and scheduleCategory are verbatim so the docs stay in sync
+ *  with the wizard. Verified identical 2026-08-01; re-check with:
+ *  grep -n 'const MATERIALS' src/components/viewer/AutoQtoTab.tsx */
 const MATERIALS = [
   { type: "doors", label: "Doors", scheduleCategory: "door-schedule", icon: "D" },
   { type: "finishes", label: "Finishes", scheduleCategory: "finish-schedule", icon: "F" },

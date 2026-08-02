@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 
-/** Guided Parse tuning sliders. Defaults from GuidedParseTab.tsx:44. */
+/** Guided Parse tuning sliders. Defaults hand-copied from the rowTolerance,
+ *  colGap and colConfidence useState hooks in
+ *  src/components/viewer/GuidedParseTab.tsx — note this file renames the last
+ *  two to minColGap / minHitsRatio. Verified identical 2026-08-01; re-check
+ *  with: grep -n 'const \[rowTolerance' src/components/viewer/GuidedParseTab.tsx */
 export function GuidedSlidersDemo() {
   const [rowTolerance, setRowTolerance] = useState(0.006);
   const [minColGap, setMinColGap] = useState(0.015);

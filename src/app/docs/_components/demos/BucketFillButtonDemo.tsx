@@ -4,8 +4,12 @@ import { useState } from "react";
 
 type ButtonState = "disabled" | "idle" | "active" | "barrier";
 
-/** Tri-state Bucket Fill button mirroring AreaTab.tsx:325-369. Click
- *  to cycle through the states so readers can see the styling difference. */
+/** Four demo states for the Bucket Fill button, mirroring the bucket-fill
+ *  toolbar in src/components/viewer/AreaTab.tsx (the setBucketFillActive and
+ *  setBucketFillBarrierMode buttons). idle / active / barrier reproduce that
+ *  toolbar's classNames verbatim; "disabled" is illustrative only — the real
+ *  toolbar is always enabled, independent of item selection. Click to cycle
+ *  through the states so readers can see the styling difference. */
 export function BucketFillButtonDemo() {
   const [state, setState] = useState<ButtonState>("disabled");
   const next: Record<ButtonState, ButtonState> = {

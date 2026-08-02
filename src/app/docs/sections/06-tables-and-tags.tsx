@@ -49,7 +49,7 @@ export function Section06TablesAndTags() {
         </p>
         <Figure
           kind="live"
-          caption="Panel tabs exactly as TableParsePanel.tsx renders them (labels verbatim from lines 306–319)."
+          caption="Panel tabs exactly as TableParsePanel.tsx renders them (IDs and labels verbatim from its tableParseTab tab bar)."
           size="md"
         >
           <TableParseTabsDemo />
@@ -87,11 +87,14 @@ export function Section06TablesAndTags() {
           Sometimes auto parse gets the structure nearly right but misplaces a
           row boundary or merges two columns. Guided Parse is the answer. You
           still draw a region, but the panel exposes three tuning sliders whose
-          defaults live in <InlineCode>GuidedParseTab.tsx:44</InlineCode>:
+          defaults live in the <InlineCode>rowTolerance</InlineCode>,{" "}
+          <InlineCode>colGap</InlineCode> and{" "}
+          <InlineCode>colConfidence</InlineCode> state hooks in{" "}
+          <InlineCode>GuidedParseTab.tsx</InlineCode>:
         </p>
         <Figure
           kind="live"
-          caption="Guided Parse tuning sliders. Defaults: rowTolerance=0.006, minColGap=0.015, minHitsRatio=0.3."
+          caption="Guided Parse tuning sliders. Defaults: rowTolerance=0.006, colGap=0.015, colConfidence=0.3."
           size="md"
         >
           <GuidedSlidersDemo />
@@ -194,8 +197,8 @@ export function Section06TablesAndTags() {
         <Callout variant="warn" title="Signal-valve state (for LLM readers)">
           Two scoring signals &mdash; <InlineCode>shapeContainBoost</InlineCode>{" "}
           and <InlineCode>objectAdjacencyBoost</InlineCode> &mdash; are
-          hardcoded to zero in the current orchestrator (L141-142). A third,
-          <InlineCode>windowMatch</InlineCode>, is hardcoded true (L131). These
+          hardcoded to zero in <InlineCode>find-occurrences.ts</InlineCode>. A third,
+          <InlineCode>windowMatch</InlineCode>, is hardcoded true. These
           are placeholders for the future Discrepancy Engine; BP today cannot
           detect &quot;the schedule says 12 doors but only 11 are on plans&quot;
           as a high-confidence signal. See Section 12 for the full story.

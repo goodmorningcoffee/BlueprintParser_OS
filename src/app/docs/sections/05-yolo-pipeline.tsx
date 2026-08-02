@@ -115,8 +115,8 @@ export function Section05YoloPipeline() {
       <SubSection title="The Detection Panel">
         <p>
           Once a YOLO run completes and results are loaded, they show up in the
-          viewer&apos;s Detection Panel (<InlineCode>DetectionPanel.tsx</InlineCode>,
-          ~780 lines of React). The panel has three sub-tabs:
+          viewer&apos;s Detection Panel (<InlineCode>DetectionPanel.tsx</InlineCode>).
+          The panel has three sub-tabs:
         </p>
         <TableEl
           headers={["Sub-tab", "What it shows", "How it's built"]}

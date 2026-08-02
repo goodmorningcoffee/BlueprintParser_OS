@@ -1,8 +1,9 @@
 import { TWENTY_COLORS } from "../constants";
 
 /** The 20-color palette used for user-drawn markups, takeoff groups, and
- *  anywhere a visual ID needs to stay stable across redraws. Imported
- *  from src/types/index.ts:636 — single source of truth. */
+ *  anywhere a visual ID needs to stay stable across redraws. Not a copy:
+ *  _components/constants.ts re-exports TWENTY_COLORS straight from src/types,
+ *  so this renders the real array. */
 export function ColorSwatchDemo() {
   return (
     <div className="space-y-2">

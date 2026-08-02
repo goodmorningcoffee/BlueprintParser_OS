@@ -3,7 +3,8 @@
 import { useState } from "react";
 
 /** The five tabs of the Schedules/Tables panel. Tab IDs and labels verbatim
- *  from TableParsePanel.tsx lines 306-319. */
+ *  from the tableParseTab tab bar in
+ *  src/components/viewer/TableParsePanel.tsx. Verified identical 2026-08-01. */
 const TABS = [
   { id: "all", label: "All Tables" },
   { id: "auto", label: "Auto Parse" },

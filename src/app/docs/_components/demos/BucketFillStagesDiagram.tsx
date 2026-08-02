@@ -1,5 +1,5 @@
-/** Bucket fill worker pipeline. Verified against
- *  src/workers/bucket-fill.worker.ts:processFill (L453+). Text is treated as a
+/** Bucket fill worker pipeline. Verified against processFill in
+ *  src/workers/bucket-fill.worker.ts. Text is treated as a
  *  dark region like any other (text-as-wall, post-2026-04-22 rewrite — pre-2026
  *  the worker erased text first). The maxDimension knob is dominant:
  *  downscale happens before Otsu, so resolution controls whether thin walls

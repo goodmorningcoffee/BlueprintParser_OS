@@ -87,8 +87,8 @@ export function Section04CsiEngine() {
             [
               <strong key="1">Tier 1</strong>,
               "Exact consecutive-word subphrase from the MasterFormat description (e.g. 'cast-in-place concrete' anywhere in the OCR).",
-              <span key="1c" className="font-mono">0.95</span>,
-              "High-signal: the literal phrase is in the text, which essentially never happens by accident.",
+              <span key="1c" className="font-mono">0.95 × tier1WeightByWordCount</span>,
+              "High-signal: the literal phrase is in the text, which essentially never happens by accident. The raw 0.95 is scaled by description word count, so a 3+ word description lands at 0.76 while a 1-word description lands at 0.0095 and is rejected by the 0.40 threshold.",
             ],
             [
               <strong key="2">Tier 2</strong>,
@@ -119,13 +119,17 @@ export function Section04CsiEngine() {
           custom CSI database TSV (useful for trades like fire alarm that benefit
           from an expanded vocabulary).
         </p>
-        <CodeBlock lang="ts" caption="src/lib/csi-detect.ts:38-52 — DEFAULT_CONFIG">
-{`const DEFAULT_CONFIG: CsiDetectConfig = {
+        <CodeBlock lang="ts" caption="DEFAULT_CSI_DETECT_CONFIG in src/lib/csi-detect-defs.ts (csi-detect.ts aliases it as DEFAULT_CONFIG)">
+{`export const DEFAULT_CSI_DETECT_CONFIG: CsiDetectConfig = {
   matchingConfidenceThreshold: 0.4,
   tier2MinWords: 3,
   tier3MinWords: 5,
   tier2Weight: 0.75,
   tier3Weight: 0.50,
+  // Tier 1 multiplier by significant-word count. Index 0 unused; the last
+  // value is reused for longer descriptions. 1-word: 0.95 × 0.01 = 0.0095,
+  // which is below matchingConfidenceThreshold and is rejected.
+  tier1WeightByWordCount: [0, 0.01, 0.19, 0.80, 0.80, 0.80],
 };`}
         </CodeBlock>
         <Figure

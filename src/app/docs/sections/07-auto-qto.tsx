@@ -71,7 +71,7 @@ export function Section07AutoQto() {
           can&apos;t cleanly differentiate &quot;tags inside the schedule&quot;
           from &quot;tags out on the drawings.&quot;
         </p>
-        <CodeBlock lang="ts" caption="src/components/viewer/AutoQtoTab.tsx:51–52">
+        <CodeBlock lang="ts" caption="src/components/viewer/AutoQtoTab.tsx — QTO_STRICT_EXCLUSION_CLASSES + QTO_RECOMMENDED_CLASSES">
 {`const QTO_STRICT_EXCLUSION_CLASSES = ["tables", "title_block", "drawings"] as const;
 const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as const;`}
         </CodeBlock>
@@ -103,7 +103,7 @@ const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as 
           text input &mdash; BP singularizes by stripping a trailing{" "}
           <InlineCode>s</InlineCode> as a rough stem.
         </p>
-        <CodeBlock lang="ts" caption="AutoQtoTab.tsx:14–20">
+        <CodeBlock lang="ts" caption="AutoQtoTab.tsx — MATERIALS">
 {`const MATERIALS = [
   { type: "doors",      label: "Doors",       scheduleCategory: "door-schedule",       icon: "D" },
   { type: "finishes",   label: "Finishes",    scheduleCategory: "finish-schedule",     icon: "F" },
@@ -122,9 +122,10 @@ const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as 
           Once a material is picked, Auto-QTO drops you into a step machine whose
           state lives in the <InlineCode>qto_workflows</InlineCode> table. The
           canonical step IDs come from{" "}
-          <InlineCode>AutoQtoTab.tsx:11</InlineCode>:
+          <InlineCode>STEP_SEQUENCE</InlineCode> in{" "}
+          <InlineCode>AutoQtoTab.tsx</InlineCode>:
         </p>
-        <CodeBlock lang="ts" caption="AutoQtoTab.tsx:11">
+        <CodeBlock lang="ts" caption="AutoQtoTab.tsx — STEP_SEQUENCE">
 {`const STEP_SEQUENCE = ["select-schedule", "confirm-tags", "map-tags", "review", "done"] as const;`}
         </CodeBlock>
         <Figure

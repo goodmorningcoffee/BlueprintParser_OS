@@ -1,6 +1,10 @@
-/** Static-open rendition of the viewer's Menu dropdown (ViewerToolbar.tsx
- *  lines 276-332). Items: Data Labeling / Export PDF (disabled) / Settings /
- *  Page Intelligence / Admin / Help. */
+/** Static-open rendition of the viewer's Menu dropdown — the menuOpen block
+ *  in src/components/viewer/ViewerToolbar.tsx. Items rendered here: Data
+ *  Labeling / Export PDF (disabled) / Settings / Page Intelligence / Admin /
+ *  Help.
+ *  STALE: the real menu no longer has a Page Intelligence entry — it moved into
+ *  the Tools panel in D4 (see the comment beside the divider in ViewerToolbar).
+ *  This demo has not been updated to match. */
 export function MenuDropdownDemo() {
   return (
     <div className="inline-block relative">

@@ -81,16 +81,16 @@ export function Section12ForLlms() {
           <InlineCode>[LLM-NAV:landmarks]</InlineCode>
         </p>
         <TableEl
-          headers={["Symbol", "File:line", "Why it matters"]}
+          headers={["Symbol", "File", "Why it matters"]}
           rows={[
-            [<InlineCode key="a1">processProject</InlineCode>, "src/lib/processing.ts:165-605", "Auto pipeline entry. 14 per-page stages + project rollup."],
-            [<InlineCode key="a2">mapConcurrent</InlineCode>, "src/lib/processing.ts:35-52", "Worker-pool concurrency limit. Default 8."],
+            [<InlineCode key="a1">processProject</InlineCode>, "src/lib/processing.ts", "Auto pipeline entry. 14 per-page stages + project rollup."],
+            [<InlineCode key="a2">mapConcurrent</InlineCode>, "src/lib/processing.ts", "Worker-pool concurrency limit. Default 8."],
             [<InlineCode key="a3">analyzePageImageWithFallback</InlineCode>, "src/lib/textract.ts:~315", "3-tier OCR fallback: full Textract → half-res → Tesseract."],
             [<InlineCode key="a4">detectCsiCodes</InlineCode>, "src/lib/csi-detect.ts", "3-tier matcher. Returns CsiCode[] with trade + division + confidence."],
-            [<InlineCode key="a5">findOccurrences</InlineCode>, "src/lib/tag-mapping/find-occurrences.ts:171", "Tag-mapping entry. Dispatches to 5 matcher types + composes scores."],
-            [<InlineCode key="a6">processFill</InlineCode>, "src/workers/bucket-fill.worker.ts:453", "8-stage flood-fill pipeline. Text is a wall."],
+            [<InlineCode key="a5">findOccurrences</InlineCode>, "src/lib/tag-mapping/find-occurrences.ts", "Tag-mapping entry. Dispatches to 5 matcher types + composes scores."],
+            [<InlineCode key="a6">processFill</InlineCode>, "src/workers/bucket-fill.worker.ts", "8-stage flood-fill pipeline. Text is a wall."],
             [<InlineCode key="a7">computeRealArea</InlineCode>, "src/lib/areaCalc.ts", "Shoelace → calibrated sqft. Truth for area takeoffs."],
-            [<InlineCode key="a8">streamChatWithTools</InlineCode>, "src/lib/llm/anthropic.ts:85-169", "Agentic tool-use loop. maxRounds=10."],
+            [<InlineCode key="a8">streamChatWithTools</InlineCode>, "src/lib/llm/anthropic.ts", "Agentic tool-use loop. maxRounds=10."],
             [<InlineCode key="a9">BP_TOOLS</InlineCode>, "src/lib/llm/tools-defs.ts", "20 tool definitions. Client-safe (no db/fs)."],
             [<InlineCode key="a10">executeToolCall</InlineCode>, "src/lib/llm/tools.ts", "Server-side tool executors. Full db + fs access."],
             [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:1484", "Render-gate condition #1, registry-derived: TOOLS.some((c) => c.wantsEvents(state)). Extend via the controller's wantsEvents; companions L1485 (shouldRender), L1540 (pointerEvents), L1544 (cursor)."],
@@ -99,10 +99,10 @@ export function Section12ForLlms() {
             [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/uiStore.ts", "One-shot UI signal. Read-and-clear pattern."],
             [<InlineCode key="a15">assembleContextWithConfig</InlineCode>, "src/lib/context-builder.ts", "LLM prompt assembly. Priority-sorted section packing."],
             [<InlineCode key="a16">ALL_DETECTORS</InlineCode>, "src/lib/detectors/registry.ts:21", "10 text-annotation detectors. Add here + wire to enable config."],
-            [<InlineCode key="a17">QTO_STRICT_EXCLUSION_CLASSES</InlineCode>, "src/components/viewer/AutoQtoTab.tsx:52", "tables, title_block, drawings. Required for Auto-QTO."],
+            [<InlineCode key="a17">QTO_STRICT_EXCLUSION_CLASSES</InlineCode>, "src/components/viewer/AutoQtoTab.tsx", "tables, title_block, drawings. Required for Auto-QTO."],
             [<InlineCode key="a18">startYoloJob</InlineCode>, "src/lib/yolo.ts", "SageMaker Processing job launch. Only caller: POST /api/yolo/run."],
             [<InlineCode key="a19">resolveConfig</InlineCode>, "src/lib/llm/resolve.ts", "Per-company LLM provider + model + key lookup."],
-            [<InlineCode key="a20">buildCsiGraph</InlineCode>, "src/lib/csi-graph.ts (~430 LOC)", "Project-level CSI relationship graph. fingerprinted cache key."],
+            [<InlineCode key="a20">buildCsiGraph</InlineCode>, "src/lib/csi-graph.ts", "Project-level CSI relationship graph. fingerprinted cache key."],
           ]}
         />
       </SubSection>
@@ -168,11 +168,11 @@ export function Section12ForLlms() {
           These are reserved for the future Discrepancy Engine; matchers have
           not been wired to populate them yet.
         </Callout>
-        <CodeBlock lang="ts" caption="src/lib/tag-mapping/find-occurrences.ts:131, 141-142">
-{`// :131 — windowMatch hardcoded to true (multi-word text coherence not evaluated)
+        <CodeBlock lang="ts" caption="src/lib/tag-mapping/find-occurrences.ts — scoreRawMatch(): the windowMatch default and the ScoreSignals literal">
+{`// windowMatch hardcoded to true (multi-word text coherence not evaluated)
 const windowMatch = true;
 
-// :141-142 — two boosts hardcoded to zero
+// two boosts hardcoded to zero
 shapeContainBoost: 0,     // not yet produced by matchers; future refinement
 objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
         </CodeBlock>

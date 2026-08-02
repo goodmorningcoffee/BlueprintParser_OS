@@ -64,7 +64,7 @@ export function Section08BucketFill() {
         </p>
         <Figure
           kind="live"
-          caption="BucketFillStagesDiagram — verified against src/workers/bucket-fill.worker.ts:processFill (L453+). Text is a dark region like any other; the flood stops at letter boundaries."
+          caption="BucketFillStagesDiagram — verified against processFill in src/workers/bucket-fill.worker.ts. Text is a dark region like any other; the flood stops at letter boundaries."
           size="full"
         >
           <BucketFillStagesDiagram />

@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 
-/** STEP_SEQUENCE from AutoQtoTab.tsx:11 verbatim. */
+/** STEP_SEQUENCE hand-copied verbatim from
+ *  src/components/viewer/AutoQtoTab.tsx. Verified identical 2026-08-01;
+ *  re-check with: grep -n 'const STEP_SEQUENCE' src/components/viewer/AutoQtoTab.tsx */
 const STEPS = ["select-schedule", "confirm-tags", "map-tags", "review", "done"] as const;
 
 const LABELS: Record<(typeof STEPS)[number], string> = {
