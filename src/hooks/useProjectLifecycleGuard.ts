@@ -26,6 +26,10 @@ type RenderedAuthority = {
  * Unit/component harnesses that do not install `openProject` retain their historical behavior only
  * while both the registry and the exact rendered session tuple remain unchanged. A null capture can
  * never borrow a lifecycle that appears later.
+ *
+ * Placement: check the guard at handler entry and after every `await` or external publication
+ * (`queryClient.setQueryData`, store `setState`) — the points where the snapshot can go stale. Checks
+ * between consecutive synchronous `useState` setters are inert; neither add new ones nor retro-trim them.
  */
 export function useProjectLifecycleGuard(
   publicId: string,

@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Shared visibility toggle eye — extracts the 👁 / 👁‍🗨 / — pattern
- * inlined in DetectionPanel model rows, ClassGroupHeader, TextPanel
- * category rows, AnnotationListItem, and yoloTag rows. Same unicode
- * symbols, same muted-opacity states, same stopPropagation behavior.
+ * Shared visibility toggle eye — intended replacement for the 👁 / 👁‍🗨 / —
+ * pattern still inlined (with diverged titles, opacity classes, and
+ * stopPropagation) in DetectionPanel model rows, ClassGroupHeader,
+ * TextPanel category rows, AnnotationListItem, and yoloTag rows.
  *
  * Two variants:
  *   - "category" → 👁 visible, 👁‍🗨 hidden. Used at every aggregate level

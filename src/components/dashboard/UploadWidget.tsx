@@ -237,7 +237,7 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
       if (!projectRes.ok) {
         const j = await projectRes.json().catch(() => ({}));
         // [refactor jun17 P1.3] /api/projects now returns {error:{code,message}}; apiErrorMessage reads
-        // both envelopes (legacy {error:str} + new) so the toast never shows "[object Object]".
+        // both envelopes (legacy {error:str} + new) so the error line never shows "[object Object]".
         throw new Error(
           apiErrorMessage(j) ||
             `Failed to create project (${projectRes.status})`,
