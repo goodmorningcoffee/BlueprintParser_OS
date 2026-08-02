@@ -7,7 +7,7 @@ import Header from "@/components/dashboard/Header";
 // [refactor jul6 S031] apiErrorMessage: yolo routes now serve {error:{code,message}};
 // reads both shapes (the retry below compares the MESSAGE, not the raw body field).
 import { apiErrorMessage } from "@/lib/client-persist";
-import AdminTabs, { type AdminTab } from "./AdminTabs";
+import AdminTabs, { TAB_IDS, type AdminTab } from "./AdminTabs";
 import OverviewTab from "./tabs/OverviewTab";
 import ProjectsTab from "./tabs/ProjectsTab";
 import AiModelsTab from "./tabs/AiModelsTab";
@@ -571,7 +571,7 @@ export default function AdminPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as AdminTab;
-      if (tab && ["overview", "projects", "ai-models", "ai-rbac", "pipeline", "llm-context", "text-annotations", "csi", "heuristics", "page-intelligence", "table-parse", "companies", "usage", "users", "settings", "logs"].includes(tab)) return tab;
+      if (tab && TAB_IDS.includes(tab)) return tab;
     }
     return "overview";
   });

@@ -21,6 +21,14 @@ const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boo
   { id: "logs", label: "Logs", rootOnly: true },
 ];
 
+/**
+ * The canonical tab-id list, DERIVED from TABS so it cannot drift from it.
+ * Consumed by admin/page.tsx to validate the `?tab=` deep-link parameter. Before this
+ * existed that check carried a hand-written third copy of all 16 ids, so adding a tab
+ * without updating it sent the deep link silently to Overview.
+ */
+export const TAB_IDS: readonly AdminTab[] = TABS.map((tab) => tab.id);
+
 interface AdminTabsProps {
   active: AdminTab;
   onChange: (tab: AdminTab) => void;
