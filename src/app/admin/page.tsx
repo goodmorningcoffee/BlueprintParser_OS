@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Header from "@/components/dashboard/Header";
 // [refactor jul6 S031] apiErrorMessage: yolo routes now serve {error:{code,message}};
 // reads both shapes (the retry below compares the MESSAGE, not the raw body field).
-import { apiErrorMessage } from "@/lib/client-persist";
+import { apiErrorMessage, persistFetch } from "@/lib/client-persist";
 import AdminTabs, { TAB_IDS, type AdminTab } from "./AdminTabs";
 import OverviewTab from "./tabs/OverviewTab";
 import ProjectsTab from "./tabs/ProjectsTab";
@@ -193,12 +193,13 @@ export default function AdminPage() {
           clearInterval(interval);
           delete pollingRef.current[pk];
 
-          // Update DB status
-          fetch("/api/admin/running-jobs", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ executionId: jobName, status: jobStatus }),
-          }).catch(() => {});
+          // Update DB status. NOT awaited — an awaited rejection would be swallowed by this tick's
+          // outer catch AND would skip loadYoloResults below; persistFetch rejects on !ok.
+          persistFetch("/api/admin/running-jobs", { executionId: jobName, status: jobStatus }, "PUT")
+            .catch((err) => {
+              console.error("[yolo] Job status write failed:", err);
+              setMessage(`Job ${jobName} finished (${jobStatus}) but its status could not be saved: ${err instanceof Error ? err.message : String(err)} — it stays marked running and will be retried on the next page load.`);
+            });
 
           if (jobStatus === "Completed") {
             await new Promise((r) => setTimeout(r, 3000));
@@ -441,12 +442,13 @@ export default function AdminPage() {
           clearInterval(interval);
           delete pollingRef.current[pk];
 
-          // Update DB status so the job isn't re-polled on next page load
-          fetch("/api/admin/running-jobs", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ executionId: jobName, status: jobStatus }),
-          }).catch(() => {});
+          // Update DB status. NOT awaited — an awaited rejection would be swallowed by this tick's
+          // outer catch AND would skip loadYoloResults below; persistFetch rejects on !ok.
+          persistFetch("/api/admin/running-jobs", { executionId: jobName, status: jobStatus }, "PUT")
+            .catch((err) => {
+              console.error("[yolo] Job status write failed:", err);
+              setMessage(`Job ${jobName} finished (${jobStatus}) but its status could not be saved: ${err instanceof Error ? err.message : String(err)} — it stays marked running and will be retried on the next page load.`);
+            });
 
           if (jobStatus === "Completed") {
             await new Promise((r) => setTimeout(r, 3000));
