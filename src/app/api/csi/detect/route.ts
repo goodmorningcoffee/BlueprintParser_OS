@@ -14,5 +14,6 @@ import { csiDetect } from "@/server/services/csi";
 export const POST = defineRoute({
   auth: "none",
   body: zLooseBody,
+  maxBodyBytes: 1024 * 1024,
   handler: ({ body }) => csiDetect(body),
 });

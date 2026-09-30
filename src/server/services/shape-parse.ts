@@ -39,6 +39,7 @@ import { logger } from "@/lib/logger";
 import type { TextractPageData } from "@/types";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
+import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
 
 export async function shapeParse(rawBody: Record<string, unknown>): Promise<unknown> {
@@ -55,6 +56,7 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
   if (!scanAll && !pageNumber) {
     throw new ApiError("VALIDATION", "Missing pageNumber (or set scanAll: true)");
   }
+  if (!scanAll) assertPageNumber(pageNumber);
 
   const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 

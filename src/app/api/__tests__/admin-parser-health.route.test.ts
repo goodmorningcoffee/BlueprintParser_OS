@@ -170,15 +170,14 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("PH-5b SIGNED-OUT + malformed JSON → 400 (shell parses body BEFORE auth; legacy was 401)", async () => {
-    // [S061 DETECTOR closer FA-1/SEC-1/PH-F1 — all three lanes, deduped] The shell's step-1
-    // safeParseJsonBody runs BEFORE step-2 auth (defineRoute.ts; auth-by-body needs the raw
-    // object), so signed-out + PARSE-FAILURE now 400s where legacy auth-first returned 401.
-    // Repo-wide shell invariant (US-20/DR006 precedent class), no auth oracle / existence
-    // leak. Non-object bodies parse fine at step 1 and still 401 at auth — pinned below.
+  it("PH-5b SIGNED-OUT + malformed JSON → 401 (auth runs before the body is read)", async () => {
+    // [S061 DETECTOR closer FA-1/SEC-1/PH-F1] The S061 shell parsed the body BEFORE auth (400).
+    // [hardening sep30] REVERSED on purpose: routes whose auth needs no body now authenticate
+    // FIRST, so a signed-out caller never makes the server read or parse a body → 401 here.
+    // Only a body-keyed project lookup still parses first. No auth oracle / existence leak.
     const r = await readJson(await phPOST(rawPost("{ nope")));
-    expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
     const r2 = await readJson(await phPOST(rawPost("[1,2]"))); // parses OK → auth wins
     expect(r2.status).toBe(401);
     expect(h.spawn).not.toHaveBeenCalled();

@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { users, companies } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { audit } from "@/lib/audit";
+import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { refreshJwtUserAuthority } from "@/server/services/auth-jwt-authority";
 // [refactor jul23 P5.4-A] Brute-force lockout helpers extracted to a pure module
 // so the exponential schedule can be frozen by a unit test (auth.ts itself is
@@ -17,6 +18,8 @@ import {
 } from "@/lib/login-lockout";
 
 const ROOT_ADMIN_MUTATION_ADVISORY_LOCK = 737375864;
+const MAX_EMAIL_CHARS = 254;
+const MAX_PASSWORD_CHARS = 1024;
 
 declare module "next-auth" {
   interface User {
@@ -70,15 +73,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         if (!credentials?.email || !credentials?.password) return null;
+        if (typeof credentials.email !== "string" || typeof credentials.password !== "string") {
+          return null;
+        }
+        // Both are logged or hashed below; neither has a legitimate reason to be this long.
+        if (credentials.email.length > MAX_EMAIL_CHARS || credentials.password.length > MAX_PASSWORD_CHARS) {
+          return null;
+        }
 
-        const email = (credentials.email as string).toLowerCase().trim();
-        const password = credentials.password as string;
+        const email = credentials.email.toLowerCase().trim();
+        const password = credentials.password;
+        // The ALB-appended client address; "unknown" (no ALB in front) keeps the email-only key.
+        const forwarded = trustedClientIp(request?.headers?.get("x-forwarded-for") ?? null);
+        const ip = forwarded === "unknown" ? undefined : forwarded;
 
         // Check brute force lockout
         // [refactor jul23 P5.4-C] login-lockout helpers are now async (login_lockouts PG table).
-        const lockMsg = await checkBruteForce(email);
+        const lockMsg = await checkBruteForce(email, ip);
         if (lockMsg) {
           console.error(`[AUTH FAIL] lockout: ${email}`);
           return null;
@@ -111,7 +124,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!user) {
           console.error(`[AUTH FAIL] user not found: ${email}`);
-          await recordFailedLogin(email);
+          await recordFailedLogin(email, ip);
           audit("login_failed", {
             details: { email, reason: "user_not_found" },
           });
@@ -122,7 +135,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           console.error(
             `[AUTH FAIL] null passwordHash: ${email} (id=${user.id})`,
           );
-          await recordFailedLogin(email);
+          await recordFailedLogin(email, ip);
           audit("login_failed", {
             userId: user.id,
             companyId: user.companyId,
@@ -134,7 +147,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const passwordMatch = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatch) {
           console.error(`[AUTH FAIL] wrong password: ${email} (id=${user.id})`);
-          await recordFailedLogin(email);
+          await recordFailedLogin(email, ip);
           audit("login_failed", {
             userId: user.id,
             companyId: user.companyId,
@@ -195,7 +208,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
         }
 
-        await clearFailedLogins(email);
+        await clearFailedLogins(email, ip);
         audit("login_success", { userId: user.id, companyId: user.companyId });
 
         return {

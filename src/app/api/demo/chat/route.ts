@@ -3,12 +3,16 @@ import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { checkDemoChatQuota } from "@/lib/quotas";
+import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
 import { streamChatResponse } from "@/lib/llm/stream";
 import type { ChatMessage } from "@/lib/llm/types";
 
 const MAX_CONTEXT_CHARS = 20000;
 const MAX_PAGES = 10;
+// Anonymous input, sent verbatim to a paid provider. A question, not a document.
+const MAX_MESSAGE_CHARS = 2000;
+const MAX_BODY_CHARS = 16 * 1024;
 
 /**
  * POST /api/demo/chat
@@ -16,14 +20,24 @@ const MAX_PAGES = 10;
  * Includes YOLO detection summaries alongside OCR text.
  */
 export async function POST(req: Request) {
-  const quota = await checkDemoChatQuota();
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message }, { status: 429 });
+  const rawBody = await req.text();
+  if (rawBody.length > MAX_BODY_CHARS) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   }
-
-  const { message } = await req.json();
+  let message: unknown;
+  try {
+    message = (JSON.parse(rawBody) as { message?: unknown } | null)?.message;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
   if (!message || typeof message !== "string") {
     return NextResponse.json({ error: "message required" }, { status: 400 });
+  }
+  if (message.length > MAX_MESSAGE_CHARS) {
+    return NextResponse.json(
+      { error: `message too long (max ${MAX_MESSAGE_CHARS} characters)` },
+      { status: 400 },
+    );
   }
 
   // Find a demo project to get companyId for LLM config resolution
@@ -33,9 +47,24 @@ export async function POST(req: Request) {
     .where(eq(projects.isDemo, true))
     .limit(1);
 
+  // With no published demo there is nothing to answer about; without this the route is an open
+  // proxy to the LLM key from the first minute the site is up.
+  if (!demoProject) {
+    return NextResponse.json({ error: "Demo chat is not available." }, { status: 404 });
+  }
+  // The admin "LLM Chat" demo switch must cover this route too, not only /api/ai/chat.
+  const gate = await assertDemoFeatureEnabled(demoProject.companyId, "chat");
+  if (gate) return gate;
+
+  // Consume quota last: every refusal above is free, so garbage cannot exhaust the daily cap.
+  const quota = await checkDemoChatQuota();
+  if (!quota.allowed) {
+    return NextResponse.json({ error: quota.message }, { status: 429 });
+  }
+
   // Resolve LLM config (demo-specific → company default → env var)
   const config = await resolveLLMConfig(
-    demoProject?.companyId || 0,
+    demoProject.companyId,
     undefined,
     true // isDemo
   );

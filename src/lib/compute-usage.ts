@@ -183,3 +183,27 @@ export async function shouldSendCapAlert(companyId: number): Promise<boolean> {
   // count === 1 means this call opened a fresh window → send exactly one email.
   return count === 1;
 }
+
+/**
+ * Atomically add one to a cluster-wide daily counter and return the new count.
+ * Row: scope = `scope`, key = the UTC date, so each day starts from zero; `resetAt` (24 h out)
+ * exists for the janitor's TTL sweep. Same single-upsert shape as shouldSendCapAlert above.
+ */
+const DAILY_COUNTER_WINDOW_MS = 24 * 60 * 60 * 1000;
+export async function consumeDailyCounter(scope: string): Promise<number> {
+  const now = Date.now();
+  const nowTs = sql`to_timestamp(${now}::double precision / 1000)`;
+  const windowTs = sql`to_timestamp(${now}::double precision / 1000) + (${DAILY_COUNTER_WINDOW_MS} * interval '1 millisecond')`;
+  const res = await db
+    .insert(runtimeCounters)
+    .values({ scope, key: new Date(now).toISOString().slice(0, 10), count: 1, resetAt: windowTs })
+    .onConflictDoUpdate({
+      target: [runtimeCounters.scope, runtimeCounters.key],
+      set: {
+        count: sql`CASE WHEN ${runtimeCounters.resetAt} < ${nowTs} THEN 1 ELSE ${runtimeCounters.count} + 1 END`,
+        resetAt: sql`CASE WHEN ${runtimeCounters.resetAt} < ${nowTs} THEN ${windowTs} ELSE ${runtimeCounters.resetAt} END`,
+      },
+    })
+    .returning({ count: runtimeCounters.count });
+  return res[0]?.count ?? 0;
+}

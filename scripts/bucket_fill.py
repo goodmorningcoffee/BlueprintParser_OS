@@ -92,7 +92,7 @@ def raster_fill(config):
         verts = poly.get("vertices", [])
         if len(verts) < 3:
             continue
-        pts = np.array([(int(v["x"] * w), int(v["y"] * h)) for v in verts], dtype=np.int32)
+        pts = np.array([(int(float(v["x"]) * w), int(float(v["y"]) * h)) for v in verts], dtype=np.int32)
         cv2.fillPoly(binary, [pts], 0)
 
     if binary[sy, sx] == 0:

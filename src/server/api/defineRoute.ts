@@ -133,6 +133,8 @@ export interface RouteSpec<B, Q> {
    * this today: admin/csi/upload (multipart). Auth still runs normally (before the handler).
    */
   rawBody?: boolean;
+  /** Byte cap for the step-1 JSON body; defaults to DEFAULT_MAX_BODY_BYTES. Over it → 413. */
+  maxBodyBytes?: number;
   handler: (ctx: RouteContext<B, Q>) => unknown | Promise<unknown>;
 }
 
@@ -150,8 +152,66 @@ type NextSegment = { params?: Promise<unknown> };
 
 const METHODS_WITH_BODY = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-async function safeParseJsonBody(req: Request): Promise<unknown> {
-  const text = await req.text();
+/**
+ * Body caps. JSON.parse of whatever the platform admits (Next's proxy limit, 10 MB by default)
+ * costs ~0.9 s of event-loop block and ~280 MB of heap per request (measured), so what an
+ * UNAUTHENTICATED caller can make the server parse has to be bounded.
+ *
+ *   DEFAULT_MAX_BODY_BYTES        any body parsed for a caller with no session.
+ *   AUTHENTICATED_MAX_BODY_BYTES  a body parsed for a caller who holds one. Real projects need
+ *                                 the room: a tag collection or a bulk save of search matches
+ *                                 passes 2 MiB at a few thousand entries.
+ *
+ * `maxBodyBytes` on a route overrides both.
+ */
+export const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+export const AUTHENTICATED_MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Cap for a body that must be parsed before the shell has authenticated anyone. A body that
+ * DECLARES itself larger than the anonymous cap is admitted only if the caller already holds a
+ * valid session, which is checked before a byte is read. Anonymous traffic never reaches the
+ * larger cap, and the session lookup is paid only by requests that ask for it.
+ */
+async function preAuthBodyCap(req: Request): Promise<number> {
+  const declared = Number(req.headers.get("content-length"));
+  if (
+    !Number.isFinite(declared) ||
+    declared <= DEFAULT_MAX_BODY_BYTES ||
+    declared > AUTHENTICATED_MAX_BODY_BYTES
+  ) {
+    return DEFAULT_MAX_BODY_BYTES;
+  }
+  const session = await auth().catch(() => null);
+  return session?.user ? AUTHENTICATED_MAX_BODY_BYTES : DEFAULT_MAX_BODY_BYTES;
+}
+
+const bodyTooLarge = () => new ApiError("BAD_REQUEST", "Request body too large", 413);
+
+/** Counts bytes off the stream, so a chunked body cannot skip the content-length check. */
+async function readBodyText(req: Request, maxBytes: number): Promise<string> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw bodyTooLarge();
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw bodyTooLarge();
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+async function safeParseJsonBody(req: Request, maxBytes: number): Promise<unknown> {
+  const text = await readBodyText(req, maxBytes);
   if (!text) return undefined;
   try {
     return JSON.parse(text);
@@ -262,14 +322,22 @@ export function defineRoute<B = undefined, Q = undefined>(
     try {
       const params = (segment?.params ? await segment.params : {}) as Record<string, string>;
 
-      // 1. raw body — skipped when spec.rawBody, so the handler owns the stream (e.g. formData)
-      const raw = !spec.rawBody && METHODS_WITH_BODY.has(req.method) ? await safeParseJsonBody(req) : undefined;
+      // 1. raw body — skipped when spec.rawBody, so the handler owns the stream (e.g. formData).
+      // Read BEFORE auth only where auth needs it (a body-keyed project id) or where there is no
+      // shell auth at all; everywhere else auth runs first, so a caller who cannot authenticate
+      // never makes the server parse anything.
+      const a = spec.auth;
+      const hasJsonBody = !spec.rawBody && METHODS_WITH_BODY.has(req.method);
+      const bodyBeforeAuth = a === "none" || (typeof a === "object" && !a.project.param);
+      let raw: unknown =
+        hasJsonBody && bodyBeforeAuth
+          ? await safeParseJsonBody(req, spec.maxBodyBytes ?? (await preAuthBodyCap(req)))
+          : undefined;
 
       // 2. auth
       let session: AuthSession | null = null;
       let project: ProjectAccessRow | null = null;
       let scope: ProjectAccessScope | null = null;
-      const a = spec.auth;
       if (a === "none") {
         /* public */
       } else if (a === "session") {
@@ -285,6 +353,12 @@ export function defineRoute<B = undefined, Q = undefined>(
         project = r.project;
         session = r.session;
         scope = r.scope;
+      }
+      if (hasJsonBody && !bodyBeforeAuth) {
+        raw = await safeParseJsonBody(
+          req,
+          spec.maxBodyBytes ?? (session ? AUTHENTICATED_MAX_BODY_BYTES : DEFAULT_MAX_BODY_BYTES),
+        );
       }
 
       // 3. schema validation (after auth)

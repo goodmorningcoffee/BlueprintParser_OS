@@ -42,6 +42,8 @@ export { trustedClientIp } from "@/lib/trusted-client-ip";
 export const runtime = "nodejs";
 
 const SESSION_COOKIE = "bp_visit_session";
+const LOGGED_FIELD_MAX_CHARS = 256;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SESSION_TTL_SEC = 24 * 60 * 60;
 
 // Known deprecated/removed routes — any hit is a signal (often a scanner
@@ -190,15 +192,32 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 // ─── Middleware ───────────────────────────────────────────────
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  // Every rule below keys on the path, and Next's router also matches the percent-DECODED form,
+  // so a raw-path comparison would let `/%61pi/...` reach a handler with no limit at all.
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(request.nextUrl.pathname);
+  } catch {
+    return new NextResponse(JSON.stringify({ error: "Bad request." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  // The ALB and container health checks must never be rate-limited: the limiter store fails
+  // closed when full, and a 429 here makes ECS replace a healthy task.
+  if (pathname === "/api/health") return NextResponse.next();
   const method = request.method;
   const ip = trustedClientIp(request.headers.get("x-forwarded-for"));
-  const userAgent = request.headers.get("user-agent") || "";
+  // Caller-controlled and logged on every response, including 429s — bound what one request can
+  // push into CloudWatch.
+  const userAgent = (request.headers.get("user-agent") || "").slice(0, LOGGED_FIELD_MAX_CHARS);
+  const loggedPath = pathname.slice(0, LOGGED_FIELD_MAX_CHARS);
   const startTs = Date.now();
 
   // Stable 24h session ID for grouping requests by visitor in CloudWatch Logs Insights
   // queries. A dedicated cookie beats hashing the NextAuth cookie: anon users have none.
-  let sessionId = request.cookies.get(SESSION_COOKIE)?.value;
+  const cookieSessionId = request.cookies.get(SESSION_COOKIE)?.value;
+  let sessionId = cookieSessionId && UUID_RE.test(cookieSessionId) ? cookieSessionId : undefined;
   const sessionIsNew = !sessionId;
   if (!sessionId) sessionId = crypto.randomUUID();
 
@@ -274,7 +293,7 @@ export async function middleware(request: NextRequest) {
         country,
         sessionId,
         method,
-        path: pathname,
+        path: loggedPath,
         status: response.status,
         latencyMs: Date.now() - startTs,
         userAgent,

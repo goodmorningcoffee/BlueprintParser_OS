@@ -42,6 +42,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
+import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
 
 const execFileAsync = promisify(execFile);
@@ -62,6 +63,7 @@ export async function tableStructure(rawBody: Record<string, unknown>): Promise<
   if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
     throw new ApiError("VALIDATION", "Missing projectId, pageNumber, or regionBbox");
   }
+  assertPageNumber(pageNumber);
 
   const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 

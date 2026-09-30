@@ -228,3 +228,75 @@ describe.skipIf(!dbUp)("pipeline (BQ-2/3/4/5/6)", () => {
     expect(h.rm).toHaveBeenCalledTimes(1); // finally (swallowed) KEPT
   });
 });
+
+// [hardening sep30] `dilate` becomes an n-by-n allocation in the Python script.
+describe.skipIf(!dbUp)("input bounds", () => {
+  it("dilate is clamped to an integer 0..25; non-numbers fall back to the default", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    await call(bodyFor(project.id, { dilate: 40_000 }));
+    expect(h.bucketFill.mock.calls[0][0].dilatePx).toBe(25);
+    await call(bodyFor(project.id, { dilate: -4 }));
+    expect(h.bucketFill.mock.calls[1][0].dilatePx).toBe(0);
+    await call(bodyFor(project.id, { dilate: "9999" }));
+    expect(h.bucketFill.mock.calls[2][0].dilatePx).toBe(3);
+  });
+
+  it("more than 500 barriers → 400 VALIDATION before the engine runs", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const barriers = Array.from({ length: 501 }, () => ({ x1: 0, y1: 0, x2: 1, y2: 1 }));
+    const { status, body } = await readJson(await call(bodyFor(project.id, { barriers })));
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: { code: "VALIDATION", message: "Too many barriers (max 500)" } });
+    expect(h.bucketFill).not.toHaveBeenCalled();
+  });
+});
+
+// [hardening sep30] The script computes `int(v["x"] * w)`: a string there is REPEATED w times.
+describe("coordinate and page validation (before any lookup)", () => {
+  const invalidBarriers = {
+    error: { code: "VALIDATION", message: "Invalid barriers (coordinates must be numbers)" },
+  };
+
+  it("a string or non-finite coordinate anywhere in a barrier is refused", async () => {
+    for (const over of [
+      { polygonBarriers: [{ vertices: [{ x: "A".repeat(1_000), y: 0 }, { x: 0, y: 0 }, { x: 0, y: 1 }] }] },
+      { polygonBarriers: [{ vertices: "nope" }] },
+      { polygonBarriers: [null] },
+      { barriers: [{ x1: "0", y1: 0, x2: 1, y2: 1 }] },
+      { barriers: [{ x1: 0, y1: 0, x2: 1e9, y2: 1 }] },
+      { barriers: [{ x1: 0, y1: 0, x2: 1 }] },
+    ]) {
+      const { status, body } = await readJson(await call(bodyFor(1, over)));
+      expect(status).toBe(400);
+      expect(body).toEqual(invalidBarriers);
+    }
+    expect(h.bucketFill).not.toHaveBeenCalled();
+  });
+
+  it("a polygon with more than 2,000 vertices is refused", async () => {
+    const vertices = Array.from({ length: 2_001 }, () => ({ x: 0.5, y: 0.5 }));
+    const { status, body } = await readJson(await call(bodyFor(1, { polygonBarriers: [{ vertices }] })));
+    expect(status).toBe(400);
+    expect(body).toEqual(invalidBarriers);
+  });
+
+  it("a barrier dragged slightly past the page edge is still accepted as a coordinate", async () => {
+    signedOut();
+    const { status, body } = await readJson(
+      await call(bodyFor(2_000_000_000, { barriers: [{ x1: -0.01, y1: 0, x2: 1.02, y2: 1 }] })),
+    );
+    // Passed validation: the refusal comes from the project lookup, not the coordinate check.
+    expect(status).not.toBe(400);
+    expect(body.error?.message).not.toMatch(/barriers/);
+  });
+
+  it("pageNumber must be a positive integer — it becomes an S3 key and a Ghostscript argument", async () => {
+    for (const pageNumber of [1.5, -1, "1/../../x", 1e9, [1]]) {
+      const { status, body } = await readJson(await call(bodyFor(1, { pageNumber })));
+      expect(status).toBe(400);
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Invalid pageNumber" } });
+    }
+  });
+});

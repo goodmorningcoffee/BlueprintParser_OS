@@ -17,14 +17,26 @@ const LEVELS: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 
 
 const currentLevel: number = LEVELS[(process.env.LOG_LEVEL as LogLevel) || "info"] ?? LEVELS.info;
 
+// A database driver quotes the offending VALUE in its error message, and the stack repeats the
+// message: a 2 MiB `projectId` string in a request became ~4 MiB of log per request. Every log
+// line is paid for by the byte, so bound the two fields a caller can inflate.
+const MAX_ERROR_FIELD_CHARS = 2_000;
+
+function clip(value: string | undefined): string | undefined {
+  if (value === undefined || value.length <= MAX_ERROR_FIELD_CHARS) return value;
+  return `${value.slice(0, MAX_ERROR_FIELD_CHARS)}… [+${value.length - MAX_ERROR_FIELD_CHARS} chars]`;
+}
+
+const serializeError = (error: Error) => ({ message: clip(error.message), stack: clip(error.stack) });
+
 function formatLog(level: LogLevel, msg: string, ctx?: LogContext): string {
   const entry: Record<string, unknown> = { level, msg, ts: new Date().toISOString() };
   if (ctx instanceof Error) {
-    entry.error = { message: ctx.message, stack: ctx.stack };
+    entry.error = serializeError(ctx);
   } else if (ctx && typeof ctx === "object" && ctx !== null) {
     for (const [k, v] of Object.entries(ctx as Record<string, unknown>)) {
       if (v instanceof Error) {
-        entry[k] = { message: v.message, stack: v.stack };
+        entry[k] = serializeError(v);
       } else {
         entry[k] = v;
       }

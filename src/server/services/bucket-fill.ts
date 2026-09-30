@@ -31,7 +31,12 @@ import { bucketFill } from "@/lib/bucket-fill";
 import { logger } from "@/lib/logger";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
+import { assertPageNumber, isPageCoordinate } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
+
+const MAX_DILATE_PX = 25;
+const MAX_BARRIERS = 500;
+const MAX_POLYGON_VERTICES = 2_000;
 
 export async function bucketFillRoute(rawBody: Record<string, unknown>): Promise<unknown> {
   const {
@@ -59,6 +64,7 @@ export async function bucketFillRoute(rawBody: Record<string, unknown>): Promise
   if (!projectId || !pageNumber || !seedPoint) {
     throw new ApiError("VALIDATION", "Missing projectId, pageNumber, or seedPoint");
   }
+  assertPageNumber(pageNumber);
 
   const { x, y } = seedPoint;
   if (typeof x !== "number" || typeof y !== "number" || x < 0 || x > 1 || y < 0 || y > 1) {
@@ -77,6 +83,35 @@ export async function bucketFillRoute(rawBody: Record<string, unknown>): Promise
   // 0 at the server boundary so the Python path gets the tightest-positive
   // equivalent. Server fallback is rare (only fires on worker failure).
   const clampedTolerance = Math.max(0, tolerance);
+  // `dilate` becomes an n-by-n kernel allocation in the Python script (40000 → 1.6 GB), and the
+  // barrier lists are rasterized one by one. Reachable anonymously on a demo project.
+  const clampedDilate =
+    typeof dilate === "number" && Number.isFinite(dilate)
+      ? Math.min(MAX_DILATE_PX, Math.max(0, Math.round(dilate)))
+      : 3;
+  if (
+    !Array.isArray(barriers) ||
+    !Array.isArray(polygonBarriers) ||
+    barriers.length > MAX_BARRIERS ||
+    polygonBarriers.length > MAX_BARRIERS
+  ) {
+    throw new ApiError("VALIDATION", `Too many barriers (max ${MAX_BARRIERS})`);
+  }
+  // The script computes `int(v["x"] * w)`: a STRING there is repeated w times, not multiplied
+  // (measured: a 1 MiB string vertex ≈ 3.8 GB). Coordinates must be numbers, and few.
+  const barriersValid = barriers.every(
+    (b) => b && [b.x1, b.y1, b.x2, b.y2].every(isPageCoordinate),
+  );
+  const polygonsValid = polygonBarriers.every(
+    (p) =>
+      p &&
+      Array.isArray(p.vertices) &&
+      p.vertices.length <= MAX_POLYGON_VERTICES &&
+      p.vertices.every((v) => v && isPageCoordinate(v.x) && isPageCoordinate(v.y)),
+  );
+  if (!barriersValid || !polygonsValid) {
+    throw new ApiError("VALIDATION", "Invalid barriers (coordinates must be numbers)");
+  }
 
   const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 
@@ -120,7 +155,7 @@ export async function bucketFillRoute(rawBody: Record<string, unknown>): Promise
       seedX: x,
       seedY: y,
       tolerance: clampedTolerance,
-      dilatePx: dilate,
+      dilatePx: clampedDilate,
       simplifyEpsilon,
       leakThreshold: clampedLeakThreshold,
       barriers,

@@ -20,6 +20,7 @@
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
+import { withAnonymousHeavySlot } from "@/server/api/heavy-work";
 import { zLooseBody } from "@/server/api/schemas";
 import { symbolSearch } from "@/server/services/symbol-search";
 
@@ -27,5 +28,5 @@ export const POST = defineRoute({
   auth: "none",
   kind: "stream",
   body: zLooseBody,
-  handler: ({ body }) => symbolSearch(body),
+  handler: ({ body }) => withAnonymousHeavySlot(() => symbolSearch(body)),
 });

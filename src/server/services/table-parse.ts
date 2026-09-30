@@ -50,6 +50,7 @@ import { logger } from "@/lib/logger";
 import { addToHistory, type ParseHistoryEntry, type InfraStage } from "@/lib/parse-history";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
+import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
 
 /**
@@ -162,6 +163,7 @@ async function resolveTextractTables(
   dataUrl: string,
   pageNumber: number,
   regionBbox: [number, number, number, number],
+  allowLiveTextract: boolean,
 ): Promise<MethodResult> {
   // Cache hit: only if at least one cached table actually overlaps the region
   if (
@@ -171,6 +173,11 @@ async function resolveTextractTables(
   ) {
     return methodTextractTables(textractData.tables, regionBbox);
   }
+
+  // Demo projects are anonymous. The caller picks the region, so the caller picks the cache
+  // miss, and every miss below is a paid AnalyzeDocument call. Demo is cache-only; the other
+  // three methods still run.
+  if (!allowLiveTextract) return methodTextractTables(undefined, regionBbox);
 
   try {
     const s3Key = `${dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
@@ -235,6 +242,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
   if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
     throw new ApiError("VALIDATION", "Missing projectId, pageNumber, or regionBbox");
   }
+  assertPageNumber(pageNumber);
 
   const [bx0, by0, bx1, by1] = regionBbox;
   if (![bx0, by0, bx1, by1].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || bx0 >= bx1 || by0 >= by1) {
@@ -345,7 +353,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
 
   const methodPromises: Promise<MethodResult | MethodResult[]>[] = [
     timed(Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode }))),
-    timed(resolveTextractTables(textractData, project.dataUrl || "", pageNumber, regionBbox)),
+    timed(resolveTextractTables(textractData, project.dataUrl || "", pageNumber, regionBbox, !project.isDemo)),
     pagePngBuffer && pdfBuffer
       ? timed(methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance }))
       : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0, error: skippedReason("page image") } as MethodResult),

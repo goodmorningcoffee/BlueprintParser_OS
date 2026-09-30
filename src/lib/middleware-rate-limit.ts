@@ -144,8 +144,26 @@ const RATE_RULES: RateRule[] = [
     windowMs: 15 * 60 * 1000,
     keyType: "ip",
   },
-  // No blanket auth POST limit: per-email failed-login lockout owns password
-  // abuse, while the general IP backstop below covers request floods.
+  // Sign-in attempts. The failed-login lockout owns password guessing; this bounds how fast one
+  // address can feed it (each attempt is a bcrypt compare and a lockout write).
+  {
+    pattern: "/api/auth/callback/credentials",
+    method: "POST",
+    limit: 10,
+    windowMs: 60 * 1000,
+    keyType: "ip",
+    exact: true,
+  },
+  // Public and synchronous: one request can hold the event loop for about a second at its input
+  // cap, so the 120/min backstop alone would let one address block most of every minute.
+  {
+    pattern: "/api/csi/detect",
+    method: "POST",
+    limit: 20,
+    windowMs: 60 * 1000,
+    keyType: "ip",
+    exact: true,
+  },
   {
     pattern: "/api/ai/chat",
     method: "POST",

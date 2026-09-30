@@ -14,11 +14,12 @@
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
+import { withAnonymousHeavySlot } from "@/server/api/heavy-work";
 import { zLooseBody } from "@/server/api/schemas";
 import { bucketFillRoute } from "@/server/services/bucket-fill";
 
 export const POST = defineRoute({
   auth: "none",
   body: zLooseBody,
-  handler: ({ body }) => bucketFillRoute(body),
+  handler: ({ body }) => withAnonymousHeavySlot(() => bucketFillRoute(body)),
 });

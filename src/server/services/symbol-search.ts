@@ -82,6 +82,7 @@ import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
+import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { downloadFromS3 } from "@/lib/s3";
@@ -96,19 +97,22 @@ import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import type { TemplateMatchProgress, SymbolSearchMatch, TextractPageData, BboxMinMax } from "@/types";
 import { logger } from "@/lib/logger";
 
+const MAX_SEARCH_PAGES = 5_000;
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
 export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Response> {
   const {
     projectId,
     sourcePageNumber,
     templateBbox,
-    confidenceThreshold = 0.75,
     searchPages,
     multiScale = true,
     useSiftFallback = true,
-    scaleMin = 0.8,
-    scaleMax = 1.5,
-    nmsThreshold = 0.3,
-    maxMatchesPerPage = 50,
+    ...knobs
   } = rawBody as {
     projectId: number;
     sourcePageNumber: number;
@@ -122,9 +126,27 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
     nmsThreshold?: number;
     maxMatchesPerPage?: number;
   };
+  // Reachable anonymously on a demo project, and these feed a loop bound and the Lambda config
+  // verbatim: `scaleMax: 1e12` builds a multi-gigabyte array, `confidenceThreshold: -1` makes
+  // every pixel a match. Clamp to the ranges the UI sliders can produce.
+  const confidenceThreshold = clampNumber(knobs.confidenceThreshold, 0.75, 0.1, 1);
+  const scaleMin = clampNumber(knobs.scaleMin, 0.8, 0.25, 3);
+  const scaleMax = Math.max(scaleMin, clampNumber(knobs.scaleMax, 1.5, 0.25, 3));
+  const nmsThreshold = clampNumber(knobs.nmsThreshold, 0.3, 0, 1);
+  const maxMatchesPerPage = Math.round(clampNumber(knobs.maxMatchesPerPage, 50, 1, 200));
 
   if (!projectId || !sourcePageNumber || !templateBbox) {
     throw new ApiError("VALIDATION", "Missing projectId, sourcePageNumber, or templateBbox"); // FQ-13
+  }
+  assertPageNumber(sourcePageNumber, "sourcePageNumber");
+  if (
+    searchPages !== undefined &&
+    searchPages !== null &&
+    (!Array.isArray(searchPages) ||
+      searchPages.length > MAX_SEARCH_PAGES ||
+      !searchPages.every((n) => Number.isInteger(n) && n >= 1))
+  ) {
+    throw new ApiError("VALIDATION", "Invalid searchPages");
   }
 
   // Bbox validation

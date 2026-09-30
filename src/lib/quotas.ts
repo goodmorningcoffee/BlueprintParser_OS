@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { consumeDailyCounter } from "@/lib/compute-usage";
 import { sql } from "drizzle-orm";
 
 interface QuotaCheck {
@@ -65,21 +66,21 @@ export async function checkChatQuota(companyId: number): Promise<QuotaCheck> {
   return { allowed: true, current, limit: DAILY_LIMIT };
 }
 
+/** Shared across every anonymous demo caller; the only thing between them and the LLM bill. */
+export const DEMO_CHAT_DAILY_LIMIT = 500;
+
 /**
- * Check global demo chat quota (shared across all unauthenticated demo users).
+ * Consume one unit of the global demo chat quota (shared across all unauthenticated demo users).
+ *
+ * Counts REQUESTS in `runtime_counters` (scope 'demo_chat', key = UTC date) via one atomic upsert.
+ * It used to count `chat_messages` rows on demo projects — rows that are never written (demo chat
+ * is no-persist, and a DB trigger forbids the insert), so the cap could not fire. Call this
+ * immediately before the provider call, after every cheaper refusal: each call consumes a unit.
  */
 export async function checkDemoChatQuota(): Promise<QuotaCheck> {
-  const DAILY_LIMIT = 500;
-  const result = await db.execute(sql`
-    SELECT COUNT(*)::int AS cnt FROM chat_messages cm
-    JOIN projects p ON cm.project_id = p.id
-    WHERE p.is_demo = true
-      AND cm.role = 'user'
-      AND cm.created_at > NOW() - INTERVAL '1 day'
-  `);
-  const current = (result.rows[0] as any)?.cnt || 0;
-  if (current >= DAILY_LIMIT) {
-    return { allowed: false, message: "Demo chat limit reached for today. Sign up for full access!", current, limit: DAILY_LIMIT };
+  const current = await consumeDailyCounter("demo_chat");
+  if (current > DEMO_CHAT_DAILY_LIMIT) {
+    return { allowed: false, message: "Demo chat limit reached for today. Sign up for full access!", current, limit: DEMO_CHAT_DAILY_LIMIT };
   }
-  return { allowed: true, current, limit: DAILY_LIMIT };
+  return { allowed: true, current, limit: DEMO_CHAT_DAILY_LIMIT };
 }

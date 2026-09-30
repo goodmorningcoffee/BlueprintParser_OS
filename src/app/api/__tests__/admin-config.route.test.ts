@@ -168,11 +168,12 @@ describe.skipIf(!dbUp)("admin/demo/config (DEMO)", () => {
 
   it("DEMO-5 PUT parse-before-auth ordering + body-shape edges (PR-D5 systemic pins)", async () => {
     const { company, admin } = await makeWorld();
-    // signed-out + malformed body: legacy authed FIRST (401); the shell parses the raw
-    // body first. [S037 fold: E applied — 400 BAD_REQUEST "Invalid JSON body" PRE-auth]
+    // signed-out + malformed body: legacy authed FIRST (401); the S037 shell parsed the raw
+    // body first (400). // [hardening sep30] REVERSED on purpose: routes whose auth needs no body now authenticate
+    // FIRST, so a signed-out caller never makes the server read or parse a body → 401 here.
     let r = await readJson(await demoPUT(rawPut("/api/admin/demo/config", "{oops")));
-    expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
     asUser(admin);
     // authed + malformed / empty: legacy req.json() threw and PROPAGATED (Next-level 500)
     // [S037 fold: E applied — malformed → 400 BAD_REQUEST; empty → 400 VALIDATION generic]
@@ -619,10 +620,11 @@ describe.skipIf(!dbUp)("admin/heuristics/config (HEU)", () => {
 
   it("HEU-8 PUT body-edge E-class + no-write (parse-before-auth systemic trait, pinned on the deviant member) [closer HEU-COV-1]", async () => {
     const { company, admin } = await makeWorld();
-    // signed-out + malformed → 400 BAD_REQUEST pre-auth (E; legacy authed first → 401)
+    // signed-out + malformed → 401. // [hardening sep30] REVERSED on purpose: routes whose auth needs no body now authenticate
+    // FIRST, so a signed-out caller never makes the server read or parse a body → 401 here.
     let r = await readJson(await heuPUT(rawPut("/api/admin/heuristics/config", "{oops")));
-    expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
     asUser(admin);
     // authed + malformed → same BAD_REQUEST; authed empty + JSON-null + scalar → VALIDATION generic
     r = await readJson(await heuPUT(rawPut("/api/admin/heuristics/config", "{oops")));

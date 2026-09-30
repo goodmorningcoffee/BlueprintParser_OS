@@ -660,3 +660,58 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     }); // [S024 fold: A] flipped
   });
 });
+
+// [hardening sep30] These knobs feed a loop bound and the Lambda config, and the route is
+// reachable anonymously on a demo project.
+describe.skipIf(!dbUp)("numeric knob clamps", () => {
+  it("scaleMax 1e12 cannot build an unbounded scale list; out-of-range knobs are clamped", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    const res = await call(
+      body(project.id, {
+        scaleMin: 0, scaleMax: 1e12, confidenceThreshold: -1, nmsThreshold: 9, maxMatchesPerPage: 1e9,
+      }),
+    );
+    await drain(res);
+    const opts = h.templateMatch.mock.calls[0][0] as {
+      scales: number[]; confidenceThreshold: number; nmsIouThreshold: number; maxMatchesPerPage: number;
+    };
+    expect(opts.scales[0]).toBe(0.25);
+    expect(opts.scales[opts.scales.length - 1]).toBeLessThanOrEqual(3);
+    expect(opts.scales.length).toBeLessThanOrEqual(29);
+    expect(opts.confidenceThreshold).toBe(0.1);
+    expect(opts.nmsIouThreshold).toBe(1);
+    expect(opts.maxMatchesPerPage).toBe(200);
+  });
+
+  it("non-finite and non-numeric knobs fall back to the defaults", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    const res = await call(body(project.id, { scaleMin: "1e17", scaleMax: null }));
+    await drain(res);
+    const opts = h.templateMatch.mock.calls[0][0] as { scales: number[] };
+    expect(opts.scales).toEqual([0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5]);
+  });
+});
+
+describe("page inputs are validated before any lookup", () => {
+  it("sourcePageNumber must be a positive integer", async () => {
+    for (const sourcePageNumber of [1.5, -2, "1/../x", 1e9]) {
+      const res = await call(body(1, { sourcePageNumber }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: { code: "VALIDATION", message: "Invalid sourcePageNumber" },
+      });
+    }
+  });
+
+  it("searchPages must be a bounded array of positive integers", async () => {
+    for (const searchPages of [true, {}, "1,2", [1, "2"], [0], Array.from({ length: 5_001 }, (_, i) => i + 1)]) {
+      const res = await call(body(1, { searchPages }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: { code: "VALIDATION", message: "Invalid searchPages" } });
+    }
+  });
+});

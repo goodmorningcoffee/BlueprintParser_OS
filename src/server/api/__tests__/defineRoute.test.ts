@@ -26,7 +26,11 @@ vi.mock("@/lib/api-utils", async (importOriginal) => {
 });
 
 // import AFTER the mocks
-import { defineRoute } from "@/server/api/defineRoute";
+import {
+  AUTHENTICATED_MAX_BODY_BYTES,
+  DEFAULT_MAX_BODY_BYTES,
+  defineRoute,
+} from "@/server/api/defineRoute";
 import { ApiError } from "@/server/api/envelope";
 import { sessionState, makeReq, params, readJson, signedOut } from "@/test/harness";
 
@@ -415,5 +419,142 @@ describe("defineRoute — structured error logging (P5.6)", () => {
     expect(mockLogger.error).not.toHaveBeenCalled();
     // 4xx envelope errors are not correlated to a server log line — no header expected
     expect(res.headers.get("x-request-id")).toBeNull();
+  });
+});
+
+// [hardening sep30] What an UNAUTHENTICATED caller can make the server parse is bounded.
+describe("defineRoute — body caps", () => {
+  const MIB = 1024 * 1024;
+  // A Request built here does not expose content-length the way a client's request does on the
+  // wire, so string bodies declare it explicitly, as a browser or curl would.
+  const post = (body: BodyInit, headers: Record<string, string> = {}) =>
+    new Request("http://test.local/x", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(typeof body === "string" ? { "content-length": String(Buffer.byteLength(body)) } : {}),
+        ...headers,
+      },
+      body,
+      // @ts-expect-error — undici requires `duplex` for a stream body; absent from lib.dom types
+      duplex: "half",
+    });
+  const jsonOf = (bytes: number) => JSON.stringify({ pad: "x".repeat(bytes) });
+
+  it("auth runs BEFORE the body is read: a signed-out caller gets 401 and nothing is parsed", async () => {
+    signedOut();
+    const handler = vi.fn(() => ({ ok: true }));
+    const route = defineRoute({ auth: "session", handler });
+    // Malformed AND oversized: neither is ever looked at.
+    const { status } = await readJson(await route(post("{not json" + "x".repeat(3 * MIB))));
+    expect(status).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("a signed-in caller on an authenticated route gets the larger cap, and a bound above it", async () => {
+    setSession();
+    const route = defineRoute({ auth: "session", handler: () => ({ ok: true }) });
+    expect((await readJson(await route(post(jsonOf(3 * MIB))))).status).toBe(200);
+    const over = await readJson(await route(post(jsonOf(AUTHENTICATED_MAX_BODY_BYTES))));
+    expect(over.status).toBe(413);
+    expect(over.body).toEqual({ error: { code: "BAD_REQUEST", message: "Request body too large" } });
+  });
+
+  it('auth:"none" — anonymous is held to the default cap; a session lifts it', async () => {
+    const handler = vi.fn(() => ({ ok: true }));
+    const route = defineRoute({ auth: "none", handler });
+    signedOut();
+    expect((await readJson(await route(post(jsonOf(DEFAULT_MAX_BODY_BYTES))))).status).toBe(413);
+    expect(handler).not.toHaveBeenCalled();
+    setSession();
+    expect((await readJson(await route(post(jsonOf(DEFAULT_MAX_BODY_BYTES))))).status).toBe(200);
+  });
+
+  it("an anonymous demo read under project auth stays on the default cap", async () => {
+    signedOut();
+    mockResolve.mockResolvedValue({ project: { ...projectRow, isDemo: true }, session: null, scope: "demo" });
+    const route = defineRoute({
+      auth: { project: { param: "id", allowDemo: true } },
+      handler: () => ({ ok: true }),
+    });
+    const res = await route(post(jsonOf(DEFAULT_MAX_BODY_BYTES)), params({ id: UUID }));
+    expect(res.status).toBe(413);
+  });
+
+  it("per-route maxBodyBytes overrides both; a body under it still parses", async () => {
+    const route = defineRoute({ auth: "none", maxBodyBytes: 64, handler: ({ body }) => body });
+    expect((await readJson(await route(post(JSON.stringify({ a: 1 }))))).status).toBe(200);
+    expect((await readJson(await route(post(jsonOf(100))))).status).toBe(413);
+  });
+
+  it("a chunked body with no content-length cannot skip the cap", async () => {
+    signedOut();
+    const route = defineRoute({ auth: "none", maxBodyBytes: 1024, handler: () => ({ ok: true }) });
+    const chunk = new TextEncoder().encode("x".repeat(600));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 4) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const req = post(stream);
+    expect(req.headers.get("content-length")).toBeNull();
+    expect((await readJson(await route(req))).status).toBe(413);
+  });
+
+  it("a content-length that understates the body does not buy the larger cap", async () => {
+    signedOut();
+    const route = defineRoute({ auth: "none", handler: () => ({ ok: true }) });
+    const chunk = new TextEncoder().encode("x".repeat(MIB));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 3) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    expect((await readJson(await route(post(stream, { "content-length": "10" })))).status).toBe(413);
+  });
+});
+
+// [hardening sep30] The parser routes take the heavy-process gate for ANONYMOUS callers only.
+describe("defineRoute — a handler behind withAnonymousHeavySlot", () => {
+  it("anonymous: a saturated gate is the 503 envelope; signed-in: never gated; recovers when work drains", async () => {
+    const { withHeavyProcessSlot, HEAVY_PROCESS_BUSY_MESSAGE, heavyProcessGateStateForTest } =
+      await import("@/lib/heavy-process-gate");
+    const { withAnonymousHeavySlot } = await import("@/server/api/heavy-work");
+    const route = defineRoute({
+      auth: "none",
+      handler: () => withAnonymousHeavySlot(async () => ({ ok: true })),
+    });
+    const releases: Array<() => void> = [];
+    const held = Array.from({ length: 8 }, () =>
+      withHeavyProcessSlot(() => new Promise<void>((resolve) => releases.push(resolve))),
+    );
+    await Promise.resolve();
+    expect(heavyProcessGateStateForTest()).toEqual({ active: 2, queued: 6 });
+    const req = () => new Request("http://test.local/x", { method: "POST" });
+
+    signedOut();
+    const busy = await readJson(await route(req()));
+    expect(busy.status).toBe(503);
+    expect(busy.body).toEqual({
+      error: { code: "RATE_LIMITED", message: HEAVY_PROCESS_BUSY_MESSAGE },
+    });
+
+    // The owner is not queued behind anonymous traffic, however full the gate is.
+    setSession();
+    expect((await readJson(await route(req()))).status).toBe(200);
+
+    // Slots are handed over as holders finish, so release until all eight have started and ended.
+    while (releases.length > 0) {
+      releases.shift()!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await Promise.all(held);
+    signedOut();
+    expect((await readJson(await route(req()))).status).toBe(200);
+    expect(heavyProcessGateStateForTest()).toEqual({ active: 0, queued: 0 });
   });
 });

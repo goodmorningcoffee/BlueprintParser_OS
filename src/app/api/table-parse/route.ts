@@ -15,11 +15,12 @@
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
+import { withAnonymousHeavySlot } from "@/server/api/heavy-work";
 import { zLooseBody } from "@/server/api/schemas";
 import { tableParse } from "@/server/services/table-parse";
 
 export const POST = defineRoute({
   auth: "none",
   body: zLooseBody,
-  handler: ({ body }) => tableParse(body),
+  handler: ({ body }) => withAnonymousHeavySlot(() => tableParse(body)),
 });

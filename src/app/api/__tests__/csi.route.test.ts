@@ -108,11 +108,13 @@ describe.skipIf(!dbUp)("GET /api/csi — company aggregate (CQ-1)", () => {
 });
 
 describe.skipIf(!dbUp)("POST /api/csi/detect — public 3-tier entry (CQ-2/CQ-3)", () => {
-  it("PUBLIC: works signed-out; text mode maps to 2-key; config passthrough w/ undefined middle arg", async () => {
+  // [hardening sep30] config passthrough RETIRED on purpose: no client sends it, and on a public
+  // route `{"matchingConfidenceThreshold":-1}` turns a 66-byte request into a 0.6 MB response.
+  it("PUBLIC: works signed-out; text mode maps to 2-key; caller config is NOT forwarded", async () => {
     const { status, body } = await readJson(await callDetect({ text: "concrete slab", config: { tier: 2 } }));
     expect(status).toBe(200);
     expect(body).toEqual({ csiTags: [{ code: "09 00 00", description: "Finishes" }] }); // trade/division DROPPED
-    expect(h.detectCsiCodes).toHaveBeenCalledWith("concrete slab", undefined, { tier: 2 });
+    expect(h.detectCsiCodes).toHaveBeenCalledWith("concrete slab");
   });
 
   it("grid mode; grid WINS when both grid and text present (CQ-2 precedence)", async () => {
@@ -120,7 +122,7 @@ describe.skipIf(!dbUp)("POST /api/csi/detect — public 3-tier entry (CQ-2/CQ-3)
       await callDetect({ headers: ["Tag"], rows: [{ Tag: "A1" }], text: "also here", config: { x: 1 } }),
     );
     expect(body).toEqual({ csiTags: [{ code: "09 00 00", description: "Finishes" }] });
-    expect(h.detectCsiFromGrid).toHaveBeenCalledWith(["Tag"], [{ Tag: "A1" }], { x: 1 });
+    expect(h.detectCsiFromGrid).toHaveBeenCalledWith(["Tag"], [{ Tag: "A1" }]); // config not forwarded
     expect(h.detectCsiCodes).not.toHaveBeenCalled();
   });
 
@@ -160,5 +162,67 @@ describe.skipIf(!dbUp)("POST /api/csi/detect — public 3-tier entry (CQ-2/CQ-3)
     const { status, body } = await readJson(await callDetect({ text: "x" }));
     expect(status).toBe(500);
     expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S032 fold: B applied — leak dropped]
+  });
+});
+
+// [hardening sep30] The route is public and the matcher is synchronous and linear in input size.
+describe("POST /api/csi/detect — input bounds", () => {
+  const tooLarge = { error: { code: "VALIDATION", message: "Input too large (max 20000 characters)" } };
+  const neither = {
+    error: {
+      code: "VALIDATION",
+      message: "Provide either { text: string } or { headers: string[], rows: Record<string,string>[] }",
+    },
+  };
+
+  it("signed-out text over the cap → 400 and the matcher never runs", async () => {
+    signedOut();
+    const { status, body } = await readJson(await callDetect({ text: "a ".repeat(12_000) }));
+    expect(status).toBe(400);
+    expect(body).toEqual(tooLarge);
+    expect(h.detectCsiCodes).not.toHaveBeenCalled();
+  });
+
+  it("signed-out grid over the cap → 400 and the matcher never runs", async () => {
+    signedOut();
+    const rows = Array.from({ length: 250 }, () => ({ a: "x".repeat(100) }));
+    const { status, body } = await readJson(await callDetect({ headers: ["a"], rows }));
+    expect(status).toBe(400);
+    expect(body).toEqual(tooLarge);
+    expect(h.detectCsiFromGrid).not.toHaveBeenCalled();
+  });
+
+  it("text at the cap is accepted signed-out", async () => {
+    signedOut();
+    h.detectCsiCodes.mockReturnValue([]);
+    const { status } = await readJson(await callDetect({ text: "x".repeat(20_000) }));
+    expect(status).toBe(200);
+  });
+
+  it("a signed-in caller may send a large schedule, up to the signed-in cap", async () => {
+    asUser({ id: 1, companyId: 1, username: "u", email: "u@test.local" } as never);
+    h.detectCsiFromGrid.mockReturnValue([]);
+    const rows = Array.from({ length: 2_000 }, () => ({ a: "x".repeat(100) })); // 200,000 chars
+    expect((await readJson(await callDetect({ headers: ["a"], rows }))).status).toBe(200);
+    const over = Array.from({ length: 2_600 }, () => ({ a: "x".repeat(100) })); // 260,000 chars
+    expect((await readJson(await callDetect({ headers: ["a"], rows: over }))).body).toEqual(tooLarge);
+  });
+
+  // A string passes `body.headers && body.rows` and then spreads to characters in the matcher:
+  // an uncounted 250 KB string blocked the event loop for ~11 s (measured).
+  it("a grid that is not arrays of strings is refused, never measured as zero", async () => {
+    signedOut();
+    for (const bad of [
+      { headers: ["x"], rows: "a".repeat(1_000) },
+      { headers: "a".repeat(1_000), rows: [{}] },
+      { headers: ["x"], rows: [["a", "b"]] },
+      { headers: ["x"], rows: [{ a: { nested: "x" } }] },
+      { headers: [1, 2], rows: [{ a: "b" }] },
+    ]) {
+      const { status, body } = await readJson(await callDetect(bad));
+      expect(status).toBe(400);
+      expect(body).toEqual(neither);
+    }
+    expect(h.detectCsiFromGrid).not.toHaveBeenCalled();
   });
 });

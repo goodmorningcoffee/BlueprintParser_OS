@@ -12,11 +12,12 @@
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
+import { withAnonymousHeavySlot } from "@/server/api/heavy-work";
 import { zLooseBody } from "@/server/api/schemas";
 import { shapeParse } from "@/server/services/shape-parse";
 
 export const POST = defineRoute({
   auth: "none",
   body: zLooseBody,
-  handler: ({ body }) => shapeParse(body),
+  handler: ({ body }) => withAnonymousHeavySlot(() => shapeParse(body)),
 });

@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
-import { recordFailedLogin, clearFailedLogins } from "@/lib/login-lockout";
+import { checkBruteForce, recordFailedLogin, clearFailedLogins } from "@/lib/login-lockout";
 
 const dbUp = inject("dbUp") as boolean;
 const BASE = new Date("2026-07-23T00:00:00.000Z").getTime();
@@ -106,5 +106,53 @@ describe.skipIf(!dbUp)("login_lockouts upsert reproduces the schedule (SQL)", ()
     // Next failure starts a brand-new row at count 1, locked_until NULL.
     await recordFailedLogin(email);
     expect(await row(email)).toEqual({ count: 1, lockSecondsFromBase: null });
+  });
+});
+
+// [hardening sep30] With the caller's address known, an address locks only ITSELF out of an
+// account, and an account-wide ceiling bounds guessing spread across many addresses.
+describe.skipIf(!dbUp)("login lockout keyed on email + address", () => {
+  const email = () => `owner-${Math.random().toString(36).slice(2)}@lockout.test`;
+  const A = "203.0.113.50";
+  const B = "203.0.113.51";
+
+  it("failures from one address never lock the account for another", async () => {
+    const e = email();
+    for (let i = 0; i < 20; i += 1) await recordFailedLogin(e, A);
+    expect(await checkBruteForce(e, A)).toMatch(/^Account locked\./);
+    expect(await checkBruteForce(e, B)).toBeNull(); // the owner, elsewhere, still signs in
+  });
+
+  it("a correct password clears that address's ladder and the account-wide count", async () => {
+    const e = email();
+    for (let i = 0; i < 6; i += 1) await recordFailedLogin(e, A);
+    expect(await checkBruteForce(e, A)).not.toBeNull();
+    await clearFailedLogins(e, A);
+    expect(await checkBruteForce(e, A)).toBeNull();
+    const left = await db.execute(
+      sql`SELECT count FROM runtime_counters WHERE scope = 'login_fail_email' AND key = ${e}`,
+    );
+    expect(left.rows).toHaveLength(0);
+  });
+
+  it("the account-wide ceiling: 50 failures across addresses refuse a fresh address for the rest of the hour", async () => {
+    const e = email();
+    for (let i = 0; i < 49; i += 1) await recordFailedLogin(e, `198.51.100.${i + 1}`);
+    expect(await checkBruteForce(e, B)).toBeNull(); // 49: still open
+    await recordFailedLogin(e, "198.51.100.200");
+    expect(await checkBruteForce(e, B)).toBe("Account locked. Try again in 60 minutes.");
+    vi.setSystemTime(BASE + 60 * 60 * 1000 + 1_000);
+    expect(await checkBruteForce(e, B)).toBeNull(); // the window ended
+  });
+
+  it("with no address the key is the bare email and the frozen ladder is untouched", async () => {
+    const e = email();
+    for (let i = 0; i < 5; i += 1) await recordFailedLogin(e);
+    expect((await row(e)).count).toBe(5);
+    expect(await checkBruteForce(e)).toBe("Account locked. Try again in 1 minute.");
+    const wide = await db.execute(
+      sql`SELECT count FROM runtime_counters WHERE scope = 'login_fail_email' AND key = ${e}`,
+    );
+    expect(wide.rows).toHaveLength(0);
   });
 });

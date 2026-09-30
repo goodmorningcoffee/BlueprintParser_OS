@@ -25,6 +25,10 @@ export type AbuseEventType =
  * Safe to call from middleware (Node runtime) on any code path including
  * inside early-return 429/403 handlers.
  */
+const COLUMN_MAX_CHARS = 255;
+const clip = (value: string | undefined) =>
+  value == null ? null : value.length > COLUMN_MAX_CHARS ? value.slice(0, COLUMN_MAX_CHARS) : value;
+
 export function recordAbuseEvent(opts: {
   eventType: AbuseEventType;
   ip: string;
@@ -33,13 +37,15 @@ export function recordAbuseEvent(opts: {
   userAgent?: string;
   details?: Record<string, unknown>;
 }) {
+  // Both columns are varchar(255) and both values come from the caller. An over-long path made
+  // the insert fail, so a real 1 h auto-ban was applied with NO row recording why (measured).
   db.insert(abuseEvents)
     .values({
       eventType: opts.eventType,
       ip: opts.ip,
       country: opts.country ?? null,
-      path: opts.path ?? null,
-      userAgent: opts.userAgent ?? null,
+      path: clip(opts.path),
+      userAgent: clip(opts.userAgent),
       details: opts.details ?? null,
     })
     .catch((err) => {

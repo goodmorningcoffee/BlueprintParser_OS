@@ -426,3 +426,25 @@ describe.skipIf(!dbUp)("POST /api/table-parse — infra failures (TQ-6) + debug 
     expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 });
+
+// [hardening sep30] Demo projects are anonymous and the caller picks the region, so the caller
+// picks the cache miss. A miss must never become a paid Textract call.
+describe.skipIf(!dbUp)("demo projects are Textract cache-only", () => {
+  it("cache miss on a demo project: no live AnalyzeDocument, the other methods still run", async () => {
+    const { project } = await world(TEXTRACT_NO_TABLES);
+    await publishDemoFixture(project.id);
+    signedOut();
+    const { status } = await readJson(await call(bodyFor(project.id)));
+    expect(status).toBe(200);
+    expect(h.analyzePageImage).not.toHaveBeenCalled();
+    expect(h.methodTextractTables).toHaveBeenCalledWith(undefined, expect.anything());
+    expect(h.methodOcrPositions).toHaveBeenCalled();
+  });
+
+  it("the same miss on a signed-in, non-demo project still calls Textract", async () => {
+    const { user, project } = await world(TEXTRACT_NO_TABLES);
+    asUser(user);
+    await call(bodyFor(project.id));
+    expect(h.analyzePageImage).toHaveBeenCalledTimes(1);
+  });
+});

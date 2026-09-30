@@ -1,5 +1,5 @@
 /**
- * login-lockout.ts — Per-email brute-force lockout for credential sign-in.
+ * login-lockout.ts — Brute-force lockout for credential sign-in.
  *
  * [refactor jul23 P5.4-A] Extracted verbatim from `auth.ts` into a pure module
  * so the exponential lockout schedule could be frozen (login-lockout.test.ts).
@@ -31,12 +31,50 @@
  */
 
 import { db } from "@/lib/db";
-import { loginLockouts } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { loginLockouts, runtimeCounters } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
 
-export async function checkBruteForce(email: string): Promise<string | null> {
-  const key = email.toLowerCase();
+/**
+ * [hardening sep30] WHO gets locked. Keyed on the email alone, the ladder let anyone who knew an
+ * address lock its owner out from one machine: 17 parallel bad logins → a 1 h lock, and one bad
+ * login an hour kept it locked, with no in-app way back. So when the caller's address is known:
+ *
+ *   - the LADDER row is keyed `email|ip` — an address locks only itself out of that account;
+ *   - an account-wide CEILING counts failures from every address in a rolling hour, and past it
+ *     the account is refused for everyone until the window ends. That keeps a bound on
+ *     distributed guessing, at a price an attacker needs many addresses to make the owner pay.
+ *
+ * Without an address (tests, non-ALB callers) the key is the bare email and there is no ceiling:
+ * exactly the behaviour the frozen schedule specs pin.
+ */
+const EMAIL_FAILURE_CEILING = 50;
+const EMAIL_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+const EMAIL_FAILURE_SCOPE = "login_fail_email";
+
+function ladderKey(email: string, ip?: string): string {
+  return ip ? `${email.toLowerCase()}|${ip}` : email.toLowerCase();
+}
+
+export async function checkBruteForce(email: string, ip?: string): Promise<string | null> {
+  const key = ladderKey(email, ip);
   const now = Date.now();
+  if (ip) {
+    const nowTs = sql`to_timestamp(${now}::double precision / 1000)`;
+    const [wide] = await db
+      .select({ count: runtimeCounters.count, resetAt: runtimeCounters.resetAt })
+      .from(runtimeCounters)
+      .where(
+        and(
+          eq(runtimeCounters.scope, EMAIL_FAILURE_SCOPE),
+          eq(runtimeCounters.key, email.toLowerCase()),
+          sql`${runtimeCounters.resetAt} > ${nowTs}`,
+        ),
+      );
+    if (wide && wide.count >= EMAIL_FAILURE_CEILING) {
+      const mins = Math.max(1, Math.ceil((new Date(wide.resetAt).getTime() - now) / 60000));
+      return `Account locked. Try again in ${mins} minute${mins > 1 ? "s" : ""}.`;
+    }
+  }
   const res = await db.execute(
     sql`SELECT locked_until FROM login_lockouts WHERE email = ${key}`,
   );
@@ -51,8 +89,8 @@ export async function checkBruteForce(email: string): Promise<string | null> {
   return null;
 }
 
-export async function recordFailedLogin(email: string): Promise<void> {
-  const key = email.toLowerCase();
+export async function recordFailedLogin(email: string, ip?: string): Promise<void> {
+  const key = ladderKey(email, ip);
   const now = Date.now();
   // The caller's instant, threaded so fake timers control the stored window.
   const nowTs = sql`to_timestamp(${now}::double precision / 1000)`;
@@ -81,9 +119,33 @@ export async function recordFailedLogin(email: string): Promise<void> {
         END`,
       },
     });
+  if (ip) {
+    const windowTs = sql`${nowTs} + (${EMAIL_FAILURE_WINDOW_MS} * interval '1 millisecond')`;
+    await db
+      .insert(runtimeCounters)
+      .values({ scope: EMAIL_FAILURE_SCOPE, key: email.toLowerCase(), count: 1, resetAt: windowTs })
+      .onConflictDoUpdate({
+        target: [runtimeCounters.scope, runtimeCounters.key],
+        set: {
+          count: sql`CASE WHEN ${runtimeCounters.resetAt} < ${nowTs} THEN 1 ELSE ${runtimeCounters.count} + 1 END`,
+          resetAt: sql`CASE WHEN ${runtimeCounters.resetAt} < ${nowTs} THEN ${windowTs} ELSE ${runtimeCounters.resetAt} END`,
+        },
+      });
+  }
 }
 
-export async function clearFailedLogins(email: string): Promise<void> {
-  const key = email.toLowerCase();
+export async function clearFailedLogins(email: string, ip?: string): Promise<void> {
+  const key = ladderKey(email, ip);
   await db.delete(loginLockouts).where(eq(loginLockouts.email, key));
+  // A correct password also lifts the account-wide count: only the owner can produce one.
+  if (ip) {
+    await db
+      .delete(runtimeCounters)
+      .where(
+        and(
+          eq(runtimeCounters.scope, EMAIL_FAILURE_SCOPE),
+          eq(runtimeCounters.key, email.toLowerCase()),
+        ),
+      );
+  }
 }

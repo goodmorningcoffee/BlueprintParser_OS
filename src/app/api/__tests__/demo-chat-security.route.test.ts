@@ -9,6 +9,11 @@ const h = vi.hoisted(() => ({
   createLLMClient: vi.fn(),
 }));
 
+// The route now imports the demo feature gate, which reaches @/lib/auth through api-utils.
+vi.mock("@/lib/auth", async () => {
+  const { sessionState } = await import("@/test/harness");
+  return { auth: async () => sessionState.current };
+});
 vi.mock("@/lib/quotas", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/quotas")>()),
   checkDemoChatQuota: h.checkDemoChatQuota,
@@ -57,5 +62,39 @@ describe.skipIf(!dbUp)("POST /api/demo/chat security policy", () => {
 
     const after = await db.select().from(chatMessages);
     expect(after).toEqual(before);
+  });
+});
+
+// [hardening sep30] Anonymous input to a paid provider. Every refusal below must be free:
+// no quota unit consumed, no provider call.
+describe("POST /api/demo/chat input bounds", () => {
+  const post = (body: string) =>
+    POST(
+      new Request("http://test.local/api/demo/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+    );
+
+  it("message over 2000 characters → 400", async () => {
+    const response = await post(JSON.stringify({ message: "x".repeat(2001) }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "message too long (max 2000 characters)" });
+    expect(h.checkDemoChatQuota).not.toHaveBeenCalled();
+    expect(h.createLLMClient).not.toHaveBeenCalled();
+  });
+
+  it("body over 16 KB → 413", async () => {
+    const response = await post(JSON.stringify({ message: "hi", pad: "x".repeat(17_000) }));
+    expect(response.status).toBe(413);
+    expect(h.checkDemoChatQuota).not.toHaveBeenCalled();
+  });
+
+  it("malformed JSON → 400, not a 500", async () => {
+    const response = await post("{not json");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid JSON body" });
+    expect(h.checkDemoChatQuota).not.toHaveBeenCalled();
   });
 });

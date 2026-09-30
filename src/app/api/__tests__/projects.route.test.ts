@@ -467,8 +467,10 @@ describe.skipIf(!dbUp)("POST /api/projects (create)", () => {
       body: "{ not valid json",
     });
     const badJson = await readJson(await POST(malformed));
-    expect(badJson.status).toBe(400);
-    expect(badJson.body.error.code).toBe("BAD_REQUEST");
+    // [hardening sep30] REVERSED on purpose: auth:"session" authenticates FIRST, so a signed-out
+    // caller never makes the server read or parse a body → 401, not 400.
+    expect(badJson.status).toBe(401);
+    expect(badJson.body.error.code).toBe("UNAUTHORIZED");
   });
 });
 
