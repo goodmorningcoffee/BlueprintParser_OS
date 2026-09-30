@@ -27,8 +27,8 @@ const CUTOVER_NOTE =
 test("admin-monitor.ts still pins legacy blueprintparser-* names (Monitor tab, OWNER cutover)", async () => {
   const src = await read("src/server/services/admin-monitor.ts");
   // Monitor-tab ECS metrics currently query the NONEXISTENT legacy service (live = beaver-*),
-  // so the CPU/mem series come back empty. Pinned, not fixed — owner-coupled. (lambdaFn stays
-  // `blueprintparser-cv-pipeline`: it matches lambda.tf and is NOT part of this cutover.)
+  // so the CPU/mem series come back empty. Pinned, not fixed — owner-coupled. (lambdaFn is
+  // `beaver-cv-pipeline`, the real function_name in lambda.tf; not part of this cutover.)
   assert.match(src, /const cluster = "blueprintparser-cluster";/, CUTOVER_NOTE);
   assert.match(src, /const appService = "blueprintparser-app";/, CUTOVER_NOTE);
   assert.match(src, /AlarmNamePrefix: "blueprintparser-",/, CUTOVER_NOTE);

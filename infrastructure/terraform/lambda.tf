@@ -48,7 +48,9 @@ resource "aws_lambda_function" "beaver_cv_pipeline" {
 ###############################################################################
 
 resource "aws_cloudwatch_log_group" "cv_lambda" {
-  name              = "/aws/lambda/blueprintparser-cv-pipeline"
+  # Lambda logs to /aws/lambda/<function_name>; a group under any other name is never written to
+  # and the real one gets auto-created with no retention.
+  name              = "/aws/lambda/beaver-cv-pipeline"
   retention_in_days = 30
 }
 

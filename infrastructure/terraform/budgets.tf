@@ -56,4 +56,7 @@ resource "aws_budgets_budget" "beaver_monthly_cap" {
     subscriber_sns_topic_arns  = [aws_sns_topic.beaver_alerts.arn]
     subscriber_email_addresses = var.alert_email != "" ? [var.alert_email] : []
   }
+
+  # Budgets validates that it may publish to the topic at CREATE time; the provider does not retry.
+  depends_on = [aws_sns_topic_policy.beaver_alerts]
 }

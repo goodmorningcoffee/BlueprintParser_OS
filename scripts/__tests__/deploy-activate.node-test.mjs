@@ -52,7 +52,11 @@ done
 
 case "\${service} \${action}" in
   "sts get-caller-identity") echo "\${MOCK_CALLER_ACCOUNT:-123456789012}" ;;
-  "secretsmanager describe-secret") printf '{"ARN":"${SECRET_ARN}","Name":"beaver/DATABASE_URL","RotationEnabled":false,"VersionIdsToStages":{"${SECRET_VERSION}":["%s"]}}\n' "\${MOCK_SECRET_STAGE:-AWSCURRENT}" ;;
+  "secretsmanager describe-secret")
+    # Real AWS OMITS RotationEnabled for a never-rotated secret (the API returns null); that is the
+    # default shape here. MOCK_SECRET_ROTATION=true|false adds the key explicitly.
+    if [ -n "\${MOCK_SECRET_ROTATION:-}" ]; then rotation=",\\"RotationEnabled\\":\${MOCK_SECRET_ROTATION}"; else rotation=""; fi
+    printf '{"ARN":"${SECRET_ARN}","Name":"beaver/DATABASE_URL"%s,"VersionIdsToStages":{"${SECRET_VERSION}":["%s"]}}\n' "\${rotation}" "\${MOCK_SECRET_STAGE:-AWSCURRENT}" ;;
   "secretsmanager get-secret-value") echo "\${MOCK_DATABASE_URL:-postgresql://beaver_admin:p%40ssword@beaver-db.abc123.us-east-1.rds.amazonaws.com:5432/beaver}" ;;
   "rds describe-db-instances") printf '{"DBInstances":[{"DBInstanceIdentifier":"beaver-db","DBInstanceArn":"arn:aws:rds:us-east-1:%s:db:beaver-db","Engine":"postgres","DBInstanceStatus":"available","DBName":"beaver","MasterUsername":"beaver_admin","PubliclyAccessible":false,"Endpoint":{"Address":"beaver-db.abc123.us-east-1.rds.amazonaws.com","Port":5432}}]}\n' "\${MOCK_RDS_ACCOUNT:-123456789012}" ;;
   "iam list-role-policies") echo "\${MOCK_MIGRATOR_INLINE_POLICIES:-[]}" ;;
@@ -121,7 +125,7 @@ case "\${service} \${action}" in
     esac
     ;;
   "stepfunctions describe-state-machine")
-    printf '%s\\n' '{"Comment":"Beaver blueprint processing pipeline","StartAt":"ValidateInput","States":{"ValidateInput":{"Type":"Pass","Parameters":{"projectId.$":"$.projectId","dataUrl.$":"$.dataUrl","s3Bucket.$":"$.s3Bucket","webhookUrl.$":"$.webhookUrl","webhookSecret.$":"$.webhookSecret","status":"PROCESSING"},"Next":"CPUProcessing"},"CPUProcessing":{"Type":"Task","Resource":"arn:aws:states:::ecs:runTask.sync","Parameters":{"LaunchType":"FARGATE","TaskDefinition":"arn:aws:ecs:us-east-1:123456789012:task-definition/beaver-cpu-pipeline:42","Cluster":"arn:aws:ecs:us-east-1:123456789012:cluster/beaver-cluster","PlatformVersion":"1.4.0","NetworkConfiguration":{"AwsvpcConfiguration":{"Subnets":["subnet-test"],"SecurityGroups":["sg-test"],"AssignPublicIp":"DISABLED"}},"Overrides":{"ContainerOverrides":[{"Name":"beaver-cpu-pipeline","Environment":[{"Name":"PROJECT_ID","Value.$":"States.Format('{}', $.projectId)"},{"Name":"DATA_URL","Value.$":"$.dataUrl"},{"Name":"S3_BUCKET","Value.$":"$.s3Bucket"},{"Name":"WEBHOOK_URL","Value.$":"$.webhookUrl"},{"Name":"WEBHOOK_SECRET","Value.$":"$.webhookSecret"}]}]}},"ResultPath":"$.cpuResult","Retry":[{"ErrorEquals":["States.TaskFailed"],"IntervalSeconds":30,"MaxAttempts":2,"BackoffRate":2}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"ProcessingFailed","ResultPath":"$.error"}],"Next":"ProcessingComplete"},"ProcessingComplete":{"Type":"Succeed"},"ProcessingFailed":{"Type":"Fail","Error":"ProcessingFailed","Cause":"Blueprint processing pipeline failed. Check CloudWatch logs for details."}}}'
+    printf '%s\\n' '{"Comment":"Beaver blueprint processing pipeline","StartAt":"ValidateInput","States":{"ValidateInput":{"Type":"Pass","Parameters":{"projectId.$":"$.projectId","dataUrl.$":"$.dataUrl","s3Bucket.$":"$.s3Bucket","webhookUrl.$":"$.webhookUrl","webhookSecret.$":"$.webhookSecret","status":"PROCESSING"},"Next":"CPUProcessing"},"CPUProcessing":{"Type":"Task","Resource":"arn:aws:states:::ecs:runTask.sync","Parameters":{"LaunchType":"FARGATE","TaskDefinition":"arn:aws:ecs:us-east-1:123456789012:task-definition/beaver-cpu-pipeline:42","Cluster":"arn:aws:ecs:us-east-1:123456789012:cluster/beaver-cluster","PlatformVersion":"1.4.0","NetworkConfiguration":{"AwsvpcConfiguration":{"Subnets":["subnet-test"],"SecurityGroups":["sg-test"],"AssignPublicIp":"DISABLED"}},"Overrides":{"ContainerOverrides":[{"Name":"beaver-cpu-pipeline","Environment":[{"Name":"PROJECT_ID","Value.$":"States.Format('"'"'{}'"'"', $.projectId)"},{"Name":"DATA_URL","Value.$":"$.dataUrl"},{"Name":"S3_BUCKET","Value.$":"$.s3Bucket"},{"Name":"WEBHOOK_URL","Value.$":"$.webhookUrl"},{"Name":"WEBHOOK_SECRET","Value.$":"$.webhookSecret"}]}]}},"ResultPath":"$.cpuResult","Retry":[{"ErrorEquals":["States.TaskFailed"],"IntervalSeconds":30,"MaxAttempts":2,"BackoffRate":2}],"Catch":[{"ErrorEquals":["States.ALL"],"Next":"ProcessingFailed","ResultPath":"$.error"}],"Next":"ProcessingComplete"},"ProcessingComplete":{"Type":"Succeed"},"ProcessingFailed":{"Type":"Fail","Error":"ProcessingFailed","Cause":"Blueprint processing pipeline failed. Check CloudWatch logs for details."}}}'
     ;;
   "scheduler get-schedule")
     case "\${query}" in
@@ -409,6 +413,22 @@ test("a partial schema-check DescribeTasks response prevents activation", async 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /terminal response was partial/u);
   assert.doesNotMatch(result.log, /ecs update-service/u);
+});
+
+// [hardening sep30] `RotationEnabled !== false` refused every real deployment: DescribeSecret omits
+// the key for a never-rotated secret, which is every secret Terraform creates here.
+test("activate accepts a never-rotated secret (RotationEnabled absent) and an explicit false", async () => {
+  const absent = await activate({});
+  assert.equal(absent.status, 0, absent.stderr);
+  const explicit = await activate({ MOCK_SECRET_ROTATION: "false" });
+  assert.equal(explicit.status, 0, explicit.stderr);
+});
+
+test("activate rejects a secret with rotation enabled", async () => {
+  const result = await activate({ MOCK_SECRET_ROTATION: "true" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /DATABASE_URL secret metadata validation failed/u);
+  assert.doesNotMatch(result.log, /ecs run-task|ecs update-service/u);
 });
 
 test("activate rejects a DATABASE_URL selector that is not AWSCURRENT", async () => {

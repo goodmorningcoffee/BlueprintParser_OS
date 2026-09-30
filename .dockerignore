@@ -15,3 +15,38 @@ infrastructure/terraform/terraform.tfvars
 models/*
 !models/tatr/
 !models/tatr/**
+
+# --- secrets / infra: never needed inside the image. Patterns without `**/` match at the context
+# ROOT only (Docker rule), which is why `*.plan` alone would not have excluded the saved terraform
+# plans (they embed tfstate with every secret) that the standalone trace was sweeping into /app.
+infrastructure
+**/*.plan
+**/*.tfplan
+**/*.tfstate*
+**/*.tfvars
+# --- tests, fixtures, scratch output
+test
+e2e
+eval
+build
+perf
+test-results
+playwright-report
+**/.pytest_cache
+**/__pycache__
+**/*.tsbuildinfo
+**/.DS_Store
+# --- repo tooling the tracer would sweep into /app
+*.sh
+!entrypoint.sh
+Dockerfile*
+docker-compose.yml
+.dockerignore
+.gitignore
+.github
+playwright*.config.ts
+vitest.config.ts
+claude_notes
+refactor_memories
+# --- test sources (4 of them import ../../../eval/** and would fail the type-check once eval/ is gone)
+**/__tests__

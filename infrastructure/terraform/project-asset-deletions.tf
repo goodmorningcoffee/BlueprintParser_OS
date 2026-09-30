@@ -264,8 +264,12 @@ resource "aws_iam_role" "beaver_project_asset_deletion_scheduler" {
       Principal = { Service = "scheduler.amazonaws.com" }
       Condition = {
         StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
-        ArnLike = {
-          "aws:SourceArn" = "arn:aws:scheduler:${var.aws_region}:${data.aws_caller_identity.current.account_id}:schedule/${aws_scheduler_schedule_group.beaver_maintenance.name}/*"
+        # EventBridge Scheduler assumes the role with the schedule GROUP as aws:SourceArn. AWS:
+        # "Do not scope the aws:SourceArn statement to a specific schedule or a schedule name
+        # prefix. The ARN you specify must be a schedule group." The previous `schedule/<group>/*`
+        # form matched nothing, so creating the schedule failed on the first apply.
+        ArnEquals = {
+          "aws:SourceArn" = aws_scheduler_schedule_group.beaver_maintenance.arn
         }
       }
     }]

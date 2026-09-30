@@ -131,3 +131,22 @@ resource "aws_route_table_association" "private" {
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private.id
 }
+
+###############################################################################
+# S3 gateway endpoint — keeps S3 (and ECR image layers, which ECR serves from S3) off the NAT
+###############################################################################
+# Every task runs in the private subnets, so without this each ECS image pull and every S3 object
+# the app or a worker reads pays NAT data processing. The maintenance task alone pulls the full
+# app image every 5 minutes. A gateway endpoint is free. ecr.api / ecr.dkr and the other APIs
+# still go out through the NAT; only S3 traffic moves.
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.beaver.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = {
+    Name = "beaver-s3-endpoint"
+  }
+}

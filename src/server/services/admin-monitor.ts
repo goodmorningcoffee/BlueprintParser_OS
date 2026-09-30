@@ -36,8 +36,9 @@ export async function getMonitor(): Promise<unknown> {
   // Pinned by scripts/__tests__/naming-residue-pin.node-test.mjs.
   const cluster = "blueprintparser-cluster";
   const appService = "blueprintparser-app";
-  // lambdaFn is NOT part of the beaver-* cutover: `blueprintparser-cv-pipeline` matches lambda.tf.
-  const lambdaFn = "blueprintparser-cv-pipeline";
+  // The Lambda's function_name in lambda.tf is `beaver-cv-pipeline` (only its log-group resource
+  // ever carried the blueprintparser- name). CloudWatch keys Lambda metrics on FunctionName.
+  const lambdaFn = "beaver-cv-pipeline";
 
   // [B] no try/catch — a CloudWatch/Budgets error propagates to the shell's generic INTERNAL
   // 500 (legacy returned a fixed "Monitor fetch failed" literal; retired). Parallel fetch

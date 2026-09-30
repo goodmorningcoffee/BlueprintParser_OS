@@ -28,6 +28,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # non-secret, non-routable shape-valid URL so the same fail-closed URL parser is
 # exercised without embedding deployment credentials or contacting a database.
 ENV DATABASE_URL=postgresql://build:build@database.invalid:5432/build
+# Bucket-fill engine routing. Next inlines NEXT_PUBLIC_* at build time (src/lib/bucket-fill-mode.ts),
+# so this is the only place it can be set; a task env var does nothing. `auto` = vector on pages
+# with vector geometry, raster fallback elsewhere. Owner decision 2026-09-30: vector fill ships.
+ARG NEXT_PUBLIC_BUCKET_FILL_MODE=auto
+ENV NEXT_PUBLIC_BUCKET_FILL_MODE=${NEXT_PUBLIC_BUCKET_FILL_MODE}
 
 RUN --mount=type=cache,target=/app/.next/cache \
     npm run build
@@ -40,11 +45,16 @@ RUN npx esbuild scripts/process-worker.ts \
     --external:pg-native
 
 # Bundle the scheduled durable project-asset deletion reconciler.
+# bcrypt is native: bundled in, node-gyp-build looks for its binary next to the BUNDLE (/app/scripts)
+# and the worker dies at load ("No native build was found") on every 5-minute run. Left external, it
+# resolves from /app/node_modules like the app does. (Measured 2026-09-29; process-worker has no
+# bcrypt in its import graph.)
 RUN npx esbuild scripts/project-asset-deletion-worker.ts \
     --bundle --platform=node --target=node20 \
     --outfile=dist/project-asset-deletion-worker.js \
     --alias:@=./src \
-    --external:pg-native
+    --external:pg-native \
+    --external:bcrypt
 
 # ── Stage 3: Production runner ─────────────────────────────────
 # Using Debian slim instead of Alpine for full glibc compatibility
@@ -59,6 +69,10 @@ RUN groupadd --system --gid 1001 nodejs && \
     useradd --system --uid 1001 --no-create-home --gid nodejs nextjs
 
 # Install Ghostscript, Python 3, Tesseract OCR, and system libraries
+# Two pins are load-bearing, not tidiness (measured 2026-09-29 against PyPI): pymupdf 1.28.2 prints
+# a deprecation warning to STDOUT on `import fitz`, and src/lib/processing.ts JSON-parses the
+# script's stdout — every upload failed. opencv-python-headless 5.0 changed HoughLinesP's shape and
+# img2table 0.0.12 raises TypeError. Both pins are the versions the last working image resolved.
 # pip3 --no-cache-dir is intentionally REMOVED below because we've mounted a
 # BuildKit cache at /root/.cache/pip — the cache lives outside the final image
 # layer, so there's no image bloat, and wheel downloads are reused across builds.
@@ -80,11 +94,11 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages \
     numpy \
-    opencv-python-headless \
+    opencv-python-headless==4.13.0.92 \
     pytesseract==0.3.13 \
     pdfplumber \
     pdfminer.six \
-    pymupdf \
+    pymupdf==1.27.2.2 \
     tabulate \
     openpyxl \
     "Pillow>=10.0" \
@@ -100,21 +114,18 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # reviewed RDS trust bundle.
 COPY --from=rds-ca /aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 
-# Schema checker/migrator deps (drizzle-orm, pg). They are invoked by standalone
-# operational scripts outside Next.js' traced server graph, so the tracer never
-# sees the imports. Installed here
-# (cacheable across source-only rebuilds) instead of at the end of the runner
-# stage, where every builder COPY invalidated the layer and this install cost
-# ~195s every deploy. The `COPY package.json` pins the install to the exact
-# versions the main app depends on (drizzle-orm@0.45.1, pg@8.19.0).
-COPY package.json package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npm install drizzle-orm pg
+# Schema checker/migrator deps. The ops scripts (scripts/*.mjs) run outside Next.js' traced server
+# graph. `pg` and its dependencies are already in the standalone trace; `drizzle-orm` is not
+# (Turbopack bundles it into chunks), so copy the lock-resolved package from the deps stage. It is
+# pure JS with no runtime dependencies, so the Alpine-built copy is valid on Debian.
+# (Was `npm install drizzle-orm pg` here, which resolved @latest — not the lock, despite its
+# comment — rewrote package.json, and installed the entire production tree: 670 MB. Measured.)
 
 # Copy standalone output
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=deps /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 
 # Copy migration files and entrypoint
 COPY --from=builder /app/drizzle ./drizzle

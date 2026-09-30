@@ -144,6 +144,7 @@ resource "aws_cloudwatch_metric_alarm" "beaver_rds_connections_high" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    DBInstanceIdentifier = aws_db_instance.beaver.id
+    # `.id` is the DBI resource id (db-XXXX) in provider v5; CloudWatch keys on the identifier.
+    DBInstanceIdentifier = aws_db_instance.beaver.identifier
   }
 }

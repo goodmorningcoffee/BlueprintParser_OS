@@ -241,7 +241,7 @@ case "\${1:-} \${2:-}" in
     esac
     ;;
   "secretsmanager describe-secret")
-    printf '{"ARN":"%s","Name":"beaver/DATABASE_URL","RotationEnabled":false,"VersionIdsToStages":{"%s":["%s"]}}\\n' \
+    printf '{"ARN":"%s","Name":"beaver/DATABASE_URL","VersionIdsToStages":{"%s":["%s"]}}\\n' \
       "\${MOCK_SECRET_ARN:-${secretArn}}" \
       "${secretVersion}" \
       "\${MOCK_SECRET_STAGE:-AWSCURRENT}"

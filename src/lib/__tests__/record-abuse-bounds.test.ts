@@ -17,14 +17,14 @@ describe("recordAbuseEvent — column bounds", () => {
       path: `/api/${"p".repeat(10_000)}`,
       userAgent: "u".repeat(10_000),
     });
-    const [row] = h.values.mock.calls[0] as [{ path: string; userAgent: string }];
+    const [row] = h.values.mock.calls[0] as unknown as [{ path: string; userAgent: string }];
     expect(row.path).toHaveLength(255);
     expect(row.userAgent).toHaveLength(255);
   });
 
   it("leaves short values and absent values alone", () => {
     recordAbuseEvent({ eventType: "RATE_LIMIT_BREACH", ip: "203.0.113.9", path: "/api/x" });
-    const [row] = h.values.mock.calls.at(-1) as [{ path: string; userAgent: null }];
+    const [row] = h.values.mock.calls.at(-1) as unknown as [{ path: string; userAgent: null }];
     expect(row.path).toBe("/api/x");
     expect(row.userAgent).toBeNull();
   });

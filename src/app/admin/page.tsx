@@ -49,6 +49,13 @@ interface UserItem {
   canRunModels: boolean;
 }
 
+// The API accepts a company admin OR a root admin (defineRoute "admin"); this page must too. It
+// used to check `role === "admin"` alone, and the ROOT_ADMIN_EMAIL bootstrap only sets isRootAdmin
+// on a `member` row — so the first root admin of a fresh deployment was told "Admin access required".
+type AdminSession = { user?: { role?: string; isRootAdmin?: boolean } } | null | undefined;
+const canOpenAdmin = (session: AdminSession) =>
+  session?.user?.role === "admin" || session?.user?.isRootAdmin === true;
+
 export default function AdminPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -80,7 +87,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
-    if (session?.user?.role !== "admin") return;
+    if (!canOpenAdmin(session)) return;
     loadData();
   }, [session, status, router]);
 
@@ -627,7 +634,7 @@ export default function AdminPage() {
     return <div className="min-h-screen flex items-center justify-center text-[var(--muted)]">Loading...</div>;
   }
 
-  if (session?.user?.role !== "admin") {
+  if (!canOpenAdmin(session)) {
     return <div className="min-h-screen flex items-center justify-center text-red-400">Admin access required</div>;
   }
 

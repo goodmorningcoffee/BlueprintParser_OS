@@ -473,6 +473,9 @@ bp_assert_database_secret_identity() {
   fi
   secret_arn="${BASH_REMATCH[1]}"
   version_id="${BASH_REMATCH[2]}"
+  # DescribeSecret omits RotationEnabled entirely for a secret that was never configured for
+  # rotation (the API returns null), which is every secret Terraform creates here. Reject only an
+  # explicit `true`; `!== false` refused every real deployment before it touched anything.
   secret_metadata=$(bp_aws secretsmanager describe-secret \
     --secret-id beaver/DATABASE_URL \
     --region "${AWS_REGION}" --output json) || return 1
@@ -490,7 +493,7 @@ process.stdin.on("end", () => {
       !secret.ARN.startsWith(expectedPrefix) ||
       secret.ARN.length !== expectedPrefix.length + 6 ||
       secret?.Name !== "beaver/DATABASE_URL" ||
-      secret?.RotationEnabled !== false ||
+      secret?.RotationEnabled === true ||
       secret?.DeletedDate !== undefined ||
       !Array.isArray(secret?.VersionIdsToStages?.[expectedVersion]) ||
       !secret.VersionIdsToStages[expectedVersion].includes("AWSCURRENT")
@@ -622,7 +625,10 @@ process.stdin.on("end", () => {
       Object.keys(value).sort().join("\0") === [...expected].sort().join("\0");
     const expectedEnvironment = {
       DATA_URL: "$.dataUrl",
-      PROJECT_ID: "States.Format('{}', $.projectId)",
+      // This JavaScript sits inside a bash single-quoted node -e block, so a bare apostrophe
+      // would end the shell string and node would compare against States.Format({}, ...), which
+      // never matches what Terraform emits. \u0027 is a quote to JavaScript and inert to bash.
+      PROJECT_ID: "States.Format(\u0027{}\u0027, $.projectId)",
       S3_BUCKET: "$.s3Bucket",
       WEBHOOK_SECRET: "$.webhookSecret",
       WEBHOOK_URL: "$.webhookUrl",
