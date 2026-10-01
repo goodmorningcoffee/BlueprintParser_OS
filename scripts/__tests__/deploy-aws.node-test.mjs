@@ -1,0 +1,521 @@
+// Hermetic drive of deploy-aws.sh: fake aws / terraform / docker / dig / curl on PATH, fake
+// deploy.sh + deploy-yolo.sh (the real ones are covered by their own specs), a scratch HOME for the
+// ledger, and a scratch tfvars + .deploy.env the test edits the way the owner would. Nothing here
+// reaches a network. What is asserted is ORDER: which mutation happened before which, and which
+// never happened on a refused path.
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test, before, after } from "node:test";
+
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const ACCOUNT = "123456789012";
+const DOMAIN = "example.test";
+const APP_DIGEST = `sha256:${"a".repeat(64)}`;
+const NEXT_DIGEST = `sha256:${"b".repeat(64)}`;
+const YOLO_DIGEST = `sha256:${"c".repeat(64)}`;
+const CERT_ARN = `arn:aws:acm:us-east-1:${ACCOUNT}:certificate/11111111-2222-3333-4444-555555555555`;
+const ALB = "beaver-alb-1.us-east-1.elb.amazonaws.com";
+const CF = "d1example.cloudfront.net";
+const ECR = `${ACCOUNT}.dkr.ecr.us-east-1.amazonaws.com`;
+
+let fixture;
+let home;
+let awsLog;
+let tfvarsPath;
+let deployEnvPath;
+
+const fakeAws = `#!/usr/bin/env bash
+# Fake AWS CLI: records every call, answers from a tiny state dir.
+set -u
+STATE="\${MOCK_STATE}"
+printf '%s\\n' "aws $*" >>"\${MOCK_AWS_LOG}"
+service="\${1:-}"; action="\${2:-}"; shift 2 || true
+has() { case " $* " in *" $1 "*) return 0;; esac; return 1; }
+argval() { local k="$1"; shift; while [ $# -gt 0 ]; do if [ "$1" = "$k" ]; then printf '%s' "\${2:-}"; return; fi; shift; done; }
+query="$(argval --query "$@")"
+case "$service $action" in
+  "sts get-caller-identity") echo "${ACCOUNT}" ;;
+  "s3api head-bucket") [ -e "$STATE/bucket" ] ;;
+  "s3api create-bucket") touch "$STATE/bucket" ;;
+  "s3api put-bucket-versioning"|"s3api put-bucket-encryption"|"s3api put-public-access-block") : ;;
+  "dynamodb describe-table") [ -e "$STATE/table" ] ;;
+  "dynamodb create-table") touch "$STATE/table" ;;
+  "dynamodb wait") : ;;
+  "service-quotas get-service-quota") echo "16.0" ;;
+  "service-quotas list-service-quotas") echo "1.0" ;;
+  "lambda get-account-settings") echo "1000" ;;
+  "acm list-certificates") printf '{"CertificateSummaryList":[{"CertificateArn":"${CERT_ARN}","DomainName":"*.${DOMAIN}","Status":"%s"}]}\\n' "\${MOCK_CERT_STATUS:-ISSUED}" ;;
+  "acm describe-certificate")
+    if [ -n "$query" ]; then echo "\${MOCK_CERT_STATUS:-ISSUED}"; else
+      printf '{"Certificate":{"Status":"%s","DomainValidationOptions":[{"ResourceRecord":{"Name":"_abc.${DOMAIN}.","Value":"_def.acm-validations.aws."}}]}}\\n' "\${MOCK_CERT_STATUS:-ISSUED}"; fi ;;
+  "acm request-certificate") echo "${CERT_ARN}" ;;
+  "ecr get-login-password") echo "pw" ;;
+  "ecr describe-images")
+    case "$query" in
+      *imageManifestMediaType*) echo "\${MOCK_LAMBDA_MEDIA_TYPE:-application/vnd.docker.distribution.manifest.v2+json}" ;;
+      *imageTags*) echo "deploy-\${MOCK_DEPLOYED_HEAD12:-000000000000}-20260101000000" ;;
+      *) echo '{"imageDetails":[]}' ;;
+    esac ;;
+  "elbv2 describe-load-balancers") echo "${ALB}" ;;
+  "scheduler get-schedule")
+    case "$query" in *LastModificationDate*) echo "2020-01-01T00:00:00+00:00" ;; *) cat "$STATE/schedule-state" 2>/dev/null || echo DISABLED ;; esac ;;
+  "ecs describe-services")
+    running=$(cat "$STATE/running" 2>/dev/null || echo 0); desired=$(cat "$STATE/desired" 2>/dev/null || echo 0)
+    td=$(cat "$STATE/service-td" 2>/dev/null || echo "arn:aws:ecs:us-east-1:${ACCOUNT}:task-definition/beaver-app:1")
+    case "$query" in
+      *rolloutState*) echo "\${MOCK_ROLLOUT:-COMPLETED}" ;;
+      *runningCount*) echo "$running" ;;
+      *networkConfiguration*) echo '{"awsvpcConfiguration":{"subnets":["subnet-1"],"securityGroups":["sg-1"],"assignPublicIp":"DISABLED"}}' ;;
+      *) printf '{"services":[{"taskDefinition":"%s","desiredCount":%s,"runningCount":%s,"pendingCount":0,"deployments":[{"rolloutState":"%s"}],"networkConfiguration":{"awsvpcConfiguration":{"subnets":["subnet-1"],"securityGroups":["sg-1"],"assignPublicIp":"DISABLED"}}}]}\\n' "$td" "$desired" "$running" "\${MOCK_ROLLOUT:-COMPLETED}" ;;
+    esac ;;
+  "ecs describe-task-definition")
+    ref="$(argval --task-definition "$@")"; ref="\${ref##*/}"; fam="\${ref%%:*}"
+    latest=$(cat "$STATE/rev" 2>/dev/null || echo 1)
+    case "$ref" in *:*) rev="\${ref##*:}" ;; *) rev="$latest" ;; esac
+    case "$query" in
+      *taskDefinitionArn*) echo "arn:aws:ecs:us-east-1:${ACCOUNT}:task-definition/$fam:$rev" ;;
+      *image*) echo "${ECR}/beaver-app@$(cat "$STATE/digest-$rev" 2>/dev/null || echo "${APP_DIGEST}")" ;;
+      *) echo "{}" ;;
+    esac ;;
+  "ecs run-task")
+    printf '%s\\n' "RUNTASK $(argval --started-by "$@") $(argval --overrides "$@")" >>"\${MOCK_AWS_LOG}"
+    if [ -n "\${MOCK_RUNTASK_FAIL:-}" ]; then echo '{"tasks":[],"failures":[{"arn":"x","reason":"RESOURCE:CPU","detail":"no capacity"}]}'; else
+    echo '{"tasks":[{"taskArn":"arn:aws:ecs:us-east-1:${ACCOUNT}:task/beaver-cluster/0123456789abcdef0123456789abcdef"}],"failures":[]}'; fi ;;
+  "ecs wait")
+    case "$1" in services-stable) echo "$(cat "$STATE/desired" 2>/dev/null || echo 0)" >"$STATE/running" ;; esac ;;
+  "ecs describe-tasks") printf '{"tasks":[{"stoppedReason":"Essential container in task exited","containers":[{"exitCode":%s}]}]}\\n' "\${MOCK_TASK_EXIT:-0}" ;;
+  "ecs list-tasks") echo "\${MOCK_MAINTENANCE_TASK:-None}" ;;
+  "iam get-role") : ;;
+  "logs get-log-events") echo "[schema-migrate] complete at 0039_runtime_state" ;;
+  "ecs update-service")
+    printf '%s' "$(argval --task-definition "$@")" >"$STATE/service-td"
+    printf '%s' "$(argval --desired-count "$@")" >"$STATE/desired"
+    echo "beaver-app" ;;
+  "logs tail") : ;;
+  *) echo "fake aws: unsupported: $service $action $*" >&2; exit 97 ;;
+esac
+`;
+
+const fakeTerraform = `#!/usr/bin/env bash
+set -u
+printf '%s\\n' "terraform $*" >>"\${MOCK_AWS_LOG}"
+case " $* " in
+  *" output -raw cloudfront_distribution_id "*) echo "E123CFID" ;;
+  *" output -raw cloudfront_domain_name "*) echo "${CF}" ;;
+  *" plan "*)
+    echo "Plan: 3 to add, 1 to change, \${MOCK_PLAN_DESTROY:-0} to destroy."
+    [ "\${MOCK_PLAN_DESTROY:-0}" != 0 ] && echo "  # aws_db_instance.beaver will be destroyed"
+    for a in "$@"; do case "$a" in -out=*) : >"\${a#-out=}" ;; esac; done ;;
+  *" apply "*)
+    # Registering task definitions bumps the revision the fakes report.
+    r=$(cat "\${MOCK_STATE}/rev" 2>/dev/null || echo 1); echo $((r+1)) >"\${MOCK_STATE}/rev"
+    # The new revisions carry whatever digest tfvars names (the test sets MOCK_REGISTERED_DIGEST to it).
+    printf '%s' "\${MOCK_REGISTERED_DIGEST:-${APP_DIGEST}}" >"\${MOCK_STATE}/digest-$((r+1))"
+    # The LIVE tuple apply sets the service's desired count the way the real one does.
+    # ECS converges running onto desired after an apply, like the real service does.
+    if grep -q 'ecs_desired_count *= *1' "\${MOCK_TFVARS}"; then echo 1 >"\${MOCK_STATE}/desired"; echo 1 >"\${MOCK_STATE}/running"; echo ENABLED >"\${MOCK_STATE}/schedule-state"; else echo 0 >"\${MOCK_STATE}/desired"; echo 0 >"\${MOCK_STATE}/running"; fi ;;
+  *) : ;;
+esac
+`;
+
+const fakeDocker = `#!/usr/bin/env bash
+printf '%s\\n' "docker $*" >>"\${MOCK_AWS_LOG}"
+case "$1" in
+  login) cat >/dev/null ;;  # consume --password-stdin like the real client, or the writer sees EPIPE
+  manifest) echo '{"Descriptor":{"digest":"sha256:${"d".repeat(64)}","platform":{"architecture":"amd64"}}}' ;;
+  run) echo "python ok 1.27.2.2 4.13.0" ;;
+  *) : ;;
+esac
+`;
+const fakeDig = `#!/usr/bin/env bash
+printf '%s\\n' "dig $*" >>"\${MOCK_AWS_LOG}"
+case " $* " in *" app.${DOMAIN} "*|*" labelstudio.${DOMAIN} "*) echo "${ALB}." ;; *" assets.${DOMAIN} "*) echo "${CF}." ;; *) echo "" ;; esac
+`;
+const fakeCurl = `#!/usr/bin/env bash
+printf '%s\\n' "curl $*" >>"\${MOCK_AWS_LOG}"
+echo '{"status":"ok"}'
+`;
+const fakeDeploySh = `#!/usr/bin/env bash
+printf '%s\\n' "deploy.sh $* (BP_SKIP_PREFLIGHT=\${BP_SKIP_PREFLIGHT:-})" >>"\${MOCK_AWS_LOG}"
+case "$1" in
+  publish) printf 'Published immutable application image:\\n  ${ECR}/beaver-app@%s\\n' "\${MOCK_PUBLISH_DIGEST:-${APP_DIGEST}}" ;;
+  activate) echo "Deployment completed" ;;
+esac
+`;
+const fakeDeployYolo = `#!/usr/bin/env bash
+printf '%s\\n' "deploy-yolo.sh $*" >>"\${MOCK_AWS_LOG}"
+printf 'Published immutable YOLO processing image:\\n  ${ECR}/beaver-yolo-pipeline@${YOLO_DIGEST}\\n'
+`;
+
+const tfvars = (tuple, appDigest = APP_DIGEST) => `
+account_id = "${ACCOUNT}"
+domain_name = "${DOMAIN}"
+acm_certificate_arn = "${CERT_ARN}"
+root_admin_email = "owner@${DOMAIN}"
+beaver_app_image_digest  = "${appDigest}"
+beaver_yolo_image_digest = "${YOLO_DIGEST}"
+label_studio_image = "heartexlabs/label-studio@sha256:${"e".repeat(64)}"
+acknowledge_beaver_data_notification_takeover = true
+anthropic_api_key = "sk-ant-..."
+label_studio_api_key = "CHANGE_ME"
+ecs_desired_count = ${tuple === "live" ? 1 : 0}
+ecs_min_count     = ${tuple === "live" ? 1 : 0}
+ecs_max_count     = 1
+ecs_autoscaling_enabled = ${tuple === "live"}
+maintenance_worker_schedule_enabled = ${tuple === "live"}
+`;
+const deployEnv = `AWS_ACCOUNT=${ACCOUNT}
+AWS_REGION=us-east-1
+ECS_CLUSTER=beaver-cluster
+ECS_SERVICE=beaver-app
+ECR_REPO=beaver-app
+DOMAIN=${DOMAIN}
+CLOUDFRONT_DISTRIBUTION_ID=E123CFID
+ROOT_ADMIN_EMAIL=owner@${DOMAIN}
+`;
+
+before(async () => {
+  fixture = await mkdtemp(path.join(tmpdir(), "deploy-aws-"));
+  home = path.join(fixture, "home");
+  await mkdir(path.join(fixture, "bin"), { recursive: true });
+  await mkdir(path.join(fixture, "state"), { recursive: true });
+  await mkdir(home, { recursive: true });
+  for (const [name, body] of [
+    ["aws", fakeAws], ["terraform", fakeTerraform], ["docker", fakeDocker], ["dig", fakeDig], ["curl", fakeCurl],
+    ["deploy.sh", fakeDeploySh], ["deploy-yolo.sh", fakeDeployYolo],
+  ]) {
+    const p = path.join(fixture, "bin", name);
+    await writeFile(p, body);
+    await chmod(p, 0o755);
+  }
+  awsLog = path.join(fixture, "aws.log");
+  tfvarsPath = path.join(fixture, "terraform.tfvars");
+  deployEnvPath = path.join(fixture, "deploy.env");
+  await writeFile(deployEnvPath, deployEnv);
+});
+after(async () => {
+  await rm(fixture, { recursive: true, force: true });
+});
+
+async function resetState() {
+  await rm(path.join(fixture, "state"), { recursive: true, force: true });
+  await mkdir(path.join(fixture, "state"), { recursive: true });
+  await rm(home, { recursive: true, force: true });
+  await mkdir(home, { recursive: true });
+  await writeFile(awsLog, "");
+}
+
+function runTool(args, extraEnv = {}) {
+  const result = spawnSync("bash", [path.join(ROOT, "deploy-aws.sh"), ...args], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${path.join(fixture, "bin")}:${process.env.PATH}`,
+      HOME: home,
+      MOCK_STATE: path.join(fixture, "state"),
+      MOCK_AWS_LOG: awsLog,
+      MOCK_TFVARS: tfvarsPath,
+      BP_DEPLOY_ENV_FILE: deployEnvPath,
+      BP_TFVARS_FILE: tfvarsPath,
+      BP_DEPLOY_SH: path.join(fixture, "bin", "deploy.sh"),
+      BP_DEPLOY_YOLO_SH: path.join(fixture, "bin", "deploy-yolo.sh"),
+      BP_GREEN_HEADS: path.join(fixture, "GREEN_HEADS"),
+      BP_TRACE: process.env.DEPLOY_AWS_TEST_TRACE || "",
+      // The harness runs against the live repo, which may carry uncommitted work; the clean-tree
+      // gate has its own test below.
+      BP_ALLOW_DIRTY: "1",
+      ...extraEnv,
+    },
+  });
+  return result;
+}
+const logLines = async () => (await readFile(awsLog, "utf8")).split("\n").filter(Boolean);
+const indexOfLine = (lines, needle) => lines.findIndex((l) => l.includes(needle));
+const assertBefore = (lines, a, b) => {
+  const ia = indexOfLine(lines, a);
+  const ib = indexOfLine(lines, b);
+  assert.ok(ia !== -1, `expected a line containing: ${a}`);
+  assert.ok(ib !== -1, `expected a line containing: ${b}`);
+  assert.ok(ia < ib, `${a} must happen before ${b} (got ${ia} vs ${ib})`);
+};
+
+test("bootstrap on an empty account runs the phases in the only order that works, and resumes across the tuple flip", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("outage"));
+  await writeFile(path.join(fixture, "state", "rev"), "1");
+
+  // First run: outage tuple. It must get through migrate and stop at infra-live, which needs the live tuple.
+  const first = runTool(["bootstrap", "--yes"], { BP_ASSUME_OWNER_DONE: "1" });
+  assert.notEqual(first.status, 0, first.stdout);
+  assert.match(first.stderr, /owner step still not done|LIVE tuple/u, `stdout:\n${first.stdout}\nstderr:\n${first.stderr}`);
+  let lines = await logLines();
+
+  // Images are built BEFORE any AWS resource exists.
+  assertBefore(lines, "docker build --platform linux/amd64 -t beaver-app:bootstrap-check", "aws s3api create-bucket");
+  // State backend before terraform init; init before the targeted ECR apply.
+  assertBefore(lines, "aws s3api create-bucket", "init -reconfigure");
+  assertBefore(lines, "init -reconfigure", "plan -input=false -out=");
+  assert.ok(lines.some((l) => l.includes("plan -input=false") && l.includes("-target=aws_ecr_repository.beaver_app")), "the ECR step is a targeted plan");
+  // ECR repos before any push; the Lambda image before the full apply (Lambda needs it at create time).
+  assertBefore(lines, "-target=aws_ecr_repository.beaver_cv_lambda", "docker push");
+  assertBefore(lines, `docker push ${ECR}/beaver-cv-lambda:latest`, "deploy.sh publish");
+  assert.ok(lines.some((l) => l.includes("deploy.sh publish (BP_SKIP_PREFLIGHT=1)")), "publish runs with the Mac-side preflight skipped");
+  // Full apply (outage) after publish, then the EMPTY-database migrator before anything goes live.
+  const fullPlans = lines.filter((l) => /terraform -chdir=.*plan -input=false -out=\S+$/.test(l));
+  const fullApplies = lines.filter((l) => /terraform -chdir=.* apply -input=false \S+plan\.tfplan$/.test(l));
+  assert.equal(fullPlans.length, 1, "exactly one full (untargeted) plan in the first run (outage)");
+  assert.ok(fullApplies.length >= 2, "every plan is applied from its saved plan file (ECR + full)");
+  const fullPlanIdx = lines.indexOf(fullPlans[0]);
+  assert.ok(indexOfLine(lines, "deploy.sh publish") < fullPlanIdx, "publish happens before the full plan/apply");
+  assert.ok(indexOfLine(lines, "-target=aws_ecr_repository.beaver_app") < indexOfLine(lines, "deploy.sh publish"), "the targeted ECR apply happens before publish");
+  const migrate = lines.find((l) => l.startsWith("RUNTASK bp-bootstrap-migrate"));
+  assert.ok(migrate, "the migrator one-off task ran");
+  assert.match(migrate, /empty-database-singleton-quiescent/u);
+  assert.ok(!lines.some((l) => l.includes("ecs update-service")), "bootstrap never calls update-service itself");
+  // Ledger: phases through migrate are done; infra-live is not.
+  const ledger = JSON.parse(await readFile(path.join(home, ".blueprintparser-deploy", "bootstrap.json"), "utf8"));
+  assert.equal(ledger["phase:migrate"], "done");
+  assert.equal(ledger["phase:infra-live"], undefined);
+  assert.equal(ledger.app_digest, APP_DIGEST);
+  assert.equal(ledger.yolo_digest, YOLO_DIGEST);
+
+  // Owner flips the tuple; the second run resumes at infra-live and finishes.
+  await writeFile(tfvarsPath, tfvars("live"));
+  await writeFile(awsLog, "");
+  const second = runTool(["bootstrap", "--yes"], { BP_ASSUME_OWNER_DONE: "1", MOCK_DEPLOYED_HEAD12: "000000000000" });
+  assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+  lines = await logLines();
+  assert.ok(!lines.some((l) => l.includes("deploy.sh publish")), "no second publish on resume");
+  assert.ok(!lines.some((l) => l.startsWith("RUNTASK bp-bootstrap-migrate")), "no second migration on resume");
+  assert.equal(lines.filter((l) => /plan -input=false -out=\S+$/.test(l)).length, 1, "exactly one full plan on resume (live)");
+  assertBefore(lines, "apply -input=false", "curl -sk --max-time 10 -H Host: app.");
+  assertBefore(lines, "curl -sk --max-time 10 -H Host: app.", "RUNTASK bp-bootstrap-company");
+  assertBefore(lines, "RUNTASK bp-bootstrap-company", "RUNTASK bp-bootstrap-admin");
+  assertBefore(lines, "RUNTASK bp-bootstrap-admin", `deploy.sh activate ${APP_DIGEST}`);
+  const releases = (await readFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(JSON.parse(releases[0]).event, "bootstrap");
+  assert.match(second.stdout, /Bootstrap complete/u);
+});
+
+test("release (rolling): publish → apply → read-only schema check → update-service, and the ledger remembers the previous digest", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST)); // the owner has already put the new digest in
+  await writeFile(path.join(fixture, "state", "rev"), "7");
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+
+  const result = runTool(["release", "--yes", "--allow-unverified"], { MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const lines = await logLines();
+  assertBefore(lines, "deploy.sh publish", "plan -input=false");
+  assertBefore(lines, "apply -input=false", "RUNTASK bp-release-schema-check");
+  const check = lines.find((l) => l.startsWith("RUNTASK bp-release-schema-check"));
+  assert.match(check, /schema-check/u);
+  assert.doesNotMatch(check, /BP_SCHEMA_MIGRATION_MODE/u, "a rolling release never runs a migration");
+  assertBefore(lines, "RUNTASK bp-release-schema-check", "ecs update-service");
+  const update = lines.find((l) => l.includes("ecs update-service"));
+  assert.match(update, /task-definition\/beaver-app:8/u, "rolls onto the revision the apply registered");
+  assert.match(update, /--desired-count 1/u);
+  assert.ok(!lines.some((l) => l.includes("-target=")), "a release is a full apply, never a targeted one");
+  const releases = (await readFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"), "utf8")).trim().split("\n");
+  const last = JSON.parse(releases[releases.length - 1]);
+  assert.equal(last.event, "release");
+  assert.equal(last.digest, NEXT_DIGEST);
+  assert.equal(last.previous, APP_DIGEST);
+});
+
+test("release refuses before publishing when drizzle/ changed since the deployed HEAD, and points at --outage", async () => {
+  await resetState();
+  // The commit that introduced migration 0039; its parent has a different drizzle/ tree.
+  const introduced = spawnSync("git", ["-C", ROOT, "log", "--format=%H", "-1", "--", "drizzle/0039_runtime_state.sql"], { encoding: "utf8" }).stdout.trim();
+  const parent = spawnSync("git", ["-C", ROOT, "rev-parse", `${introduced}^`], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "release", digest: APP_DIGEST, previous: "-", head: parent }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live"));
+  const result = runTool(["release", "--yes", "--allow-unverified"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /schema change.*release --outage/su);
+  const lines = await logLines();
+  assert.ok(!lines.some((l) => l.includes("deploy.sh publish")), "nothing is built or pushed");
+  assert.ok(!lines.some((l) => l.includes("terraform")), "nothing is applied");
+});
+
+test("release stops before update-service when the schema check fails; the old revision keeps serving", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  const result = runTool(["release", "--yes", "--allow-unverified"], { MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST, MOCK_TASK_EXIT: "1" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /schema check FAILED/u);
+  const lines = await logLines();
+  assert.ok(!lines.some((l) => l.includes("ecs update-service")));
+});
+
+test("release honours the GREEN_HEADS gate unless --allow-unverified", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  await writeFile(path.join(fixture, "GREEN_HEADS"), "0000000000000000000000000000000000000000 nothing\n");
+  const refused = runTool(["release", "--yes"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /GREEN_HEADS/u);
+  assert.ok(!(await logLines()).some((l) => l.includes("deploy.sh publish")));
+});
+
+test("release --outage: drain to 0, forward migration, re-bind at 0, live apply", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  // The owner has set the OUTAGE tuple with the new digest; the fake terraform flips desired on apply,
+  // and the test flips the tfvars to LIVE when the tool asks (BP_ASSUME_OWNER_DONE cannot edit files,
+  // so pre-stage the live file and swap it in via a wrapper around terraform).
+  await writeFile(tfvarsPath, tfvars("outage", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  // Wrap the fake terraform: after the outage apply, the "owner" writes the live tuple.
+  const liveTfvars = tfvars("live", NEXT_DIGEST);
+  await writeFile(path.join(fixture, "live.tfvars"), liveTfvars);
+  const wrapper = `#!/usr/bin/env bash
+"${path.join(fixture, "bin", "terraform")}" "$@"; rc=$?
+case " $* " in *" apply "*) if grep -q 'ecs_desired_count *= *0' "${tfvarsPath}"; then cp "${path.join(fixture, "live.tfvars")}" "${tfvarsPath}"; fi ;; esac
+exit $rc
+`;
+  await writeFile(path.join(fixture, "terraform-wrap"), wrapper);
+  await chmod(path.join(fixture, "terraform-wrap"), 0o755);
+  const result = runTool(["release", "--yes", "--allow-unverified", "--outage"], {
+    MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST, TERRAFORM_BIN: path.join(fixture, "terraform-wrap"),
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const lines = await logLines();
+  const applies = lines.map((l, i) => [l, i]).filter(([l]) => / apply -input=false /.test(l));
+  assert.equal(applies.length, 2, "outage apply then live apply");
+  const migrate = lines.find((l) => l.startsWith("RUNTASK bp-release-migrate"));
+  assert.match(migrate, /p2-0037-singleton-quiescent/u);
+  assertBefore(lines, "apply -input=false", "RUNTASK bp-release-migrate");
+  assertBefore(lines, "RUNTASK bp-release-migrate", "ecs update-service");
+  assert.match(lines.find((l) => l.includes("ecs update-service")), /--desired-count 0/u, "re-bind happens while drained");
+  const [, firstApply] = applies[0];
+  const [, secondApply] = applies[1];
+  const updateIdx = indexOfLine(lines, "ecs update-service");
+  assert.ok(firstApply < updateIdx && updateIdx < secondApply, "update-service sits between the two applies");
+});
+
+test("no arguments opens the menu and q quits without touching AWS", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const result = spawnSync("bash", ["-c", `echo q | script -q /dev/null bash ${path.join(ROOT, "deploy-aws.sh")} 2>/dev/null || true`], { encoding: "utf8", env: { ...process.env, PATH: `${path.join(fixture, "bin")}:${process.env.PATH}`, HOME: home, MOCK_STATE: path.join(fixture, "state"), MOCK_AWS_LOG: awsLog, BP_DEPLOY_ENV_FILE: deployEnvPath, BP_TFVARS_FILE: tfvarsPath } });
+  // `script` provides the tty the menu reads from; where it is unavailable the menu simply exits.
+  assert.ok(!(await logLines()).some((l) => l.includes("aws ") && !l.includes("sts")), "the menu itself makes no mutating call");
+});
+
+test("release: a circuit-breaker rollback is reported as a failure, not recorded as a release", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "rev"), "7");
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  // After the breaker rolls back, the service reports COMPLETED but is bound to the OLD revision.
+  const wrapper = `#!/usr/bin/env bash
+if [ "$1 $2" = "ecs update-service" ]; then "${path.join(fixture, "bin", "aws")}" "$@"; printf '%s' "arn:aws:ecs:us-east-1:${ACCOUNT}:task-definition/beaver-app:7" >"${path.join(fixture, "state", "service-td")}"; exit 0; fi
+exec "${path.join(fixture, "bin", "aws")}" "$@"
+`;
+  await writeFile(path.join(fixture, "aws-rollback"), wrapper);
+  await chmod(path.join(fixture, "aws-rollback"), 0o755);
+  const result = runTool(["release", "--yes", "--allow-unverified"], {
+    MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST, AWS_BIN: path.join(fixture, "aws-rollback"),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /rolled the deployment back/u);
+  const releases = (await readFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(releases.length, 1, "no release line was written for a rollout that did not land");
+});
+
+test("release --outage waits for a running maintenance worker before migrating", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  await writeFile(tfvarsPath, tfvars("outage", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  // A maintenance worker is RUNNING for the first two polls, then gone.
+  const counter = path.join(fixture, "state", "list-tasks-calls");
+  const wrapper = `#!/usr/bin/env bash
+if [ "$1 $2" = "ecs list-tasks" ]; then n=$(cat "${counter}" 2>/dev/null || echo 0); echo $((n+1)) >"${counter}"; if [ "$n" -lt 2 ]; then echo "arn:aws:ecs:us-east-1:${ACCOUNT}:task/beaver-cluster/maint"; else echo None; fi; printf '%s\\n' "aws $*" >>"${awsLog}"; exit 0; fi
+exec "${path.join(fixture, "bin", "aws")}" "$@"
+`;
+  await writeFile(path.join(fixture, "aws-maint"), wrapper);
+  await chmod(path.join(fixture, "aws-maint"), 0o755);
+  const liveTfvars = tfvars("live", NEXT_DIGEST);
+  await writeFile(path.join(fixture, "live.tfvars"), liveTfvars);
+  const tfwrap = `#!/usr/bin/env bash
+"${path.join(fixture, "bin", "terraform")}" "$@"; rc=$?
+case " $* " in *" apply "*) if grep -q 'ecs_desired_count *= *0' "${tfvarsPath}"; then cp "${path.join(fixture, "live.tfvars")}" "${tfvarsPath}"; fi ;; esac
+exit $rc
+`;
+  await writeFile(path.join(fixture, "terraform-wrap2"), tfwrap);
+  await chmod(path.join(fixture, "terraform-wrap2"), 0o755);
+  const result = runTool(["release", "--yes", "--allow-unverified", "--outage"], {
+    MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST,
+    AWS_BIN: path.join(fixture, "aws-maint"), TERRAFORM_BIN: path.join(fixture, "terraform-wrap2"),
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const lines = await logLines();
+  const polls = lines.filter((l) => l.includes("ecs list-tasks"));
+  assert.ok(polls.length >= 3, "polled the maintenance family until it was empty");
+  assertBefore(lines, "ecs list-tasks", "RUNTASK bp-release-migrate");
+});
+
+test("first-user re-run with an existing company prints no new key and still promotes", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "bootstrap.json"), JSON.stringify({ app_digest: APP_DIGEST }));
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  // The company task exits 4 ("already bootstrapped"); the promote task exits 0.
+  const wrapper = `#!/usr/bin/env bash
+if [ "$1 $2" = "ecs describe-tasks" ]; then n=$(cat "${path.join(fixture, "state", "dt-calls")}" 2>/dev/null || echo 0); echo $((n+1)) >"${path.join(fixture, "state", "dt-calls")}"; if [ "$n" = 0 ]; then echo '{"tasks":[{"stoppedReason":"","containers":[{"exitCode":4}]}]}'; else echo '{"tasks":[{"stoppedReason":"","containers":[{"exitCode":0}]}]}'; fi; exit 0; fi
+exec "${path.join(fixture, "bin", "aws")}" "$@"
+`;
+  await writeFile(path.join(fixture, "aws-exists"), wrapper);
+  await chmod(path.join(fixture, "aws-exists"), 0o755);
+  const result = runTool(["bootstrap", "--yes", "--from", "first-user"], {
+    BP_ASSUME_OWNER_DONE: "1", AWS_BIN: path.join(fixture, "aws-exists"),
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.doesNotMatch(result.stdout, /Company access key \(shown once/u);
+  assert.match(result.stdout, /a company already exists/u);
+  assert.match(result.stdout, /root admin with the admin role/u);
+});
+
+test("release refuses an unclean working tree unless BP_ALLOW_DIRTY=1 (deploy.sh's own gate is skipped)", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const dirty = spawnSync("git", ["-C", ROOT, "status", "--porcelain"], { encoding: "utf8" }).stdout
+    .split("\n").filter((l) => l && !/^ M \.gitignore$|^\?\? perf\/private-gateway-baseline\.json$/.test(l));
+  if (dirty.length === 0) return; // nothing to prove against a clean tree
+  const result = runTool(["release", "--yes", "--allow-unverified"], { BP_ALLOW_DIRTY: "0" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /uncommitted changes/u);
+  assert.ok(!(await logLines()).some((l) => l.includes("deploy.sh publish")));
+});

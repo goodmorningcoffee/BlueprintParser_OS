@@ -131,7 +131,8 @@ Works without AWS credentials — PDF viewing, annotations, table parsing, QTO, 
 | `scripts/test-db.sh`              | Start/stop/status a user-owned PostgreSQL cluster on `:5433` for the route and migration-boundary tests        | Before running the test suite locally          |
 | `install_setup.sh`                | Interactive config wizard; schema setup is allowed only for a loopback development database                    | Local setup, or updating service configuration |
 | `entrypoint.sh`                   | Container entrypoint. The **first positional argument** selects the mode: `app`, `worker`, `migrate`, `schema-check`, `schema-readiness`, `janitor`. `app` and `worker` assert the schema is current and **never migrate** | Inside the image; not run by hand              |
-| `deploy.sh`                       | Publish an immutable app image, then activate digest-pinned task definitions after migration-history admission | Ordinary AWS production deployments            |
+| `deploy-aws.sh`                   | The one deploy tool: a menu with no arguments, subcommands otherwise. `bootstrap` walks a first deploy on an empty account phase by phase (state backend, certificate, ECR, images, outage apply, schema, live apply, DNS, first account), resumable; `release` = publish → `terraform apply` → read-only schema check → rolling update; `release --outage` for a schema change; `rollback`, `restart`, `status`, `doctor`. Calls `deploy.sh`, never replaces it. Stock macOS bash | Every deploy: the first one, and each release after |
+| `deploy.sh`                       | Publish an immutable app image, then activate digest-pinned task definitions after migration-history admission | Called by `deploy-aws.sh`; also usable alone   |
 | `scripts/p2-schema-cutover.sh`    | Verify zero writers/readiness, bind and retire old revisions, migrate, and verify restoration                  | One-time P2 schema compatibility boundary      |
 | `scripts/rollback.sh`             | Read-only/advisory. Resolves digests and prints the exact owner command sequence to rebind a prior image; mutates nothing | Planning a rollback (execution is owner-gated) |
 | `deploy-yolo.sh`                  | Build and push YOLO inference container to ECR                                                                 | When updating YOLO models or inference code    |
@@ -141,7 +142,7 @@ Works without AWS credentials — PDF viewing, annotations, table parsing, QTO, 
 | `scripts/cost-control.sh`         | Read-only ECS, Step Functions, and SageMaker status report                                                     | Production cost and writer-state inspection    |
 | `scripts/sagemaker-killswitch.sh` | Retired fail-closed tombstone; runs no AWS command and exits 64                                                | Never; a working kill switch must deny `sagemaker:*` at the SageMaker execution role |
 
-This table covers 13 of the repository's 20 shell scripts. The seven not listed —
+This table covers 14 of the repository's 21 shell scripts. The seven not listed —
 `deploy-label-studio.sh`, `deploy-lambda.sh`, `ecs-health.sh`, `ecs-tune.sh`, `setup-lambda-iam.sh`,
 `scripts/record-battery-green.sh`, `scripts/setup-label-studio.sh` — each state their contract in
 their own header comment.
