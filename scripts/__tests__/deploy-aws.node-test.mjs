@@ -106,9 +106,14 @@ case " $* " in
   *" output -raw cloudfront_distribution_id "*) echo "E123CFID" ;;
   *" output -raw cloudfront_domain_name "*) echo "${CF}" ;;
   *" plan "*)
-    echo "Plan: 3 to add, 1 to change, \${MOCK_PLAN_DESTROY:-0} to destroy."
-    [ "\${MOCK_PLAN_DESTROY:-0}" != 0 ] && echo "  # aws_db_instance.beaver will be destroyed"
+    # Real terraform colours its prose unless -no-color is passed; the tool must not grep prose.
+    case " $* " in *" -no-color "*) printf 'Plan: 3 to add, 1 to change, 4 to destroy.\\n' ;; *) printf '\\033[1mPlan:\\033[0m 3 to add, 1 to change, 4 to destroy.\\n' ;; esac
     for a in "$@"; do case "$a" in -out=*) : >"\${a#-out=}" ;; esac; done ;;
+  *" show -json "*)
+    # Every release replaces the four task definitions; a tuple flip replaces the epoch. Those are
+    # expected. MOCK_PLAN_DESTROY=1 adds a real deletion.
+    extra=""; [ "\${MOCK_PLAN_DESTROY:-0}" != 0 ] && extra=',{"address":"aws_db_instance.beaver","change":{"actions":["delete"]}}'
+    printf '{"resource_changes":[{"address":"aws_ecs_task_definition.beaver_app","change":{"actions":["delete","create"]}},{"address":"aws_ecs_task_definition.beaver_cpu_pipeline","change":{"actions":["delete","create"]}},{"address":"aws_ecs_task_definition.beaver_schema_migrator","change":{"actions":["delete","create"]}},{"address":"aws_ecs_task_definition.beaver_project_asset_deletions","change":{"actions":["delete","create"]}},{"address":"terraform_data.beaver_writer_mode_epoch","change":{"actions":["delete","create"]}},{"address":"aws_ecs_service.beaver_app","change":{"actions":["update"]}},{"address":"aws_s3_bucket.x","change":{"actions":["no-op"]}}%s]}\\n' "$extra" ;;
   *" apply "*)
     # Registering task definitions bumps the revision the fakes report.
     r=$(cat "\${MOCK_STATE}/rev" 2>/dev/null || echo 1); echo $((r+1)) >"\${MOCK_STATE}/rev"
@@ -258,14 +263,14 @@ test("bootstrap on an empty account runs the phases in the only order that works
   assertBefore(lines, "docker build --platform linux/amd64 -t beaver-app:bootstrap-check", "aws s3api create-bucket");
   // State backend before terraform init; init before the targeted ECR apply.
   assertBefore(lines, "aws s3api create-bucket", "init -reconfigure");
-  assertBefore(lines, "init -reconfigure", "plan -input=false -out=");
+  assertBefore(lines, "init -reconfigure", "plan -input=false -no-color -out=");
   assert.ok(lines.some((l) => l.includes("plan -input=false") && l.includes("-target=aws_ecr_repository.beaver_app")), "the ECR step is a targeted plan");
   // ECR repos before any push; the Lambda image before the full apply (Lambda needs it at create time).
   assertBefore(lines, "-target=aws_ecr_repository.beaver_cv_lambda", "docker push");
   assertBefore(lines, `docker push ${ECR}/beaver-cv-lambda:latest`, "deploy.sh publish");
   assert.ok(lines.some((l) => l.includes("deploy.sh publish (BP_SKIP_PREFLIGHT=1)")), "publish runs with the Mac-side preflight skipped");
   // Full apply (outage) after publish, then the EMPTY-database migrator before anything goes live.
-  const fullPlans = lines.filter((l) => /terraform -chdir=.*plan -input=false -out=\S+$/.test(l));
+  const fullPlans = lines.filter((l) => /terraform -chdir=.*plan -input=false -no-color -out=\S+$/.test(l));
   const fullApplies = lines.filter((l) => /terraform -chdir=.* apply -input=false \S+plan\.tfplan$/.test(l));
   assert.equal(fullPlans.length, 1, "exactly one full (untargeted) plan in the first run (outage)");
   assert.ok(fullApplies.length >= 2, "every plan is applied from its saved plan file (ECR + full)");
@@ -291,7 +296,7 @@ test("bootstrap on an empty account runs the phases in the only order that works
   lines = await logLines();
   assert.ok(!lines.some((l) => l.includes("deploy.sh publish")), "no second publish on resume");
   assert.ok(!lines.some((l) => l.startsWith("RUNTASK bp-bootstrap-migrate")), "no second migration on resume");
-  assert.equal(lines.filter((l) => /plan -input=false -out=\S+$/.test(l)).length, 1, "exactly one full plan on resume (live)");
+  assert.equal(lines.filter((l) => /plan -input=false -no-color -out=\S+$/.test(l)).length, 1, "exactly one full plan on resume (live)");
   assertBefore(lines, "apply -input=false", "curl -sk --max-time 10 -H Host: app.");
   assertBefore(lines, "curl -sk --max-time 10 -H Host: app.", "RUNTASK bp-bootstrap-company");
   assertBefore(lines, "RUNTASK bp-bootstrap-company", "RUNTASK bp-bootstrap-admin");
@@ -518,4 +523,54 @@ test("release refuses an unclean working tree unless BP_ALLOW_DIRTY=1 (deploy.sh
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /uncommitted changes/u);
   assert.ok(!(await logLines()).some((l) => l.includes("deploy.sh publish")));
+});
+
+test("the plan gate: expected task-definition/epoch replacements pass; a real deletion is refused non-interactively", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "rev"), "7");
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  // The fake plan says "4 to destroy" (the four task definitions): must NOT trip the gate.
+  const fine = runTool(["release", "--yes", "--allow-unverified"], { MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST });
+  assert.equal(fine.status, 0, `${fine.stdout}\n${fine.stderr}`);
+  assert.ok((await logLines()).some((l) => / apply -input=false \S+plan\.tfplan$/.test(l)), "applied the saved plan");
+  // A deletion beyond those is refused unless the owner opts in.
+  await resetState();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "rev"), "7");
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  const refused = runTool(["release", "--yes", "--allow-unverified"], { MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST, MOCK_PLAN_DESTROY: "1" });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /destructive plan/u);
+  assert.match(refused.stdout, /DESTROY: aws_db_instance\.beaver/u);
+  assert.ok(!(await logLines()).some((l) => / apply -input=false /.test(l)), "nothing applied");
+});
+
+test("bootstrap --from re-runs every later phase, and infra-live rolls the service onto a re-published digest", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "rev"), "7");
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  await writeFile(path.join(fixture, "state", "service-td"), `arn:aws:ecs:us-east-1:${ACCOUNT}:task-definition/beaver-app:1`);
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  const ledger = {};
+  for (const p of ["preflight", "image-build", "state-backend", "certificate", "ecr", "images", "infra-outage", "migrate", "infra-live", "dns", "first-user", "verify"]) ledger[`phase:${p}`] = "done";
+  ledger.app_digest = NEXT_DIGEST; ledger.app_head = "deadbeef";
+  await writeFile(path.join(home, ".blueprintparser-deploy", "bootstrap.json"), JSON.stringify(ledger));
+  const result = runTool(["bootstrap", "--yes", "--from", "infra-live"], { BP_ASSUME_OWNER_DONE: "1", MOCK_REGISTERED_DIGEST: NEXT_DIGEST, MOCK_DEPLOYED_HEAD12: "000000000000" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const lines = await logLines();
+  assert.ok(lines.some((l) => l.includes("ecs update-service") && /beaver-app:8/.test(l)), "rolled the service onto the registered revision");
+  assert.ok(lines.some((l) => l.startsWith("RUNTASK bp-bootstrap-company")), "first-user ran again (later phases were re-opened)");
+  const after = JSON.parse(await readFile(path.join(home, ".blueprintparser-deploy", "bootstrap.json"), "utf8"));
+  assert.equal(after["phase:verify"], "done");
 });

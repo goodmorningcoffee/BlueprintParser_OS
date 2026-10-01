@@ -38,6 +38,12 @@ describe("hardening wiring", () => {
     }
   });
 
+  it("symbol-search holds its own anonymous slot around the LOCAL template match (the stream outlives the route's)", () => {
+    const source = withoutComments(read("src/server/services/symbol-search.ts"));
+    expect(source).toContain("const localHeavy = session");
+    expect(source).toContain("await localHeavy(() => templateMatch(");
+  });
+
   it("next.config.ts turns the image optimizer off", () => {
     expect(withoutComments(read("next.config.ts"))).toContain("images: { unoptimized: true }");
   });

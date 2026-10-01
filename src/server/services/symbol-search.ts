@@ -96,6 +96,7 @@ import { isLambdaCvEnabled, fanOutTemplateMatch, TEMPLATE_MATCH_BATCH_SIZE } fro
 import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import type { TemplateMatchProgress, SymbolSearchMatch, TextractPageData, BboxMinMax } from "@/types";
 import { logger } from "@/lib/logger";
+import { withHeavyProcessSlot } from "@/lib/heavy-process-gate";
 
 const MAX_SEARCH_PAGES = 5_000;
 
@@ -155,7 +156,14 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
     throw new ApiError("VALIDATION", "Invalid templateBbox");
   }
 
-  const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
+  const { project, session } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
+  // This route answers with a stream, so the route-level anonymous slot is released the moment the
+  // Response exists — before the LOCAL branch below starts its python child inside the stream.
+  // Hold a slot of our own around that child for a caller with no session. (The Lambda branch
+  // starts no local child; production runs it.)
+  const localHeavy = session
+    ? <T,>(task: () => Promise<T>) => task()
+    : <T,>(task: () => Promise<T>) => withHeavyProcessSlot(task);
 
   if (project.isDemo) {
     // Returned VERBATIM (old {error:string} envelope) via the shell passthrough — see header.
@@ -413,7 +421,7 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
           }
           if (scales.length === 0) scales.push(1.0);
 
-          const result = await templateMatch(
+          const result = await localHeavy(() => templateMatch(
             {
               mode: "search",
               templatePath: templatePath,
@@ -438,7 +446,7 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
                 controller.enqueue(encoder.encode(msg + "\n"));
               },
             }
-          );
+          ));
 
           const matches: (SymbolSearchMatch & { boundText?: string | null })[] = result.results.map((r, i) => ({
             id: `sm-${Date.now()}-${i}`, // FQ-1

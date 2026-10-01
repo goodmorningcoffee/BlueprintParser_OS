@@ -10,6 +10,7 @@
 #   ./deploy-aws.sh rollback             re-bind the previous digest (no schema change across it)
 #   ./deploy-aws.sh restart              same-image restart after a config/secret change (deploy.sh activate)
 #   ./deploy-aws.sh logs                 tail the app log
+#   ./deploy-aws.sh unlock-login <email> clear a login lockout (the owner's own, typically)
 #
 # It ORCHESTRATES the tools that exist; it does not reimplement them. `./deploy.sh publish` remains
 # the build-and-push step and `./deploy.sh activate` the same-image restart. Terraform owns every
@@ -28,6 +29,7 @@ set -euo pipefail
 if [ -n "${BP_TRACE:-}" ]; then exec 9>>"${BP_TRACE}"; export BASH_XTRACEFD=9; set -x; fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${PROJECT_DIR}"   # deploy-yolo.sh and deploy.sh build from relative paths
 TF_DIR="${PROJECT_DIR}/infrastructure/terraform"
 STATE_DIR="${BP_DEPLOY_STATE_DIR:-${HOME}/.blueprintparser-deploy}"
 LEDGER="${STATE_DIR}/bootstrap.json"
@@ -224,15 +226,26 @@ last_release_field() { # last_release_field <field>
 # that would be destroyed or replaced, refuse destruction unless the owner types `destroy`, then
 # apply exactly that plan. tf_apply [extra plan args...]
 tf_apply() {
-  local plan="${STATE_DIR}/plan.tfplan" out="${STATE_DIR}/plan.txt" summary destroys
-  run "${TERRAFORM_BIN}" -chdir="${TF_DIR}" plan -input=false -out="${plan}" "$@" >"${out}" 2>&1 || { tail -30 "${out}"; die "terraform plan failed"; }
-  summary=$(grep -E '^(Plan: |No changes)' "${out}" | tail -1)
-  printf '  %b%s%b\n' "${BOLD}" "${summary:-plan produced no summary line}" "${NC}"
-  grep -E 'will be (destroyed|replaced)|must be replaced' "${out}" | sed 's/^/    /' || true
-  case "${summary}" in "No changes"*) ok "nothing to apply"; return 0 ;; esac
-  destroys=$(printf '%s' "${summary}" | sed -n -E 's/.* ([0-9]+) to destroy.*/\1/p')
+  local plan="${STATE_DIR}/plan.tfplan" out="${STATE_DIR}/plan.txt" verdict destroys
+  run "${TERRAFORM_BIN}" -chdir="${TF_DIR}" plan -input=false -no-color -out="${plan}" "$@" >"${out}" 2>&1 || { tail -30 "${out}"; die "terraform plan failed"; }
+  grep -E '^(Plan: |No changes)' "${out}" | tail -1 | sed 's/^/  /' || true
+  # Read the plan itself, not its prose. A release REPLACES the four task definitions (a digest
+  # change is a new revision) and every live<->outage flip replaces terraform_data.…_epoch by
+  # design: those are not destruction. Anything else deleted or replaced is.
+  verdict=$("${TERRAFORM_BIN}" -chdir="${TF_DIR}" show -json "${plan}" 2>>"$(log_file)" | json '
+    (() => {
+      const rc = (j && j.resource_changes) || [];
+      const expected = a => /^aws_ecs_task_definition\./.test(a) || a === "terraform_data.beaver_writer_mode_epoch";
+      const acts = r => r.change && r.change.actions ? r.change.actions : [];
+      const destroys = rc.filter(r => acts(r).includes("delete") && !expected(r.address)).map(r => r.address + " (" + acts(r).join(",") + ")");
+      const changes = rc.filter(r => !(acts(r).length === 1 && acts(r)[0] === "no-op"));
+      return JSON.stringify({ total: changes.length, destroys });
+    })()')
+  destroys=$(printf '%s' "${verdict}" | json 'j.destroys.length')
+  printf '%s' "${verdict}" | json 'j.destroys.join("\n")' | sed 's/^/    DESTROY: /'
+  if [ "$(printf '%s' "${verdict}" | json 'j.total')" = 0 ]; then ok "nothing to apply"; return 0; fi
   if [ "${destroys:-0}" != 0 ]; then
-    printf '  %bThis plan DESTROYS %s resource(s).%b\n' "${RED}" "${destroys}" "${NC}"
+    printf '  %bThis plan DESTROYS %s resource(s) beyond the expected task-definition/epoch replacements.%b\n' "${RED}" "${destroys}" "${NC}"
     if [ "${ASSUME_YES}" = 1 ]; then
       [ "${BP_ALLOW_DESTROY:-0}" = 1 ] || die "refusing a destructive plan non-interactively (set BP_ALLOW_DESTROY=1 only on purpose)"
     else
@@ -431,6 +444,8 @@ phase_image_build() {
   run "${DOCKER_BIN}" build --platform linux/amd64 -f "${PROJECT_DIR}/Dockerfile.yolo" -t beaver-yolo-pipeline:bootstrap-check "${PROJECT_DIR}"
   info "smoke: the python the web task shells out to must import cleanly"
   run "${DOCKER_BIN}" run --rm --entrypoint python3 beaver-app:bootstrap-check -c "import fitz, cv2, img2table, PIL, pytesseract; print('python ok', fitz.version[0], cv2.__version__)"
+  info "smoke: native node modules must load on the Debian runner (they were traced on an Alpine builder)"
+  run "${DOCKER_BIN}" run --rm --entrypoint node beaver-app:bootstrap-check -e "require('sharp'); require('bcrypt'); require('pg'); require('drizzle-orm'); console.log('node native ok')"
 }
 
 phase_state_backend() {
@@ -560,17 +575,30 @@ phase_infra_outage() {
 # Before any migration: the maintenance schedule is DISABLED in the outage tuple, but its retry
 # window is 600 s, so the cutover contract waits 900 s after its last change before trusting that
 # nothing can fire; and no writer (app task or maintenance worker) may still be running.
+# The migrator refuses, in BOTH modes, an image whose latest migration is not the pinned
+# P2_CURRENT_TAG (scripts/schema-migration-contract.mjs). Check that here, before anything is
+# drained, because discovering it from a failed task after a 15-minute wait is a site outage.
+require_journal_pin() {
+  local latest pin
+  latest=$(node -e 'const j=require(process.argv[1]);process.stdout.write(j.entries[j.entries.length-1].tag)' "${PROJECT_DIR}/drizzle/meta/_journal.json")
+  pin=$(sed -n -E 's/^export const P2_CURRENT_TAG = "([^"]+)";/\1/p' "${PROJECT_DIR}/scripts/schema-migration-contract.mjs")
+  [ -n "${pin}" ] || die "could not read P2_CURRENT_TAG from scripts/schema-migration-contract.mjs"
+  [ "${latest}" = "${pin}" ] || die "drizzle journal ends at ${latest} but the migrator is pinned to ${pin}: bump P2_CURRENT_TAG (and the policy/test literals) in the same commit as the migration, then release again"
+  ok "journal ${latest} matches the migrator pin"
+}
+
 await_writer_quiescence() {
   local modified now since; modified=$(aws_ro scheduler get-schedule --name "${MAINTENANCE_SCHEDULE_NAME}" --group-name "${MAINTENANCE_SCHEDULE_GROUP}" --region "${AWS_REGION}" --query LastModificationDate --output text)
   now=$(date +%s); since=$(( now - $(node -e 'process.stdout.write(String(Math.floor(Date.parse(process.argv[1])/1000)))' "${modified}") ))
   if [ "${since}" -lt "${SCHEDULE_DRAIN_SECONDS}" ]; then info "waiting $(( SCHEDULE_DRAIN_SECONDS - since )) s for the scheduler drain window"; sleep $(( SCHEDULE_DRAIN_SECONDS - since )); fi
   [ "$(service_field 'j.services[0].runningCount')" = 0 ] || die "the app service has running tasks; it must be at 0 for a migration"
-  wait_for 600 15 "maintenance workers to finish" sh -c "[ -z \"\$(${AWS_BIN} ecs list-tasks --cluster ${ECS_CLUSTER} --family beaver-project-asset-deletions --desired-status RUNNING --region ${AWS_REGION} --query 'taskArns[0]' --output text 2>/dev/null | grep -v '^None$')\" ]"
+  wait_for 600 15 "maintenance workers to finish" sh -c "out=\$(${AWS_BIN} ecs list-tasks --cluster ${ECS_CLUSTER} --family beaver-project-asset-deletions --desired-status RUNNING --region ${AWS_REGION} --query 'taskArns[0]' --output text) || exit 1; [ -z \"\$(printf '%s' \"\$out\" | grep -v '^None$')\" ]"
   ok "no writers running; scheduler drain window elapsed"
 }
 
 phase_migrate() {
   section "Create the schema (empty database → 40 migrations)"
+  require_journal_pin
   await_writer_quiescence
   local td; td=$(latest_td "${MIGRATOR_FAMILY}")
   [ "$(td_image "${td}")" = "$(ecr_base)/beaver-app@$(ledger_get app_digest)" ] || die "migrator task definition image does not match the published digest"
@@ -585,11 +613,18 @@ phase_infra_live() {
   require_tuple live
   info "terraform: desired 1, autoscaling and maintenance schedule on"
   tf_apply
+  # Terraform ignores the service's task definition, so a resumed bootstrap whose image was
+  # re-published leaves the service on the old revision. Roll it onto the published digest.
   local td; td=$(service_field 'j.services[0].taskDefinition')
-  local tries=0
-  until aws_ro ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" --region "${AWS_REGION}" >/dev/null 2>&1; do
-    tries=$((tries+1)); [ "${tries}" -lt 3 ] || die "service did not stabilise"; info "still starting…"
-  done
+  if [ "$(td_image "${td}")" != "$(ecr_base)/${ECR_REPO}@$(ledger_get app_digest)" ]; then
+    warn "service is bound to ${td##*/}, not the published digest; rolling it"
+    roll_service "$(bound_app_td_for "$(ledger_get app_digest)")" 1
+  else
+    local tries=0
+    until aws_ro ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" --region "${AWS_REGION}" >/dev/null 2>&1; do
+      tries=$((tries+1)); [ "${tries}" -lt 3 ] || die "service did not stabilise"; info "still starting…"
+    done
+  fi
   local alb; alb=$(alb_dns)
   wait_for 600 15 "app healthy through the ALB" health_ok "https://${alb}/api/health" "app.${DOMAIN}"
   ok "app answers through the ALB (${alb})"
@@ -646,13 +681,21 @@ cmd_bootstrap() {
   load_config; require_config AWS_ACCOUNT AWS_REGION DOMAIN
   section "Bootstrap — ledger ${LEDGER}"
   local p started=0
+  # --from P re-runs P and everything after it: a later phase's "done" was earned against the
+  # state P is about to change (a re-publish changes the digest every later phase depends on).
+  if [ -n "${FROM_PHASE}" ]; then
+    for p in ${PHASES}; do
+      if [ "$p" = "${FROM_PHASE}" ]; then started=1; fi
+      [ "${started}" = 1 ] && ledger_set "phase:$p" pending
+    done
+    started=0
+  fi
   for p in ${PHASES}; do
     if [ -n "${FROM_PHASE}" ] && [ "${started}" = 0 ]; then [ "$p" = "${FROM_PHASE}" ] && started=1 || continue; fi
-    if [ -z "${FROM_PHASE}" ] && phase_done "$p"; then ok "phase $p already done"; continue; fi
+    if phase_done "$p"; then ok "phase $p already done"; continue; fi
     printf '\n%b▶ phase %s%b\n' "${BOLD}" "$p" "${NC}"
     "phase_$(printf '%s' "$p" | tr '-' '_')"
     mark_done "$p"
-    [ -n "${FROM_PHASE}" ] && { FROM_PHASE=""; }
   done
   section "Bootstrap complete — https://app.${DOMAIN}"
 }
@@ -700,6 +743,7 @@ cmd_release() {
     warn "no drizzle/ change since ${dh:0:12}; --outage is not needed but proceeds"
   fi
 
+  [ "${OUTAGE}" = 1 ] && require_journal_pin
   announce "BP_SKIP_PREFLIGHT=1 ./deploy.sh publish"
   local digest
   BP_SKIP_PREFLIGHT=1 run_to_file "${STATE_DIR}/last-publish.txt" "${DEPLOY_SH}" publish
@@ -763,7 +807,9 @@ cmd_rollback() {
   valid_digest "${previous:-}" || die "no previous digest in ${RELEASES}"
   local current; current=$(live_digest)
   info "live ${current} → back to ${previous}"
-  local ph; ph=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || true)
+  # The restored image was built from an earlier HEAD; record that one, so the next release's
+  # drizzle/ comparison starts from the code that is actually running.
+  local ph; ph=$(node -e 'const fs=require("fs");const [p,d]=process.argv.slice(1);const rows=fs.readFileSync(p,"utf8").trim().split("\n").map(l=>JSON.parse(l));const r=[...rows].reverse().find(r=>r.digest===d);process.stdout.write(r?r.head:"")' "${RELEASES}" "${previous}")
   confirm "Re-bind ${previous:0:19}…? (the schema check below refuses if its migrations differ from the database)"
   apply_digest "${previous}" live
   schema_check || die "the previous image's migrations do not match the database; a rollback across a schema change is not possible"
@@ -779,6 +825,14 @@ cmd_restart() {
   run "${DEPLOY_SH}" activate "${d}"
 }
 cmd_logs() { load_config; run "${AWS_BIN}" logs tail /ecs/blueprintparser-app --since 10m --follow --region "${AWS_REGION}"; }
+cmd_unlock_login() {
+  load_config; require_config AWS_ACCOUNT AWS_REGION
+  [ -n "${1:-}" ] || die "usage: ./deploy-aws.sh unlock-login <email>"
+  local td; td=$(latest_td "${MIGRATOR_FAMILY}")
+  one_off_task "${td}" "$(node -e 'const [email]=process.argv.slice(1);process.stdout.write(JSON.stringify({containerOverrides:[{name:"beaver-schema-migrator",command:["./entrypoint.sh","worker","node","scripts/unlock-login.mjs"],environment:[{name:"BP_EMAIL",value:email}]}]}))' "$1")" bp-unlock-login \
+    || die "unlock failed"
+  ok "lockouts cleared for $1"
+}
 
 # ── TUI ──────────────────────────────────────────────────────────────────────
 tui() {
@@ -797,21 +851,24 @@ tui() {
     printf '  6) restart    — same image, picks up secret/config changes\n'
     printf '  7) rollback   — re-bind the previous digest\n'
     printf '  8) logs       — tail the app log\n'
+    printf '  9) unlock     — clear a login lockout for an email\n'
     printf '  q) quit\n\n  > '
     local c; read -r c </dev/tty || exit 0
     case "${c}" in
       1) cmd_doctor ;; 2) cmd_status ;; 3) cmd_bootstrap ;;
       4) OUTAGE=0; cmd_release ;; 5) OUTAGE=1; cmd_release ;;
       6) cmd_restart ;; 7) cmd_rollback ;; 8) cmd_logs ;;
+      9) local e; printf '  email: '; read -r e </dev/tty || e=""; cmd_unlock_login "${e}" ;;
       q|Q) exit 0 ;; *) warn "unknown choice" ;;
     esac
   done
 }
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 64; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 64; }
 
 # ── main ─────────────────────────────────────────────────────────────────────
 cmd="${1:-}"; [ $# -gt 0 ] && shift
+POSITIONAL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1 ;;
@@ -819,7 +876,8 @@ while [ $# -gt 0 ]; do
     --outage) OUTAGE=1 ;;
     --allow-unverified) ALLOW_UNVERIFIED=1 ;;
     -h|--help) usage ;;
-    *) die "unknown option $1" ;;
+    -*) die "unknown option $1" ;;
+    *) POSITIONAL="$1" ;;
   esac
   shift
 done
@@ -832,6 +890,7 @@ case "${cmd}" in
   rollback) cmd_rollback ;;
   restart) cmd_restart ;;
   logs) cmd_logs ;;
+  unlock-login) cmd_unlock_login "${POSITIONAL}" ;;
   help|-h|--help) usage ;;
   *) usage ;;
 esac
