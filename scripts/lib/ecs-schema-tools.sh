@@ -29,6 +29,15 @@ bp_aws() {
   "${AWS_BIN:-aws}" "$@"
 }
 
+# macOS ships bash 3.2. It has no BASHPID (an unbound variable under `set -u`; the generated
+# client token in bp_run_one_off_task reads it, and the policy gate pins that line verbatim),
+# and no ${var,,} (it dies with "bad substitution" at the call).
+: "${BASHPID:=$$}"
+
+bp_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 bp_assert_caller_account() {
   local actual
   actual=$(bp_aws sts get-caller-identity \
@@ -819,7 +828,7 @@ bp_assert_service_autoscaling_state() {
     bp_die "expected autoscaling minimum/maximum must be explicit nonnegative integers with minimum <= maximum"
     return 1
   fi
-  expected_suspended="${expected_suspended,,}"
+  expected_suspended=$(bp_lower "${expected_suspended}")
   if [ "${expected_suspended}" != "true" ] && [ "${expected_suspended}" != "false" ]; then
     bp_die "expected autoscaling suspension must be explicitly true or false"
     return 1
@@ -857,8 +866,8 @@ bp_assert_service_autoscaling_state() {
     --output text) || return 1
 
   local -a actual=(
-    "${min_capacity}" "${max_capacity}" "${scale_in_suspended,,}"
-    "${scale_out_suspended,,}" "${scheduled_scaling_suspended,,}"
+    "${min_capacity}" "${max_capacity}" "$(bp_lower "${scale_in_suspended}")"
+    "$(bp_lower "${scale_out_suspended}")" "$(bp_lower "${scheduled_scaling_suspended}")"
   )
   local -a expected=(
     "${expected_min}" "${expected_max}" "${expected_suspended}"
