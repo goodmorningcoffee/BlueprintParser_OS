@@ -301,7 +301,9 @@ one_off_task() { # one_off_task <td arn> <overrides json> <started-by>
   # The CLI waiter gives up after 10 min; a cold pull of this image can take longer. Loop it.
   local tries=0
   until aws_ro ecs wait tasks-stopped --cluster "${ECS_CLUSTER}" --tasks "${task_arn}" --region "${AWS_REGION}" >/dev/null 2>&1; do
-    tries=$((tries+1)); [ "${tries}" -lt 6 ] || die "task ${task_arn##*/} did not stop within an hour"
+    # The waiter exits 255 for a 10-minute timeout AND for an expired token (in about a second).
+    require_caller
+    tries=$((tries+1)); [ "${tries}" -lt 6 ] || die "task ${task_arn##*/} still not STOPPED after 6 waiter rounds (see $(log_file))"
     info "still running…"
   done
   local described; described=$(aws_ro ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${task_arn}" --region "${AWS_REGION}" --output json)
@@ -317,11 +319,13 @@ one_off_task() { # one_off_task <td arn> <overrides json> <started-by>
 
 roll_service() { # roll_service <app td arn> <desired>
   local td="$1" desired="$2" state tries=0
+  [ -n "${td}" ] || die "roll_service: no task definition given"
   aws_mut ecs update-service --cluster "${ECS_CLUSTER}" --service "${ECS_SERVICE}" \
     --task-definition "${td}" --desired-count "${desired}" --force-new-deployment \
     --region "${AWS_REGION}" --query 'service.serviceName' --output text
   until aws_ro ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" --region "${AWS_REGION}" >/dev/null 2>&1; do
-    tries=$((tries+1)); [ "${tries}" -lt 3 ] || die "service did not stabilise within 30 minutes"
+    require_caller
+    tries=$((tries+1)); [ "${tries}" -lt 3 ] || die "service still not stable after 3 waiter rounds (see $(log_file))"
     info "still rolling…"
   done
   # services-stable can return before the deployment reports COMPLETED; poll it.
@@ -443,7 +447,7 @@ phase_image_build() {
   run "${DOCKER_BIN}" build --platform linux/amd64 -f "${PROJECT_DIR}/Dockerfile.lambda" -t beaver-cv-lambda:bootstrap-check "${PROJECT_DIR}"
   run "${DOCKER_BIN}" build --platform linux/amd64 -f "${PROJECT_DIR}/Dockerfile.yolo" -t beaver-yolo-pipeline:bootstrap-check "${PROJECT_DIR}"
   info "smoke: the python the web task shells out to must import cleanly"
-  run "${DOCKER_BIN}" run --rm --entrypoint python3 beaver-app:bootstrap-check -c "import fitz, cv2, img2table, PIL, pytesseract; print('python ok', fitz.version[0], cv2.__version__)"
+  run "${DOCKER_BIN}" run --rm --entrypoint python3 beaver-app:bootstrap-check -c "import fitz, cv2, img2table, PIL, pytesseract; assert cv2.__version__.startswith('4.13'), 'cv2 is ' + cv2.__version__ + ', not the pinned 4.13: img2table breaks on OpenCV 5'; print('python ok', fitz.version[0], cv2.__version__)"
   info "smoke: native node modules must load on the Debian runner (they were traced on an Alpine builder)"
   run "${DOCKER_BIN}" run --rm --entrypoint node beaver-app:bootstrap-check -e "require('sharp'); require('bcrypt'); require('pg'); require('drizzle-orm'); console.log('node native ok')"
 }
@@ -618,11 +622,14 @@ phase_infra_live() {
   local td; td=$(service_field 'j.services[0].taskDefinition')
   if [ "$(td_image "${td}")" != "$(ecr_base)/${ECR_REPO}@$(ledger_get app_digest)" ]; then
     warn "service is bound to ${td##*/}, not the published digest; rolling it"
-    roll_service "$(bound_app_td_for "$(ledger_get app_digest)")" 1
+    # Assigned first: a die inside "$(…)" used as an ARGUMENT only exits the subshell.
+    local new_td; new_td=$(bound_app_td_for "$(ledger_get app_digest)")
+    roll_service "${new_td}" 1
   else
     local tries=0
     until aws_ro ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" --region "${AWS_REGION}" >/dev/null 2>&1; do
-      tries=$((tries+1)); [ "${tries}" -lt 3 ] || die "service did not stabilise"; info "still starting…"
+      require_caller
+      tries=$((tries+1)); [ "${tries}" -lt 3 ] || die "service still not stable after 3 waiter rounds (see $(log_file))"; info "still starting…"
     done
   fi
   local alb; alb=$(alb_dns)
@@ -649,10 +656,15 @@ phase_dns() {
 phase_first_user() {
   section "First account"
   local email; email=$(tfvar root_admin_email); [ -n "${email}" ] || die "root_admin_email is empty in tfvars; set it and re-run this phase"
-  local name slug key
+  local name slug key keyfile="${STATE_DIR}/first-company-key" key_reused=0
   printf '  Company name for your own account [BlueprintParser]: '; read -r name </dev/tty || true; name="${name:-BlueprintParser}"
   slug=$(printf '%s' "${name}" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')-$(openssl rand -hex 4)
-  key=$(openssl rand -hex 16)
+  # The key is saved BEFORE the task launches and reused by a re-run. If this phase dies between
+  # RunTask and the print below (expired credentials, Ctrl-C, a sleeping laptop), the row may
+  # already carry the key, and registering needs it: without the file the owner would be told to
+  # regenerate it in /admin, which needs the login the key is for. STATE_DIR is 0700.
+  if [ -s "${keyfile}" ]; then key=$(cat "${keyfile}"); key_reused=1
+  else key=$(openssl rand -hex 16); (umask 077; printf '%s\n' "${key}" >"${keyfile}"); fi
   local td; td=$(latest_td "${MIGRATOR_FAMILY}")
   # The migrator task definition has DATABASE_URL and nothing else; `worker` mode asserts the
   # schema is current before running the command. Values travel as env overrides (visible in
@@ -660,7 +672,11 @@ phase_first_user() {
   # regenerated in the admin UI). The SQL lives in scripts/bootstrap-first-company.mjs, in the image.
   one_off_task "${td}" "$(node -e 'const [name,slug,key]=process.argv.slice(1);process.stdout.write(JSON.stringify({containerOverrides:[{name:"beaver-schema-migrator",command:["./entrypoint.sh","worker","node","scripts/bootstrap-first-company.mjs"],environment:[{name:"BP_COMPANY_NAME",value:name},{name:"BP_DATA_KEY",value:slug},{name:"BP_ACCESS_KEY",value:key}]}]}))' "${name}" "${slug}" "${key}")" bp-bootstrap-company \
     || { [ "${LAST_TASK_EXIT}" = 4 ] || die "could not insert the company row"; }
-  if [ "${LAST_TASK_EXIT}" = 4 ]; then
+  if [ "${LAST_TASK_EXIT}" = 4 ] && [ "${key_reused}" = 1 ]; then
+    warn "a company already exists (an earlier run of this phase inserted it). No new row, no new key."
+    printf '\n  %bCompany access key from that earlier run (saved in %s until you are promoted):%b %s\n' "${BOLD}" "${keyfile}" "${NC}" "${key}"
+  elif [ "${LAST_TASK_EXIT}" = 4 ]; then
+    rm -f "${keyfile}"   # generated by this run; no row carries it
     warn "a company already exists (an earlier run inserted it); its key was shown then — if lost, regenerate it in /admin after logging in. No new row, no new key."
   else
     printf '\n  %bCompany access key (shown once; regenerate it in /admin afterwards — it also sits in the ECS task record for a while):%b %s\n' "${BOLD}" "${NC}" "${key}"
@@ -668,6 +684,7 @@ phase_first_user() {
   pause_for_owner "register at https://app.${DOMAIN}/register with email ${email}, the key above, and a password (10+ chars, one uppercase, one digit); then LOG IN once (that login promotes ${email} to root admin)."
   one_off_task "${td}" "$(node -e 'const [email]=process.argv.slice(1);process.stdout.write(JSON.stringify({containerOverrides:[{name:"beaver-schema-migrator",command:["./entrypoint.sh","worker","node","scripts/promote-first-admin.mjs"],environment:[{name:"BP_EMAIL",value:email}]}]}))' "${email}")" bp-bootstrap-admin \
     || die "no root-admin row for ${email} yet — did the login happen? re-run this phase after logging in"
+  rm -f "${keyfile}"
   ok "${email} is root admin with the admin role; /admin is open"
 }
 
@@ -778,7 +795,8 @@ release_rolling() {
   apply_digest "${digest}" live
   schema_check || die "schema check FAILED: the database does not match the new image's migrations. The service still runs ${previous}. Use: ./deploy-aws.sh release --outage"
   ok "schema check passed"
-  roll_service "$(bound_app_td_for "${digest}")" 1
+  local new_td; new_td=$(bound_app_td_for "${digest}")
+  roll_service "${new_td}" 1
   wait_for 300 10 "https://app.${DOMAIN}/api/health" health_ok "https://app.${DOMAIN}/api/health"
   release_record release "${digest}" "${previous}" "${head}"
   section "Released ${digest:0:19}… (previous ${previous:0:19}…) — ./deploy-aws.sh rollback undoes it"
@@ -793,7 +811,8 @@ release_outage() {
   one_off_task "${td}" "{\"containerOverrides\":[{\"name\":\"beaver-schema-migrator\",\"environment\":[{\"name\":\"BP_SCHEMA_MIGRATION_MODE\",\"value\":\"${FORWARD_MODE}\"}]}]}" bp-release-migrate \
     || die "migration FAILED. The service is at 0 and still bound to ${previous}. Fix forward, or restore the LIVE tuple with the previous digest to come back up."
   ok "migrated"
-  roll_service "$(bound_app_td_for "${digest}")" 0
+  local new_td; new_td=$(bound_app_td_for "${digest}")
+  roll_service "${new_td}" 0
   apply_digest "${digest}" live
   wait_for 600 15 "https://app.${DOMAIN}/api/health" health_ok "https://app.${DOMAIN}/api/health"
   release_record release-outage "${digest}" "${previous}" "${head}"
@@ -813,7 +832,8 @@ cmd_rollback() {
   confirm "Re-bind ${previous:0:19}…? (the schema check below refuses if its migrations differ from the database)"
   apply_digest "${previous}" live
   schema_check || die "the previous image's migrations do not match the database; a rollback across a schema change is not possible"
-  roll_service "$(bound_app_td_for "${previous}")" 1
+  local new_td; new_td=$(bound_app_td_for "${previous}")
+  roll_service "${new_td}" 1
   release_record rollback "${previous}" "${current}" "${ph}"
   ok "rolled back"
 }

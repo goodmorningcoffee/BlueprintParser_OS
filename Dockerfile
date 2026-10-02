@@ -71,8 +71,10 @@ RUN groupadd --system --gid 1001 nodejs && \
 # Install Ghostscript, Python 3, Tesseract OCR, and system libraries
 # Two pins are load-bearing, not tidiness (measured 2026-09-29 against PyPI): pymupdf 1.28.2 prints
 # a deprecation warning to STDOUT on `import fitz`, and src/lib/processing.ts JSON-parses the
-# script's stdout — every upload failed. opencv-python-headless 5.0 changed HoughLinesP's shape and
-# img2table 0.0.12 raises TypeError. Both pins are the versions the last working image resolved.
+# script's stdout — every upload failed. OpenCV 5.0 changed HoughLinesP's shape and img2table 0.0.12
+# raises TypeError. Both pins are the versions the last working image resolved. opencv-python (the
+# non-headless wheel) is pinned too: img2table depends on it with no version, pip installs it AFTER
+# the headless one, and both own cv2/ — unpinned, 5.0 overwrote the pinned 4.13 (measured 2026-10-02).
 # pip3 --no-cache-dir is intentionally REMOVED below because we've mounted a
 # BuildKit cache at /root/.cache/pip — the cache lives outside the final image
 # layer, so there's no image bloat, and wheel downloads are reused across builds.
@@ -95,6 +97,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     && pip3 install --break-system-packages \
     numpy \
     opencv-python-headless==4.13.0.92 \
+    opencv-python==4.13.0.92 \
     pytesseract==0.3.13 \
     pdfplumber \
     pdfminer.six \

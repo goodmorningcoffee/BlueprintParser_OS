@@ -14,10 +14,16 @@ RUN apt-get update && \
 # PyTorch with CUDA 11.8 (bundles CUDA runtime), then ultralytics.
 # --no-cache-dir removed: BuildKit cache mount at /root/.cache/pip lives outside
 # the image layer, so repeat builds skip the ~2GB torch download without bloat.
+# pip is upgraded first because this base image ships pip 23.0.1, which rejects the cu118 index's
+# typing_extensions wheel ("inconsistent Name"), falls back to its sdist, and dies on flit_core,
+# which that index does not host: the build failed (measured 2026-10-02; pip 24.0 resolves).
+# The versions are what resolved and ran that day. dill is needed to unpickle yolo_medium.pt and
+# yolo_precise.pt, and the SageMaker job has no network to fetch it at run time.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip install \
-        torch torchvision --index-url https://download.pytorch.org/whl/cu118 \
-    && pip install ultralytics pyyaml
+    pip install pip==24.0 \
+    && pip install \
+        torch==2.7.1+cu118 torchvision==0.22.1+cu118 --index-url https://download.pytorch.org/whl/cu118 \
+    && pip install ultralytics==8.4.171 pyyaml==6.0.3 dill==0.4.1
 
 COPY scripts/yolo_inference.py /opt/ml/code/yolo_inference.py
 

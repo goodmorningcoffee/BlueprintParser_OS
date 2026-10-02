@@ -5,6 +5,7 @@
 // never happened on a refused path.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -511,6 +512,35 @@ exec "${path.join(fixture, "bin", "aws")}" "$@"
   assert.doesNotMatch(result.stdout, /Company access key \(shown once/u);
   assert.match(result.stdout, /a company already exists/u);
   assert.match(result.stdout, /root admin with the admin role/u);
+  // The key this run generated belongs to no row, so it must not be left behind as if it did.
+  assert.equal(existsSync(path.join(home, ".blueprintparser-deploy", "first-company-key")), false);
+});
+
+test("first-user re-run after a run that died mid-phase shows the key that run saved", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const stateDir = path.join(home, ".blueprintparser-deploy");
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(path.join(stateDir, "bootstrap.json"), JSON.stringify({ app_digest: APP_DIGEST }));
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  // An earlier run saved its key, launched the task (the INSERT committed), then died before
+  // printing. This run finds the row (exit 4) and must hand the owner that same key.
+  const savedKey = "0123456789abcdef0123456789abcdef";
+  await writeFile(path.join(stateDir, "first-company-key"), `${savedKey}\n`);
+  const wrapper = `#!/usr/bin/env bash
+if [ "$1 $2" = "ecs describe-tasks" ]; then n=$(cat "${path.join(fixture, "state", "dt-calls")}" 2>/dev/null || echo 0); echo $((n+1)) >"${path.join(fixture, "state", "dt-calls")}"; if [ "$n" = 0 ]; then echo '{"tasks":[{"stoppedReason":"","containers":[{"exitCode":4}]}]}'; else echo '{"tasks":[{"stoppedReason":"","containers":[{"exitCode":0}]}]}'; fi; exit 0; fi
+exec "${path.join(fixture, "bin", "aws")}" "$@"
+`;
+  await writeFile(path.join(fixture, "aws-exists"), wrapper);
+  await chmod(path.join(fixture, "aws-exists"), 0o755);
+  const result = runTool(["bootstrap", "--yes", "--from", "first-user"], {
+    BP_ASSUME_OWNER_DONE: "1", AWS_BIN: path.join(fixture, "aws-exists"),
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, new RegExp(`Company access key from that earlier run[^\\n]*${savedKey}`, "u"));
+  assert.match(result.stdout, /root admin with the admin role/u);
+  assert.equal(existsSync(path.join(stateDir, "first-company-key")), false, "removed once the owner is promoted");
 });
 
 test("release refuses an unclean working tree unless BP_ALLOW_DIRTY=1 (deploy.sh's own gate is skipped)", async () => {
