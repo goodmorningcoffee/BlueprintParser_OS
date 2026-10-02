@@ -122,6 +122,11 @@ resource "aws_s3_bucket_policy" "beaver_alb_access_logs" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # The first apply (2026-10-02) failed at ModifyLoadBalancerAttributes with "Access Denied
+      # for bucket" while this statement also carried an aws:SourceAccount condition. The ALB
+      # access-log doc lists aws:SourceArn (and aws:SourceOrgId) as the conditions the
+      # log-delivery service principal supports, not aws:SourceAccount, so that condition is
+      # gone; the account is still pinned by the account id in the resource path and the ARN.
       {
         Sid    = "AllowAccountLoadBalancerLogDelivery"
         Effect = "Allow"
@@ -131,9 +136,6 @@ resource "aws_s3_bucket_policy" "beaver_alb_access_logs" {
         Action   = "s3:PutObject"
         Resource = "${aws_s3_bucket.beaver_alb_access_logs.arn}/alb-logs/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
         Condition = {
-          StringEquals = {
-            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
-          }
           ArnLike = {
             "aws:SourceArn" = "arn:aws:elasticloadbalancing:${var.aws_region}:${data.aws_caller_identity.current.account_id}:loadbalancer/app/beaver-alb/*"
           }

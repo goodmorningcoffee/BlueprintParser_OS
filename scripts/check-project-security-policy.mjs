@@ -8707,7 +8707,9 @@ async function validateLabelStudioAccessLogSecretPolicy() {
       'Service = "logdelivery.elasticloadbalancing.amazonaws.com"',
       'Action   = "s3:PutObject"',
       "/alb-logs/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
-      '"aws:SourceAccount" = data.aws_caller_identity.current.account_id',
+      // aws:SourceAccount is deliberately NOT pinned here: the ALB log-delivery service does not
+      // satisfy it (the first real apply, 2026-10-02, got "Access Denied for bucket"), and the
+      // account is already pinned twice below — in the resource path and in aws:SourceArn.
       '"aws:SourceArn" = "arn:aws:elasticloadbalancing:${var.aws_region}:${data.aws_caller_identity.current.account_id}:loadbalancer/app/beaver-alb/*"',
       'Sid       = "DenyInsecureTransport"',
       '"aws:SecureTransport" = "false"',
