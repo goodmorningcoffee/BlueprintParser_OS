@@ -142,7 +142,15 @@ case " $* " in *" app.${DOMAIN} "*|*" labelstudio.${DOMAIN} "*) echo "${ALB}." ;
 `;
 const fakeCurl = `#!/usr/bin/env bash
 printf '%s\\n' "curl $*" >>"\${MOCK_AWS_LOG}"
-echo '{"status":"ok"}'
+# The first-user phase drives the app's own API: registration, the CSRF token, the credentials
+# login (the tool reads only the redirect URL) and the session check.
+case " $* " in
+  *"/api/register"*)                 cat >/dev/null; printf '{"success":true}\\n%s\\n' "\${MOCK_REGISTER_HTTP:-200}" ;;
+  *"/api/auth/csrf"*)                echo '{"csrfToken":"csrf-fixture"}' ;;
+  *"/api/auth/callback/credentials"*) printf '%s' "\${MOCK_LOGIN_REDIRECT:-https://app.${DOMAIN}/}" ;;
+  *"/api/auth/session"*)             echo '{"user":{"email":"owner@${DOMAIN}"}}' ;;
+  *) echo '{"status":"ok"}' ;;
+esac
 `;
 const fakeDeploySh = `#!/usr/bin/env bash
 printf '%s\\n' "deploy.sh $* (BP_SKIP_PREFLIGHT=\${BP_SKIP_PREFLIGHT:-})" >>"\${MOCK_AWS_LOG}"
@@ -234,6 +242,9 @@ function runTool(args, extraEnv = {}) {
       // The harness runs against the live repo, which may carry uncommitted work; the clean-tree
       // gate has its own test below.
       BP_ALLOW_DIRTY: "1",
+      // first-user registers the root admin through the API; non-interactive runs take these from env
+      BP_ROOT_ADMIN_PASSWORD: "Fixture-Passw0rd",
+      BP_ROOT_ADMIN_USERNAME: "owner",
       ...extraEnv,
     },
   });
@@ -491,7 +502,7 @@ exit $rc
   assertBefore(lines, "ecs list-tasks", "RUNTASK bp-release-migrate");
 });
 
-test("first-user re-run with an existing company prints no new key and still promotes", async () => {
+test("first-user re-run with an existing company and no saved key skips registration, logs in and promotes", async () => {
   await resetState();
   await writeFile(tfvarsPath, tfvars("live"));
   await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
@@ -509,14 +520,16 @@ exec "${path.join(fixture, "bin", "aws")}" "$@"
     BP_ASSUME_OWNER_DONE: "1", AWS_BIN: path.join(fixture, "aws-exists"),
   });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.doesNotMatch(result.stdout, /Company access key \(shown once/u);
-  assert.match(result.stdout, /a company already exists/u);
+  assert.match(result.stdout, /a company already exists and this tool has no saved key/u);
+  const lines = await logLines();
+  assert.ok(!lines.some((l) => l.startsWith("curl") && l.includes("/api/register")), "no registration without a key");
+  assert.ok(lines.some((l) => l.startsWith("curl") && l.includes("/api/auth/callback/credentials")), "the login still runs");
   assert.match(result.stdout, /root admin with the admin role/u);
   // The key this run generated belongs to no row, so it must not be left behind as if it did.
   assert.equal(existsSync(path.join(home, ".blueprintparser-deploy", "first-company-key")), false);
 });
 
-test("first-user re-run after a run that died mid-phase shows the key that run saved", async () => {
+test("first-user re-run after a run that died mid-phase registers with the key that run saved", async () => {
   await resetState();
   await writeFile(tfvarsPath, tfvars("live"));
   const stateDir = path.join(home, ".blueprintparser-deploy");
@@ -538,9 +551,35 @@ exec "${path.join(fixture, "bin", "aws")}" "$@"
     BP_ASSUME_OWNER_DONE: "1", AWS_BIN: path.join(fixture, "aws-exists"),
   });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stdout, new RegExp(`Company access key from that earlier run[^\\n]*${savedKey}`, "u"));
+  assert.match(result.stdout, /using the key that run saved/u);
+  const lines = await logLines();
+  assert.ok(lines.some((l) => l.startsWith("curl") && l.includes("/api/register")), "registered through the API with the saved key");
+  assertBefore(lines, "/api/register", "/api/auth/callback/credentials");
+  assertBefore(lines, "/api/auth/callback/credentials", "RUNTASK bp-bootstrap-admin");
   assert.match(result.stdout, /root admin with the admin role/u);
   assert.equal(existsSync(path.join(stateDir, "first-company-key")), false, "removed once the owner is promoted");
+});
+
+test("first-user: a refused login stops the phase before any promotion task", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const stateDir = path.join(home, ".blueprintparser-deploy");
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(path.join(stateDir, "bootstrap.json"), JSON.stringify({ app_digest: APP_DIGEST }));
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  const result = runTool(["bootstrap", "--yes", "--from", "first-user"], {
+    BP_ASSUME_OWNER_DONE: "1",
+    MOCK_LOGIN_REDIRECT: `https://app.${DOMAIN}/login?error=CredentialsSignin&code=credentials`,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /login as owner@example\.test was refused/u);
+  const lines = await logLines();
+  assert.ok(!lines.some((l) => l.startsWith("RUNTASK bp-bootstrap-admin")), "no promotion after a refused login");
+  // The password never reaches a command line the log could capture.
+  assert.ok(!lines.some((l) => l.includes("Fixture-Passw0rd")), "password absent from every logged command");
+  // The access key file survives for the re-run.
+  assert.equal(existsSync(path.join(stateDir, "first-company-key")), true);
 });
 
 test("release refuses an unclean working tree unless BP_ALLOW_DIRTY=1 (deploy.sh's own gate is skipped)", async () => {
