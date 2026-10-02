@@ -8711,10 +8711,14 @@ async function validateLabelStudioAccessLogSecretPolicy() {
       // satisfy it (the first real apply, 2026-10-02, got "Access Denied for bucket"), and the
       // account is already pinned twice below — in the resource path and in aws:SourceArn.
       '"aws:SourceArn" = "arn:aws:elasticloadbalancing:${var.aws_region}:${data.aws_caller_identity.current.account_id}:loadbalancer/app/beaver-alb/*"',
+      // The documented legacy grant for us-east-1 (the Region's Elastic Load Balancing account),
+      // scoped by the same account-id resource path; the service-principal form alone was
+      // refused by the real ALB on 2026-10-02.
+      'AWS = "arn:aws:iam::127311923021:root"',
       'Sid       = "DenyInsecureTransport"',
       '"aws:SecureTransport" = "false"',
     ]) ||
-    bucketPolicyAllowCount !== 1 ||
+    bucketPolicyAllowCount !== 2 ||
     bucketPolicyDenyCount !== 1 ||
     /s3:(?:GetObject|ListBucket)/u.test(bucketPolicy) ||
     !textHasAll(loadBalancer, [

@@ -122,11 +122,13 @@ resource "aws_s3_bucket_policy" "beaver_alb_access_logs" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # The first apply (2026-10-02) failed at ModifyLoadBalancerAttributes with "Access Denied
-      # for bucket" while this statement also carried an aws:SourceAccount condition. The ALB
-      # access-log doc lists aws:SourceArn (and aws:SourceOrgId) as the conditions the
-      # log-delivery service principal supports, not aws:SourceAccount, so that condition is
-      # gone; the account is still pinned by the account id in the resource path and the ARN.
+      # The first two applies (2026-10-02) failed at ModifyLoadBalancerAttributes with "Access
+      # Denied for bucket": first with an aws:SourceAccount condition on this statement (not a
+      # condition the ALB access-log doc lists for the log-delivery service principal), then
+      # with aws:SourceArn alone. The second statement is the doc's legacy form for Regions
+      # that existed before August 2022, which us-east-1 is: a grant to the Region's own
+      # Elastic Load Balancing account (127311923021). The account id in the resource path
+      # still limits both statements to this account's load balancers.
       {
         Sid    = "AllowAccountLoadBalancerLogDelivery"
         Effect = "Allow"
@@ -140,6 +142,15 @@ resource "aws_s3_bucket_policy" "beaver_alb_access_logs" {
             "aws:SourceArn" = "arn:aws:elasticloadbalancing:${var.aws_region}:${data.aws_caller_identity.current.account_id}:loadbalancer/app/beaver-alb/*"
           }
         }
+      },
+      {
+        Sid    = "AllowRegionalLoadBalancerAccountLogDelivery"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::127311923021:root"
+        }
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.beaver_alb_access_logs.arn}/alb-logs/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
       },
       {
         Sid       = "DenyInsecureTransport"
