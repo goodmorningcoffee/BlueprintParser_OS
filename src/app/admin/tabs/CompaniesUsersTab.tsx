@@ -35,14 +35,14 @@ const DEMO_COMPANIES: CompanyItem[] = [
   { id: 4, publicId: "pacf-004", name: "Pacific Design Group", accessKey: "demo-key-pacf", dataKey: "pacific-data", userCount: 2, projectCount: 1 },
 ];
 const DEMO_USERS: UserItem[] = [
-  { id: "1", username: "demo-admin", email: "admin@acme-construction.com", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: true },
-  { id: "3", username: "jsmith", email: "jsmith@acme-construction.com", role: "member", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
-  { id: "5", username: "mrivera", email: "m.rivera@westside-builders.com", role: "admin", companyId: 2, companyName: "Westside Builders", canRunModels: true, isRootAdmin: false },
-  { id: "6", username: "tchen", email: "tchen@westside-builders.com", role: "member", companyId: 2, companyName: "Westside Builders", canRunModels: false, isRootAdmin: false },
-  { id: "7", username: "estimator1", email: "estimator1@summit-eng.com", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: true, isRootAdmin: false },
-  { id: "8", username: "dpatel", email: "d.patel@summit-eng.com", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: false, isRootAdmin: false },
-  { id: "9", username: "lnguyen", email: "l.nguyen@pacific-design.com", role: "admin", companyId: 4, companyName: "Pacific Design Group", canRunModels: true, isRootAdmin: false },
-  { id: "10", username: "bwilson", email: "b.wilson@pacific-design.com", role: "member", companyId: 4, companyName: "Pacific Design Group", canRunModels: false, isRootAdmin: false },
+  { id: "1", username: "demo-admin", email: "admin@acme-construction.example", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: true },
+  { id: "3", username: "jsmith", email: "jsmith@acme-construction.example", role: "member", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
+  { id: "5", username: "mrivera", email: "m.rivera@westside-builders.example", role: "admin", companyId: 2, companyName: "Westside Builders", canRunModels: true, isRootAdmin: false },
+  { id: "6", username: "tchen", email: "tchen@westside-builders.example", role: "member", companyId: 2, companyName: "Westside Builders", canRunModels: false, isRootAdmin: false },
+  { id: "7", username: "estimator1", email: "estimator1@summit-eng.example", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: true, isRootAdmin: false },
+  { id: "8", username: "dpatel", email: "d.patel@summit-eng.example", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: false, isRootAdmin: false },
+  { id: "9", username: "lnguyen", email: "l.nguyen@pacific-design.example", role: "admin", companyId: 4, companyName: "Pacific Design Group", canRunModels: true, isRootAdmin: false },
+  { id: "10", username: "bwilson", email: "b.wilson@pacific-design.example", role: "member", companyId: 4, companyName: "Pacific Design Group", canRunModels: false, isRootAdmin: false },
 ];
 
 export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boolean } = {}) {

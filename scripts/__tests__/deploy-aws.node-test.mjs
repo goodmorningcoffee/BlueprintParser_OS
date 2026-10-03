@@ -366,6 +366,37 @@ test("release refuses before publishing when drizzle/ changed since the deployed
   assert.ok(!lines.some((l) => l.includes("terraform")), "nothing is applied");
 });
 
+test("release resolves a pre-rewrite deployed HEAD through filter-repo's commit-map instead of calling it a schema change", async () => {
+  await resetState();
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  const ghost = "f".repeat(40); // a SHA that existed before the 2026-10-03 history rewrite and no longer does
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "release", digest: APP_DIGEST, previous: "-", head: ghost }) + "\n");
+  const map = path.join(home, "commit-map");
+  await writeFile(map, `old new\n${ghost} ${head}\n`);
+  await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+  await writeFile(path.join(fixture, "state", "rev"), "7");
+  await writeFile(path.join(fixture, "state", "desired"), "1");
+  await writeFile(path.join(fixture, "state", "running"), "1");
+  const result = runTool(["release", "--yes", "--allow-unverified"], { BP_COMMIT_MAP: map, MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /predates the history rewrite/u);
+  assert.doesNotMatch(result.stderr, /schema change/u);
+
+  // Without a map entry the tool must not guess: it stops before building anything and names the ledger line to fix.
+  await resetState();
+  await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+  await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+    JSON.stringify({ at: "x", event: "release", digest: APP_DIGEST, previous: "-", head: ghost }) + "\n");
+  await writeFile(tfvarsPath, tfvars("live"));
+  const refused = runTool(["release", "--yes", "--allow-unverified"], { BP_COMMIT_MAP: path.join(home, "no-such-map") });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /has no commit-map entry.*releases\.jsonl/su);
+  const lines = await logLines();
+  assert.ok(!lines.some((l) => l.includes("deploy.sh publish")), "nothing is built or pushed");
+});
+
 test("release stops before update-service when the schema check fails; the old revision keeps serving", async () => {
   await resetState();
   const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();

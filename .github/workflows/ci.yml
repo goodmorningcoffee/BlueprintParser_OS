@@ -12,6 +12,10 @@ on:
   push:
   pull_request:
 
+# Nothing here writes to the repo or opens PRs; the default GITHUB_TOKEN scope is wider than needed.
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest

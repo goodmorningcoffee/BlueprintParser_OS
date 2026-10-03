@@ -1,5 +1,11 @@
 # eval/csi — CSI tagger baseline and gold set
 
+> **Four artifacts are not in this repository.** `GRANULARITY_RUBRIC.md`, `gold-pilot.json`,
+> `PILOT_ADJUDICATION_PACKET.md` and `lexicon-gap.json` quote sheet text from a client's drawings
+> (title blocks, firm names, contact details), so they stay with the project owner outside the public
+> repo. The tooling that produced them is here and runs against any corpus; the tests that asserted
+> on those files were retired with them. The table below is kept as the record of what existed.
+
 | file | what it is | phase |
 |---|---|---|
 | `baseline-old-engine.json` | what the OLD engine **emits** over all 471 pages | P0.1 |

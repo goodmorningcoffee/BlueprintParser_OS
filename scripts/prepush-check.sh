@@ -13,6 +13,10 @@
 #   4. SIZE     no blob reachable from any ref being pushed exceeds 50 MB — catches a weight file
 #               renamed to dodge check 3 (largest legitimate blob in history is 36 MB; GitHub
 #               rejects 100 MB outright)
+#   5. PRIVATE  none of the named files below is tracked or was ever added in the pushed history.
+#               They quote a client's drawings and were scrubbed from history on 2026-10-03; copies
+#               live outside the repo (gitignore/projects/csi_private_eval/) and are NOT ignored
+#               here, so a careless `git add eval/csi` would bring them back.
 #
 # Usage
 #   scripts/prepush-check.sh            check every local branch (what a manual pre-push run wants)
@@ -27,6 +31,12 @@ set -eu
 # (the same ambiguity that once gitignored it). Weights elsewhere are caught by extension or size.
 WEIGHT_RE='^models/|\.(pt|pth|safetensors|onnx|ckpt|weights|h5|pb|tflite|pkl|pickle)$'
 MAX_BLOB_BYTES=$((50 * 1024 * 1024))
+# One path per line; matched exactly against tracked paths and paths added in the pushed history.
+FORBIDDEN_PATHS='eval/csi/PILOT_ADJUDICATION_PACKET.md
+eval/csi/gold-pilot.json
+eval/csi/lexicon-gap.json
+eval/csi/GRANULARITY_RUBRIC.md'
+
 ZERO_SHA='0000000000000000000000000000000000000000'
 
 root=$(git rev-parse --show-toplevel) || { echo "prepush-check: not inside a git repository" >&2; exit 2; }
@@ -96,8 +106,16 @@ if [ -n "${big_blobs}" ]; then
   printf '%s\n' "${big_blobs}" | sed 's/^/    /' >&2
 fi
 
+# 5. PRIVATE — exact-path matches, in the index and in every commit reachable from the pushed tips.
+private_hits=$( { git ls-files; git log --diff-filter=AR --name-only --format= ${tips}; } \
+  | grep -Fx -f <(printf '%s\n' "${FORBIDDEN_PATHS}") | sort -u || true)
+if [ -n "${private_hits}" ]; then
+  fail "files that quote client drawings (scrubbed 2026-10-03) are back in the index or the pushed history:"
+  printf '%s\n' "${private_hits}" | sed 's/^/    /' >&2
+fi
+
 if [ "${failures}" -ne 0 ]; then
-  echo "prepush-check: ${failures} check(s) failed — push refused. The trained models never go to GitHub." >&2
+  echo "prepush-check: ${failures} check(s) failed — push refused. Nothing private goes to GitHub." >&2
   exit 1
 fi
-echo "prepush-check: clean — no model weights tracked, added in history, or hiding as a large blob; /models/ still ignored"
+echo "prepush-check: clean — no model weights or client-text files tracked or added in history, no blob over 50 MB; /models/ still ignored"

@@ -790,6 +790,16 @@ deployed_head() {
     local tag; tag=$(aws_ro ecr describe-images --repository-name "${ECR_REPO}" --image-ids "imageDigest=$(live_digest)" --region "${AWS_REGION}" --query 'imageDetails[0].imageTags[0]' --output text 2>/dev/null || true)
     h=$(printf '%s' "${tag}" | sed -n -E 's/^deploy-([0-9a-f]{12})-.*/\1/p')
   fi
+  # History was rewritten once (2026-10-03, client text scrubbed before the first GitHub publish):
+  # a HEAD recorded before that may no longer exist here. git filter-repo leaves old→new in
+  # .git/filter-repo/commit-map; translate through it rather than mistaking "unknown" for "changed".
+  if [ -n "${h}" ] && ! git -C "${PROJECT_DIR}" cat-file -e "${h}^{commit}" 2>/dev/null; then
+    local map; map="${BP_COMMIT_MAP:-$(git -C "${PROJECT_DIR}" rev-parse --git-path filter-repo/commit-map 2>/dev/null)}"
+    local mapped=""; [ -f "${map}" ] && mapped=$(awk -v p="${h}" 'index($1, p) == 1 { print $2; exit }' "${map}")
+    # stdout is this function's return value (dh=$(deployed_head)), so the note goes to stderr
+    if [ -n "${mapped}" ]; then warn "deployed HEAD ${h:0:12} predates the history rewrite → ${mapped:0:12} (commit-map)" >&2; h="${mapped}"
+    else die "deployed HEAD ${h:0:12} is not in this repository and has no commit-map entry. Find the commit it became (git log --all --grep or the deploy-<sha12> ECR tag's date) and correct \"head\" in the last line of ${RELEASES}"; fi
+  fi
   printf '%s' "${h}"
 }
 require_green_head() {

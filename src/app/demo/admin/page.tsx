@@ -44,14 +44,14 @@ export default function DemoAdminPage() {
         setYoloModels(data.models || []);
         // Replace real user data with fake demo users for privacy
         const fakeUsers: UserItem[] = [
-          { id: "1", username: "demo-admin", email: "admin@acme-construction.com", role: "admin", canRunModels: true },
-          { id: "3", username: "jsmith", email: "jsmith@acme-construction.com", role: "member", canRunModels: true },
-          { id: "5", username: "mrivera", email: "m.rivera@westside-builders.com", role: "admin", canRunModels: true },
-          { id: "6", username: "tchen", email: "tchen@westside-builders.com", role: "member", canRunModels: false },
-          { id: "7", username: "estimator1", email: "estimator1@summit-eng.com", role: "member", canRunModels: true },
-          { id: "8", username: "dpatel", email: "d.patel@summit-eng.com", role: "member", canRunModels: false },
-          { id: "9", username: "lnguyen", email: "l.nguyen@pacific-design.com", role: "admin", canRunModels: true },
-          { id: "10", username: "bwilson", email: "b.wilson@pacific-design.com", role: "member", canRunModels: false },
+          { id: "1", username: "demo-admin", email: "admin@acme-construction.example", role: "admin", canRunModels: true },
+          { id: "3", username: "jsmith", email: "jsmith@acme-construction.example", role: "member", canRunModels: true },
+          { id: "5", username: "mrivera", email: "m.rivera@westside-builders.example", role: "admin", canRunModels: true },
+          { id: "6", username: "tchen", email: "tchen@westside-builders.example", role: "member", canRunModels: false },
+          { id: "7", username: "estimator1", email: "estimator1@summit-eng.example", role: "member", canRunModels: true },
+          { id: "8", username: "dpatel", email: "d.patel@summit-eng.example", role: "member", canRunModels: false },
+          { id: "9", username: "lnguyen", email: "l.nguyen@pacific-design.example", role: "admin", canRunModels: true },
+          { id: "10", username: "bwilson", email: "b.wilson@pacific-design.example", role: "member", canRunModels: false },
         ];
         setUsers(fakeUsers);
         setYoloStatus(data.yoloStatus || {});
@@ -223,7 +223,7 @@ export default function DemoAdminPage() {
           {activeTab === "users" && (
             <UsersTab
               users={users}
-              currentEmail="admin@acme-construction.com"
+              currentEmail="admin@acme-construction.example"
               newUser={{ username: "", email: "", password: "", role: "member" }}
               setNewUser={noop}
               onCreateUser={noopAsync}
