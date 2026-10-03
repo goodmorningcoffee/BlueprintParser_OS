@@ -58,6 +58,10 @@ infrastructure/terraform/main.tf
 # only ignore the root-level planning docs; a same-named source file under src/ stays tracked.
 # (NOTE: *.plan / *.pem below stay UN-anchored ON PURPOSE — secret/key protection must match
 # at any depth.)
+/gitignore/
+#put plans, temp files, etc in gitignore
+# owner's private perf capture — stays on the Mac (the tracked baseline is perf/baseline.json)
+/perf/private-gateway-baseline.json
 /plans/
 /REFACTORED_MARCH29.md
 /bucket-fill.md
