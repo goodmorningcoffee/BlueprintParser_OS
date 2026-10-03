@@ -38,6 +38,13 @@ bash scripts/setup.sh
 `.deploy.env`, drives ECS Exec against the deployed cluster, and can only list, promote, or demote
 an account that already exists.
 
+Trained model weights (`models/`, ignored) must never be pushed. Install the pre-push guard once per
+clone; it refuses any push whose history adds weight files or a blob over 50 MB:
+
+```bash
+scripts/prepush-check.sh --install
+```
+
 ## Code Style
 
 - **TypeScript** with strict mode enabled
