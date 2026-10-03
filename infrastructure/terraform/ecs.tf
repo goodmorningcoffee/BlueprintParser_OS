@@ -130,6 +130,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "SAGEMAKER_ROLE_ARN", value = aws_iam_role.beaver_sagemaker_role.arn },
         { name = "LAMBDA_CV_ENABLED", value = "true" },
         { name = "LAMBDA_CV_FUNCTION_NAME", value = aws_lambda_function.beaver_cv_pipeline.function_name },
+        { name = "ALLOW_MODEL_UPLOAD", value = var.allow_model_upload ? "true" : "false" },
       ]
 
       secrets = [

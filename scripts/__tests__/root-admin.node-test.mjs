@@ -88,6 +88,7 @@ const appTaskDefinition = {
         },
         { name: "LAMBDA_CV_ENABLED", value: "true" },
         { name: "LAMBDA_CV_FUNCTION_NAME", value: "beaver-cv-pipeline" },
+        { name: "ALLOW_MODEL_UPLOAD", value: "false" },
       ],
       secrets: [
         { name: "DATABASE_URL", valueFrom: secretSelector },

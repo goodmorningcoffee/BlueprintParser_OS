@@ -114,6 +114,12 @@ variable "maintenance_worker_schedule_enabled" {
   default     = true
 }
 
+variable "allow_model_upload" {
+  description = "Whether the root admin may upload model weights through the app (ALLOW_MODEL_UPLOAD kill-switch); keep false except while restoring models, then release again with it off"
+  type        = bool
+  default     = false
+}
+
 variable "beaver_app_image_digest" {
   description = "Exact ECR digest shared by the app, CPU worker, maintenance worker, and singleton schema migrator; tags such as latest are forbidden"
   type        = string

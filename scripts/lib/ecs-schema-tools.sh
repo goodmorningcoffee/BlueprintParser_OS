@@ -169,7 +169,7 @@ const contracts = {
   app: {
     name: "beaver-app",
     command: [],
-    environment: ["AWS_ACCOUNT", "AWS_REGION", "CLOUDFRONT_DISTRIBUTION_ID", "CLOUDFRONT_DOMAIN", "LABEL_STUDIO_INSTANCE_ID", "LABEL_STUDIO_URL", "LAMBDA_CV_ENABLED", "LAMBDA_CV_FUNCTION_NAME", "NEXTAUTH_URL", "NODE_ENV", "PORT", "ROOT_ADMIN_EMAIL", "S3_BUCKET", "SAGEMAKER_ROLE_ARN", "STEP_FUNCTION_ARN", "YOLO_ECR_IMAGE"],
+    environment: ["ALLOW_MODEL_UPLOAD", "AWS_ACCOUNT", "AWS_REGION", "CLOUDFRONT_DISTRIBUTION_ID", "CLOUDFRONT_DOMAIN", "LABEL_STUDIO_INSTANCE_ID", "LABEL_STUDIO_URL", "LAMBDA_CV_ENABLED", "LAMBDA_CV_FUNCTION_NAME", "NEXTAUTH_URL", "NODE_ENV", "PORT", "ROOT_ADMIN_EMAIL", "S3_BUCKET", "SAGEMAKER_ROLE_ARN", "STEP_FUNCTION_ARN", "YOLO_ECR_IMAGE"],
     secrets: ["ANTHROPIC_API_KEY", "DATABASE_URL", "GROQ_API_KEY", "LABEL_STUDIO_API_KEY", "NEXTAUTH_SECRET", "PROCESSING_WEBHOOK_SECRET"],
     taskRole: "beaver-ecs-task-role",
     logGroup: "/ecs/blueprintparser-app",
@@ -310,6 +310,9 @@ process.stdin.on("end", () => {
         !yoloImage.startsWith(expectedYoloPrefix) ||
         !/^sha256:[0-9a-f]{64}$/u.test(yoloImage.slice(expectedYoloPrefix.length))
       ) failures.push("YOLO_ECR_IMAGE value");
+      // The weights-upload kill-switch is operator-set (var.allow_model_upload), so its value is
+      // not pinned; it must still be an exact boolean literal — the app compares against "true".
+      if (!["true", "false"].includes(environmentValues.get("ALLOW_MODEL_UPLOAD"))) failures.push("ALLOW_MODEL_UPLOAD value");
     }
     if (databaseSecrets.length !== 1 || environmentNames.includes("DATABASE_URL")) failures.push("DATABASE_URL authority");
     if (nodeEnvironments.length !== 1 || secretNames.includes("NODE_ENV")) failures.push("NODE_ENV authority");
