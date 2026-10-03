@@ -25,11 +25,14 @@
 #   only the refs being pushed are checked.
 #
 # Runs on stock macOS bash 3.2: no ${var,,}, no mapfile, no associative arrays.
-set -eu
+# pipefail: every check is a pipeline; a failing `git log`/`rev-list` must refuse the push, not print "clean".
+set -euo pipefail
+# Paths are printed raw (core.quotePath=false): a C-quoted "models/\303\261.pt" would slip past every regex.
+git() { command git -c core.quotePath=false "$@"; }
 
 # Anchored to the TOP-LEVEL models/ on purpose: src/app/api/admin/models/ is a source directory
 # (the same ambiguity that once gitignored it). Weights elsewhere are caught by extension or size.
-WEIGHT_RE='^models/|\.(pt|pth|safetensors|onnx|ckpt|weights|h5|pb|tflite|pkl|pickle)$'
+WEIGHT_RE='^models/|\.(pt|pth|safetensors|onnx|ckpt|weights|h5|pb|tflite|pkl|pickle|bin|npz|npy|gguf|ggml|joblib|keras|mlmodel|engine|trt|caffemodel|params)(\.(gz|bz2|xz|zst|zip))?$'
 MAX_BLOB_BYTES=$((50 * 1024 * 1024))
 # One path per line; matched exactly against tracked paths and paths added in the pushed history.
 FORBIDDEN_PATHS='eval/csi/PILOT_ADJUDICATION_PACKET.md
@@ -87,7 +90,7 @@ fi
 # Commit lines are marked with a unit separator (0x1f) so a path can never be mistaken for one;
 # the path alone is matched (tolower: BSD awk has no case-insensitive flag).
 # shellcheck disable=SC2086
-history_hits=$(git log --diff-filter=AR --name-only --format='%x1f%h' ${tips} \
+history_hits=$(git log -m --diff-filter=AR --name-only --format='%x1f%h' ${tips} \
   | awk -v re="${WEIGHT_RE}" '
       /^\037/ { commit = substr($0, 2); next }
       NF && tolower($0) ~ re { print commit "  " $0 }')
@@ -107,8 +110,8 @@ if [ -n "${big_blobs}" ]; then
 fi
 
 # 5. PRIVATE — exact-path matches, in the index and in every commit reachable from the pushed tips.
-private_hits=$( { git ls-files; git log --diff-filter=AR --name-only --format= ${tips}; } \
-  | grep -Fx -f <(printf '%s\n' "${FORBIDDEN_PATHS}") | sort -u || true)
+private_hits=$( { git ls-files; git log -m --diff-filter=AR --name-only --format= ${tips}; } \
+  | awk 'NR == FNR { forbidden[$0] = 1; next } ($0 in forbidden) && !seen[$0]++' <(printf '%s\n' "${FORBIDDEN_PATHS}") -)
 if [ -n "${private_hits}" ]; then
   fail "files that quote client drawings (scrubbed 2026-10-03) are back in the index or the pushed history:"
   printf '%s\n' "${private_hits}" | sed 's/^/    /' >&2
