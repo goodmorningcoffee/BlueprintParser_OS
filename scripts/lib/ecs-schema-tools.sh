@@ -902,13 +902,21 @@ bp_service_network_configuration() {
 }
 
 bp_wait_service_stable() {
-  bp_aws ecs wait services-stable \
+  # The CLI waiter gives up after 10 minutes. A Fargate rolling restart that cold-pulls this image
+  # took longer than that on the first real deploy (2026-10-02) while the service was healthy the
+  # whole time, so the wait is three waiter rounds (30 minutes) before it is called a failure.
+  local rounds=0
+  until bp_aws ecs wait services-stable \
     --cluster "${ECS_CLUSTER}" \
     --services "${ECS_SERVICE}" \
-    --region "${AWS_REGION}" || {
-    bp_die "ECS service did not become stable"
-    return 1
-  }
+    --region "${AWS_REGION}"; do
+    rounds=$((rounds + 1))
+    if [ "${rounds}" -ge 3 ]; then
+      bp_die "ECS service did not become stable within 30 minutes"
+      return 1
+    fi
+    echo "[ecs-service] not stable after $((rounds * 10)) minutes; waiting another 10" >&2
+  done
 }
 
 bp_describe_task_batch_live_count() {
