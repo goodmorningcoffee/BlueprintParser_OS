@@ -40,4 +40,11 @@ case "${mode}" in
 esac
 
 echo "Starting application..."
+# Next's standalone server listens on $HOSTNAME. The Dockerfile sets it to 0.0.0.0, but the ECS
+# Fargate runtime overwrites HOSTNAME with the task's own name (ip-10-…ec2.internal), so the server
+# bound only to the task's network address: the ALB health check (task IP) passed while the
+# container health check (curl localhost) failed, and ECS replaced every task about 4.5 minutes
+# after it started (measured 2026-10-04: 337 failed tasks since the first deploy). Bind every
+# interface here, after the runtime has had its say.
+export HOSTNAME=0.0.0.0
 exec node server.js
