@@ -100,6 +100,17 @@ describe("csi-tokenize: plural fold", () => {
     expect(foldPlural(word)).toBe(expected);
   });
 
+  // IMPLEMENTATION E12 D8: words ending in s that are not plurals (EIFS used to fold to "eif").
+  it.each([
+    ["EIFS", "eifs"],
+    ["ASBESTOS", "asbestos"],
+    ["Atlas", "atlas"],
+    ["PLEXIGLAS", "plexiglas"],
+  ])("tokenize(%s)[0].t is %s (plural-invariant, D8)", (word, expected) => {
+    expect(tokenize(word)[0].t).toBe(expected);
+    expect(foldPlural(expected)).toBe(expected);
+  });
+
   it.each([
     ["niche", "niches"],
     ["leaf", "leaves"],

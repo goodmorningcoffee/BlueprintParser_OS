@@ -64,6 +64,8 @@ export const STOP_WORDS: ReadonlySet<string> = new Set([
 const PLURAL_INVARIANT: ReadonlySet<string> = new Set([
   "glass", "gas", "bus", "canvas", "brass", "truss", "series", "species", "lens",
   "chassis",
+  // S1.1 / IMPLEMENTATION E12 D8 (measured: EIFS folded to "eif").
+  "eifs", "asbestos", "atlas", "plexiglas",
 ]);
 
 /** Plurals the suffix rules would get wrong (each pinned to land on its singular's token). */

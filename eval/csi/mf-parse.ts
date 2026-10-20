@@ -22,8 +22,11 @@
  * ── HEAD RULE (PLAN §5.1) ──
  * A line is a HEAD if it has no code, OR has a code and the following lines are
  * indented deeper (textX > line.textX + 3 pt). Sub-entries attach to the nearest head
- * above in the SAME column; the head resets at every column and page break; a sub-level
- * entry with no head is counted (`report.headless`) and dropped.
+ * above. DEFAULT (`carryHeads: true`, S1 decision): the open head CARRIES across column
+ * and page breaks, because the printed flow continues there (see IndexOptions). The CLI
+ * flag `--reset-heads` (`carryHeads: false`) is PLAN §5.1 as literally written — the head
+ * resets at every column and page break. In either mode a sub-level entry with no head is
+ * counted (`report.headless`) and dropped.
  *
  * ── TITLES (PLAN §5.2, parse half) ──
  * Over-grabbed header text is cut at the first match of TITLE_STRIP (truncation, not
@@ -118,6 +121,14 @@ export const REJECT_TITLE_RE = /^(for|see)\b/i;
 /** Page furniture on master-list pages (prototype `hdr_noise`). */
 const MASTER_NOISE_RE =
   /^(D ?IVISION \d\d\b.*|N ?UMBER T ?ITLE E ?XPLANATION.*|Master List of Numbers, Titles, and Explanations.*|\d+ Master List.*|\d+)$/;
+/** The column header "N UMBER  TITLE  EXPLANATION" heads every master page, its three words
+ *  set > SEG_GAP apart (x 72/162/247 or 55/145/231). `splitAtGaps` therefore yields them as
+ *  three one-word lines that MASTER_NOISE_RE (whole header only) never sees; before S1.1 they
+ *  were appended to the open block across the page break (measured: 9 altTerms, 42 includes,
+ *  4 notes, 129 see texts). Dropped as standalone lines, and cut off a block line's tail if one
+ *  is ever glued on (0 measured). Case-sensitive: block prose never prints these in caps. */
+export const HEADER_FRAGMENT_RE = /^(N ?UMBER|T ?ITLE|E ?XPLANATION)$/;
+export const HEADER_TAIL_RE = /\s+(?:N ?UMBER|T ?ITLE|E ?XPLANATION)(?:\s+(?:N ?UMBER|T ?ITLE|E ?XPLANATION))*$/;
 /** Header strings that may never extend a title (prototype's `Level \\d` was a dead escape). */
 const TITLE_HEADER_RE = /^(D ?IVISION|N ?UMBER|Master\b|Level \d)/;
 const BLOCK_RE = /^(Includes|Alternate Terms\/Abbreviations|See Also|See|Notes|May Include|Excludes)\s*:\s*(.*)$/;
@@ -341,8 +352,8 @@ export function parseMasterList(lines: Line[]): MasterParse {
       ? ln.x > curCodeX + TITLE_MIN_INDENT && ln.x <= curTitleX + TITLE_X_TOL
       : Math.abs(ln.x - curTitleX) <= TITLE_X_TOL;
   for (const ln of lines) {
-    const line = ln.text;
-    if (MASTER_NOISE_RE.test(line)) continue;
+    const line = ln.text.replace(HEADER_TAIL_RE, "");
+    if (MASTER_NOISE_RE.test(line) || HEADER_FRAGMENT_RE.test(line)) continue;
     if (ln.code && !BLOCK_RE.test(line)) {
       const code = ln.code;
       // Range rows ("04 80 00 to 04 90 00 Unassigned", "45 11 10 to 45 12 99 User-Defined …")

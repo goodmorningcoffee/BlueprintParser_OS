@@ -18,6 +18,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEFAULT_PDF,
+  HEADER_FRAGMENT_RE,
   TITLE_STRIP_RE,
   buildLines,
   countSplitWordArtifacts,
@@ -28,6 +29,7 @@ import {
   parseIndex,
   parseMasterList,
   stripTitle,
+  type MasterEntry,
   type PdfItem,
   type PdfPage,
 } from "../../../eval/csi/mf-parse";
@@ -53,6 +55,14 @@ function syntheticPage(rows: [string, string][]): PdfPage {
   });
   return { page: 1, width: 612, height: 792, items };
 }
+
+/** IMPLEMENTATION E12 D10: block texts that still carry the master-page column header. */
+const headerLeaks = (master: MasterEntry[]) =>
+  master.flatMap((e) =>
+    [...e.altTerms, ...e.includes, ...e.notes, ...e.see.map((x) => x.text)]
+      .filter((t) => t.includes("N UMBER") || t === "TITLE" || t === "EXPLANATION")
+      .map((t) => `${e.code}: ${t}`),
+  );
 
 describe("csi-mf-parse — keyword index head rule (PLAN §5.1 goldens)", () => {
   it("p.642: a CODED head owns the deeper rows under it — cleaning, maintenance, concrete → 03 01 00", () => {
@@ -174,6 +184,30 @@ describe("csi-mf-parse — master list (PLAN §5.1/§5.2 parse half)", () => {
     );
   });
 
+  it("header furniture (D10): the split 'N UMBER' / 'TITLE' / 'EXPLANATION' never enters a block (fixture pp. 40→46)", () => {
+    // Precondition, so the test cannot pass vacuously: p.46's column header is split by the
+    // gap rule into three one-word lines while 00 01 20's Includes block is open from p.40.
+    expect(masterLines(46).filter((l) => HEADER_FRAGMENT_RE.test(l.text)).map((l) => l.text)).toEqual([
+      "N UMBER",
+      "TITLE",
+      "EXPLANATION",
+    ]);
+    const mp = parseMasterList(masterLines(40, 46, 179, 560));
+    expect(mp.master.find((e) => e.code === "00 01 20")?.includes.slice(-1)[0]).toMatch(/at the beginning of each division\.$/);
+    expect(headerLeaks(mp.master)).toEqual([]);
+  });
+
+  it("header furniture (D10): a fragment glued onto a block line's tail is cut off", () => {
+    const pg = syntheticPage([["07 99 03", "Glued Header Case"]]);
+    // No widths ⇒ no gap split, so each baseline is one line with the fragment glued on.
+    pg.items.push({ str: "Includes: hinged doors. N UMBER", x: 247.5, y: 680, h: 9 });
+    pg.items.push({ str: "frames. TITLE EXPLANATION", x: 247.5, y: 668, h: 9 });
+    pg.items.push({ str: "TITLE", x: 162, y: 656, h: 9 });
+    const e = parseMasterList(buildLines(pg)).master.find((x) => x.code === "07 99 03");
+    expect(e?.includes).toEqual(["hinged doors. frames."]);
+    expect(e?.title).toBe("Glued Header Case");
+  });
+
   it("adjacent duplicate words are removed and counted", () => {
     expect(dedupeAdjacentWords("Metal Metal Doors and and Frames")).toEqual({ text: "Metal Doors and Frames", removed: 2 });
     expect(stripTitle("Door Door Hardware")).toMatchObject({ title: "Door Hardware", dupWords: 1 });
@@ -242,8 +276,13 @@ describe.skipIf(!existsSync(DEFAULT_PDF))("csi-mf-parse — full-PDF census", ()
       unassigned: 51,
     });
     expect(doc.master.filter((e) => TITLE_STRIP_RE.test(e.title)).length).toBe(0);
+    // D10 (S1.1): before the fix 'N UMBER' leaked into 9 altTerms / 42 includes / 4 notes / 129 see texts.
+    expect(headerLeaks(doc.master)).toEqual([]);
     // DEFAULT (carryHeads): every coded index row survives (12,511 = PLAN §3's pdfjs count).
     const carry = parseDocument(pages);
+    expect(headerLeaks(carry.master)).toEqual([]);
+    const blockText = carry.master.flatMap((e) => [...e.altTerms, ...e.includes, ...e.notes, ...e.see.map((x) => x.text)]);
+    expect(blockText.filter((t) => /\b(TITLE|EXPLANATION)\b/.test(t))).toEqual([]);
     expect(carry.index.length).toBe(12511);
     expect(carry.report.headless).toBe(4);
     expect(carry.report.danglingIndexCodes).toBe(126);
