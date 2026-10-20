@@ -61,7 +61,7 @@ describe("csi-tokenize: word-form map", () => {
   });
 
   it("every FOLD_MAP stem is a fixed point and no key is also an exception", () => {
-    expect(Object.keys(FOLD_MAP).length).toBeGreaterThanOrEqual(40);
+    expect(Object.keys(FOLD_MAP).length).toBeGreaterThanOrEqual(39); // 40 − `cooling` (kb-v2.4, a no-op rename)
     for (const [form, stem] of Object.entries(FOLD_MAP)) {
       expect(canonToken(stem), `${form} → ${stem}`).toBe(stem);
       expect(form in FOLD_EXCEPTIONS, form).toBe(false);

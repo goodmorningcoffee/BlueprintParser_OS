@@ -81,7 +81,10 @@ function lookup(map: Readonly<Record<string, string>>, key: string): string | un
 
 /** Word-form folds (PLAN §5.4's explicit list, extended to common MasterFormat -ing/-ed/
  *  -ion nouns). Applied by `canonToken` only when the stem is in the supplied vocabulary;
- *  with no vocabulary they are applied unconditionally.
+ *  with no vocabulary they are applied unconditionally — which is how the KB builder calls it
+ *  (owner ruling 2026-10-20, kb-v2.4: fold always), so no key is ever a KB token.
+ *  REMOVED 2026-10-20 (kb-v2.4): `cooling: cool` — under fold-always it only renamed the token
+ *  (no source word tokenizes to `cool`) and would have let a bare COOL match every cooling pattern.
  *  REMOVED by the S2 term/fold review (2026-10-20, measured against MF2018 titles) because the
  *  fold merges two trades: framing/framed (METAL FRAMING = 08 12 00 "Metal Frames"), cleaning
  *  (13 21 13 Clean Rooms), coated (Coat Racks, Tack Coats), wiring (Welded Wire, Wire Rope),
@@ -93,7 +96,6 @@ export const FOLD_MAP: Readonly<Record<string, string>> = {
   carpeting: "carpet",
   caulking: "caulk",
   coating: "coat",
-  cooling: "cool",
   dampproofing: "dampproof",
   demolishing: "demolish", demolition: "demolish",
   fencing: "fence",
@@ -176,8 +178,10 @@ export function foldPlural(w: string): string {
 
 /** Canonical form of one piece (no whitespace, '-' or '/'): normalize, fold plural, then
  *  apply `FOLD_MAP` when its stem is in `vocab` (always, when `vocab` is omitted).
- *  The fold depends on `vocab`, so the KB builder and the runtime must pass the SAME set
- *  (e.g. `Cooling` → `cool` with no vocab, `cooling` under a vocab lacking `cool`).
+ *  The fold depends on `vocab` (`Heating` → `heat` with no vocab, `heating` under a vocab
+ *  lacking `heat`). The KB builder omits it; the runtime may pass the KB token set and still
+ *  match identically, because a fold it skips maps an out-of-vocabulary word to another
+ *  out-of-vocabulary word (proof: eval/csi/build-kb-v2.ts §3).
  *  `FOLD_EXCEPTIONS` surface forms are returned unchanged. Returns '' when nothing
  *  alphanumeric is left. Does NOT apply the stop/numeric/length drops — `tokenize` does. */
 export function canonToken(word: string, vocab?: ReadonlySet<string>): string {

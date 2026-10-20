@@ -1,50 +1,53 @@
 {
   "schemaVersion": "csi-kb-report/1",
-  "builderVersion": "kb-v2.3",
-  "kbBytes": 6447842,
-  "kbSha256": "f0f4b98014a5118f3fdb10020db6d9d93d2438a86a53b3c000932c3a7c05ba52",
+  "builderVersion": "kb-v2.4",
+  "kbBytes": 6405722,
+  "kbSha256": "5110a51547cdfed752316019c5cb43675501cf5c311e59773c9004213f36e970",
   "counts": {
     "N": 8933,
     "abbrevRowsPdf": 83,
     "abbrevRowsPdfInTerms": 3,
     "altDupOfDescendantTitle": 89,
     "altEqOtherCodeTermRow": 20,
+    "altEqOtherCodeTitle": 29,
     "codes": 8935,
     "codesMaster": 8934,
     "codesWithoutPattern": 2,
     "danglingIndexCodesParsed": 126,
     "danglingIndexRows": 126,
     "danglingSeeParsed": 5,
-    "dedupedPatterns": 1527,
+    "dedupedPatterns": 1516,
     "dedupedPatterns_alt": 8,
-    "dedupedPatterns_index": 1516,
+    "dedupedPatterns_index": 1505,
     "dedupedPatterns_see": 2,
     "dedupedPatterns_term": 1,
     "emptyTokenDropped_alt": 6,
     "fillerAnchors": 15,
     "floorTokens": 19,
-    "genericPatterns": 51,
+    "genericPatterns": 49,
     "headerLeakResidual": 0,
     "headless": 4,
-    "hintOnlyPatterns": 1000,
+    "hintOnlyPatterns": 985,
     "indexDupOfDescendantTitle": 551,
     "indexEmptySubEntryRows": 20,
     "indexEntriesParsed": 12511,
     "indexEqOtherCodeTermRow": 4,
+    "indexEqOtherCodeTitle": 135,
     "indexFacetRows": 3,
     "latticePostingScan": 12,
     "le2CharDropped_alt": 23,
-    "patterns": 20478,
-    "patterns_alt": 991,
-    "patterns_index": 10291,
+    "patterns": 20323,
+    "patterns_alt": 962,
+    "patterns_index": 10167,
     "patterns_regex": 2,
-    "patterns_see": 209,
+    "patterns_see": 207,
     "patterns_term": 54,
     "patterns_title": 8932,
     "patterns_tsv": 1,
-    "reachDenominator": 19454,
+    "reachDenominator": 19314,
     "seeDupOfDescendantTitle": 1,
     "seeEqOtherCodeTermRow": 1,
+    "seeEqOtherCodeTitle": 2,
     "seeFanoutDropped": 69,
     "seeResolved": 156,
     "seeResolvedViaHead": 6,
@@ -61,7 +64,7 @@
     "tsvOnlyKept": 1,
     "tsvTitleAliases": 83,
     "unassignedCodes": 51,
-    "vocab": 4234
+    "vocab": 4231
   },
   "report": {
     "overGrabResidual": 0,
@@ -72,58 +75,58 @@
     "le2CharPatterns": 0,
     "misHeadedGoldens": 0,
     "oneWordTermMultiFamily": 0,
-    "reach_oneTokenTolerance": 6690,
-    "reach_diffMassGE80": 4519
+    "reach_oneTokenTolerance": 6653,
+    "reach_diffMassGE80": 4499
   },
   "reach": {
-    "denominator": 19454,
-    "denominator_alt": 662,
-    "denominator_index": 9969,
-    "denominator_see": 162,
+    "denominator": 19314,
+    "denominator_alt": 641,
+    "denominator_index": 9852,
+    "denominator_see": 160,
     "denominator_term": 30,
     "denominator_title": 8630,
     "denominator_tsv": 1,
-    "diffMassGE80_alt": 61,
-    "diffMassGE80_index": 1145,
+    "diffMassGE80_alt": 59,
+    "diffMassGE80_index": 1127,
     "diffMassGE80_see": 20,
     "diffMassGE80_term": 3,
     "diffMassGE80_title": 3290,
-    "oneTokenTolerance_alt": 99,
-    "oneTokenTolerance_index": 3108,
+    "oneTokenTolerance_alt": 95,
+    "oneTokenTolerance_index": 3075,
     "oneTokenTolerance_see": 12,
     "oneTokenTolerance_term": 1,
     "oneTokenTolerance_title": 3470,
-    "oneTokenToleranceShare": 0.3439,
-    "diffMassGE80Share": 0.2323
+    "oneTokenToleranceShare": 0.3445,
+    "diffMassGE80Share": 0.2329
   },
   "patternsBySource": {
     "title": 8932,
     "tsv": 1,
-    "alt": 991,
-    "index": 10291,
-    "see": 209,
+    "alt": 962,
+    "index": 10167,
+    "see": 207,
     "term": 54
   },
   "floorTokens": {
-    "air": 231,
-    "concrete": 354,
-    "control": 412,
-    "equipment": 1080,
-    "gas": 219,
+    "air": 229,
+    "concrete": 353,
+    "control": 410,
+    "equipment": 1078,
+    "gas": 218,
     "maintenance": 336,
-    "metal": 308,
+    "metal": 307,
     "operation": 225,
-    "pipe": 421,
-    "process": 309,
-    "pump": 272,
-    "schedule": 333,
-    "storage": 228,
-    "system": 511,
+    "pipe": 419,
+    "process": 307,
+    "pump": 270,
+    "schedule": 332,
+    "storage": 226,
+    "system": 510,
     "unit": 228,
-    "utility": 218,
-    "wall": 216,
-    "water": 331,
-    "wood": 210
+    "utility": 217,
+    "wall": 214,
+    "water": 330,
+    "wood": 208
   },
   "boilerplateTokens": {
     "all": 5,
@@ -146,35 +149,35 @@
     "work": 102
   },
   "fillerTokens": {
-    "accessory": 66,
+    "accessory": 65,
     "assembly": 111,
     "common": 73,
-    "equipment": 1080,
+    "equipment": 1078,
     "product": 68,
     "result": 66,
-    "system": 511,
+    "system": 510,
     "work": 102
   },
   "topCodeDF": [
     [
       "equipment",
-      1080
+      1078
     ],
     [
       "system",
-      511
+      510
     ],
     [
       "pipe",
-      421
+      419
     ],
     [
       "control",
-      412
+      410
     ],
     [
       "concrete",
-      354
+      353
     ],
     [
       "maintenance",
@@ -182,35 +185,35 @@
     ],
     [
       "schedule",
-      333
+      332
     ],
     [
       "water",
-      331
-    ],
-    [
-      "process",
-      309
+      330
     ],
     [
       "metal",
-      308
+      307
+    ],
+    [
+      "process",
+      307
     ],
     [
       "pump",
-      272
+      270
     ],
     [
       "air",
-      231
-    ],
-    [
-      "storage",
-      228
+      229
     ],
     [
       "unit",
       228
+    ],
+    [
+      "storage",
+      226
     ],
     [
       "operation",
@@ -218,19 +221,19 @@
     ],
     [
       "gas",
-      219
-    ],
-    [
-      "utility",
       218
     ],
     [
+      "utility",
+      217
+    ],
+    [
       "wall",
-      216
+      214
     ],
     [
       "wood",
-      210
+      208
     ],
     [
       "electrical",
@@ -242,11 +245,11 @@
     ],
     [
       "material",
-      195
+      194
     ],
     [
       "door",
-      192
+      190
     ],
     [
       "treatment",
@@ -270,7 +273,7 @@
     ],
     [
       "facility",
-      166
+      165
     ],
     [
       "manufacturing",
@@ -282,11 +285,11 @@
     ],
     [
       "tank",
-      156
+      155
     ],
     [
       "power",
-      153
+      151
     ],
     [
       "liquid",
@@ -298,11 +301,11 @@
     ],
     [
       "protection",
-      143
+      142
     ],
     [
       "heat",
-      140
+      139
     ],
     [
       "masonry",
@@ -318,19 +321,19 @@
     ],
     [
       "requirement",
-      135
+      133
     ],
     [
       "security",
       130
     ],
     [
-      "device",
+      "service",
       122
     ],
     [
-      "service",
-      122
+      "device",
+      121
     ],
     [
       "period",
@@ -345,16 +348,16 @@
       111
     ],
     [
+      "reinforce",
+      109
+    ],
+    [
       "pressure",
-      108
+      107
     ],
     [
       "window",
       107
-    ],
-    [
-      "commissioning",
-      106
     ]
   ]
 }

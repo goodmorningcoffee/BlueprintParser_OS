@@ -18,13 +18,17 @@
  *   - STRUCTURE + RULES: the §5.6 gate counters, parent(), the 08 11 lattice family, anchors,
  *     the E2 diff rule (recomputed for every pattern), the D6/E12e shadow filters, the generic
  *     list, the fold fixpoint and csi_terms parity, read off the artifact itself.
+ *   - OWNER RULING 2026-10-20 (kb-v2.4, variant E): fold always; a code's MF title owns its token
+ *     set; process-division (40–49) titles do not own against building codes. Each has its own
+ *     test below, and disabling any one rule in the builder fails that test.
  * Rebuild: see the header of `eval/csi/build-kb-v2.ts` (bundle → build/csi-kbv2-build.js).
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tokenize } from "@/lib/csi-tokenize";
+import { FOLD_MAP, tokenize } from "@/lib/csi-tokenize";
+import { loadCsiKbFromFile } from "@/lib/csi-kb";
 import type { CsiKb, KbCode, KbPattern } from "@/lib/csi-kb-types";
 import {
   BOILERPLATE_WORDS,
@@ -33,6 +37,7 @@ import {
   PDF_SOURCE,
   SOURCE_PATHS,
   TSV_JUNK_RE,
+  isProcessDivision,
   parentOf,
   parseTermsTsv,
   readMasterformatTsv,
@@ -50,7 +55,8 @@ if (!HAS_KB) {
 }
 const read = (p: string) => readFileSync(join(root, p), "utf-8");
 const sha256File = (p: string) => createHash("sha256").update(readFileSync(join(root, p))).digest("hex");
-const uniqTokens = (text: string, vocab: ReadonlySet<string>) => [...new Set(tokenize(text, vocab).map((t) => t.t))];
+/** vocab omitted = every FOLD_MAP fold (the kb-v2.4 build rule). */
+const uniqTokens = (text: string, vocab?: ReadonlySet<string>) => [...new Set(tokenize(text, vocab).map((t) => t.t))];
 const setKey = (ts: string[]) => [...ts].sort().join(" ");
 
 /** E12a: the EXACT report key list. */
@@ -218,6 +224,47 @@ describe.skipIf(!HAS_KB)("csi-kb.json structure", () => {
     expect(kb.patterns.filter((p) => p.source === "term" && key(p.tokens) === "ball valve").map((p) => p.code).sort()).toEqual(["22 05 23", "23 05 23"]);
   });
 
+  it("owner ruling 2026-10-20 (kb-v2.4): a code's MF title owns its token set against other codes' alt/index/see", () => {
+    // Recomputed from the artifact exactly as the builder decides it: owners = codes whose KEPT title
+    // has the set (a term-owned set is the term rule's alone); a building-code pattern ignores
+    // process-division (40–49) titles. Every surviving alt/index/see must be one of its owners.
+    const termKeys = new Set(kb.patterns.filter((p) => p.source === "term" && p.kind === "tokens").map((p) => setKey(p.tokens)));
+    const owners = new Map<string, Set<string>>();
+    for (const p of kb.patterns) {
+      if (p.source !== "title" || termKeys.has(setKey(p.tokens))) continue;
+      owners.set(setKey(p.tokens), (owners.get(setKey(p.tokens)) ?? new Set<string>()).add(p.code));
+    }
+    const residual: string[] = [];
+    for (const p of kb.patterns) {
+      if (p.kind !== "tokens" || (p.source !== "alt" && p.source !== "index" && p.source !== "see")) continue;
+      const o = [...(owners.get(setKey(p.tokens)) ?? [])].filter((c) => isProcessDivision(p.code) || !isProcessDivision(c));
+      if (o.length && !o.includes(p.code)) residual.push(`${p.id} ${p.code}/${p.source} '${p.text}' = title of ${o.join(",")}`);
+    }
+    expect(residual).toEqual([]);
+    // Measured at kb-v2.4 (counted AFTER the facet and D6 filters, so only what the ruling added).
+    const c = kb.header.counts;
+    expect([c.altEqOtherCodeTitle, c.indexEqOtherCodeTitle, c.seeEqOtherCodeTitle]).toEqual([29, 135, 2]);
+  });
+
+  it("owner ruling 2026-10-20 (kb-v2.4): process-division titles (40–49) do not take a building code's pattern", () => {
+    // Measured: 10 building-code alt/index/see patterns survive only because the title with their set
+    // is a process title; the two adjudicated in notes/FOLD_EXPERIMENT_2026-10-20.md are pinned.
+    expect(isProcessDivision("40 05 81.33") && isProcessDivision("49 00 00") && !isProcessDivision("39 00 00") && !isProcessDivision("50 00 00")).toBe(true);
+    const pairs: [string, string, string][] = [["22 11 19", "40 05 81.33", "bibb hose"], ["22 13 19", "46 25 23", "grease trap"]];
+    for (const [building, proc, set] of pairs) {
+      expect(setKey(titleOf(proc).tokens), proc).toBe(set);
+      expect(kb.patterns.filter((p) => p.code === building && p.source === "index" && setKey(p.tokens) === set), building).toHaveLength(1);
+    }
+    const procTitleKeys = new Map<string, string[]>();
+    for (const p of kb.patterns) {
+      if (p.source === "title" && isProcessDivision(p.code)) procTitleKeys.set(setKey(p.tokens), [...(procTitleKeys.get(setKey(p.tokens)) ?? []), p.code]);
+    }
+    const nonProcTitleKeys = new Set(kb.patterns.filter((p) => p.source === "title" && !isProcessDivision(p.code)).map((p) => setKey(p.tokens)));
+    const exempted = kb.patterns.filter((p) => (p.source === "alt" || p.source === "index" || p.source === "see") && !isProcessDivision(p.code) &&
+      procTitleKeys.has(setKey(p.tokens)) && !nonProcTitleKeys.has(setKey(p.tokens)));
+    expect(exempted.map((p) => p.code)).toHaveLength(10);
+  });
+
   it("D6 (extended by E12e): no alt/index/see pattern has the token set of a DESCENDANT's title", () => {
     const c = kb.header.counts;
     expect(c.altDupOfDescendantTitle).toBeGreaterThan(0);
@@ -362,6 +409,37 @@ describe.skipIf(!HAS_KB)("token lists and fold vocabulary", () => {
   it("fold fixpoint (E12b): re-tokenizing every pattern text with vocab = the KB token set reproduces its tokens", () => {
     const bad = kb.patterns.filter((p) => p.kind === "tokens" && uniqTokens(p.text, vocab).join(" ") !== p.tokens.join(" "));
     expect(bad.map((p) => `${p.id}:${p.text}`)).toEqual([]);
+  });
+
+  it("owner ruling 2026-10-20 (kb-v2.4): FOLD ALWAYS — every pattern is its text's NO-vocab tokenization; no FOLD_MAP key is a token", () => {
+    // The second line is the premise of the runtime-equivalence proof (eval/csi/build-kb-v2.ts §3): a
+    // fold the runtime skips (stem ∉ KB tokens) then maps one out-of-vocabulary word to another.
+    const bad = kb.patterns.filter((p) => p.kind === "tokens" && uniqTokens(p.text).join(" ") !== p.tokens.join(" "));
+    expect(bad.map((p) => `${p.id}:${p.text}`)).toEqual([]);
+    expect(Object.keys(FOLD_MAP).filter((k) => vocab.has(k))).toEqual([]);
+    expect(Object.hasOwn(FOLD_MAP, "cooling")).toBe(false); // deleted at kb-v2.4: a pure token rename under fold-always
+  });
+
+  it("fold probe: FIRESTOP / FIRESTOPPING ALL PENETRATIONS, through the LOADER's vocab, both set-match only 07 84 13", () => {
+    // Stand-in for the S3 matcher: a probe hits a pattern whose token set equals the probe's non-boilerplate
+    // tokens (`all` is boilerplate, PLAN §5.5). FIRESTOPPING is the FOLD_MAP key, so it is the vocab-sensitive
+    // form: the loader's vocab folds it (it holds `firestop`), an empty vocab does not. MEASURED 2026-10-20:
+    // at kb-v2.3 the title was stored `firestopping`, so the FIRESTOP probe hit nothing and the loader left
+    // FIRESTOPPING unfolded; at kb-v2.4 both surface forms reach the same two patterns.
+    const loaderVocab = new Set(loadCsiKbFromFile(join(root, KB_REL)).idf.keys());
+    expect(loaderVocab).toEqual(vocab);
+    expect(uniqTokens("FIRESTOPPING", loaderVocab)).toEqual(["firestop"]);
+    expect(uniqTokens("FIRESTOPPING", new Set())).toEqual(["firestopping"]); // the fold above is the vocab's doing
+    const boiler = new Set(kb.header.boilerplateTokens);
+    const setMatch = (text: string) => {
+      const key = setKey(uniqTokens(text, loaderVocab).filter((t) => !boiler.has(t)));
+      return kb.patterns.filter((p) => p.kind === "tokens" && setKey(p.tokens) === key).map((p) => `${p.code}/${p.source}`);
+    };
+    for (const text of ["FIRESTOP ALL PENETRATIONS", "FIRESTOPPING ALL PENETRATIONS"]) {
+      expect(uniqTokens(text, loaderVocab), text).toEqual(["firestop", "all", "penetration"]);
+      expect(setMatch(text), text).toEqual(["07 84 13/title", "07 84 13/index"]);
+    }
+    expect(setKey(titleOf("07 84 13").tokens)).toBe("firestop penetration"); // kb-v2.3 stored `firestopping`
   });
 });
 

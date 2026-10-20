@@ -15,9 +15,12 @@
  *                token set equals ANY master title is dropped — E12e); `parentOf` by digit shape
  *                skipping absent codes; titles per PLAN §5.2 (PDF wins, `^(for|see)` → TSV).
  *   2. sources — title · index phrase (set) · alt term · see synonym (D7) · term row · tsv (D5).
- *   3. folds   — E12b two passes: pass 1 with an EMPTY vocab gives V0; pass 2 tokenizes with V0.
+ *   3. folds   — FOLD ALWAYS (owner ruling 2026-10-20, kb-v2.4): every source string is tokenized
+ *                with the vocab OMITTED, so every FOLD_MAP word form folds (replaces E12b's V0 gate).
  *                Stored tokens are unique per pattern, in first-occurrence order.
- *   4. filters — empty, ≤2-char (non-term, PLAN §5.3), index facet rows (sub-entry text ⊆ head, E12e),
+ *   4. filters — a term row owns its set (E13); a code's MF title owns its set against other codes'
+ *                alt/index/see, process titles (div 40–49) excepted for building codes (kb-v2.4);
+ *                empty, ≤2-char (non-term, PLAN §5.3), index facet rows (sub-entry text ⊆ head, E12e),
  *                alt/index/see ≡ a descendant's title (D6 as extended by E12e), dedupe (E12c).
  *   5. weights — codeDF over every token source; idf = ln(N/codeDF); floor = codeDF ≥ 200;
  *                boilerplate and filler as CANONICAL tokens (D4); anchor = rarest non-floored
@@ -52,7 +55,7 @@ import type { CsiKb, CsiKbHeader, KbCode, KbPattern, KbSource } from "@/lib/csi-
 import { DEFAULT_PDF, REJECT_TITLE_RE, TITLE_STRIP_RE, dedupeAdjacentWords, extractPages, levelOf, parseDocument, stripTitle, type MfParsed } from "./mf-parse";
 
 /** Manual constant (D3): bump on ANY builder-logic change; the artifact test pins it. */
-export const BUILDER_VERSION = "kb-v2.3";
+export const BUILDER_VERSION = "kb-v2.4";
 export const SCHEMA_VERSION = "csi-kb/2" as const;
 export const KB_OUT = "src/data/csi-kb.json";
 export const REPORT_OUT = "eval/csi/kb-report.json";
@@ -78,6 +81,10 @@ export const BOILERPLATE_WORDS = [
 /** D5: a TSV-only title that is junk (a code, the index banner, `api`, no letters). */
 export const TSV_JUNK_RE = /^\d\d \d\d \d\d\b|keyword index|^api$|^[^a-z]*$/i;
 const SOURCE_RANK: Record<KbSource, number> = { title: 0, tsv: 1, alt: 2, index: 3, see: 4, term: 5 };
+/** Divisions 40–49 (process/industrial). Their MF titles do not own a token set against a
+ *  building-division code's alt/index/see (owner ruling 2026-10-20: Hose Bibbs 40 05 81.33 must not
+ *  take "hose bibbs" from 22 11 19). */
+export const isProcessDivision = (code: string): boolean => code >= "40" && code < "50";
 
 // ───────────────────────────── codes ─────────────────────────────
 
@@ -149,7 +156,9 @@ export function parseTermsTsv(raw: string): TermRow[] {
 
 const EMPTY_VOCAB: ReadonlySet<string> = new Set<string>();
 const uniq = (xs: string[]) => [...new Set(xs)];
-const toks = (text: string, vocab: ReadonlySet<string>) => uniq(tokenize(text, vocab).map((t) => t.t));
+/** Unique tokens, first-occurrence order. `vocab` OMITTED = every FOLD_MAP fold applies (the kb-v2.4
+ *  build rule); EMPTY_VOCAB = no word-form fold (D5's pre-vocabulary comparison only). */
+const toks = (text: string, vocab?: ReadonlySet<string>) => uniq(tokenize(text, vocab).map((t) => t.t));
 const setKey = (ts: string[]) => [...ts].sort().join(" ");
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
 const norm = (s: string) => s.toLowerCase().replace(/[‐-―]/g, "-").replace(/\s+/g, " ").trim().replace(/[.,;:]+$/, "");
@@ -223,7 +232,7 @@ export function buildKb(inp: BuildInputs): BuildResult {
   }
   // D5 (as extended by E12e): TSV-only codes. A TSV-only title is dropped when its token set equals
   // the set of ANY master title (not only a sibling's: 09 62 23 "bamboo flooring" = 09 64 36). The
-  // comparison uses pass-1 tokens (no folds), so the kept set is decided before any vocabulary exists.
+  // comparison uses UNFOLDED tokens (EMPTY_VOCAB), as in kb-v2.3: the fold-always ruling (§3) left it.
   const tsvOnly = [...tsv.values()].filter((r) => !masterAll.has(r.code)).sort((a, b) => cmp(a.code, b.code));
   counts.tsvOnlyCandidates = tsvOnly.length;
   const masterTitleKeys = new Set(master.map((e) => setKey(toks(titleOf.get(e.code) ?? "", EMPTY_VOCAB))));
@@ -293,12 +302,20 @@ export function buildKb(inp: BuildInputs): BuildResult {
     else add({ ...base, kind: "tokens" });
   }
 
-  // ── 3. E12b fold vocabulary: pass 1 (no folds) → V0; pass 2 tokenizes with V0 ──
-  const v0 = new Set<string>();
-  for (const c of cands) if (c.kind === "tokens") for (const t of tokenize(c.text, EMPTY_VOCAB)) v0.add(t.t);
-  for (const c of cands) if (c.kind === "tokens") c.tokens = toks(c.text, v0);
+  // ── 3. folds: FOLD ALWAYS (owner ruling 2026-10-20, kb-v2.4; replaces E12b's two-pass V0 gate) ──
+  // Every source string is tokenized with the vocab OMITTED, which `canonToken` defines as "apply
+  // every FOLD_MAP fold": FIRESTOPPING → firestop although no source spells FIRESTOP, so the drawing
+  // word FIRESTOP reaches 07 84 13. (kb-v2.3 folded only when the stem was itself a pass-1 token.)
+  // Runtime contract (E12b, unchanged): the matcher tokenizes with vocab = the KB token set (the
+  // loader's `idf` key set) and gets the SAME match. canonToken(w, V) differs from canonToken(w) only
+  // for a FOLD_MAP key w whose stem s ∉ V. No stored token is a FOLD_MAP key (every one folded here),
+  // so w ∉ V too: both outputs are out-of-vocabulary, one token each at the same position, and match
+  // nothing either way. For every token that can match, runtime ≡ build. The artifact test pins the
+  // premise (no FOLD_MAP key is a KB token) and the fold fixpoint. Omitting the vocab at runtime is
+  // equally exact; the loader's contract is kept so E12b's fixpoint test still describes the KB.
+  for (const c of cands) if (c.kind === "tokens") c.tokens = toks(c.text);
   for (const r of termRows) {
-    if (r.kind !== "regex" && toks(r.term, v0).length === 0) throw new Error(`[kbv2] csi_terms row '${r.term}' has no tokens`);
+    if (r.kind !== "regex" && toks(r.term).length === 0) throw new Error(`[kbv2] csi_terms row '${r.term}' has no tokens`);
   }
 
   // ── 4. filters ──
@@ -322,6 +339,23 @@ export function buildKb(inp: BuildInputs): BuildResult {
     const k = setKey(c.tokens);
     termSetCodes.set(k, (termSetCodes.get(k) ?? new Set<string>()).add(c.code));
   }
+  // Owner ruling 2026-10-20 (kb-v2.4, variant E of notes/FOLD_EXPERIMENT_2026-10-20.md): a code's
+  // MasterFormat TITLE owns its token set. An alt/index/see pattern of a DIFFERENT code with exactly
+  // that set is dropped (INSULATION BOARD keeps 07 21 13, not 07 22 00/07 24 00/09 81 00). A set a
+  // term row owns is decided by the term rule alone, so its titles own nothing here (that covers
+  // every title the term rule dropped). Process exemption: a 40–49 title does not own against a
+  // building-division pattern; a process pattern yields to any title. TSV-only titles own nothing.
+  const titleSetCodes = new Map<string, Set<string>>();
+  for (const c of cands) {
+    if (c.source !== "title" || c.kind !== "tokens" || !c.tokens.length) continue;
+    const k = setKey(c.tokens);
+    if (termSetCodes.has(k)) continue;
+    titleSetCodes.set(k, (titleSetCodes.get(k) ?? new Set<string>()).add(c.code));
+  }
+  const titleOwnersOf = (c: Cand): string[] => {
+    const all = [...(titleSetCodes.get(setKey(c.tokens)) ?? [])];
+    return isProcessDivision(c.code) ? all : all.filter((x) => !isProcessDivision(x));
+  };
   const seen = new Set<string>();
   const kept: Cand[] = [];
   for (const c of cands) {
@@ -335,10 +369,10 @@ export function buildKb(inp: BuildInputs): BuildResult {
       // E12e facet rows: an index sub-entry whose own text adds nothing to its head ('doors' under
       // 'hollow metal doors and frames' → 08 13 13) yields the HEAD's token set under another code.
       // A sub-entry with NO token (the bare NAICS numbers under 'NAICS group manufacturing
-      // equipment') is the same case and is counted apart.
+      // equipment') is the same case and is counted apart. Same fold rule as the stored tokens.
       if (c.sub !== undefined && c.head !== undefined) {
-        const headSet = new Set(toks(c.head, v0));
-        const subTokens = toks(c.sub, v0);
+        const headSet = new Set(toks(c.head));
+        const subTokens = toks(c.sub);
         if (subTokens.every((t) => headSet.has(t))) { bump(subTokens.length ? "indexFacetRows" : "indexEmptySubEntryRows"); continue; }
       }
       // D6, extended by E12e to every MF-derived non-title source: a pattern whose token set equals a
@@ -347,6 +381,14 @@ export function buildKb(inp: BuildInputs): BuildResult {
       if ((c.source === "alt" || c.source === "index" || c.source === "see") && descTitleKeys.get(c.code)?.has(setKey(c.tokens))) {
         bump(`${c.source}DupOfDescendantTitle`);
         continue;
+      }
+      // kb-v2.4 title-owns (above). Checked AFTER the facet and D6 filters, which it mostly subsumes,
+      // so their counters keep describing the same rows and `*EqOtherCodeTitle` counts only what the
+      // ruling added. Every drop rule is a predicate on the candidate alone, so the order changes
+      // counters, never the kept set.
+      if (c.source === "alt" || c.source === "index" || c.source === "see") {
+        const owners = titleOwnersOf(c);
+        if (owners.length && !owners.includes(c.code)) { bump(`${c.source}EqOtherCodeTitle`); continue; }
       }
     }
     const dk = `${c.code}|${c.source}|${c.kind === "regex" ? `re:${c.regex}` : setKey(c.tokens)}`;
