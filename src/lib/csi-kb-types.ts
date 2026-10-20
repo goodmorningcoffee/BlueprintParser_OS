@@ -20,6 +20,7 @@ export interface KbPattern {
   up: number[];               // pattern ids this pattern extends (maximal subsets, other codes)
   orderFree: boolean;         // true for index/term sets
   oneWordOk?: boolean;        // only meaningful when tokens.length === 1
+  hintOnly?: boolean;         // E6/E12: build-time = tokens.length === 1 && !oneWordOk; never yields spans
   discipline?: string;        // term rows only: 'A'|'S'|'M'|'P'|'E'|'FP'|'C'
   regex?: string;             // kind === 'regex' only (e.g. 'R-\\d+ INSULATION')
   text: string;               // original surface form, for triggers/debug
@@ -34,17 +35,22 @@ export interface KbCode {
 
 export interface CsiKbHeader {
   schemaVersion: 'csi-kb/2'; builderVersion: string;
-  sources: { path: string; sha256: string }[];   // pdf, tsv, csi.tsv, csi_terms.tsv
-  counts: Record<string, number>;                 // codes, patterns by source, …
-  report: Record<string, number>;                 // §5.6 counters (all must be 0 except the two reach counters)
+  sources: { path: string; sha256: string }[];   // pdf, csi-masterformat.tsv, csi.tsv, csi_terms.tsv, src/lib/csi-tokenize.ts (E12; sha of RAW bytes)
+  counts: Record<string, number>;                 // codes, patterns by source, drops, … (informational)
+  report: Record<string, number>;                 // §5.6 counters, exact key list E12a (all 0 except the two reach counters)
   floorTokens: string[]; fillerTokens: string[]; boilerplateTokens: string[];
+  abbrevTokens: string[];                         // E12: canonical tokens of csi_terms `abbrev` rows → the runtime `known` set
 }
 export interface CsiKb { header: CsiKbHeader; codes: KbCode[]; patterns: KbPattern[]; }
 
-/** Shape returned by `loadCsiKb()` in `csi-kb.ts` (server-only; S2). */
+/** Shape returned by `loadCsiKb()` in `csi-kb.ts` (server-only; S2). Layout per IMPLEMENTATION
+ *  §IV E10 (amended 2026-10-20): tokens are interned to ids at load; `up*` is not precomputed. */
 export interface LoadedKb extends CsiKb {
   byCode: Map<string, KbCode>;
-  anchorIndex: Map<string, Int32Array>;           // token → pattern ids (anchor postings)
-  genericIndex: Map<string, Int32Array>;          // token → pattern ids with anchor === null
-  idf: Map<string, number>;
+  tokenId: Map<string, number>;                   // interned at load; the key set doubles as the fold vocab (E12b)
+  anchorIndex: Map<number, Int32Array>;           // tokenId → pattern ids (anchor postings)
+  genericIndex: Map<number, Int32Array>;          // tokenId → pattern ids with anchor === null
+  up: Int32Array[];                               // per pattern id
+  idf: Map<string, number>;                       // token → idf (string-keyed for callers/tests)
+  known: Set<string>;                             // = header.abbrevTokens, passed to tokenize()/splitTextUnits()
 }

@@ -32,13 +32,22 @@ describe("csi-tokenize: word-form map", () => {
     ["SURFACE", "surface"],
     ["SURFACING", "surface"],
     ["CURE", "cure"],
-    ["CURING", "cure"],
-    ["CLEANING", "clean"],
     ["DEMOLITION", "demolish"],
     ["INSULATION", "insulate"],
-    ["FRAMING", "frame"],
+    ["REINFORCING", "reinforce"],
   ])("%s → %s", (word, expected) => {
     expect(ts(word)).toEqual([expected]);
+  });
+
+  // S2 term/fold review (2026-10-20): each of these folds merged two trades' MasterFormat
+  // titles (METAL FRAMING → "metal frame" = 08 12 00 Metal Frames; CLEANING ROOM → 13 21 13
+  // Clean Rooms; …), so the word stays its own token even with no vocabulary.
+  it.each([
+    "FRAMING", "FRAMED", "CLEANING", "COATED", "WIRING", "GLAZED",
+    "INSULATED", "INSULATING", "CURED", "CURING", "WELDED", "WELDING",
+  ])("%s is NOT folded (cross-trade collision)", (word) => {
+    expect(ts(word)).toEqual([word.toLowerCase()]);
+    expect(Object.hasOwn(FOLD_MAP, word.toLowerCase())).toBe(false);
   });
 
   it("applies a fold only when the stem is KB vocabulary (vocab given)", () => {

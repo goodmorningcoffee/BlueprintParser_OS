@@ -1,0 +1,56 @@
+term	code	kind	discipline	oneWordOk	note
+GWB	09 29 00	abbrev		1	gypsum wall board
+GYP BD	09 29 00	abbrev		0	
+GYP	09 29 00	abbrev		1	
+GYPSUM WALL BOARD	09 29 00	vernacular		0	insert 'wall'
+DRYWALL	09 29 00	vernacular		1	
+PTD	09 91 00	abbrev		1	painted → painting family
+PNT	09 91 00	abbrev		1	
+PAINT	09 91 00	vernacular		1	bare verb/noun on finish schedules
+HM	08 11 13	abbrev		1	hollow metal (doors and frames)
+HM DOOR	08 13 13	vernacular		0	
+HM FRAME	08 12 13	vernacular		0	
+HOLLOW METAL	08 11 13	vernacular		0	
+ACT	09 51 00	abbrev		1	acoustical ceiling (tile/panel unknown)
+ACT LAY-IN	09 51 13	vernacular		0	lay-in → panel ceilings
+LAY-IN CEILING	09 51 13	vernacular		0	
+CMU	04 22 00	abbrev		1	concrete masonry unit
+CONCRETE BLOCK	04 22 00	vernacular		0	
+VCT	09 65 19	abbrev		1	vinyl composition tile (resilient tile flooring)
+LVT	09 65 19	abbrev		1	luxury vinyl tile
+EIFS	07 24 00	abbrev		1	
+FRP	06 64 00	abbrev		1	fiberglass reinforced plastic paneling
+FRP PANEL	06 64 00	vernacular		0	
+RB	09 65 13	abbrev		1	rubber base
+WALL BASE	09 65 13	vernacular		0	resilient base (default)
+MTL STUD	09 22 16	abbrev		0	MTL is an abbreviation (feeds the known set)
+METAL STUD	09 22 16	vernacular		0	
+METAL STUD FRAMING	09 22 16	vernacular		0	
+VAPOR BARRIER	07 26 00	vernacular		0	MF says vapor retarders
+SPRINKLER	21 13 00	vernacular		1	
+SPRINKLER SYSTEM	21 13 00	vernacular		0	
+SPRINKLER HEAD	21 13 00	vernacular		0	
+SEALANT	07 92 00	vernacular		1	joint sealants
+CAULK	07 92 00	vernacular		1	
+CAULKING	07 92 00	vernacular		1	
+STOREFRONT	08 43 00	vernacular		1	
+BATT INSULATION	07 21 16	vernacular		0	blanket insulation
+RIGID INSULATION	07 21 13	vernacular		0	board insulation
+R-\d+(?:\s+\w+)?\s+INSUL	07 21 00	regex		0	R-value: form (batt/rigid) unknown → thermal insulation family
+SPRAY FOAM	07 21 19	vernacular		0	foamed-in-place insulation
+CARPET	09 68 00	vernacular		1	
+CPT	09 68 00	abbrev		1	
+PLAM	06 41 00	abbrev		1	MF2018 alt of 06 41 00 (cabinet face or countertop)
+\bP-LAM\b	06 41 00	regex		0	token form is the bare "lam"; matched on raw text (E7)
+SOLID SURFACE	12 36 61.16	vernacular		0	solid surfacing countertops
+ROLLER SHADE	12 24 13	vernacular		0	
+PORCELAIN TILE	09 30 13	vernacular		0	ceramic tiling
+WATER HEATER	22 30 00	vernacular		0	plumbing equipment parent; electric/gas decided by a modifier row later
+CIRCUIT BREAKER	26 28 16	vernacular	E	0	
+DISCONNECT SWITCH	26 28 16	vernacular	E	0	
+PANELBOARD	26 24 16	vernacular	E	1	
+BALL VALVE	22 05 23	vernacular	P	0	
+BALL VALVE	23 05 23	vernacular	M	0	
+GATE VALVE	22 05 23	vernacular	P	0	
+GATE VALVE	23 05 23	vernacular	M	0	
+SEWAGE PUMP	22 13 29	vernacular	P	0	sanitary sewerage pumps

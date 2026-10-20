@@ -1,0 +1,354 @@
+{
+  "schemaVersion": "csi-kb-report/1",
+  "builderVersion": "kb-v2.2",
+  "kbBytes": 6456503,
+  "kbSha256": "96f7a0e9afe143922d88d971b13b69f6f34d877aa67118911b7c6db4c6cf5596",
+  "counts": {
+    "N": 8935,
+    "abbrevRowsPdf": 83,
+    "abbrevRowsPdfInTerms": 3,
+    "altDupOfDescendantTitle": 89,
+    "codes": 8935,
+    "codesMaster": 8934,
+    "danglingIndexCodesParsed": 126,
+    "danglingIndexRows": 126,
+    "danglingSeeParsed": 5,
+    "dedupedPatterns": 1527,
+    "dedupedPatterns_alt": 8,
+    "dedupedPatterns_index": 1516,
+    "dedupedPatterns_see": 2,
+    "dedupedPatterns_term": 1,
+    "emptyTokenDropped_alt": 6,
+    "fillerAnchors": 15,
+    "floorTokens": 19,
+    "genericPatterns": 51,
+    "headerLeakResidual": 0,
+    "headless": 4,
+    "hintOnlyPatterns": 1008,
+    "indexDupOfDescendantTitle": 551,
+    "indexEmptySubEntryRows": 20,
+    "indexEntriesParsed": 12511,
+    "indexFacetRows": 3,
+    "latticePostingScan": 12,
+    "le2CharDropped_alt": 23,
+    "patterns": 20505,
+    "patterns_alt": 1011,
+    "patterns_index": 10295,
+    "patterns_regex": 2,
+    "patterns_see": 210,
+    "patterns_term": 54,
+    "patterns_title": 8934,
+    "patterns_tsv": 1,
+    "reachDenominator": 19473,
+    "seeDupOfDescendantTitle": 1,
+    "seeFanoutDropped": 69,
+    "seeResolved": 156,
+    "seeResolvedViaHead": 6,
+    "seeResolvedViaText": 121,
+    "seeResolvedViaTitle": 29,
+    "seeUnresolved": 28,
+    "synonymsParsed": 253,
+    "termRows": 55,
+    "tradeInherited": 2,
+    "tsvOnlyCandidates": 19,
+    "tsvOnlyDropped": 18,
+    "tsvOnlyKept": 1,
+    "tsvTitleAliases": 83,
+    "unassignedCodes": 51,
+    "vocab": 4234
+  },
+  "report": {
+    "overGrabResidual": 0,
+    "dupWords": 0,
+    "danglingInPatterns": 0,
+    "unassignedInPatterns": 0,
+    "numericOrLen1Tokens": 0,
+    "le2CharPatterns": 0,
+    "misHeadedGoldens": 0,
+    "oneWordTermMultiFamily": 0,
+    "reach_oneTokenTolerance": 6688,
+    "reach_diffMassGE80": 4523
+  },
+  "reach": {
+    "denominator": 19473,
+    "denominator_alt": 675,
+    "denominator_index": 9972,
+    "denominator_see": 163,
+    "denominator_term": 30,
+    "denominator_title": 8632,
+    "denominator_tsv": 1,
+    "diffMassGE80_alt": 61,
+    "diffMassGE80_index": 1146,
+    "diffMassGE80_see": 20,
+    "diffMassGE80_term": 4,
+    "diffMassGE80_title": 3292,
+    "oneTokenTolerance_alt": 99,
+    "oneTokenTolerance_index": 3107,
+    "oneTokenTolerance_see": 12,
+    "oneTokenTolerance_term": 1,
+    "oneTokenTolerance_title": 3469,
+    "oneTokenToleranceShare": 0.3434,
+    "diffMassGE80Share": 0.2323
+  },
+  "patternsBySource": {
+    "title": 8934,
+    "tsv": 1,
+    "alt": 1011,
+    "index": 10295,
+    "see": 210,
+    "term": 54
+  },
+  "floorTokens": {
+    "air": 231,
+    "concrete": 354,
+    "control": 412,
+    "equipment": 1080,
+    "gas": 219,
+    "maintenance": 336,
+    "metal": 308,
+    "operation": 225,
+    "pipe": 421,
+    "process": 309,
+    "pump": 272,
+    "schedule": 333,
+    "storage": 228,
+    "system": 511,
+    "unit": 228,
+    "utility": 218,
+    "wall": 216,
+    "water": 331,
+    "wood": 210
+  },
+  "boilerplateTokens": {
+    "all": 5,
+    "any": 0,
+    "contractor": 16,
+    "detail": 1,
+    "drawing": 11,
+    "existing": 38,
+    "general": 41,
+    "location": 6,
+    "new": 4,
+    "no": 7,
+    "plan": 3,
+    "project": 38,
+    "provide": 0,
+    "required": 6,
+    "scale": 12,
+    "see": 1,
+    "type": 56,
+    "work": 102
+  },
+  "fillerTokens": {
+    "accessory": 66,
+    "assembly": 111,
+    "common": 73,
+    "equipment": 1080,
+    "product": 68,
+    "result": 66,
+    "system": 511,
+    "work": 102
+  },
+  "topCodeDF": [
+    [
+      "equipment",
+      1080
+    ],
+    [
+      "system",
+      511
+    ],
+    [
+      "pipe",
+      421
+    ],
+    [
+      "control",
+      412
+    ],
+    [
+      "concrete",
+      354
+    ],
+    [
+      "maintenance",
+      336
+    ],
+    [
+      "schedule",
+      333
+    ],
+    [
+      "water",
+      331
+    ],
+    [
+      "process",
+      309
+    ],
+    [
+      "metal",
+      308
+    ],
+    [
+      "pump",
+      272
+    ],
+    [
+      "air",
+      231
+    ],
+    [
+      "storage",
+      228
+    ],
+    [
+      "unit",
+      228
+    ],
+    [
+      "operation",
+      225
+    ],
+    [
+      "gas",
+      219
+    ],
+    [
+      "utility",
+      218
+    ],
+    [
+      "wall",
+      216
+    ],
+    [
+      "wood",
+      210
+    ],
+    [
+      "electrical",
+      195
+    ],
+    [
+      "fire",
+      195
+    ],
+    [
+      "material",
+      195
+    ],
+    [
+      "door",
+      192
+    ],
+    [
+      "treatment",
+      190
+    ],
+    [
+      "plastic",
+      177
+    ],
+    [
+      "steel",
+      172
+    ],
+    [
+      "roof",
+      169
+    ],
+    [
+      "communication",
+      166
+    ],
+    [
+      "facility",
+      166
+    ],
+    [
+      "manufacturing",
+      165
+    ],
+    [
+      "panel",
+      160
+    ],
+    [
+      "tank",
+      156
+    ],
+    [
+      "power",
+      153
+    ],
+    [
+      "liquid",
+      150
+    ],
+    [
+      "construction",
+      145
+    ],
+    [
+      "protection",
+      143
+    ],
+    [
+      "heat",
+      140
+    ],
+    [
+      "masonry",
+      139
+    ],
+    [
+      "form",
+      135
+    ],
+    [
+      "integrated",
+      135
+    ],
+    [
+      "requirement",
+      135
+    ],
+    [
+      "security",
+      130
+    ],
+    [
+      "device",
+      122
+    ],
+    [
+      "service",
+      122
+    ],
+    [
+      "valve",
+      119
+    ],
+    [
+      "period",
+      118
+    ],
+    [
+      "assembly",
+      111
+    ],
+    [
+      "pressure",
+      108
+    ],
+    [
+      "window",
+      107
+    ],
+    [
+      "commissioning",
+      106
+    ]
+  ]
+}

@@ -81,26 +81,28 @@ function lookup(map: Readonly<Record<string, string>>, key: string): string | un
 
 /** Word-form folds (PLAN §5.4's explicit list, extended to common MasterFormat -ing/-ed/
  *  -ion nouns). Applied by `canonToken` only when the stem is in the supplied vocabulary;
- *  with no vocabulary they are applied unconditionally. */
+ *  with no vocabulary they are applied unconditionally.
+ *  REMOVED by the S2 term/fold review (2026-10-20, measured against MF2018 titles) because the
+ *  fold merges two trades: framing/framed (METAL FRAMING = 08 12 00 "Metal Frames"), cleaning
+ *  (13 21 13 Clean Rooms), coated (Coat Racks, Tack Coats), wiring (Welded Wire, Wire Rope),
+ *  glazed (08 80 Glazing), insulated/insulating (adjectives of other products), cured/curing
+ *  (Cured-in-Place vs Concrete Curing), welded/welding (Welded Wire vs Welding gases). Those
+ *  words now stay their own tokens. */
 export const FOLD_MAP: Readonly<Record<string, string>> = {
   anchored: "anchor", anchoring: "anchor",
   carpeting: "carpet",
   caulking: "caulk",
-  cleaning: "clean",
-  coated: "coat", coating: "coat",
+  coating: "coat",
   cooling: "cool",
-  cured: "cure", curing: "cure",
   dampproofing: "dampproof",
   demolishing: "demolish", demolition: "demolish",
   fencing: "fence",
   finished: "finish", finishing: "finish",
   firestopping: "firestop",
   fireproofing: "fireproof",
-  framed: "frame", framing: "frame",
-  glazed: "glaze",
   grouted: "grout", grouting: "grout",
   heating: "heat",
-  insulated: "insulate", insulating: "insulate", insulation: "insulate",
+  insulation: "insulate",
   lighting: "light",
   mounted: "mount", mounting: "mount",
   painted: "paint", painting: "paint",
@@ -113,8 +115,6 @@ export const FOLD_MAP: Readonly<Record<string, string>> = {
   tiled: "tile", tiling: "tile",
   ventilating: "ventilate", ventilation: "ventilate",
   waterproofing: "waterproof",
-  welded: "weld", welding: "weld",
-  wiring: "wire",
 };
 
 /** Exceptions: the surface form is KEPT as the token (MasterFormat names these trades by
