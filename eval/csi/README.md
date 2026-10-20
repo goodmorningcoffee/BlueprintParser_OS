@@ -8,6 +8,8 @@
 >
 > **The CSI v2 lookup table `src/data/csi-kb.json` is not in git either** (owner ruling D1, 2026-10-20:
 > MasterFormat phrases are not redistributed); rebuild it from the PDF per the header of `build-kb-v2.ts`.
+> **Nor is the parser fixture `src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json`** (owner ruling
+> 2026-10-20, same as D1: verbatim PDF page text); regenerate it per the header of `mf-fixture-extract.ts`.
 
 | file | what it is | phase |
 |---|---|---|

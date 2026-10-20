@@ -1,9 +1,21 @@
 /**
- * mf-fixture-extract.ts — regenerates the public parser fixture
+ * mf-fixture-extract.ts — regenerates the parser fixture
  * `src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json` from the MasterFormat PDF,
  * so `csi-mf-parse.test.ts` runs without the PDF and the excerpt stays reproducible.
  *
- * Content is MasterFormat text only (numbers, titles, explanations, keyword index).
+ * Content is MasterFormat text only (numbers, titles, explanations, keyword index) — verbatim.
+ *
+ * Why this file is not in git (owner ruling 2026-10-20, the same treatment as D1's
+ * `src/data/csi-kb.json`): the fixture is ~186 KB of verbatim MasterFormat PDF page text,
+ * including five keyword-index pages, which is not redistributed on the public GitHub repo.
+ * The anchored `/src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json` line in .gitignore
+ * keeps it out, and scripts/prepush-check.sh refuses a push that tracks it, ever added it, or
+ * whose committed .gitignore lacks that line. Unlike the KB it does NOT ship in the image (only
+ * tests read it). A fresh clone has no copy: put the PDF at `DEFAULT_PDF` (eval/csi/mf-parse.ts:
+ * `../../gitignore/csi_masterformat.pdf` from the repo root, or set BP_MF_PDF) or pass its path,
+ * then run the two commands below from the repo root. Without it the fixture-driven
+ * describes of csi-mf-parse.test.ts skip (announced by src/test/global-setup.ts; a failure
+ * under BP_REQUIRE_CSI_KB=1, the workspace's scripts/bp-suite default).
  *
  *   npx esbuild eval/csi/mf-fixture-extract.ts --bundle --platform=node --target=node20 \
  *     --alias:@=./src --external:pg-native --outfile=build/csi-mf-fixture.js

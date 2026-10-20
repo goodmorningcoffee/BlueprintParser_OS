@@ -41,8 +41,9 @@
  * It is "gitignored but shipped": the anchored `/src/data/csi-kb.json` line in .gitignore keeps it
  * out (scripts/prepush-check.sh refuses a push that tracks it, ever added it, or whose committed
  * .gitignore lacks that line), and the image still carries it because it is built from the working
- * tree. A fresh clone has no copy: put the PDF at `DEFAULT_PDF` (eval/csi/mf-parse.ts) or pass its
- * path, then run the two Usage commands above. Without it the KB tests skip (announced by
+ * tree. A fresh clone has no copy: put the PDF at `DEFAULT_PDF` (eval/csi/mf-parse.ts:
+ * `../../gitignore/csi_masterformat.pdf` from the repo root, or set BP_MF_PDF) or pass its path,
+ * then run the two Usage commands above. Without it the KB tests skip (announced by
  * src/test/global-setup.ts; a failure under BP_REQUIRE_CSI_KB=1) and no image builds: the
  * Dockerfile runs scripts/verify-csi-kb.mjs, which also refuses a stub or a KB stale against the
  * tree's TSVs or tokenizer, and deploy-aws.sh runs it before release/bootstrap touch docker or AWS.

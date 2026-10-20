@@ -90,3 +90,6 @@ __pycache__/
 # eval/csi/build-kb-v2.ts; it still SHIPS because the image is built from the working tree
 # (.dockerignore does not exclude src/data). ANCHORED on purpose.
 /src/data/csi-kb.json
+# Parser test fixture with verbatim MasterFormat PDF page text (owner ruling 2026-10-20, same as D1):
+# not redistributed on the public GitHub; regenerate with eval/csi/mf-fixture-extract.ts. ANCHORED.
+/src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json

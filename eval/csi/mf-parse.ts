@@ -40,12 +40,18 @@
  *   node build/csi-mf-parse.js [pdfPath] [outPath]
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
-export const DEFAULT_PDF = "/workspaces/projects/gitignore/csi_masterformat.pdf";
+/**
+ * The MasterFormat PDF (not in git). `BP_MF_PDF` overrides; otherwise `../../gitignore/` relative to
+ * the CWD, which every caller sets to the repo root: vitest (scripts/bp-suite cd's there) and the
+ * esbuild bundles (`node build/….js`, run from the root — DEFAULT_OUT and FIXTURE_OUT are
+ * cwd-relative too). Not module-relative: in the CJS bundle `import.meta.url` is empty and
+ * `__dirname` is build/, so one relative path could not serve both the source and the bundle.
+ * Machine layout: the repo sits two levels below the workspace root that holds gitignore/.
+ */
+export const DEFAULT_PDF = process.env.BP_MF_PDF ?? resolve(process.cwd(), "../../gitignore/csi_masterformat.pdf");
 export const DEFAULT_OUT = "build/mf-parsed.json";
-const PDFJS_ABS =
-  "/workspaces/projects/BlueprintParser_OS_july10_part6_refactor/blueprintparser_2/node_modules/pdfjs-dist/legacy/build/pdf.mjs";
 
 // ───────────────────────────── types ─────────────────────────────
 
@@ -791,10 +797,10 @@ interface Pdfjs {
   getDocument(o: { data: Uint8Array; useSystemFonts: boolean; verbosity: number }): { promise: Promise<PdfjsDoc> };
 }
 
+/** `BP_PDFJS` overrides; otherwise the repo's own node_modules (CWD = repo root, see DEFAULT_PDF). */
 export function pdfjsPath(): string {
   const candidates = [
     process.env.BP_PDFJS,
-    PDFJS_ABS,
     join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.mjs"),
   ].filter((p): p is string => !!p);
   const hit = candidates.find((p) => existsSync(p));
