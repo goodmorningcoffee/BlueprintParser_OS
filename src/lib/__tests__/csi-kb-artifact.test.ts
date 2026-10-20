@@ -183,6 +183,25 @@ describe("csi-kb.json structure", () => {
     expect(roots).toBeGreaterThan(1000); // the rule is exercised (≈3.5k non-title multi-token roots)
   });
 
+  it("owner ruling 2026-10-20: a curated term row owns its token set; no other code keeps an equal MF/TSV pattern", () => {
+    const key = (ts: string[]) => [...new Set(ts)].sort().join(" ");
+    const owners = new Map<string, Set<string>>();
+    for (const p of kb.patterns) {
+      if (p.source !== "term" || p.kind !== "tokens") continue;
+      owners.set(key(p.tokens), (owners.get(key(p.tokens)) ?? new Set<string>()).add(p.code));
+    }
+    const residual = kb.patterns.filter((p) => p.source !== "term" && p.kind === "tokens" && owners.get(key(p.tokens)) && !owners.get(key(p.tokens))?.has(p.code));
+    expect(residual.map((p) => `${p.code} ${p.source} '${p.text}'`)).toEqual([]);
+    const c = kb.header.counts;
+    const dropped = ["title", "tsv", "alt", "index", "see"].reduce((n, s) => n + (c[`${s}EqOtherCodeTermRow`] ?? 0), 0);
+    expect(dropped).toBe(27); // measured 2026-10-20 at kb-v2.3: title 2 · alt 20 · index 4 · see 1
+    // The visible cost: division 40's Ball/Gate Valves lose every text pattern to the 22/23 05 23 term rows.
+    for (const code of ["40 05 61", "40 05 63"]) {
+      expect(kb.patterns.filter((p) => p.code === code && p.kind === "tokens"), code).toEqual([]);
+    }
+    expect(kb.patterns.filter((p) => p.source === "term" && key(p.tokens) === "ball valve").map((p) => p.code).sort()).toEqual(["22 05 23", "23 05 23"]);
+  });
+
   it("D6 (extended by E12e): no alt/index/see pattern has the token set of a DESCENDANT's title", () => {
     const c = kb.header.counts;
     expect(c.altDupOfDescendantTitle).toBeGreaterThan(0);

@@ -14,8 +14,8 @@
  *     per process).
  *   - The KB file is found with the same 3-path probe as `csi-database.ts`.
  *   - Verified at load: `header.schemaVersion === 'csi-kb/2'`, and the sha256 of the RAW bytes
- *     (CRLF included) of every in-repo input recorded in `header.sources` — the three TSVs and
- *     the tokenizer. The PDF entry is skipped (it is not in the repo or the image). A stale KB
+ *     (CRLF included) of the three TSVs recorded in `header.sources`. The PDF and the tokenizer
+ *     entries are skipped (build-only; the artifact test hashes them). A stale KB
  *     (an input edited without a rebuild) therefore fails loudly here, not silently at match time.
  *   - Any failure — file missing, unparseable, wrong schema, sha mismatch, broken structure —
  *     throws a descriptive Error. There is no empty-KB fallback (fail closed).
@@ -47,8 +47,16 @@ export const CSI_KB_RUNTIME_SOURCES: readonly string[] = [
   "src/data/csi-masterformat.tsv",
   "src/data/csi.tsv",
   "src/data/csi_terms.tsv",
-  "src/lib/csi-tokenize.ts",
 ];
+
+/**
+ * Inputs recorded in `header.sources` but NOT re-hashed at load (2026-10-20 ruling, amends E12d).
+ * The tokenizer runs compiled into the server bundle; its `.ts` source is not in the image, and a
+ * hash of source text would not describe the compiled code anyway. Its freshness is a property of
+ * the commit, checked by `__tests__/csi-kb-artifact.test.ts` (which hashes all five sources) on
+ * every suite/CI run. The PDF is likewise build-only (not in the repo or the image).
+ */
+export const CSI_KB_BUILD_ONLY_SOURCES: readonly string[] = ["src/lib/csi-tokenize.ts"];
 
 /**
  * Mass of a filler token is idf × this factor (PLAN §5.5, D4). Must equal the builder's
@@ -101,6 +109,7 @@ function verifyHeader(file: string, header: CsiKbHeader | undefined): void {
   const recorded = new Map<string, string>();
   for (const s of header.sources) {
     if (s.path.toLowerCase().endsWith(".pdf")) continue; // E12d: the PDF is not in the repo/image
+    if (CSI_KB_BUILD_ONLY_SOURCES.includes(s.path)) continue; // checked at test time, not in the image
     if (!CSI_KB_RUNTIME_SOURCES.includes(s.path)) {
       fail(file, `header.sources lists "${s.path}", which this loader does not verify — update csi-kb.ts`);
     }

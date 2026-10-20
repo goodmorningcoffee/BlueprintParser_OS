@@ -32,6 +32,7 @@ vi.mock("fs", async (importOriginal) => {
 });
 
 import {
+  CSI_KB_BUILD_ONLY_SOURCES,
   CSI_KB_FILLER_FACTOR,
   CSI_KB_RUNTIME_SOURCES,
   __resetCsiKbMemoForTests,
@@ -149,6 +150,24 @@ describe("csi-kb loader: fail closed", () => {
     expect(kb.header.schemaVersion).toBe("csi-kb/2");
     expect(kb.patterns.length).toBeGreaterThan(0);
   }, LOAD_TIMEOUT);
+
+  it("the tokenizer entry is build-only: not re-hashed at load (the image has no src/lib)", () => {
+    expect(CSI_KB_BUILD_ONLY_SOURCES).toEqual(["src/lib/csi-tokenize.ts"]);
+    const p = tamperedCopy("tokenizer-sha-altered.json", (kb) => {
+      const t = kb.header.sources.find((s) => s.path === "src/lib/csi-tokenize.ts");
+      if (!t) throw new Error("fixture: no tokenizer source entry");
+      t.sha256 = flipHex(t.sha256);
+    });
+    h.reads.length = 0;
+    expect(loadCsiKbFromFile(p).header.schemaVersion).toBe("csi-kb/2");
+    expect(h.reads.some((r) => r.endsWith("csi-tokenize.ts"))).toBe(false);
+  }, LOAD_TIMEOUT);
+
+  it("image contract: every runtime input lives under src/data, which the Dockerfile copies into the runner", () => {
+    for (const rel of [...CSI_KB_RUNTIME_SOURCES, "src/data/csi-kb.json"]) expect(rel.startsWith("src/data/"), rel).toBe(true);
+    const dockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^COPY --from=builder \/app\/src\/data \.\/src\/data\s*$/m);
+  });
 
   it("a structural break (non-dense ids, same-code up, foreign patternId) throws", () => {
     const dense = tamperedCopy("not-dense.json", (kb) => {

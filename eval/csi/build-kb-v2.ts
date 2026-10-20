@@ -40,7 +40,7 @@ import type { CsiKb, CsiKbHeader, KbCode, KbPattern, KbSource } from "@/lib/csi-
 import { DEFAULT_PDF, REJECT_TITLE_RE, TITLE_STRIP_RE, dedupeAdjacentWords, extractPages, levelOf, parseDocument, stripTitle, type MfParsed } from "./mf-parse";
 
 /** Manual constant (D3): bump on ANY builder-logic change; the artifact test pins it. */
-export const BUILDER_VERSION = "kb-v2.2";
+export const BUILDER_VERSION = "kb-v2.3";
 export const SCHEMA_VERSION = "csi-kb/2" as const;
 export const KB_OUT = "src/data/csi-kb.json";
 export const REPORT_OUT = "eval/csi/kb-report.json";
@@ -301,9 +301,22 @@ export function buildKb(inp: BuildInputs): BuildResult {
       descTitleKeys.set(a, s);
     }
   }
+  // Owner ruling 2026-10-20 (review §1b, "drop"): a curated term row OWNS its token set. Any MF/TSV
+  // pattern of a DIFFERENT code with exactly that set is dropped (e.g. 40 05 63 'Ball Valves' loses
+  // its {ball,valve} title/index patterns to the BALL VALVE rows @ 22 05 23 P / 23 05 23 M).
+  const termSetCodes = new Map<string, Set<string>>();
+  for (const c of cands) {
+    if (c.source !== "term" || c.kind !== "tokens" || !c.tokens.length) continue;
+    const k = setKey(c.tokens);
+    termSetCodes.set(k, (termSetCodes.get(k) ?? new Set<string>()).add(c.code));
+  }
   const seen = new Set<string>();
   const kept: Cand[] = [];
   for (const c of cands) {
+    if (c.kind === "tokens" && c.source !== "term") {
+      const owners = termSetCodes.get(setKey(c.tokens));
+      if (owners && !owners.has(c.code)) { bump(`${c.source}EqOtherCodeTermRow`); continue; }
+    }
     if (c.kind === "tokens") {
       if (!c.tokens.length) { bump(`emptyTokenDropped_${c.source}`); continue; }
       if (c.source !== "term" && c.tokens.every((t) => t.length <= 2)) { bump(`le2CharDropped_${c.source}`); continue; }
@@ -330,6 +343,10 @@ export function buildKb(inp: BuildInputs): BuildResult {
     kept.push(c);
   }
   kept.sort((a, b) => cmp(a.code, b.code) || SOURCE_RANK[a.source] - SOURCE_RANK[b.source] || a.order - b.order);
+  // E2 title-diff reads the parent's title from what the KB KEEPS: a parent whose title pattern was
+  // dropped (owner term-row ruling) counts as untitled, so the artifact alone re-derives every diff.
+  const keptTitleTokens = new Map<string, string[]>();
+  for (const c of kept) if (c.source === "title" || c.source === "tsv") keptTitleTokens.set(c.code, c.tokens);
 
   // ── 5. weights ──
   const tokPats = kept.filter((c) => c.kind === "tokens");
@@ -432,8 +449,8 @@ export function buildKb(inp: BuildInputs): BuildResult {
     if (anchor !== null) diff.add(anchor);
     if (c.source === "title") {
       const p = parent.get(c.code) ?? null;
-      const pt = p ? new Set(titleTokens.get(p) ?? []) : null;
-      if (p && !titleTokens.get(p)?.length) bump("titleDiffParentUntitled");
+      const pt = p ? new Set(keptTitleTokens.get(p) ?? []) : null;
+      if (p && !keptTitleTokens.get(p)?.length) bump("titleDiffParentUntitled");
       if (pt && pt.size) ts.forEach((t, i) => { if (!pt.has(t)) diff.add(i); });
     }
     if (up.length) {
