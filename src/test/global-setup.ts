@@ -7,6 +7,15 @@
 // SKIP (suite stays green for unit-test-only contexts) unless
 // BP_REQUIRE_TEST_DB=1 (set in CI, where a postgres service is guaranteed).
 // Start the local DB with: scripts/test-db.sh start
+//
+// CSI v2 lookup table (owner ruling D1, 2026-10-20): src/data/csi-kb.json is gitignored by
+// design, so a fresh clone (GitHub CI) has none and the tests that read it SKIP. The per-file
+// console.warn in those tests shows only under --reporter=verbose; globalSetup output is printed
+// by the default reporter, so the skip is announced here. Under BP_REQUIRE_CSI_KB=1 (the default
+// of /workspaces/projects/scripts/bp-suite, the run GREEN_HEADS records) an absent KB fails the
+// whole run instead, so a recorded-green run can never be green on skips.
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -24,6 +33,16 @@ export default async function setup({
 }: {
   provide: (key: string, value: unknown) => void;
 }) {
+  const csiKb = "src/data/csi-kb.json";
+  if (!existsSync(join(process.cwd(), csiKb))) {
+    const why =
+      `${csiKb} is absent (gitignored by design, owner ruling D1). Rebuild it from the MasterFormat PDF — ` +
+      "see the header of eval/csi/build-kb-v2.ts";
+    if (process.env.BP_REQUIRE_CSI_KB === "1") {
+      throw new Error(`[csi-kb] required (BP_REQUIRE_CSI_KB=1) but ${why}`);
+    }
+    console.warn(`[csi-kb] ${why}. The tests that read it (csi-kb-artifact, csi-kb-loader) will SKIP.`);
+  }
   const pool = new Pool({
     connectionString: TEST_DATABASE_URL,
     connectionTimeoutMillis: 1500,

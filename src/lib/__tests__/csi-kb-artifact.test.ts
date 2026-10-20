@@ -1,6 +1,12 @@
 // @vitest-environment node
 /**
- * csi-kb-artifact.test.ts — CSI tagger v2, S2: the committed KB `src/data/csi-kb.json`.
+ * csi-kb-artifact.test.ts — CSI tagger v2, S2: the built KB `src/data/csi-kb.json`.
+ *
+ * The KB is GITIGNORED BY DESIGN (owner ruling D1, 2026-10-20: its ~11,500 MasterFormat phrases are
+ * not redistributed on GitHub). A fresh clone — GitHub CI included — has no copy, so every describe
+ * here is `skipIf(!HAS_KB)`. The skip is announced by src/test/global-setup.ts, whose output the
+ * default reporter prints (the console.warn below shows only under --reporter=verbose), and under
+ * BP_REQUIRE_CSI_KB=1 — scripts/bp-suite's default — an absent KB fails the run instead.
  *
  * The artifact is built by `eval/csi/build-kb-v2.ts` from the MasterFormat PDF + three TSVs +
  * the tokenizer (IMPLEMENTATION §II S2, §IV E12). The full-PDF rebuild is deliberately NOT a
@@ -16,7 +22,7 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tokenize } from "@/lib/csi-tokenize";
 import type { CsiKb, KbCode, KbPattern } from "@/lib/csi-kb-types";
@@ -33,6 +39,15 @@ import {
 } from "../../../eval/csi/build-kb-v2";
 
 const root = process.cwd();
+const KB_REL = "src/data/csi-kb.json";
+/** Absent on a fresh clone by design (D1, 2026-10-20) — see the file header. */
+const HAS_KB = existsSync(join(root, KB_REL));
+if (!HAS_KB) {
+  console.warn(
+    `[csi-kb-artifact] SKIPPING every test in this file: ${KB_REL} is absent (gitignored by design, owner ruling D1). ` +
+      "Rebuild it from the MasterFormat PDF — see the header of eval/csi/build-kb-v2.ts (esbuild bundle → node build/csi-kbv2-build.js).",
+  );
+}
 const read = (p: string) => readFileSync(join(root, p), "utf-8");
 const sha256File = (p: string) => createHash("sha256").update(readFileSync(join(root, p))).digest("hex");
 const uniqTokens = (text: string, vocab: ReadonlySet<string>) => [...new Set(tokenize(text, vocab).map((t) => t.t))];
@@ -57,12 +72,13 @@ const titleOf = (code: string): KbPattern => {
 const tokensAt = (p: KbPattern, idx: number[]) => idx.map((i) => p.tokens[i]);
 
 beforeAll(() => {
-  kb = JSON.parse(read("src/data/csi-kb.json")) as CsiKb;
+  if (!HAS_KB) return;
+  kb = JSON.parse(read(KB_REL)) as CsiKb;
   byCode = new Map(kb.codes.map((c) => [c.code, c]));
   vocab = new Set(kb.patterns.flatMap((p) => p.tokens));
 });
 
-describe("csi-kb.json header + freshness (no PDF needed)", () => {
+describe.skipIf(!HAS_KB)("csi-kb.json header + freshness (no PDF needed)", () => {
   it("is schema csi-kb/2 at the builder's current version", () => {
     expect(kb.header.schemaVersion).toBe("csi-kb/2");
     expect(kb.header.builderVersion).toBe(BUILDER_VERSION);
@@ -104,7 +120,7 @@ describe("csi-kb.json header + freshness (no PDF needed)", () => {
   });
 });
 
-describe("csi-kb.json structure", () => {
+describe.skipIf(!HAS_KB)("csi-kb.json structure", () => {
   // Each check collects violations and asserts ONE empty list: ~21k patterns × per-item
   // `expect` calls exceed vitest's 5 s budget, and a list names every offender at once.
   it("pattern ids are dense, codes are sorted, and patternIds/code links agree both ways", () => {
@@ -238,7 +254,7 @@ describe("csi-kb.json structure", () => {
   });
 });
 
-describe("parent() by digit shape", () => {
+describe.skipIf(!HAS_KB)("parent() by digit shape", () => {
   it("walks .NN → NNNNNN → NNNN00 → NNN000 → NN0000", () => {
     const has = (c: string) => byCode.has(c);
     expect(parentOf("08 11 13.13", has)).toBe("08 11 13");
@@ -255,7 +271,7 @@ describe("parent() by digit shape", () => {
   });
 });
 
-describe("lattice (IMPLEMENTATION §II S2 as amended 2026-10-20)", () => {
+describe.skipIf(!HAS_KB)("lattice (IMPLEMENTATION §II S2 as amended 2026-10-20)", () => {
   it("08 11 13 Hollow Metal Doors and Frames: diff ⊇ {hollow}; up ⊇ titles of 08 11 00, 08 12 13, 08 13 13", () => {
     const p = titleOf("08 11 13");
     expect(tokensAt(p, p.diff)).toContain("hollow");
@@ -312,7 +328,7 @@ describe("lattice (IMPLEMENTATION §II S2 as amended 2026-10-20)", () => {
   });
 });
 
-describe("token lists and fold vocabulary", () => {
+describe.skipIf(!HAS_KB)("token lists and fold vocabulary", () => {
   it("header.floorTokens is pinned (fixtures/csi-v2/floor-tokens.json)", () => {
     const fixture = JSON.parse(read("src/lib/__tests__/fixtures/csi-v2/floor-tokens.json")) as string[];
     expect(kb.header.floorTokens).toEqual(fixture);
@@ -349,7 +365,7 @@ describe("token lists and fold vocabulary", () => {
   });
 });
 
-describe("TSV sources", () => {
+describe.skipIf(!HAS_KB)("TSV sources", () => {
   it("trade comes from csi-masterformat.tsv (08 71 00)", () => {
     const tsv = readMasterformatTsv(read("src/data/csi-masterformat.tsv"));
     expect(byCode.get("08 71 00")?.trade).toBe(tsv.get("08 71 00")?.trade);

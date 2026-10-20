@@ -23,6 +23,12 @@ COPY --from=rds-ca /aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bund
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# CSI v2 lookup table: src/data/csi-kb.json is gitignored by design (owner ruling D1, 2026-10-20 —
+# MasterFormat phrases are not redistributed on GitHub) but MUST ship, so git cannot vouch for it.
+# Every image build passes here (release, bootstrap, a bare ./deploy.sh publish): a missing, stub or
+# stale KB (built from other TSVs or another tokenizer than this tree's) stops the build.
+RUN node scripts/verify-csi-kb.mjs
+
 ENV NEXT_TELEMETRY_DISABLED=1
 # The production DB module is evaluated during `next build`. Supply a
 # non-secret, non-routable shape-valid URL so the same fail-closed URL parser is

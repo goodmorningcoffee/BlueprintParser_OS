@@ -49,6 +49,11 @@ ALLOW_UNVERIFIED=0
 PAUSES=0
 LAST_TASK_EXIT=none
 GREEN_HEADS="${BP_GREEN_HEADS:-${PROJECT_DIR}/../../gitignore/projects/aws_deploy/GREEN_HEADS}"
+# The CSI v2 MasterFormat lookup table: gitignored by design (owner ruling D1, 2026-10-20) but baked
+# into the image from the working tree, so release and bootstrap refuse without a current one. The
+# override exists only so the hermetic test harness can run on a fresh clone (GitHub CI has no
+# copy); never set it by hand.
+CSI_KB_FILE="${BP_CSI_KB_FILE:-${PROJECT_DIR}/src/data/csi-kb.json}"
 
 # Build attestations (provenance/SBOM) turn a push into an OCI image index. ECS accepts that;
 # Lambda rejects it and SageMaker has. Off for every build this script starts.
@@ -442,6 +447,7 @@ phase_preflight() {
 
 phase_image_build() {
   section "Build the images locally first (the likeliest failure, and free)"
+  require_csi_kb
   announce "docker build ×3 (app, Lambda, YOLO) — nothing is pushed"
   run "${DOCKER_BIN}" build --platform linux/amd64 -t beaver-app:bootstrap-check "${PROJECT_DIR}"
   run "${DOCKER_BIN}" build --platform linux/amd64 -f "${PROJECT_DIR}/Dockerfile.lambda" -t beaver-cv-lambda:bootstrap-check "${PROJECT_DIR}"
@@ -525,6 +531,7 @@ docker_manifest_digest() { "${DOCKER_BIN}" manifest inspect --verbose "$1" 2>/de
 
 phase_images() {
   section "Push the three images"
+  require_csi_kb
   local base; base=$(ecr_base)
   capture_redacted "aws ecr get-login-password" "${AWS_BIN}" ecr get-login-password --region "${AWS_REGION}" | "${DOCKER_BIN}" login --username AWS --password-stdin "${base}" >/dev/null
   announce "build + push beaver-cv-lambda:latest (Lambda needs it at create time; single manifest, amd64)"
@@ -820,11 +827,22 @@ require_clean_tree() {
   die "uncommitted changes: commit them, or BP_ALLOW_DIRTY=1 to ship the working tree anyway"
 }
 
+# src/data/csi-kb.json is not in git (D1), so neither the clean-tree gate nor a fresh clone can
+# vouch for it; an image built without it would ship a CSI tagger whose loader fails closed. The
+# Dockerfile runs the same verifier on every build; this runs it first, before docker or AWS.
+require_csi_kb() {
+  local out
+  if out=$(node "${PROJECT_DIR}/scripts/verify-csi-kb.mjs" "${CSI_KB_FILE}" 2>&1); then ok "CSI lookup table present and current (${CSI_KB_FILE#"${PROJECT_DIR}"/})"; return 0; fi
+  printf '%s\n' "${out}" >&2
+  die "the CSI lookup table ${CSI_KB_FILE} cannot ship (above); no image was built"
+}
+
 cmd_release() {
   load_config; require_config AWS_ACCOUNT AWS_REGION DOMAIN CLOUDFRONT_DISTRIBUTION_ID
   section "Release$( [ "${OUTAGE}" = 1 ] && printf ' (OUTAGE: schema change)')"
   local head; head=$(git -C "${PROJECT_DIR}" rev-parse HEAD)
   require_clean_tree
+  require_csi_kb
   [ "$(caller_account)" = "${AWS_ACCOUNT}" ] || die "aws caller account is not ${AWS_ACCOUNT}"
   require_green_head "${head}"
   local previous; previous=$(live_digest); info "live digest ${previous:-<none>}"

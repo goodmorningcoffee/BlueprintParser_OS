@@ -12,13 +12,20 @@
  *   - the "server-only" walk: no client-side file imports `@/lib/csi-kb` except `import type`
  *     (the `server-only` package is not installed; this walk is the guard)
  * Every load is a 6.5 MB parse + four sha256s, so tests that load carry a generous timeout.
+ *
+ * The KB is GITIGNORED BY DESIGN (owner ruling D1, 2026-10-20), so a fresh clone (GitHub CI) has
+ * none: the describes that load or tamper with the REAL file are `skipIf(!HAS_KB)` (announced by
+ * src/test/global-setup.ts; a hard failure under BP_REQUIRE_CSI_KB=1, bp-suite's default). The
+ * missing-file / invalid-JSON / image-contract / verifier-drift checks and the server-only walk need
+ * no KB and always run.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import type { CsiKb, LoadedKb } from "@/lib/csi-kb-types";
 import { FILLER_FACTOR } from "../../../eval/csi/build-kb-v2";
+import { CSI_KB_REL as VERIFIER_KB_REL, REQUIRED_SOURCES as VERIFIER_REQUIRED_SOURCES } from "../../../scripts/verify-csi-kb.mjs";
 
 // Wrap fs.readFileSync (the loader imports it from "fs") so the test can count KB reads.
 const h = vi.hoisted(() => ({ reads: [] as string[] }));
@@ -33,6 +40,7 @@ vi.mock("fs", async (importOriginal) => {
 
 import {
   CSI_KB_BUILD_ONLY_SOURCES,
+  CSI_KB_FILE,
   CSI_KB_FILLER_FACTOR,
   CSI_KB_RUNTIME_SOURCES,
   __resetCsiKbMemoForTests,
@@ -42,6 +50,15 @@ import {
 
 const root = process.cwd();
 const KB_PATH = join(root, "src/data/csi-kb.json");
+/** Absent on a fresh clone by design (D1, 2026-10-20) — see the file header. */
+const HAS_KB = existsSync(KB_PATH);
+if (!HAS_KB) {
+  console.warn(
+    "[csi-kb-loader] SKIPPING the describes that need the real KB (lazy + memo, tampered copies, indexes): " +
+      "src/data/csi-kb.json is absent (gitignored by design, owner ruling D1). Rebuild it from the MasterFormat PDF — " +
+      "see the header of eval/csi/build-kb-v2.ts (esbuild bundle → node build/csi-kbv2-build.js).",
+  );
+}
 const LOAD_TIMEOUT = 60_000;
 const kbReads = () => h.reads.filter((p) => p.endsWith("csi-kb.json")).length;
 
@@ -49,7 +66,7 @@ let tmp: string;
 let rawKb: string;
 beforeAll(() => {
   tmp = mkdtempSync(join(tmpdir(), "csi-kb-loader-"));
-  rawKb = readFileSync(KB_PATH, "utf-8");
+  rawKb = HAS_KB ? readFileSync(KB_PATH, "utf-8") : "";
 });
 afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
@@ -66,7 +83,7 @@ function tamperedCopy(name: string, mutate: (kb: CsiKb) => void): string {
 }
 const flipHex = (sha: string) => (sha[0] === "0" ? "1" : "0") + sha.slice(1);
 
-describe("csi-kb loader: lazy + memo", () => {
+describe.skipIf(!HAS_KB)("csi-kb loader: lazy + memo", () => {
   it("importing the module reads nothing; the first call reads once; the second is the same object", async () => {
     __resetCsiKbMemoForTests();
     expect(globalThis.__bpCsiKbV2).toBeUndefined();
@@ -98,7 +115,7 @@ describe("csi-kb loader: lazy + memo", () => {
   }, LOAD_TIMEOUT);
 });
 
-describe("csi-kb loader: fail closed", () => {
+describe("csi-kb loader: fail closed (no KB needed)", () => {
   it("missing file throws a descriptive error", () => {
     const p = join(tmp, "does-not-exist.json");
     expect(() => loadCsiKbFromFile(p)).toThrow(/cannot read the KB file/);
@@ -107,10 +124,23 @@ describe("csi-kb loader: fail closed", () => {
 
   it("invalid JSON throws", () => {
     const p = join(tmp, "broken.json");
-    writeFileSync(p, rawKb.slice(0, 5000));
+    writeFileSync(p, '{"header":{"schemaVersion":"csi-kb/2","sources":[{"path":"csi_masterformat.pdf"'); // truncated
     expect(() => loadCsiKbFromFile(p)).toThrow(/not valid JSON/);
   });
 
+  it("image contract: every runtime input lives under src/data, which the Dockerfile copies into the runner", () => {
+    for (const rel of [...CSI_KB_RUNTIME_SOURCES, "src/data/csi-kb.json"]) expect(rel.startsWith("src/data/"), rel).toBe(true);
+    const dockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^COPY --from=builder \/app\/src\/data \.\/src\/data\s*$/m);
+  });
+
+  it("the image-build verifier (scripts/verify-csi-kb.mjs) hashes exactly the loader's runtime + build-only inputs", () => {
+    expect(VERIFIER_REQUIRED_SOURCES).toEqual([...CSI_KB_RUNTIME_SOURCES, ...CSI_KB_BUILD_ONLY_SOURCES]);
+    expect(VERIFIER_KB_REL).toBe(CSI_KB_FILE);
+  });
+});
+
+describe.skipIf(!HAS_KB)("csi-kb loader: fail closed (tampered copies of the real KB)", () => {
   it("a bad schemaVersion throws", () => {
     const p = tamperedCopy("bad-schema.json", (kb) => {
       Object.assign(kb.header, { schemaVersion: "csi-kb/1" });
@@ -163,12 +193,6 @@ describe("csi-kb loader: fail closed", () => {
     expect(h.reads.some((r) => r.endsWith("csi-tokenize.ts"))).toBe(false);
   }, LOAD_TIMEOUT);
 
-  it("image contract: every runtime input lives under src/data, which the Dockerfile copies into the runner", () => {
-    for (const rel of [...CSI_KB_RUNTIME_SOURCES, "src/data/csi-kb.json"]) expect(rel.startsWith("src/data/"), rel).toBe(true);
-    const dockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
-    expect(dockerfile).toMatch(/^COPY --from=builder \/app\/src\/data \.\/src\/data\s*$/m);
-  });
-
   it("a structural break (non-dense ids, same-code up, foreign patternId) throws", () => {
     const dense = tamperedCopy("not-dense.json", (kb) => {
       kb.patterns[5].id = 6;
@@ -200,7 +224,7 @@ describe("csi-kb loader: fail closed", () => {
   }, LOAD_TIMEOUT);
 });
 
-describe("csi-kb loader: indexes (E10)", () => {
+describe.skipIf(!HAS_KB)("csi-kb loader: indexes (E10)", () => {
   let kb: LoadedKb;
   beforeAll(() => {
     kb = loadCsiKb();

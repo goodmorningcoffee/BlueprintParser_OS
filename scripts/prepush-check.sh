@@ -4,7 +4,7 @@
 # The trained models under models/ (yolo_*.pt ≈137 MB each, tatr/model.safetensors) are a real
 # investment and must never reach the public repository. Today they are untracked and ignored by
 # the anchored `/models/` line in .gitignore; this script makes that a checked invariant at push
-# time instead of a remembered one. Four checks, any hit is fatal:
+# time instead of a remembered one. Six checks, any hit is fatal:
 #
 #   1. INDEX    no tracked file under the top-level models/ or with a weights extension
 #   2. IGNORE   .gitignore still carries the anchored `/models/` line (an un-anchored `models/`
@@ -17,6 +17,16 @@
 #               They quote a client's drawings and were scrubbed from history on 2026-10-03; copies
 #               live outside the repo (gitignore/projects/csi_private_eval/) and are NOT ignored
 #               here, so a careless `git add eval/csi` would bring them back.
+#               Also src/data/csi-kb.json, the CSI v2 MasterFormat lookup table (~11,500 phrases from
+#               the MasterFormat PDF): owner ruling D1 (2026-10-20) keeps it off the public repo. It
+#               is "gitignored but shipped" — built locally by eval/csi/build-kb-v2.ts, baked into
+#               the image from the working tree. Its history was purged on 2026-10-20.
+#   6. KB-IGNORE the anchored line `/src/data/csi-kb.json` is in .gitignore — both in the working
+#               tree (this clone's `git add -A`) and in the COMMITTED .gitignore of every pushed tip
+#               that carries the KB builder eval/csi/build-kb-v2.ts. The second half is what GitHub
+#               receives: without it a fresh clone that builds the KB stages the 6.4 MB table on
+#               `git add -A`, and hooks are not cloned, so check 5 would not run there. Tips without
+#               the builder (older branches) cannot build the KB and are not held to the line.
 #
 # Usage
 #   scripts/prepush-check.sh            check every local branch (what a manual pre-push run wants)
@@ -38,7 +48,8 @@ MAX_BLOB_BYTES=$((50 * 1024 * 1024))
 FORBIDDEN_PATHS='eval/csi/PILOT_ADJUDICATION_PACKET.md
 eval/csi/gold-pilot.json
 eval/csi/lexicon-gap.json
-eval/csi/GRANULARITY_RUBRIC.md'
+eval/csi/GRANULARITY_RUBRIC.md
+src/data/csi-kb.json'
 
 ZERO_SHA='0000000000000000000000000000000000000000'
 
@@ -72,6 +83,10 @@ fi
 # 2. IGNORE
 grep -qx '/models/' .gitignore 2>/dev/null || fail ".gitignore no longer carries the anchored line '/models/'"
 
+# 6a. KB-IGNORE, working tree (run here, next to its sibling; 6b needs the pushed tips, below)
+KB_IGNORE_LINE='/src/data/csi-kb.json'
+grep -qx "${KB_IGNORE_LINE}" .gitignore 2>/dev/null || fail ".gitignore no longer carries the anchored line '${KB_IGNORE_LINE}'"
+
 # Which commits are being pushed? Hook mode reads ref lines from stdin; otherwise every local branch.
 tips=""
 if [ ! -t 0 ]; then
@@ -85,6 +100,28 @@ if [ -z "${tips}" ]; then
   tips=$(git for-each-ref --format='%(objectname)' refs/heads/ | tr '\n' ' ')
 fi
 [ -n "${tips}" ] || { echo "prepush-check: nothing to check"; exit 0; }
+
+# 6b. KB-IGNORE, committed — the .gitignore GitHub will receive, at every pushed tip that has the
+# builder. Matched with `case`, not `git show | grep -q`: grep -q exits at the first hit, git show
+# takes SIGPIPE, and pipefail would turn a present line into a failure.
+kb_unignored=""
+for t in ${tips}; do
+  git cat-file -e "${t}:eval/csi/build-kb-v2.ts" 2>/dev/null || continue
+  committed=$(git show "${t}:.gitignore" 2>/dev/null || true)
+  case "
+${committed}
+" in
+    *"
+${KB_IGNORE_LINE}
+"*) ;;
+    *) kb_unignored="${kb_unignored}    $(git rev-parse --short=12 "${t}")
+" ;;
+  esac
+done
+if [ -n "${kb_unignored}" ]; then
+  fail "pushed tips carry eval/csi/build-kb-v2.ts but their COMMITTED .gitignore lacks '${KB_IGNORE_LINE}' (a working-tree line does not reach GitHub — commit .gitignore):"
+  printf '%s' "${kb_unignored}" >&2
+fi
 
 # 3. HISTORY — every file ever added or renamed-in by any commit reachable from the pushed tips.
 # Commit lines are marked with a unit separator (0x1f) so a path can never be mistaken for one;
@@ -113,7 +150,7 @@ fi
 private_hits=$( { git ls-files; git log -m --diff-filter=AR --name-only --format= ${tips}; } \
   | awk 'NR == FNR { forbidden[$0] = 1; next } ($0 in forbidden) && !seen[$0]++' <(printf '%s\n' "${FORBIDDEN_PATHS}") -)
 if [ -n "${private_hits}" ]; then
-  fail "files that quote client drawings (scrubbed 2026-10-03) are back in the index or the pushed history:"
+  fail "private files (client-drawing text scrubbed 2026-10-03; MasterFormat KB, ruling D1 2026-10-20) are back in the index or the pushed history:"
   printf '%s\n' "${private_hits}" | sed 's/^/    /' >&2
 fi
 
@@ -121,4 +158,4 @@ if [ "${failures}" -ne 0 ]; then
   echo "prepush-check: ${failures} check(s) failed — push refused. Nothing private goes to GitHub." >&2
   exit 1
 fi
-echo "prepush-check: clean — no model weights or client-text files tracked or added in history, no blob over 50 MB; /models/ still ignored"
+echo "prepush-check: clean — no model weights, client-text files or MasterFormat KB (src/data/csi-kb.json) tracked or added in history, no blob over 50 MB; /models/ and /src/data/csi-kb.json still ignored (and committed so at every pushed tip with the KB builder)"

@@ -30,7 +30,19 @@
  *   npx esbuild eval/csi/build-kb-v2.ts --bundle --platform=node --target=node20 \
  *     --alias:@=./src --external:pg-native --outfile=build/csi-kbv2-build.js
  *   node build/csi-kbv2-build.js [pdfPath]
- * Writes `src/data/csi-kb.json` (committed, D1) and `eval/csi/kb-report.json` (numbers only).
+ * Writes `src/data/csi-kb.json` (gitignored, see below) and `eval/csi/kb-report.json` (numbers only,
+ * tracked: counts, hashes and single-token frequencies — no MasterFormat phrase).
+ *
+ * Why `src/data/csi-kb.json` is not in git (owner ruling D1, 2026-10-20): it holds ~11,500 keyword
+ * phrases taken from the MasterFormat PDF, which are not redistributed on the public GitHub repo.
+ * It is "gitignored but shipped": the anchored `/src/data/csi-kb.json` line in .gitignore keeps it
+ * out (scripts/prepush-check.sh refuses a push that tracks it, ever added it, or whose committed
+ * .gitignore lacks that line), and the image still carries it because it is built from the working
+ * tree. A fresh clone has no copy: put the PDF at `DEFAULT_PDF` (eval/csi/mf-parse.ts) or pass its
+ * path, then run the two Usage commands above. Without it the KB tests skip (announced by
+ * src/test/global-setup.ts; a failure under BP_REQUIRE_CSI_KB=1) and no image builds: the
+ * Dockerfile runs scripts/verify-csi-kb.mjs, which also refuses a stub or a KB stale against the
+ * tree's TSVs or tokenizer, and deploy-aws.sh runs it before release/bootstrap touch docker or AWS.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

@@ -5,6 +5,7 @@
 // never happened on a refused path.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,6 +28,7 @@ let home;
 let awsLog;
 let tfvarsPath;
 let deployEnvPath;
+let csiKbPath;
 
 const fakeAws = `#!/usr/bin/env bash
 # Fake AWS CLI: records every call, answers from a tiny state dir.
@@ -209,10 +211,23 @@ before(async () => {
   tfvarsPath = path.join(fixture, "terraform.tfvars");
   deployEnvPath = path.join(fixture, "deploy.env");
   await writeFile(deployEnvPath, deployEnv);
+  // src/data/csi-kb.json is gitignored by design (D1), so a fresh clone (CI) has none. release and
+  // bootstrap run scripts/verify-csi-kb.mjs on it, so the harness hands them the smallest KB that
+  // verifier accepts: current hashes of this tree's four inputs. The refusals have their own test.
+  csiKbPath = path.join(fixture, "csi-kb.json");
+  await writeFile(csiKbPath, await minimalCsiKb());
 });
 after(async () => {
   await rm(fixture, { recursive: true, force: true });
 });
+
+async function minimalCsiKb(mutate = (kb) => kb) {
+  const sources = [{ path: "csi_masterformat.pdf", sha256: "0".repeat(64) }];
+  for (const rel of ["src/data/csi-masterformat.tsv", "src/data/csi.tsv", "src/data/csi_terms.tsv", "src/lib/csi-tokenize.ts"]) {
+    sources.push({ path: rel, sha256: createHash("sha256").update(await readFile(path.join(ROOT, rel))).digest("hex") });
+  }
+  return JSON.stringify(mutate({ header: { schemaVersion: "csi-kb/2", sources }, codes: [{ code: "00 00 00" }], patterns: [{ id: 0 }] }));
+}
 
 async function resetState() {
   await rm(path.join(fixture, "state"), { recursive: true, force: true });
@@ -238,6 +253,7 @@ function runTool(args, extraEnv = {}) {
       BP_DEPLOY_SH: path.join(fixture, "bin", "deploy.sh"),
       BP_DEPLOY_YOLO_SH: path.join(fixture, "bin", "deploy-yolo.sh"),
       BP_GREEN_HEADS: path.join(fixture, "GREEN_HEADS"),
+      BP_CSI_KB_FILE: csiKbPath,
       BP_TRACE: process.env.DEPLOY_AWS_TEST_TRACE || "",
       // The harness runs against the live repo, which may carry uncommitted work; the clean-tree
       // gate has its own test below.
@@ -623,6 +639,36 @@ test("release refuses an unclean working tree unless BP_ALLOW_DIRTY=1 (deploy.sh
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /uncommitted changes/u);
   assert.ok(!(await logLines()).some((l) => l.includes("deploy.sh publish")));
+});
+
+test("release and bootstrap refuse before building when the gitignored CSI lookup table is missing, a stub or stale", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const kb = (name, body) => {
+    const p = path.join(fixture, name);
+    return writeFile(p, body).then(() => p);
+  };
+  const bad = [
+    [path.join(fixture, "no-such-csi-kb.json"), /is missing or unreadable/u],
+    [await kb("csi-kb-empty.json", ""), /is empty/u],
+    [await kb("csi-kb-stub.json", '{"header":{"schemaVersion":"csi-kb/2"}}\n'), /"codes" is missing or empty.*header\.sources is not an array/su],
+    [await kb("csi-kb-stale.json", await minimalCsiKb((k) => {
+      k.header.sources.find((s) => s.path === "src/lib/csi-tokenize.ts").sha256 = "f".repeat(64);
+      return k;
+    })), /STALE: "src\/lib\/csi-tokenize\.ts"/u],
+  ];
+  for (const [file, reason] of bad) {
+    const release = runTool(["release", "--yes", "--allow-unverified"], { BP_CSI_KB_FILE: file });
+    assert.notEqual(release.status, 0, file);
+    assert.match(release.stderr, reason, file);
+    assert.match(release.stderr, /gitignored by design.*eval\/csi\/build-kb-v2\.ts.*cannot ship/su, file);
+    assert.ok(!(await logLines()).some((l) => l.includes("deploy.sh publish")), "release published no image");
+  }
+  await resetState();
+  const boot = runTool(["bootstrap", "--yes"], { BP_ASSUME_OWNER_DONE: "1", BP_CSI_KB_FILE: bad[3][0] });
+  assert.notEqual(boot.status, 0);
+  assert.match(boot.stderr, /STALE: "src\/lib\/csi-tokenize\.ts"/u);
+  assert.ok(!(await logLines()).some((l) => l.includes("docker build") || l.includes("deploy.sh publish")), "bootstrap built nothing");
 });
 
 test("the plan gate: expected task-definition/epoch replacements pass; a real deletion is refused non-interactively", async () => {

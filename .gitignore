@@ -84,3 +84,9 @@ __pycache__/
 # terraform saved-plans embed tfstate/secrets - never commit
 *.plan
 *.tfplan
+
+# CSI v2 MasterFormat lookup table (owner ruling D1, 2026-10-20): ~11,500 keyword phrases from the
+# MasterFormat PDF are NOT redistributed on the public GitHub. Built locally from the PDF by
+# eval/csi/build-kb-v2.ts; it still SHIPS because the image is built from the working tree
+# (.dockerignore does not exclude src/data). ANCHORED on purpose.
+/src/data/csi-kb.json
