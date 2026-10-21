@@ -2,42 +2,27 @@
 
 import { useMemo, useRef, useState } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
+import {
+  type CreateProjectBody,
+  type FileStatus,
+  type PresignFile,
+  type UploadDeps,
+  UploadHttpError,
+  extOf,
+  fileRowErrors,
+  formatMB,
+  perFileSummaryMessage,
+  runMergedUpload,
+  runPerFileUploads,
+  selectionError,
+  uploadModeFor,
+} from "./upload-batch";
 
 interface UploadWidgetProps {
   onUploadComplete: () => void;
 }
 
-const ALLOWED_EXT = new Set([
-  "pdf",
-  "png",
-  "jpg",
-  "jpeg",
-  "tif",
-  "tiff",
-  "heic",
-]);
-const MAX_FILES = 30;
-const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB
-const MAX_AGGREGATE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
-
 const ACCEPT_ATTR = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.heic";
-
-function extOf(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
-}
-
-function formatMB(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-interface PresignFile {
-  filename: string;
-  url: string;
-  fields: Record<string, string>;
-  stagingKey: string;
-  index: number;
-}
 
 async function uploadOne(
   file: File,
@@ -64,6 +49,78 @@ async function uploadOne(
   });
 }
 
+// The only two API calls the upload flow makes; both modes in ./upload-batch go through these.
+const API_DEPS: UploadDeps<File> = {
+  async requestCredentials(filenames) {
+    const credRes = await fetch("/api/s3/staging-credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filenames }),
+    });
+    if (!credRes.ok) {
+      const j = await credRes.json().catch(() => ({}));
+      // [refactor jul6 S033] staging-credentials now serves {error:{code,message}}
+      throw new UploadHttpError(
+        credRes.status,
+        apiErrorMessage(j) ||
+          `Failed to get upload credentials (${credRes.status})`,
+      );
+    }
+    return (await credRes.json()) as {
+      projectPath: string;
+      files: PresignFile[];
+    };
+  },
+  uploadFile: uploadOne,
+  async createProject(body: CreateProjectBody) {
+    const projectRes = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!projectRes.ok) {
+      const j = await projectRes.json().catch(() => ({}));
+      // [refactor jun17 P1.3] /api/projects now returns {error:{code,message}}; apiErrorMessage reads
+      // both envelopes (legacy {error:str} + new) so the error line never shows "[object Object]".
+      throw new UploadHttpError(
+        projectRes.status,
+        apiErrorMessage(j) ||
+          `Failed to create project (${projectRes.status})`,
+      );
+    }
+  },
+};
+
+function withoutKey<V>(map: Record<string, V>, key: string): Record<string, V> {
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
+function statusLabel(status: FileStatus): string {
+  switch (status.state) {
+    case "queued":
+      return "queued";
+    case "uploading":
+      return `uploading ${status.pct}%`;
+    case "creating":
+      return "creating…";
+    case "created":
+      return "created";
+    case "failed":
+      return "failed";
+    case "skipped":
+      return "not uploaded";
+  }
+}
+
+function statusClass(status: FileStatus): string {
+  if (status.state === "created") return "text-emerald-300";
+  if (status.state === "failed" || status.state === "skipped")
+    return "text-red-300";
+  return "text-gray-400";
+}
+
 export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -71,18 +128,29 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
     Record<string, number>
   >({});
   const [stage, setStage] = useState<
-    "idle" | "credentialing" | "uploading" | "creating" | "error"
+    "idle" | "credentialing" | "uploading" | "creating" | "batch" | "error"
   >("idle");
   const [globalError, setGlobalError] = useState("");
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  // Off by default: several files become several projects unless the user asks to merge them.
+  const [merge, setMerge] = useState(false);
+  const [fileStatus, setFileStatus] = useState<Record<string, FileStatus>>({});
+  const [batchNote, setBatchNote] = useState("");
 
   const collator = useMemo(
     () => new Intl.Collator("en", { numeric: true, sensitivity: "base" }),
     [],
   );
 
+  const mode = uploadModeFor(files.length, merge);
+  const selError = selectionError(files, mode);
+  const shownError = globalError || selError;
+
   const uploading =
-    stage === "credentialing" || stage === "uploading" || stage === "creating";
+    stage === "credentialing" ||
+    stage === "uploading" ||
+    stage === "creating" ||
+    stage === "batch";
 
   const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
   const aggregateProgress =
@@ -92,12 +160,19 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
           files.reduce((sum, f) => sum + (perFileProgress[f.name] ?? 0), 0) /
             files.length,
         );
+  const batchStarted = files.filter((f) => {
+    const st = fileStatus[f.name];
+    return st !== undefined && st.state !== "queued";
+  }).length;
 
   function resetSelection() {
     setFiles([]);
     setPerFileProgress({});
     setRowErrors({});
     setGlobalError("");
+    setFileStatus({});
+    setBatchNote("");
+    setMerge(false);
     setStage("idle");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -109,147 +184,70 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
       .slice()
       .sort((a, b) => collator.compare(a.name, b.name));
 
-    const errors: Record<string, string> = {};
-    let aggregate = 0;
-    for (const f of sorted) {
-      const ext = extOf(f.name);
-      if (!ALLOWED_EXT.has(ext)) {
-        errors[f.name] = `Unsupported type: .${ext || "(none)"}`;
-        continue;
-      }
-      if (f.size > MAX_FILE_BYTES) {
-        errors[f.name] = `Too large (${formatMB(f.size)} > 500 MB)`;
-        continue;
-      }
-      aggregate += f.size;
-    }
-
-    let global = "";
-    if (sorted.length > MAX_FILES) {
-      global = `Maximum ${MAX_FILES} files per project (got ${sorted.length})`;
-    } else if (aggregate > MAX_AGGREGATE_BYTES) {
-      global = `Aggregate size ${formatMB(aggregate)} exceeds 2 GB cap`;
-    }
-
     setFiles(sorted);
-    setRowErrors(errors);
-    setGlobalError(global);
+    setRowErrors(fileRowErrors(sorted));
+    setGlobalError("");
+    setFileStatus({});
+    setBatchNote("");
     setPerFileProgress({});
+    // A new selection starts from the per-file default, even if the last one was merged.
+    setMerge(false);
     setStage("idle");
   }
 
   function removeRow(filename: string) {
     setFiles((prev) => prev.filter((f) => f.name !== filename));
-    setRowErrors((prev) => {
-      const next = { ...prev };
-      delete next[filename];
-      return next;
-    });
-    setPerFileProgress((prev) => {
-      const next = { ...prev };
-      delete next[filename];
-      return next;
-    });
+    setRowErrors((prev) => withoutKey(prev, filename));
+    setPerFileProgress((prev) => withoutKey(prev, filename));
+    setFileStatus((prev) => withoutKey(prev, filename));
   }
 
-  async function handleUpload() {
-    const hasBlockingErrors =
-      Object.keys(rowErrors).length > 0 || globalError || files.length === 0;
-    if (hasBlockingErrors) return;
-
+  async function handleMergedUpload() {
     setGlobalError("");
-    setStage("credentialing");
     setPerFileProgress(Object.fromEntries(files.map((f) => [f.name, 0])));
 
     try {
-      // 1. Get staging presigns (one per file, keyed in submission order).
-      const credRes = await fetch("/api/s3/staging-credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filenames: files.map((f) => f.name) }),
+      await runMergedUpload(files, API_DEPS, {
+        onStage: setStage,
+        onProgress: (name, pct) =>
+          setPerFileProgress((prev) => ({ ...prev, [name]: pct })),
+        onRowErrors: setRowErrors,
       });
-      if (!credRes.ok) {
-        const j = await credRes.json().catch(() => ({}));
-        // [refactor jul6 S033] staging-credentials now serves {error:{code,message}}
-        throw new Error(
-          apiErrorMessage(j) ||
-            `Failed to get upload credentials (${credRes.status})`,
-        );
-      }
-      const { projectPath, files: presigns } = (await credRes.json()) as {
-        projectPath: string;
-        files: PresignFile[];
-      };
-      if (!Array.isArray(presigns) || presigns.length !== files.length) {
-        throw new Error("Presign response does not match file list");
-      }
-
-      // 2. Parallel upload each file to its staging key.
-      setStage("uploading");
-      const uploadResults = await Promise.allSettled(
-        files.map(async (f, index) => {
-          const p = presigns[index];
-          if (!p || p.index !== index || p.filename !== f.name) {
-            throw new Error(`No matching presign issued for file ${index + 1}`);
-          }
-          await uploadOne(f, p, (pct) =>
-            setPerFileProgress((prev) => ({ ...prev, [f.name]: pct })),
-          );
-          return { filename: f.name, stagingKey: p.stagingKey };
-        }),
-      );
-
-      const rowErrs: Record<string, string> = {};
-      const stagingFiles: Array<{ filename: string; stagingKey: string }> = [];
-      uploadResults.forEach((res, i) => {
-        const fn = files[i].name;
-        if (res.status === "rejected") {
-          rowErrs[fn] =
-            res.reason instanceof Error
-              ? res.reason.message
-              : String(res.reason);
-        } else {
-          stagingFiles.push(res.value);
-        }
-      });
-      if (Object.keys(rowErrs).length > 0) {
-        setRowErrors(rowErrs);
-        throw new Error(
-          `${Object.keys(rowErrs).length} upload(s) failed — see rows below`,
-        );
-      }
-
-      // 3. Create project — server validates + kicks off Step Function.
-      setStage("creating");
-      const firstBase = files[0].name.replace(/\.[^.]+$/, "") || "Project";
-      const projectName =
-        files.length === 1 ? firstBase : `${firstBase} (+${files.length - 1})`;
-
-      const projectRes = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: projectName,
-          dataUrl: projectPath,
-          stagingFiles,
-        }),
-      });
-      if (!projectRes.ok) {
-        const j = await projectRes.json().catch(() => ({}));
-        // [refactor jun17 P1.3] /api/projects now returns {error:{code,message}}; apiErrorMessage reads
-        // both envelopes (legacy {error:str} + new) so the error line never shows "[object Object]".
-        throw new Error(
-          apiErrorMessage(j) ||
-            `Failed to create project (${projectRes.status})`,
-        );
-      }
-
       onUploadComplete();
       resetSelection();
     } catch (err) {
       setGlobalError(err instanceof Error ? err.message : "Upload failed");
       setStage("error");
     }
+  }
+
+  async function handlePerFileUpload() {
+    setGlobalError("");
+    setBatchNote("");
+    setStage("batch");
+    const batch = files.slice();
+    const summary = await runPerFileUploads(batch, API_DEPS, (name, st) =>
+      setFileStatus((prev) => ({ ...prev, [name]: st })),
+    );
+
+    if (summary.created.length > 0) onUploadComplete();
+    if (summary.created.length === batch.length) {
+      resetSelection();
+      return;
+    }
+    // Keep only what did not become a project, so a retry never duplicates one.
+    const created = new Set(summary.created);
+    setFiles(batch.filter((f) => !created.has(f.name)));
+    setBatchNote(perFileSummaryMessage(summary));
+    setStage("idle");
+  }
+
+  async function handleUpload() {
+    const hasBlockingErrors =
+      Object.keys(rowErrors).length > 0 || shownError || files.length === 0;
+    if (hasBlockingErrors) return;
+    if (mode === "per-file") await handlePerFileUpload();
+    else await handleMergedUpload();
   }
 
   return (
@@ -260,6 +258,7 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
         accept={ACCEPT_ATTR}
         multiple
         className="hidden"
+        data-testid="upload-input"
         onChange={(e) => handleFilesPicked(e.target.files)}
       />
 
@@ -278,15 +277,19 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
             disabled={
               uploading ||
               Object.keys(rowErrors).length > 0 ||
-              Boolean(globalError)
+              Boolean(shownError)
             }
             className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium disabled:opacity-50"
           >
             {stage === "credentialing" && "Preparing…"}
             {stage === "uploading" && `Uploading ${aggregateProgress}%`}
             {stage === "creating" && "Creating project…"}
+            {stage === "batch" &&
+              `Uploading ${batchStarted} of ${files.length}…`}
             {(stage === "idle" || stage === "error") &&
-              `Upload ${files.length} file${files.length > 1 ? "s" : ""}`}
+              (mode === "per-file"
+                ? `Upload ${files.length} files as ${files.length} projects`
+                : `Upload ${files.length} file${files.length > 1 ? "s" : ""}`)}
           </button>
         )}
 
@@ -300,7 +303,27 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
         )}
       </div>
 
-      {files.length > 0 && (
+      {files.length >= 2 && (
+        <label className="flex items-center gap-2 text-sm text-gray-300 select-none">
+          <input
+            type="checkbox"
+            checked={merge}
+            disabled={uploading}
+            onChange={(e) => {
+              setMerge(e.target.checked);
+              setGlobalError("");
+              setFileStatus({});
+              setBatchNote("");
+            }}
+          />
+          Merge into one project
+          <span className="text-xs text-gray-500">
+            (off: each file becomes its own project)
+          </span>
+        </label>
+      )}
+
+      {files.length > 0 && mode === "merged" && (
         <div className="text-xs text-gray-400">
           Files are indexed alphabetically ({formatMB(totalBytes)} total).
           Rename locally with{" "}
@@ -311,14 +334,25 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
         </div>
       )}
 
+      {files.length > 0 && mode === "per-file" && (
+        <div className="text-xs text-gray-400">
+          Each file becomes its own project, named after the file and
+          uploaded one at a time ({formatMB(totalBytes)} total).
+        </div>
+      )}
+
       {files.length > 0 && (
         <ul className="flex flex-col gap-1 max-h-64 overflow-y-auto pr-1">
           {files.map((f, i) => {
-            const rowErr = rowErrors[f.name];
+            const st = fileStatus[f.name];
+            const rowErr =
+              rowErrors[f.name] ??
+              (st?.state === "failed" ? st.message : undefined);
             const pct = perFileProgress[f.name] ?? 0;
             return (
               <li
                 key={f.name}
+                data-testid="upload-row"
                 className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm ${
                   rowErr
                     ? "bg-red-500/10 border border-red-500/30"
@@ -338,6 +372,14 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
                 {stage === "uploading" && !rowErr && (
                   <span className="text-xs text-emerald-300 tabular-nums w-10 text-right">
                     {pct}%
+                  </span>
+                )}
+                {st && (
+                  <span
+                    className={`text-xs tabular-nums ${statusClass(st)}`}
+                    data-testid="upload-row-status"
+                  >
+                    {statusLabel(st)}
                   </span>
                 )}
                 {!uploading && (
@@ -360,7 +402,8 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
         </ul>
       )}
 
-      {globalError && <p className="text-red-400 text-sm">{globalError}</p>}
+      {batchNote && <p className="text-amber-300 text-sm">{batchNote}</p>}
+      {shownError && <p className="text-red-400 text-sm">{shownError}</p>}
     </div>
   );
 }
