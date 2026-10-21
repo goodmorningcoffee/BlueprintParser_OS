@@ -18,7 +18,7 @@ import { getAppSettings, putAppSetting } from "@/server/services/app-settings";
 
 export const GET = defineRoute({
   auth: "admin",
-  handler: () => getAppSettings(),
+  handler: ({ session }) => getAppSettings(session),
 });
 
 export const PUT = defineRoute({

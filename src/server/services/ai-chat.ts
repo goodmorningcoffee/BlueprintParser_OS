@@ -18,7 +18,9 @@
 //   FC-6  quota sources: global = session.user.companyId; scoped non-demo =
 //         access.session!.user.companyId (the AUTHED user's company, NOT the project's —
 //         matters for root cross-company); scoped demo = checkDemoChatQuota() (global
-//         counter). quota.message || "Rate limit exceeded" on all three.
+//         counter). quota.message || "Rate limit exceeded" on all three. Owner ruling
+//         2026-10-21: a root admin is exempt from all three (the demo pool is neither checked
+//         nor consumed for him) and per-user/company overrides apply (see lib/quota-overrides).
 //   FC-7  delegated Responses ride the shell's instanceof-Response passthrough and stay
 //         FLAT {error:string}: demo-gate 403 (demo-features.ts owns that shape — labeling
 //         FQ-8 precedent), 503 "No LLM configured…" (global.ts Response.json + scoped.ts
@@ -86,7 +88,7 @@ export async function chatPost(rawBody: Record<string, unknown>): Promise<Respon
 
   // ─── Global RAG scope — search across all user's projects ─── (FC-4: anon falls through)
   if (scope === "global" && session?.user) {
-    const quota = await checkChatQuota(session.user.companyId);
+    const quota = await checkChatQuota(session.user.companyId, session.user.isRootAdmin, session.user.dbId);
     if (!quota.allowed) {
       throw new ApiError("RATE_LIMITED", quota.message || "Rate limit exceeded");
     }
@@ -113,12 +115,13 @@ export async function chatPost(rawBody: Record<string, unknown>): Promise<Respon
 
   // Quota check (FC-6)
   if (isDemo) {
-    const quota = await checkDemoChatQuota();
+    const quota = await checkDemoChatQuota(session?.user?.isRootAdmin === true);
     if (!quota.allowed) {
       throw new ApiError("RATE_LIMITED", quota.message || "Rate limit exceeded");
     }
   } else {
-    const quota = await checkChatQuota(access.session!.user.companyId);
+    const authed = access.session!.user;
+    const quota = await checkChatQuota(authed.companyId, authed.isRootAdmin, authed.dbId);
     if (!quota.allowed) {
       throw new ApiError("RATE_LIMITED", quota.message || "Rate limit exceeded");
     }

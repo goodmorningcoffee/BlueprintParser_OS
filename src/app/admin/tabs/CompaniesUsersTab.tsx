@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 // string read below unwraps via apiErrorMessage (an envelope OBJECT in rendered string
 // state crashes React; the S056 DETECTOR found the class).
 import { apiErrorMessage } from "@/lib/client-persist";
+import QuotaOverrideEditor, { hasQuotaOverride, useQuotaOverrides } from "./QuotaOverrideEditor";
 
 interface CompanyItem {
   id: number;
@@ -69,6 +70,11 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
   const [deleteReassignTo, setDeleteReassignTo] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState("");
+  // Daily-quota overrides (this tab is root-only; the API 403s everyone else). Off in demo mode.
+  const quotas = useQuotaOverrides(!demoMode);
+  const [quotaTarget, setQuotaTarget] = useState<{ target: "user" | "company"; id: number } | null>(null);
+  const toggleQuota = (target: "user" | "company", id: number) =>
+    setQuotaTarget((p) => (p && p.target === target && p.id === id ? null : { target, id }));
 
   const loadData = useCallback(async () => {
     if (demoMode) { setLoading(false); return; }
@@ -233,6 +239,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
         <h2 className="text-sm font-semibold">Companies / Users</h2>
         {message && <span className="text-xs text-[var(--accent)]">{message}</span>}
       </div>
+      {quotas.error && <div className="text-xs text-red-400">{quotas.error}</div>}
 
       {/* Create company */}
       <div className="flex gap-2 items-center">
@@ -291,7 +298,26 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
                     >
                       {copiedKey === company.id ? "Copied!" : "Copy"}
                     </button>
+                    {!demoMode && (
+                      <button
+                        onClick={() => toggleQuota("company", company.id)}
+                        className="ml-auto text-[10px] text-[var(--muted)] hover:text-sky-400"
+                      >
+                        Daily quotas: {hasQuotaOverride(quotas.doc, "company", company.id) ? "custom" : "default"}
+                      </button>
+                    )}
                   </div>
+                  {!demoMode && quotaTarget?.target === "company" && quotaTarget.id === company.id && (
+                    <QuotaOverrideEditor
+                      target="company"
+                      id={company.id}
+                      label={company.name}
+                      doc={quotas.doc}
+                      defaults={quotas.defaults}
+                      onSaved={quotas.setDoc}
+                      onClose={() => setQuotaTarget(null)}
+                    />
+                  )}
 
                   {/* Users list */}
                   {companyUsers.length > 0 ? (
@@ -316,6 +342,15 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
                           >
                             PW
                           </button>
+                          {!demoMode && (
+                            <button
+                              onClick={() => toggleQuota("user", Number(user.id))}
+                              className={`text-[9px] px-1 hover:text-sky-400 ${hasQuotaOverride(quotas.doc, "user", Number(user.id)) ? "text-sky-400" : "text-[var(--muted)]"}`}
+                              title="Daily quotas"
+                            >
+                              Q
+                            </button>
+                          )}
                           {!user.isRootAdmin && (
                             <button onClick={() => { setDeletingUserId(deletingUserId === user.id ? null : user.id); setDeleteReassignTo(""); setDeleteMessage(""); }} className="text-red-400/60 hover:text-red-400 text-xs">&times;</button>
                           )}
@@ -353,6 +388,21 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
                               </button>
                             </div>
                             {deleteMessage && <div className="text-[9px] text-red-400">{deleteMessage}</div>}
+                          </div>
+                        )}
+                        {!demoMode && quotaTarget?.target === "user" && quotaTarget.id === Number(user.id) && (
+                          <div className="mx-2 mb-1">
+                            <QuotaOverrideEditor
+                              target="user"
+                              id={Number(user.id)}
+                              label={user.email}
+                              role={user.role}
+                              isRootAdmin={user.isRootAdmin}
+                              doc={quotas.doc}
+                              defaults={quotas.defaults}
+                              onSaved={quotas.setDoc}
+                              onClose={() => setQuotaTarget(null)}
+                            />
                           </div>
                         )}
                         {resettingUserId === user.id && (

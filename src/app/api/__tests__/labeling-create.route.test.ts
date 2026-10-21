@@ -466,6 +466,21 @@ describe.skipIf(!dbUp)("POST /api/labeling/create", () => {
     expect(await rowsFor(project.id)).toHaveLength(11); // the 11th row was created
   });
 
+  it("owner ruling 2026-10-21: a MEMBER-role root admin bypasses the daily labeling limit (10 seeded → reaches the env check)", async () => {
+    const company = await createCompany();
+    const rootMember = await createUser(company.id, { role: "member", isRootAdmin: true });
+    const project = await createProjectFixture(company.id, rootMember.id);
+    await seedSessions(project, 10);
+    asUser(rootMember);
+    stubNoLsEnv(); // a non-429 here proves the rate limit was skipped (the env check is next)
+    const { status, body } = await readJson(
+      await post({ projectId: project.publicId }),
+    );
+    expect(status).toBe(503); // the env check, which runs AFTER the (skipped) rate limit
+    expect(body.error?.code).not.toBe("RATE_LIMITED");
+    expect(await rowsFor(project.id)).toHaveLength(10);
+  });
+
   // ── LS env check ───────────────────────────────────────────────────────────
 
   it("LABEL_STUDIO env unset → 503 VALIDATION, message verbatim", async () => {

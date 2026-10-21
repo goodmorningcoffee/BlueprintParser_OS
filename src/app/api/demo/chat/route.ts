@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { auth } from "@/lib/auth";
 import { checkDemoChatQuota } from "@/lib/quotas";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
@@ -57,7 +58,10 @@ export async function POST(req: Request) {
   if (gate) return gate;
 
   // Consume quota last: every refusal above is free, so garbage cannot exhaust the daily cap.
-  const quota = await checkDemoChatQuota();
+  // A verified root admin (server-side session flag) neither checks nor consumes the shared pool
+  // (owner ruling 2026-10-21). Anonymous callers hold no session: their path is unchanged.
+  const session = await auth().catch(() => null);
+  const quota = await checkDemoChatQuota(session?.user?.isRootAdmin === true);
   if (!quota.allowed) {
     return NextResponse.json({ error: quota.message }, { status: 429 });
   }

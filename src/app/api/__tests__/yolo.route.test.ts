@@ -393,6 +393,12 @@ describe.skipIf(!dbUp)(
       expect(r.body).toEqual({
         error: { code: "RATE_LIMITED", message: "YOLO daily cap reached" },
       }); // NO || fallback (YQ-3) [S031 fold: A applied]
+      // owner ruling 2026-10-21: root flag + user id ride along (exemption + per-user overrides)
+      expect(h.checkYoloQuota).toHaveBeenLastCalledWith(
+        w.user.companyId,
+        w.user.isRootAdmin,
+        w.user.id,
+      );
       h.checkYoloQuota.mockResolvedValue({ allowed: true });
       r = await readJson(await call({ projectId: w.project.publicId }));
       expect(r.status).toBe(400);
@@ -402,6 +408,15 @@ describe.skipIf(!dbUp)(
           message: "projectId and modelId required",
         },
       }); // [S031 fold: A applied]
+    });
+
+    it("owner ruling 2026-10-21: a root admin's run passes isRootAdmin=true to the YOLO quota", async () => {
+      h.getToggles.mockResolvedValue({ sagemakerEnabled: true, quotaEnabled: true });
+      const w = await runWorld({ isRootAdmin: true });
+      asUser(w.user);
+      const r = await readJson(await call({ projectId: w.project.publicId }));
+      expect(r.status).toBe(400); // past the quota, stopped by the field check
+      expect(h.checkYoloQuota).toHaveBeenCalledExactlyOnceWith(w.company.id, true, w.user.id);
     });
 
     it("malformed body rejects RAW only AFTER auth+toggles+quota pass (YQ-3)", async () => {

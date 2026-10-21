@@ -8,11 +8,15 @@ import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { getToken } from "next-auth/jwt";
 import {
   apiIpBackstopForRule,
+  confirmedRootUserId,
   findRateRule,
   isGeneralBucketExempt,
   isRateLimited,
+  isRootExemptRule,
   pruneExpiredRateBuckets,
+  rootParserLaneRetryAfter,
 } from "@/lib/middleware-rate-limit";
+import { refreshJwtUserAuthority } from "@/server/services/auth-jwt-authority";
 // TEST-FACING RE-EXPORT, deliberate — not an accident and not dead code. These symbols live in
 // lib/middleware-rate-limit.ts and lib/trusted-client-ip.ts; they are surfaced here because two
 // test files address them through the "@/middleware" specifier:
@@ -45,6 +49,13 @@ const SESSION_COOKIE = "bp_visit_session";
 const LOGGED_FIELD_MAX_CHARS = 256;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SESSION_TTL_SEC = 24 * 60 * 60;
+
+// Root re-confirmation: the same users read Auth.js runs on every session refresh, on a fresh
+// object so the decoded token (reused by the visit log) is never mutated.
+const isRootInDatabase = async (userId: number): Promise<boolean> => {
+  const fresh: { dbId: number; isRootAdmin?: boolean } = { dbId: userId };
+  return (await refreshJwtUserAuthority(fresh))?.isRootAdmin === true;
+};
 
 // Known deprecated/removed routes — any hit is a signal (often a scanner
 // that cached an old route). Add to this list when you remove a route for
@@ -348,11 +359,41 @@ export async function middleware(request: NextRequest) {
   // Only rate limit API routes
   if (pathname.startsWith("/api")) {
     const now = Date.now();
+    // Root admin: ONLY from the verified (AUTH_SECRET-decrypted) session token — never a header
+    // or an unverified cookie — and then re-confirmed against users.isRootAdmin (cached 30 s), so
+    // an unrefreshed cookie cannot carry the exemption past a demotion. Owner ruling 2026-10-21:
+    // root is exempt from the app's policy limits; the manual IP ban, the deprecated-route bucket
+    // and the pre-auth rules still apply.
+    const rootUserId = await confirmedRootUserId(await verifiedAuthToken, isRootInDatabase, now);
+
+    // Root's parser lane: no IP ban / cooldown / burst state is read or written for him; a
+    // per-user ceiling bounds his concurrent local parses (memory), with a plain 429.
+    if (rootUserId !== null && isAbusiveRoute(pathname)) {
+      const retryAfter = rootParserLaneRetryAfter(
+        rootUserId,
+        pathname.split("/").slice(0, 3).join("/"),
+        now,
+      );
+      if (retryAfter > 0) {
+        return finalize(
+          new NextResponse(
+            JSON.stringify({ error: "Too many parser requests.", retryAfter }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": String(retryAfter),
+              },
+            },
+          ),
+        );
+      }
+    }
 
     // ─── Tiered IP abuse detection on Lambda-fanout routes ────
     // Ban check runs first and blocks the request regardless of other
     // rate rules; cooldown check runs next and returns 429 early.
-    if (isAbusiveRoute(pathname)) {
+    if (rootUserId === null && isAbusiveRoute(pathname)) {
       const banEntry = banStore.get(ip);
       if (banEntry && banEntry.bannedUntil > now) {
         return finalize(
@@ -465,13 +506,17 @@ export async function middleware(request: NextRequest) {
       }
     }
 
-    // Find matching rule
-    const rule = findRateRule(pathname, method);
+    // Find matching rule. A verified root skips the backstop and the route rule together,
+    // except on the pre-auth rules (sign-in / registration / password reset), which bind him too.
+    const matchedRule = findRateRule(pathname, method);
+    const rootExempt = rootUserId !== null && isRootExemptRule(matchedRule);
+    const rule = rootExempt ? undefined : matchedRule;
 
     // Apply the independently namespaced IP backstop even when a route-specific
     // rule matches. Otherwise rotating a purported user identity could skip the
     // only IP-wide admission control. Session GET is the sole exact exemption.
-    if (!isGeneralBucketExempt(pathname, method)) {
+    // (A root claim cannot be forged by rotating identities: it is inside the encrypted token.)
+    if (!rootExempt && !isGeneralBucketExempt(pathname, method)) {
       const backstop = apiIpBackstopForRule(rule);
       if (
         isRateLimited(

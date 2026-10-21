@@ -321,6 +321,29 @@ describe.skipIf(!dbUp)("POST /api/projects (create)", () => {
     );
     expect(status).toBe(429);
     expect(body.error.code).toBe("RATE_LIMITED");
+    expect(body.error.message).toBe("Daily upload limit reached (3/day)"); // unchanged for non-root
+  });
+
+  it("owner ruling 2026-10-21: a member-role ROOT admin is exempt from the upload quota (was S012: root limited)", async () => {
+    const company = await createCompany();
+    const root = await createUser(company.id, { isRootAdmin: true }); // role member → default limit 3
+    await createProject(company.id, root.id);
+    await createProject(company.id, root.id);
+    await createProject(company.id, root.id);
+    asUser(root);
+
+    const { status, body } = await readJson(
+      await post({
+        name: "fourth",
+        dataUrl: canonicalProjectPath(company.dataKey, "c"),
+      }),
+    );
+    // Past the quota: the next gate (the staging manifest) is what refuses this body.
+    expect(status).toBe(400);
+    expect(body.error).toEqual({
+      code: "VALIDATION",
+      message: "stagingFiles must be a non-empty array",
+    });
   });
 
   it("staging-manifest validation 400s (fire before any S3 HeadObject)", async () => {

@@ -4,7 +4,8 @@
 // generateProjectPath / extensionFromFilename). Char: __tests__/s3-credentials.route.test.ts.
 //   • SQ3-1 staging: validation ladder IN ORDER (non-empty array → MAX 30 → per-file
 //     non-empty string ≤255 → extension allowlist w/ interpolated message);
-//     checkUploadQuota(companyId, role) 2-ARG (root-limited, S012); company 404;
+//     checkUploadQuota(companyId, role, isRootAdmin, dbId) — root EXEMPT + overrides
+//     (owner ruling 2026-10-21; supersedes the S012 2-arg freeze); company 404;
 //     submission-order fanout {projectPath, files}. The legacy route's own
 //     req.json-catch emitted the SAME "Invalid JSON body" text the shell uses — the
 //     malformed-body flip is SHAPE-ONLY (A/E hybrid); the route-local try/catch retired.
@@ -45,7 +46,12 @@ export async function stagingCredentials(rawBody: Record<string, unknown>, sessi
   }
 
   // Daily project-count quota (existing) — each staging upload batch creates one project.
-  const quota = await checkUploadQuota(session.user.companyId, session.user.role);
+  const quota = await checkUploadQuota(
+    session.user.companyId,
+    session.user.role,
+    session.user.isRootAdmin,
+    session.user.dbId,
+  );
   if (!quota.allowed) {
     throw new ApiError("RATE_LIMITED", quota.message as string); // no fallback (frozen)
   }

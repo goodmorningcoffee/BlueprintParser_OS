@@ -224,7 +224,8 @@ describe.skipIf(!dbUp)("POST — global branch (FC-6/FC-11)", () => {
     expectSseHeaders(res);
     const { events } = await drainSse(res);
     expect(events).toEqual([{ content: "Hello" }, { content: " world" }, "[DONE]"]);
-    expect(h.checkChatQuota).toHaveBeenCalledWith(user.companyId);
+    // owner ruling 2026-10-21: the call now carries the root flag + user id (overrides/exemption)
+    expect(h.checkChatQuota).toHaveBeenCalledWith(user.companyId, false, user.id);
     const mine = await db
       .select()
       .from(chatMessages)
@@ -260,6 +261,15 @@ describe.skipIf(!dbUp)("POST — global branch (FC-6/FC-11)", () => {
     const { status, body } = await readJson(await callPost({ message: "hi", scope: "global" }));
     expect(status).toBe(503);
     expect(body).toEqual({ error: "No LLM configured. Set up a provider in Admin → AI Models." });
+  });
+
+  it("owner ruling 2026-10-21: a root admin's global chat passes isRootAdmin=true to the quota", async () => {
+    const company = await createCompany();
+    const root = await createUser(company.id, { isRootAdmin: true });
+    asUser(root);
+    const res = await POST(makeReq(PATH, { body: { message: "hi", scope: "global" } }));
+    await drainSse(res);
+    expect(h.checkChatQuota).toHaveBeenCalledExactlyOnceWith(company.id, true, root.id);
   });
 
   it("toolUse company config does NOT hijack the global branch (Path A still)", async () => {
@@ -308,7 +318,8 @@ describe.skipIf(!dbUp)("POST — scoped access matrix ({publicId}, allowDemo:tru
     expectSseHeaders(res);
     const { events } = await drainSse(res);
     expect(events).toEqual([{ content: "Hello" }, { content: " world" }, "[DONE]"]);
-    expect(h.checkChatQuota).toHaveBeenCalledWith(user.companyId);
+    // owner ruling 2026-10-21: the call now carries the root flag + user id (overrides/exemption)
+    expect(h.checkChatQuota).toHaveBeenCalledWith(user.companyId, false, user.id);
     const rows = await rowsFor(project.id);
     expect(rows).toHaveLength(2);
     const byRole = Object.fromEntries(rows.map((r) => [r.role, r]));
@@ -359,6 +370,17 @@ describe.skipIf(!dbUp)("POST — demo semantics (FC-3/FC-6/FC-7)", () => {
     expect(sawDone).toBe(true);
     expect(events[0]).toEqual({ content: "Hello" });
     expect(h.checkDemoChatQuota).toHaveBeenCalledTimes(1);
+    expect(h.checkDemoChatQuota).toHaveBeenCalledWith(false); // anonymous: not root
+    expect(h.checkChatQuota).not.toHaveBeenCalled();
+  });
+
+  it("owner ruling 2026-10-21: a root admin on a demo project passes the root flag (pool neither checked nor consumed)", async () => {
+    const { company, project } = await createWorld({ isDemo: true });
+    const root = await createUser(company.id, { isRootAdmin: true });
+    asUser(root);
+    const res = await callPost({ projectId: project.publicId, message: "hi" });
+    await drainSse(res);
+    expect(h.checkDemoChatQuota).toHaveBeenCalledExactlyOnceWith(true);
     expect(h.checkChatQuota).not.toHaveBeenCalled();
   });
 

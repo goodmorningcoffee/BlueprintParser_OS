@@ -779,6 +779,7 @@ export default function AdminPage() {
             onCreateUser={createUser}
             onToggleCanRunModels={toggleCanRunModels}
             onDeleteUser={handleDeleteUser}
+            isRootAdmin={session?.user?.isRootAdmin === true}
           />
         )}
 
