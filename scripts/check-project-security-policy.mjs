@@ -981,6 +981,68 @@ function usesExpiryBasedLeaseRetirement(node) {
   );
 }
 
+// A real generation check: `<row>.lifecycleEpoch ===/!== <capability>.lifecycleEpoch`. A bare
+// mention (e.g. the select projection) does not count.
+function hasLifecycleEpochComparison(node) {
+  const equality = new Set([
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.EqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken,
+  ]);
+  const isEpochAccess = (side) => {
+    const value = unwrapExpression(side);
+    return (
+      Boolean(value) &&
+      ts.isPropertyAccessExpression(value) &&
+      value.name.text === "lifecycleEpoch"
+    );
+  };
+  return descendants(node, ts.isBinaryExpression).some(
+    (binary) =>
+      equality.has(binary.operatorToken.kind) &&
+      isEpochAccess(binary.left) &&
+      isEpochAccess(binary.right),
+  );
+}
+
+// Operator/provider lease reclaim surfaces: every projectMutationLeases predicate (select AND
+// delete) must be free of expiry and time comparisons — the ownership/time window is proven in
+// application code — and each delete must be keyed by token + project, generation-checked.
+// `requiredKind`: every active-lease SELECT must pin eq(kind, <literal>) (provider reclaim may
+// only ever see the worker's lease). `requiredCall`: an application-side kind filter.
+function isFailClosedLeaseReclaim(node, options = {}) {
+  const leaseWheres = descendants(node, ts.isCallExpression).filter(
+    (call) =>
+      callName(call) === "where" &&
+      call.arguments[0] &&
+      hasIdentifier(call.arguments[0], ["projectMutationLeases"]),
+  );
+  const pinsKind = (call) =>
+    descendants(call.arguments[0], ts.isCallExpression).some(
+      (inner) =>
+        callName(inner) === "eq" &&
+        hasIdentifier(inner, ["kind"]) &&
+        hasStringLiteral(inner, [options.requiredKind]),
+    );
+  return (
+    hasFailClosedActiveLeasePredicate(node) &&
+    !usesExpiryBasedLeaseRetirement(node) &&
+    hasCall(node, ["delete"]) &&
+    hasLifecycleEpochComparison(node) &&
+    (!options.requiredKind || activeLeaseWhereCalls(node).every(pinsKind)) &&
+    (!options.requiredCall || hasCall(node, [options.requiredCall])) &&
+    leaseWheres.every(
+      (call) =>
+        !hasIdentifier(call.arguments[0], ["expiresAt"]) &&
+        !hasCall(call.arguments[0], ["gt", "gte", "lt", "lte"]),
+    ) &&
+    leaseWheres.some((call) =>
+      hasAllIdentifiers(call.arguments[0], ["token", "projectId"]),
+    )
+  );
+}
+
 function hasSafeLeaseReleaseFinally(node) {
   return descendants(node, ts.isTryStatement).some((outerTry) => {
     if (!outerTry.finallyBlock) return false;
@@ -11600,6 +11662,30 @@ async function validateLeaseFoundation() {
       release ?? capability.source,
     );
   }
+  for (const [reclaimFile, reclaimSymbol, reclaimOptions] of [
+    [fileName, "forceReleaseWebHeldLeases", { requiredCall: "isWebHeldLeaseKind" }],
+    [
+      "src/server/services/ingest-reconcile.ts",
+      "reconcileIngestJob",
+      { requiredKind: "project-processing" },
+    ],
+  ]) {
+    const reclaimParsed =
+      reclaimFile === fileName ? capability : await parsed(reclaimFile);
+    const reclaim = functionFor(reclaimParsed, reclaimSymbol);
+    if (
+      !reclaim ||
+      !hasAtomicWriteBoundary(reclaim) ||
+      !isFailClosedLeaseReclaim(reclaim, reclaimOptions)
+    ) {
+      report(
+        "MUTATION_LEASE_RECLAIM_NOT_FAIL_CLOSED",
+        `${reclaimSymbol} must reclaim leases inside withProjectWrite(s) with no expiry/time predicate, deleting by token + project after a lifecycle-generation comparison${reclaimOptions.requiredKind ? `, selecting only kind "${reclaimOptions.requiredKind}"` : ""}${reclaimOptions.requiredCall ? `, filtering kinds via ${reclaimOptions.requiredCall}` : ""}`,
+        reclaimFile,
+        reclaim ?? reclaimParsed.source,
+      );
+    }
+  }
   if (
     !wrapper ||
     !hasAllCalls(wrapper, [
@@ -13296,6 +13382,94 @@ exit 64
     report(
       "CHECKER_LEASE_CLOCK_FIXTURE",
       "app-clock lease metadata and expiry-based reap/live predicates must be rejected",
+    );
+  }
+
+  const reclaimFixture = parseText(
+    "lease-reclaim-fixture.ts",
+    [
+      "async function safeReclaim(tx, lease, capability) {",
+      "  const rows = await tx.select().from(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "    eq(projectMutationLeases.status, 'active'),",
+      "  ));",
+      "  if (rows[0].lifecycleEpoch !== capability.lifecycleEpoch) return;",
+      "  await tx.delete(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.token, rows[0].token),",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "  ));",
+      "}",
+      "async function expiryReclaim(tx, capability) {",
+      "  const rows = await tx.select().from(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "    eq(projectMutationLeases.status, 'active'),",
+      "    lt(projectMutationLeases.expiresAt, new Date()),",
+      "  ));",
+      "  if (rows[0].lifecycleEpoch !== capability.lifecycleEpoch) return;",
+      "  await tx.delete(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.token, rows[0].token),",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "  ));",
+      "}",
+      "async function kindPinnedReclaim(tx, capability) {",
+      "  const rows = await tx.select().from(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "    eq(projectMutationLeases.kind, 'project-processing'),",
+      "    eq(projectMutationLeases.status, 'active'),",
+      "  ));",
+      "  if (rows[0].lifecycleEpoch !== capability.lifecycleEpoch) return;",
+      "  await tx.delete(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.token, rows[0].token),",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "  ));",
+      "}",
+      "async function projectionEpochReclaim(tx, capability) {",
+      "  const rows = await tx.select({ lifecycleEpoch: projectMutationLeases.lifecycleEpoch }).from(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "    eq(projectMutationLeases.kind, 'project-processing'),",
+      "    eq(projectMutationLeases.status, 'active'),",
+      "  ));",
+      "  await tx.delete(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.token, rows[0].token),",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "  ));",
+      "}",
+      "async function windowDeleteReclaim(tx, capability, start) {",
+      "  const rows = await tx.select().from(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "    eq(projectMutationLeases.status, 'active'),",
+      "  ));",
+      "  if (rows[0].lifecycleEpoch !== capability.lifecycleEpoch) return;",
+      "  await tx.delete(projectMutationLeases).where(and(",
+      "    eq(projectMutationLeases.projectId, capability.projectId),",
+      "    gte(projectMutationLeases.createdAt, start),",
+      "  ));",
+      "}",
+    ].join("\n"),
+  );
+  const safeReclaim = functionFor(reclaimFixture, "safeReclaim");
+  const expiryReclaim = functionFor(reclaimFixture, "expiryReclaim");
+  const windowDeleteReclaim = functionFor(reclaimFixture, "windowDeleteReclaim");
+  const kindPinnedReclaim = functionFor(reclaimFixture, "kindPinnedReclaim");
+  const projectionEpochReclaim = functionFor(reclaimFixture, "projectionEpochReclaim");
+  const workerKind = { requiredKind: "project-processing" };
+  if (
+    !safeReclaim ||
+    !expiryReclaim ||
+    !windowDeleteReclaim ||
+    !kindPinnedReclaim ||
+    !projectionEpochReclaim ||
+    !isFailClosedLeaseReclaim(safeReclaim) ||
+    isFailClosedLeaseReclaim(expiryReclaim) ||
+    isFailClosedLeaseReclaim(windowDeleteReclaim) ||
+    !isFailClosedLeaseReclaim(kindPinnedReclaim, workerKind) ||
+    isFailClosedLeaseReclaim(safeReclaim, workerKind) ||
+    isFailClosedLeaseReclaim(projectionEpochReclaim) ||
+    isFailClosedLeaseReclaim(safeReclaim, { requiredCall: "isWebHeldLeaseKind" })
+  ) {
+    report(
+      "CHECKER_LEASE_RECLAIM_FIXTURE",
+      "lease reclaim must reject expiry/time predicates, untokened deletes, a projection-only generation mention and a missing kind pin/filter, while accepting a token-keyed, generation-checked reclaim",
     );
   }
 

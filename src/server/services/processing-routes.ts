@@ -52,6 +52,10 @@ interface WebhookPayload {
 
 export async function processingWebhook(rawBody: Record<string, unknown>): Promise<unknown> {
   const payload = rawBody as unknown as WebhookPayload;
+  // The raw value is written into the job_status/project_status enums below: reject anything else.
+  if (payload.status !== "completed" && payload.status !== "error") {
+    throw new ApiError("VALIDATION", "status must be completed or error");
+  }
 
   const [project] = await db
     .select()
@@ -148,6 +152,7 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
     .where(and(
       eq(processingJobs.projectId, project.id),
       isNull(processingJobs.modelConfig),
+      eq(processingJobs.status, "running"), // never relabel an already-closed older run
     ));
 
   return { success: true };

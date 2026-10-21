@@ -23,6 +23,10 @@ import {
 } from "@/lib/project-upload-authority";
 import { ApiError } from "@/server/api/envelope";
 import {
+  reconcileProjectIngestJobs,
+  type IngestReconcileOutcome,
+} from "@/server/services/ingest-reconcile";
+import {
   withProjectStorageWrite,
   withProjectStorageWritesInTransaction,
   withProjectWritesInTransaction,
@@ -270,18 +274,61 @@ export async function reconcileCommittedProjectDeletions(
   }
 }
 
+const STUCK_JOBS_HINT = "see Admin > Data tools > Stuck jobs";
+
+/** Explain a quiescence refusal with what the pre-delete provider reconcile learned. */
+function explainDeleteRefusal(
+  error: unknown,
+  reconciled: readonly IngestReconcileOutcome[],
+): unknown {
+  if (!(error instanceof ApiError) || error.code !== "CONFLICT") return error;
+  if (reconciled.length === 0) return error;
+  // An unavailable provider taught us nothing: today's exact refusal stands.
+  const pending = reconciled.find(
+    (outcome) => !outcome.changed && outcome.provider.state !== "unavailable",
+  );
+  if (error.message === "Project has an active processing job" && pending) {
+    const detail =
+      pending.provider.state === "running"
+        ? pending.message
+        : `${pending.message}; ${STUCK_JOBS_HINT}`;
+    return new ApiError("CONFLICT", `${error.message} (${detail})`);
+  }
+  if (
+    error.message === "Project has an active mutation lease" &&
+    reconciled.some((outcome) => outcome.changed)
+  ) {
+    const refusal = reconciled.find((outcome) => outcome.leaseRefusal);
+    const detail = refusal?.leaseRefusal
+      ? `${refusal.leaseRefusal}; ${STUCK_JOBS_HINT}`
+      : STUCK_JOBS_HINT;
+    return new ApiError("CONFLICT", `${error.message} (${detail})`);
+  }
+  return error;
+}
+
 export async function deleteProjectFully(
   project: DeletableProject,
   writeCapability: ProjectWriteCapability,
 ): Promise<void> {
+  // Best-effort provider reconcile strictly BEFORE the guard transaction (never call AWS inside
+  // it): an ingest job AWS attests finished is closed, and its worker lease reclaimed under the
+  // ownership proof, so the quiescence checks below see the truth. Failure leaves them in charge.
+  const reconciled = await reconcileProjectIngestJobs(project.id, writeCapability);
+
   // The parent lock, quiescence decision, outbox, and delete are one transaction. Provider stop
   // acknowledgement is not quiescence: workers may still be writing after a timeout/stop request.
-  const deletion = await withProjectStorageWrite(
-    writeCapability,
-    project.id,
-    project.dataUrl,
-    (tx) => stageLockedProjectDeletion(tx, project),
-  );
+  let deletion: StagedProjectAssetDeletion;
+  try {
+    deletion = await withProjectStorageWrite(
+      writeCapability,
+      project.id,
+      project.dataUrl,
+      (tx) => stageLockedProjectDeletion(tx, project),
+    );
+  } catch (error) {
+    throw explainDeleteRefusal(error, reconciled);
+  }
 
   await reconcileCommittedProjectDeletions([deletion]);
 }

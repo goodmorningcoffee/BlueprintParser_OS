@@ -1,6 +1,6 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "table-parse" | "companies" | "usage" | "users" | "settings" | "logs";
+export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "table-parse" | "companies" | "usage" | "users" | "data-tools" | "settings" | "logs";
 
 const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boolean }[] = [
   { id: "overview", label: "Overview" },
@@ -17,6 +17,7 @@ const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boo
   { id: "companies", label: "Companies / Users", rootOnly: true },
   { id: "usage", label: "Usage", rootOnly: true },
   { id: "users", label: "Users", hideForRoot: true },
+  { id: "data-tools", label: "Data tools" },
   { id: "settings", label: "Settings" },
   { id: "logs", label: "Logs", rootOnly: true },
 ];
