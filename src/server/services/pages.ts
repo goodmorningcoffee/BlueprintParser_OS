@@ -195,7 +195,8 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     // Frozen SHALLOW merge (top-level keys only; a nested object under a shared key is REPLACED
     // wholesale — do NOT "fix" into a recursive merge: the CSI merge below reads merged.parsedRegions).
     const existing = (pageRow.pageIntelligence || {}) as Record<string, unknown>;
-    const merged = { ...existing, ...intelligence };
+    // duplicateOf is server-owned (admin Data tools): a client patch can neither set nor clear it.
+    const merged: Record<string, unknown> = { ...existing, ...intelligence, duplicateOf: existing.duplicateOf };
 
     // CSI merge: collect csiTags from parsedRegions and merge into the page-level csiCodes.
     const existingCsi = (pageRow.csiCodes || []) as CsiCode[];

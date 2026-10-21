@@ -582,6 +582,20 @@ export const MUTATION_SURFACES = [
     [["src/server/services/yolo-admin.ts", "purgeYolo"]],
   ),
   mutation(
+    "admin-duplicates-apply",
+    "/api/admin/duplicates/apply",
+    "POST",
+    "batch-non-demo",
+    [["src/server/services/page-duplicates-apply.ts", "applyDuplicates"]],
+  ),
+  mutation(
+    "admin-duplicates-restore",
+    "/api/admin/duplicates/restore",
+    "POST",
+    "shared-guard",
+    [["src/server/services/page-duplicates-apply.ts", "restoreDuplicates"]],
+  ),
+  mutation(
     "admin-running-jobs",
     "/api/admin/running-jobs",
     "PUT",

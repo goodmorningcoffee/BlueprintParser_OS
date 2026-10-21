@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { projects, pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
+import { onVisiblePage, visiblePage } from "@/lib/page-dedup/visibility";
 import { streamChatResponse } from "@/lib/llm/stream";
 import { mapWordsToRegions, buildSpatialContext } from "@/lib/spatial";
 import { findWordsInBbox, wordsToText } from "@/lib/ocr-utils";
@@ -80,7 +81,7 @@ export async function handleScopedChat(params: ScopedChatParams) {
   // ─── Parallel DB queries for context data ──────────────────
   const pageFilter = scope === "page" && pageNumber
     ? [eq(annotations.pageNumber, pageNumber)]
-    : [];
+    : [onVisiblePage(annotations.projectId, annotations.pageNumber)]; // hidden duplicates out
 
   const [yoloAnnotations, userAnnotations, projectTakeoffItems, history] = await Promise.all([
     db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo"), ...pageFilter)),
@@ -375,7 +376,7 @@ async function buildProjectContext(
       csiCodes: pages.csiCodes,
     })
     .from(pages)
-    .where(eq(pages.projectId, project.id))
+    .where(and(eq(pages.projectId, project.id), visiblePage(pages.pageIntelligence)))
     .orderBy(pages.pageNumber);
 
   // Fetch heavy project fields only when needed (not included in lightweight access query)
