@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { mergeCsiCodes, normalizeCsiCode, normalizeCsiCodes } from "@/lib/csi-utils";
+import {
+  csiCodeMatchesQuery,
+  csiCodesForLlm,
+  csiDivisionOf,
+  csiTriggerHits,
+  mergeCsiCodes,
+  normalizeCsiCode,
+  normalizeCsiCodes,
+} from "@/lib/csi-utils";
+import { DEFAULT_CSI_V2_CONFIG } from "@/lib/csi-v2-config";
 import type { CsiCode } from "@/types";
 
 describe("mergeCsiCodes", () => {
@@ -17,11 +26,11 @@ describe("mergeCsiCodes", () => {
     expect(merged[1].code).toBe("09");
   });
 
-  it("derives division from code substring when not provided", () => {
+  it("derives division as 'NN 00 00' when not provided [csi-v2 S6; was the bare prefix '08']", () => {
     const merged = mergeCsiCodes([], [
       { code: "08 11 16", description: "Aluminum Doors" },
     ]);
-    expect(merged[0].division).toBe("08");
+    expect(merged[0].division).toBe("08 00 00");
     expect(merged[0].trade).toBe("");
   });
 
@@ -72,11 +81,11 @@ describe("mergeCsiCodes — raw-code dedupe (PRE-FIX characterization)", () => {
     expect(merged).toHaveLength(2);
   });
 
-  it("documents WHY normalizeCsiCode must NOT be the dedupe key: it truncates Level-4 to 6 digits (two distinct siblings normalize IDENTICALLY)", () => {
-    expect(normalizeCsiCode("00 24 13.16")).toBe("00 24 13");
-    expect(normalizeCsiCode("00 24 13.13")).toBe("00 24 13");
-    // Both dotted siblings collapse to "00 24 13" — proof that keying dedupe on
-    // normalizeCsiCode would silently drop one of two genuinely different codes.
+  it("[csi-v2 S6 flip] normalizeCsiCode no longer truncates Level-5 codes: the two dotted siblings stay distinct", () => {
+    // Pre-S6 both normalized to "00 24 13" (measured on c6ad951) — the data-loss hazard this
+    // block documented. They now keep their ".NN" suffix; dedupe still keys on csiDedupeKey.
+    expect(normalizeCsiCode("00 24 13.16")).toBe("00 24 13.16");
+    expect(normalizeCsiCode("00 24 13.13")).toBe("00 24 13.13");
   });
 });
 
@@ -104,6 +113,10 @@ describe("yolo placeholder merge — pre-swap equivalence net (Stage C identity)
     }
     return newCsi;
   }
+  // [csi-v2 S6] The ONE sanctioned delta vs the replica: an ADDED code's derived division is
+  // "NN 00 00" (the engine's own form), not the bare prefix. Rows from `existing` are untouched.
+  const withS6Division = (rows: CsiCode[], keptCount: number): CsiCode[] =>
+    rows.map((c, i) => (i < keptCount ? c : { ...c, division: `${c.code.substring(0, 2)} 00 00` }));
 
   it("reproduces the loop's objects byte-for-byte (empty existing)", () => {
     const existing: CsiCode[] = [];
@@ -112,7 +125,7 @@ describe("yolo placeholder merge — pre-swap equivalence net (Stage C identity)
       existing,
       yoloCodes.map((code) => ({ code, description: "From YOLO class config" })),
     );
-    expect(viaMerge).toEqual(yoloLoopMerge(existing, yoloCodes));
+    expect(viaMerge).toEqual(withS6Division(yoloLoopMerge(existing, yoloCodes), existing.length));
   });
 
   // [P4.1 tranche-review] The variant-collapse delta on the yolo path IS the U9 fix
@@ -140,7 +153,7 @@ describe("yolo placeholder merge — pre-swap equivalence net (Stage C identity)
       existing,
       yoloCodes.map((code) => ({ code, description: "From YOLO class config" })),
     );
-    expect(viaMerge).toEqual(yoloLoopMerge(existing, yoloCodes));
+    expect(viaMerge).toEqual(withS6Division(yoloLoopMerge(existing, yoloCodes), existing.length));
   });
 });
 
@@ -166,5 +179,114 @@ describe("normalizeCsiCodes", () => {
       "08 11 16",
       "02 33 21",
     ]);
+  });
+});
+
+describe("[csi-v2 S6] normalizeCsiCode keeps Level-5 '.NN' suffixes", () => {
+  it("spaced, unspaced and dotted Level-5 inputs all give 'NN NN NN.NN'", () => {
+    // measured pre-S6 (c6ad951): all four → "00 24 13"
+    for (const v of ["00 24 13.16", "00241316", "00.24.13.16", "002413.16"]) {
+      expect(normalizeCsiCode(v)).toBe("00 24 13.16");
+    }
+  });
+  it("Level 2–4 forms are unchanged", () => {
+    expect(normalizeCsiCode("081113")).toBe("08 11 13");
+    expect(normalizeCsiCode("08-11")).toBe("08 11");
+    expect(normalizeCsiCode("ABC")).toBe("ABC");
+    expect(normalizeCsiCodes("8, 00241316")).toEqual(["08", "00 24 13.16"]);
+  });
+});
+
+describe("[csi-v2 S6] csiDivisionOf", () => {
+  it("reads spaced, unspaced and Level-5 codes", () => {
+    expect(csiDivisionOf("08 11 13")).toBe("08 00 00");
+    expect(csiDivisionOf("081113")).toBe("08 00 00");
+    expect(csiDivisionOf("00 24 13.16")).toBe("00 00 00");
+  });
+  it("a code without two leading digits keeps the old 2-character prefix", () => {
+    expect(csiDivisionOf("AB-1")).toBe("AB");
+  });
+});
+
+describe("[csi-v2 S6] mergeCsiCodes carries confidence (max)", () => {
+  it("a duplicate raises the kept entry to the max confidence; the kept raw code and fields stay", () => {
+    const existing: CsiCode[] = [{ code: "081113", description: "legacy", division: "08 00 00", trade: "t" }];
+    const merged = mergeCsiCodes(existing, [
+      { code: "08 11 13", description: "v2", confidence: 0.9 },
+      { code: "23 05 00", description: "hvac", confidence: 0.7 },
+      { code: "230500", description: "hvac dup", confidence: 0.8 },
+      { code: "23-05-00", description: "hvac lower", confidence: 0.5 },
+    ]);
+    expect(merged).toEqual([
+      { code: "081113", description: "legacy", division: "08 00 00", trade: "t", confidence: 0.9 },
+      { code: "23 05 00", description: "hvac", division: "23 00 00", trade: "", confidence: 0.8 },
+    ]);
+    expect(existing[0]).not.toHaveProperty("confidence"); // input never mutated
+  });
+  it("codes without a numeric confidence (all pre-v2 data) gain no confidence key", () => {
+    const merged = mergeCsiCodes([], [{ code: "09 00 00", description: "Finishes" }]);
+    expect(merged[0]).not.toHaveProperty("confidence");
+  });
+  it("a lower incoming confidence does not lower the kept one", () => {
+    const kept = { code: "09 29 00", description: "Gypsum", division: "09 00 00", trade: "", confidence: 0.95 };
+    expect(mergeCsiCodes([kept], [{ code: "092900", description: "x", confidence: 0.4 }])).toEqual([kept]);
+  });
+});
+
+describe("[csi-v2 S6] csiCodeMatchesQuery (CsiPanel search)", () => {
+  const legacy = { code: "081113", description: "hollow metal doors" };
+  const v2 = { code: "08 11 13", description: "Hollow Metal Doors and Frames" };
+  it("matches across stored formats via csiDedupeKey", () => {
+    // measured pre-S6 (raw substring): "0811" hit only legacy, "08 11" only v2, "08-11-13" neither
+    for (const q of ["0811", "08 11", "08-11-13", "081113"]) {
+      expect(csiCodeMatchesQuery(legacy, q), q).toBe(true);
+      expect(csiCodeMatchesQuery(v2, q), q).toBe(true);
+    }
+  });
+  it("description search is unchanged (case-insensitive substring)", () => {
+    expect(csiCodeMatchesQuery(v2, "metal door")).toBe(true);
+    expect(csiCodeMatchesQuery(v2, "gypsum")).toBe(false);
+    expect(csiCodeMatchesQuery(v2, "09 21")).toBe(false);
+  });
+});
+
+describe("[csi-v2 S6] csiTriggerHits (SearchHighlightOverlay)", () => {
+  it("flatMaps per-word bboxes when present, else the single bbox (legacy triggers)", () => {
+    const hits = csiTriggerHits([
+      { text: "hollow metal doors", bbox: [0.1, 0.1, 0.3, 0.02], tier: 1, bboxes: [[0.1, 0.1, 0.1, 0.02], [0.2, 0.1, 0.2, 0.02]] },
+      { text: "gyp bd", bbox: [0.5, 0.5, 0.1, 0.02], tier: 2 },
+      { text: "empty", bbox: [0.7, 0.7, 0.1, 0.02], tier: 3, bboxes: [] },
+    ]);
+    expect(hits).toEqual([
+      { text: "hollow metal doors", bbox: [0.1, 0.1, 0.1, 0.02] },
+      { text: "hollow metal doors", bbox: [0.2, 0.1, 0.2, 0.02] },
+      { text: "gyp bd", bbox: [0.5, 0.5, 0.1, 0.02] },
+      { text: "empty", bbox: [0.7, 0.7, 0.1, 0.02] },
+    ]);
+  });
+});
+
+describe("[csi-v2 S6] csiCodesForLlm (LLM getPageDetails / detectCsiFromText)", () => {
+  it("keeps {code, description, trade, confidence}; drops triggers and division", () => {
+    const codes = [
+      { code: "081113", description: "hollow metal doors", trade: "Openings", division: "08 00 00",
+        triggers: [{ text: "hm door", bbox: [0, 0, 1, 1] as [number, number, number, number], tier: 1 as const }] },
+      { code: "09 29 00", description: "Gypsum Board", trade: "Finishes", division: "09 00 00", confidence: 0.91 },
+    ];
+    expect(csiCodesForLlm(codes)).toEqual([
+      { code: "081113", description: "hollow metal doors", trade: "Openings" },
+      { code: "09 29 00", description: "Gypsum Board", trade: "Finishes", confidence: 0.91 },
+    ]);
+  });
+  it("null / undefined stored codes → []", () => {
+    expect(csiCodesForLlm(null)).toEqual([]);
+    expect(csiCodesForLlm(undefined)).toEqual([]);
+  });
+});
+
+describe("[csi-v2 S6] DEFAULT_CSI_V2_CONFIG (client-safe)", () => {
+  it("is the IMPLEMENTATION §I default and frozen", () => {
+    expect(DEFAULT_CSI_V2_CONFIG).toEqual({ tau: 0.75, maxCodesPerPage: 40 });
+    expect(Object.isFrozen(DEFAULT_CSI_V2_CONFIG)).toBe(true);
   });
 });

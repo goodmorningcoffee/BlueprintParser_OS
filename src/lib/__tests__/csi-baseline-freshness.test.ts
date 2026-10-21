@@ -33,6 +33,17 @@ interface Baseline {
 
 const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
+/**
+ * [csi-v2 S6] Engine files that MOVED since the artifact was captured. The artifact keys its
+ * hashes by path; the old engine was `git mv`ed byte-identical to `csi-detect-legacy.ts` (the
+ * new `csi-detect.ts` is the v2 entry point, not the engine this artifact measured). Only the
+ * PATH is retargeted — every recorded hash is compared exactly as captured.
+ */
+const MOVED: Record<string, string> = {
+  "src/lib/csi-detect.ts": "src/lib/csi-detect-legacy.ts",
+};
+const currentPath = (recordedRel: string) => MOVED[recordedRel] ?? recordedRel;
+
 describe("CSI corpus baseline artifact", () => {
   it("exists and is the schema this suite understands", () => {
     expect(existsSync(ARTIFACT), `missing ${ARTIFACT} — see eval/csi/README.md`).toBe(true);
@@ -46,9 +57,9 @@ describe("CSI corpus baseline artifact", () => {
 
     const drifted: string[] = [];
     for (const [rel, recorded] of Object.entries(b.engineSha)) {
-      const abs = join(process.cwd(), rel);
-      expect(existsSync(abs), `baseline references a file that no longer exists: ${rel}`).toBe(true);
-      if (sha256File(abs) !== recorded) drifted.push(rel);
+      const abs = join(process.cwd(), currentPath(rel));
+      expect(existsSync(abs), `baseline references a file that no longer exists: ${currentPath(rel)}`).toBe(true);
+      if (sha256File(abs) !== recorded) drifted.push(currentPath(rel));
     }
 
     expect(
@@ -64,6 +75,14 @@ describe("CSI corpus baseline artifact", () => {
           `  node build/csi-capture.js <work>/corpus.ndjson eval/csi/baseline-old-engine.json\n` +
           `\nSee eval/csi/README.md. Do not delete this test to make it pass.\n`,
     ).toEqual([]);
+  });
+
+  it("the moved old engine is still pinned: every MOVED target is a recorded file, under its new path", () => {
+    const b = JSON.parse(readFileSync(ARTIFACT, "utf-8")) as Baseline;
+    for (const [from, to] of Object.entries(MOVED)) {
+      expect(Object.keys(b.engineSha)).toContain(from);
+      expect(existsSync(join(process.cwd(), to)), `moved engine file missing: ${to}`).toBe(true);
+    }
   });
 
   it("summary totals agree with the per-page rows (artifact is internally consistent)", () => {

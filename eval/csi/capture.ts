@@ -30,7 +30,7 @@ import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
-import { detectCsiCodes } from "@/lib/csi-detect";
+import { detectCsiCodes } from "@/lib/csi-detect-legacy"; // [csi-v2 S6] the OLD engine, by name
 import { DEFAULT_CSI_DETECT_CONFIG } from "@/lib/csi-detect-defs";
 import type { CsiCode, TextractWord } from "@/types";
 
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
   // Engine provenance: if any of these hashes move, the baseline is stale by
   // construction and must be recaptured before it is compared against.
   const engineFiles = [
-    "src/lib/csi-detect.ts",
+    "src/lib/csi-detect-legacy.ts", // [csi-v2 S6] was src/lib/csi-detect.ts (git mv, byte-identical)
     "src/lib/csi-detect-defs.ts",
     "src/lib/csi-database.ts",
     "src/data/csi-masterformat.tsv",

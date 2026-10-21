@@ -5,14 +5,15 @@ import { sql } from "drizzle-orm";
 /**
  * GET /api/demo/csi
  * Aggregate CSI codes across all demo projects. Single query via JSON unnesting.
+ * [csi-v2 S6] One row per code (csiDedupeKey-style key) — same rule as services/csi.ts csiAggregate.
  */
 export async function GET() {
   const results = await db.execute(sql`
     SELECT
-      code->>'code' AS code,
-      code->>'description' AS description,
-      code->>'trade' AS trade,
-      code->>'division' AS division,
+      MIN(code->>'code' COLLATE "C") AS code,
+      mode() WITHIN GROUP (ORDER BY code->>'description') AS description,
+      mode() WITHIN GROUP (ORDER BY code->>'trade') AS trade,
+      mode() WITHIN GROUP (ORDER BY code->>'division') AS division,
       COUNT(DISTINCT p.id)::int AS project_count,
       COUNT(*)::int AS page_count,
       ARRAY_AGG(DISTINCT p.public_id) AS project_ids,
@@ -23,7 +24,7 @@ export async function GET() {
     WHERE p.is_demo = true
       AND p.status = 'completed'
       AND pg.csi_codes IS NOT NULL
-    GROUP BY code->>'code', code->>'description', code->>'trade', code->>'division'
+    GROUP BY COALESCE(NULLIF(upper(regexp_replace(code->>'code', '[[:space:].-]', '', 'g')), ''), code->>'code')
     ORDER BY page_count DESC
     LIMIT 200
   `);
