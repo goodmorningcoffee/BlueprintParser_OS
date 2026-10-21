@@ -589,6 +589,20 @@ export const MUTATION_SURFACES = [
     [["src/server/services/running-jobs.ts", "updateRunningJob"]],
   ),
   mutation(
+    "admin-stuck-jobs-reconcile",
+    "/api/admin/stuck-jobs/reconcile",
+    "POST",
+    "shared-guard",
+    [["src/server/services/stuck-jobs.ts", "reconcileStuckJobs"]],
+  ),
+  mutation(
+    "admin-stuck-jobs-force-release",
+    "/api/admin/stuck-jobs/force-release",
+    "POST",
+    "shared-guard",
+    [["src/server/services/stuck-jobs.ts", "forceReleaseStuckLeases"]],
+  ),
+  mutation(
     "admin-user-delete",
     "/api/admin/users",
     "DELETE",
@@ -681,6 +695,16 @@ export const INTERNAL_MUTATION_SINKS = [
   [
     "src/server/api/project-write-capability.ts",
     "releaseProjectMutationLease",
+    "atomic-project-write",
+  ],
+  [
+    "src/server/api/project-write-capability.ts",
+    "forceReleaseWebHeldLeases",
+    "atomic-project-write",
+  ],
+  [
+    "src/server/services/ingest-reconcile.ts",
+    "reconcileIngestJob",
     "atomic-project-write",
   ],
 ];

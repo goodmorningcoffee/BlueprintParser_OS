@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { assertProjectWritable } from "@/server/api/project-write-capability";
+import { notifyProcessingWebhook } from "@/lib/processing-webhook-notify";
 
 async function main() {
   const projectId = parseInt(process.env.PROJECT_ID || "", 10);
@@ -40,19 +41,15 @@ async function main() {
     `[worker] Done: ${result.pagesProcessed} pages processed, ${result.pageErrors} errors, ${result.processingTime}s`
   );
 
-  // Optional webhook notification (for Step Functions status tracking)
+  // Webhook notification, retried (res.ok checked). Success path only — see the helper's header.
   const webhookUrl = process.env.WEBHOOK_URL;
   const webhookSecret = process.env.WEBHOOK_SECRET;
   if (webhookUrl && webhookSecret) {
     const totalPages = result.pagesProcessed + result.pageErrors;
-    await fetch(webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${webhookSecret}`,
-        "x-webhook-timestamp": `${Date.now()}`,
-      },
-      body: JSON.stringify({
+    await notifyProcessingWebhook({
+      url: webhookUrl,
+      secret: webhookSecret,
+      body: {
         projectId,
         // [refactor jun13 P0.5-G1] pages stay empty (processProject already
         // wrote them to the DB) but real counts ride along for logging. No
@@ -66,10 +63,8 @@ async function main() {
             ? "error"
             : "completed",
         processingTime: result.processingTime,
-      }),
-    }).catch((err: unknown) =>
-      console.warn("[worker] Webhook notification failed:", err)
-    );
+      },
+    });
   }
 }
 

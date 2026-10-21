@@ -25,6 +25,20 @@ import {
 import { withProjectWrite } from "@/server/api/project-write-capability";
 import { getYoloJobStatus } from "@/lib/yolo";
 
+export const YOLO_NEVER_STARTED_MIN_AGE_MS = 30 * 60_000;
+
+/** DescribeProcessingJob's answer for an unknown job name (no typed exception exists for it). */
+export function isSagemakerJobNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, message } = error as { name?: unknown; message?: unknown };
+  if (name === "ResourceNotFound") return true;
+  return (
+    name === "ValidationException" &&
+    typeof message === "string" &&
+    /could not find/i.test(message)
+  );
+}
+
 export async function getRunningJobs(session: AuthSession): Promise<unknown> {
   try {
     const rows = await db.execute(sql`
@@ -81,6 +95,7 @@ export async function updateRunningJob(
       id: processingJobs.id,
       projectId: processingJobs.projectId,
       executionId: processingJobs.executionId,
+      startedAt: processingJobs.startedAt,
     })
     .from(processingJobs)
     .where(
@@ -105,7 +120,19 @@ export async function updateRunningJob(
   // here would let any company admin retire the publication blocker while the provider job was
   // still writing to the project's S3 prefix. Re-read the authoritative, monotonic provider
   // state and fail closed on non-terminal/unknown responses or provider errors.
-  const provider = await getYoloJobStatus(job.executionId!);
+  // Case 9: SageMaker never accepted the job. A not-found answer is terminal only once the row is
+  // old enough that no in-flight start can still create it; only the JOB row closes — the compute
+  // reservation is never touched here (it is unlinked; see the Stuck jobs panel).
+  let neverStarted = false;
+  const provider = await getYoloJobStatus(job.executionId!).catch((error: unknown) => {
+    if (!isSagemakerJobNotFound(error)) throw error;
+    const ageMs = job.startedAt ? Date.now() - job.startedAt.getTime() : Infinity;
+    if (ageMs < YOLO_NEVER_STARTED_MIN_AGE_MS) {
+      throw new ApiError("CONFLICT", "SageMaker has no such job yet; retry after 30 minutes");
+    }
+    neverStarted = true;
+    return { status: "Failed" };
+  });
   const dbStatus =
     provider.status === "Completed"
       ? "completed"
@@ -122,7 +149,11 @@ export async function updateRunningJob(
   await withProjectWrite(writeCapability, project.id, async (tx) => {
     await tx
       .update(processingJobs)
-      .set({ status: dbStatus, completedAt: new Date() })
+      .set({
+        status: dbStatus,
+        completedAt: new Date(),
+        ...(neverStarted ? { error: "SageMaker job never accepted" } : {}),
+      })
       .where(eq(processingJobs.id, job.id));
   });
 

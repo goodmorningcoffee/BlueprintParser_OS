@@ -393,6 +393,83 @@ export async function releaseProjectMutationLease(
   });
 }
 
+/** Web-held lease kinds, matched by PREFIX (admin-reprocess carries a scope suffix). */
+export const WEB_HELD_LEASE_KIND_PREFIXES: readonly string[] = [
+  "admin-reprocess:",
+  "labeling-session-create",
+  "processing-start",
+  "yolo-load",
+  "yolo-run",
+];
+
+export function isWebHeldLeaseKind(kind: string): boolean {
+  return WEB_HELD_LEASE_KIND_PREFIXES.some((prefix) => kind.startsWith(prefix));
+}
+
+export interface ReclaimedLeaseSummary {
+  kind: string;
+  tokenPrefix: string;
+  createdAt: Date;
+}
+
+/**
+ * Operator force-release of web-held leases whose holder process is gone. Authority is the root
+ * operator's typed confirmation (audited by the caller), NOT time: `heldBefore` (this process's
+ * start) only filters out leases a live request in this process could still own. Worker-held
+ * `project-processing` leases are never released here; they go through provider reconciliation.
+ */
+export async function forceReleaseWebHeldLeases(
+  capability: ProjectWriteCapability,
+  heldBefore: Date,
+): Promise<{
+  released: ReclaimedLeaseSummary[];
+  refused: (ReclaimedLeaseSummary & { reason: string })[];
+}> {
+  return withProjectWrite(capability, capability.projectId, async (tx) => {
+    const rows = await tx
+      .select({
+        token: projectMutationLeases.token,
+        kind: projectMutationLeases.kind,
+        createdAt: projectMutationLeases.createdAt,
+        lifecycleEpoch: projectMutationLeases.lifecycleEpoch,
+      })
+      .from(projectMutationLeases)
+      .where(
+        and(
+          eq(projectMutationLeases.projectId, capability.projectId),
+          eq(projectMutationLeases.status, "active"),
+        ),
+      );
+    const released: ReclaimedLeaseSummary[] = [];
+    const refused: (ReclaimedLeaseSummary & { reason: string })[] = [];
+    for (const row of rows) {
+      const summary = {
+        kind: row.kind,
+        tokenPrefix: row.token.slice(0, 8),
+        createdAt: row.createdAt,
+      };
+      if (!isWebHeldLeaseKind(row.kind)) {
+        refused.push({ ...summary, reason: "not a web-held lease kind" });
+      } else if (row.createdAt.getTime() >= heldBefore.getTime()) {
+        refused.push({ ...summary, reason: "taken after this server started" });
+      } else if (row.lifecycleEpoch !== capability.lifecycleEpoch) {
+        refused.push({ ...summary, reason: "belongs to another lifecycle generation" });
+      } else {
+        await tx
+          .delete(projectMutationLeases)
+          .where(
+            and(
+              eq(projectMutationLeases.token, row.token),
+              eq(projectMutationLeases.projectId, capability.projectId),
+            ),
+          );
+        released.push(summary);
+      }
+    }
+    return { released, refused };
+  });
+}
+
 /**
  * Coordinate a long external mutation without retaining a DB connection or row lock.
  *
