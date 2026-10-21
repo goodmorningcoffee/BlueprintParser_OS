@@ -1,0 +1,349 @@
+{
+  "schemaVersion": "csi-compare/1",
+  "generatedAt": "2026-10-21T04:34:47.661Z",
+  "inputs": {
+    "gold": {
+      "file": "gold-pilot.json",
+      "sha16": "202bf1a49f783ee9",
+      "pages": 20,
+      "distinct": 19,
+      "certified": false
+    },
+    "frame": {
+      "file": "gold-frame.json",
+      "sha16": "8456afc1ec0f55cc"
+    },
+    "corpus": {
+      "file": "corpus.ndjson",
+      "sha16": "5c3a9cdea5ff6837",
+      "rows": 471
+    },
+    "engines": [
+      {
+        "label": "old",
+        "file": "baseline-old-engine.json",
+        "sha16": "beb1a3d3ad55d874",
+        "engineSha": {
+          "src/lib/csi-detect.ts": "f1d68fd8b4133207d8307a39f460a3f48d0d2d8c79ab82d3d5cdfdd37e6aed91",
+          "src/lib/csi-detect-defs.ts": "2aa507cae04761c91cd8f518446488e1eaa8bd25be07d427090de7b1b62a6b44",
+          "src/lib/csi-database.ts": "d5f55e300b92c2f253f65872b5b498d4a315a493ba63306ee23cc48cfee80531",
+          "src/data/csi-masterformat.tsv": "8966fe2a28756aefe98d1658b0905db220215c9404704f6970243a9e7a38fd8b"
+        },
+        "kbSha": null
+      }
+    ]
+  },
+  "config": {
+    "dedupeKey": "rawTextSha(corpus)",
+    "hierarchyMinAncestorLevel": 2,
+    "fBeta": 0.5,
+    "variants": [
+      "strict",
+      "generous"
+    ]
+  },
+  "caveats": [
+    "Gold is UNCERTIFIED: quote strict/generous as a range; precision is a FLOOR (see precisionBracket).",
+    "1 gold page(s) duplicate another gold page's text and are scored once; flat cells therefore differ from score.ts (which scores all 20)."
+  ],
+  "results": {
+    "old": {
+      "strict": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.0393,
+          "recall": 0.2054,
+          "primaryRecall": 0.1913,
+          "f05": 0.0468,
+          "precisionBracket": {
+            "floor": 0.0393,
+            "ceiling": 0.3861,
+            "unadjudicatedShare": 0.3468
+          },
+          "truePositives": 43.4,
+          "falsePositives": {
+            "hard": 644.6,
+            "crossDivision": 33.6,
+            "unadjudicated": 383.2
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 38.7,
+          "hier": {
+            "precision": 0.0573,
+            "recall": 0.295,
+            "primaryRecall": 0.3049,
+            "f05": 0.0683,
+            "tpAncestor": 5.9,
+            "tpDescendant": 14,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 13.3,
+            "groupsHit": 55.6
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.0093,
+          "recall": 0.084,
+          "primaryRecall": 0.0858,
+          "f05": 0.0113,
+          "precisionBracket": {
+            "floor": 0.0093,
+            "ceiling": 0.4768,
+            "unadjudicatedShare": 0.4674
+          },
+          "truePositives": 17.8,
+          "falsePositives": {
+            "hard": 950.7,
+            "crossDivision": 49.6,
+            "unadjudicated": 893.5
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 15.8,
+          "hier": {
+            "precision": 0.0341,
+            "recall": 0.2741,
+            "primaryRecall": 0.2773,
+            "f05": 0.0414,
+            "tpAncestor": 9.8,
+            "tpDescendant": 37.6,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 44.6,
+            "groupsHit": 51.6
+          }
+        }
+      },
+      "generous": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.0475,
+          "recall": 0.2032,
+          "primaryRecall": 0.2055,
+          "f05": 0.0561,
+          "precisionBracket": {
+            "floor": 0.0475,
+            "ceiling": 0.3861,
+            "unadjudicatedShare": 0.3386
+          },
+          "truePositives": 52.5,
+          "falsePositives": {
+            "hard": 644.6,
+            "crossDivision": 33.6,
+            "unadjudicated": 374
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 61.4,
+          "hier": {
+            "precision": 0.0668,
+            "recall": 0.2845,
+            "primaryRecall": 0.3194,
+            "f05": 0.0789,
+            "tpAncestor": 4,
+            "tpDescendant": 17.4,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 19.1,
+            "groupsHit": 86
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.0114,
+          "recall": 0.0914,
+          "primaryRecall": 0.0772,
+          "f05": 0.0138,
+          "precisionBracket": {
+            "floor": 0.0114,
+            "ceiling": 0.4768,
+            "unadjudicatedShare": 0.4654
+          },
+          "truePositives": 21.8,
+          "falsePositives": {
+            "hard": 950.7,
+            "crossDivision": 49.6,
+            "unadjudicated": 889.6
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 27.6,
+          "hier": {
+            "precision": 0.0407,
+            "recall": 0.2651,
+            "primaryRecall": 0.2818,
+            "f05": 0.049,
+            "tpAncestor": 7.9,
+            "tpDescendant": 48.2,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 61.2,
+            "groupsHit": 80.1
+          }
+        }
+      },
+      "missingFromEngine": 0,
+      "unusableGold": 0
+    }
+  },
+  "corpus": {
+    "old": {
+      "pagesIn": 471,
+      "distinct": 378,
+      "pages": 377,
+      "pagesWithCodes": 293,
+      "mean": 41.528,
+      "median": 11,
+      "p90": 130,
+      "distinctCodes": 2277
+    }
+  },
+  "integrity": {
+    "old": {
+      "counters": {
+        "parentBesideDescendant": 4801,
+        "pagesWithParentBesideDescendant": 200,
+        "civilDivOnNonCivilSheet": 2817,
+        "civilDivOnUnknownDiscipline": 6,
+        "emitsWithoutOwnedSpan": null,
+        "childWithoutDiffToken": null,
+        "notesOnlySupportShare": null,
+        "legendPageCodesPerPageVsMedian": null,
+        "topPairsDistinct": null
+      },
+      "notAvailable": [
+        "emitsWithoutOwnedSpan/topPairs: capture has no codeDetails (OLD engine shape)",
+        "childWithoutDiffToken: needs KB diff tokens joined to span tokens — S5-proper (capture-v2)",
+        "notesOnlySupportShare / legendPageCodesPerPageVsMedian: need pageKind per page — S5-proper"
+      ]
+    }
+  },
+  "perTerm": {
+    "old": [
+      {
+        "term": "GWB/GYP BD",
+        "target": "0929",
+        "pagesWithTerm": 39,
+        "pagesHit": 13,
+        "recall": 0.3333
+      },
+      {
+        "term": "PTD/PAINT",
+        "target": "0991",
+        "pagesWithTerm": 136,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "HM",
+        "target": "081",
+        "pagesWithTerm": 14,
+        "pagesHit": 10,
+        "recall": 0.7143
+      },
+      {
+        "term": "ACT/lay-in",
+        "target": "095113",
+        "pagesWithTerm": 32,
+        "pagesHit": 4,
+        "recall": 0.125
+      },
+      {
+        "term": "CMU",
+        "target": "0422",
+        "pagesWithTerm": 7,
+        "pagesHit": 2,
+        "recall": 0.2857
+      },
+      {
+        "term": "VCT",
+        "target": "0965",
+        "pagesWithTerm": 8,
+        "pagesHit": 3,
+        "recall": 0.375
+      },
+      {
+        "term": "CARPET",
+        "target": "0968",
+        "pagesWithTerm": 21,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "SPRINKLER",
+        "target": "2113",
+        "pagesWithTerm": 36,
+        "pagesHit": 16,
+        "recall": 0.4444
+      },
+      {
+        "term": "INSULATION",
+        "target": "0721",
+        "pagesWithTerm": 96,
+        "pagesHit": 11,
+        "recall": 0.1146
+      },
+      {
+        "term": "VAPOR BARRIER",
+        "target": "0726",
+        "pagesWithTerm": 11,
+        "pagesHit": 2,
+        "recall": 0.1818
+      },
+      {
+        "term": "MTL STUD",
+        "target": "092216",
+        "pagesWithTerm": 16,
+        "pagesHit": 6,
+        "recall": 0.375
+      },
+      {
+        "term": "SEALANT",
+        "target": "0792",
+        "pagesWithTerm": 45,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "FRP",
+        "target": "0664",
+        "pagesWithTerm": 26,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "RB",
+        "target": "096513",
+        "pagesWithTerm": 2,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "EIFS",
+        "target": "0724",
+        "pagesWithTerm": 18,
+        "pagesHit": 14,
+        "recall": 0.7778
+      },
+      {
+        "term": "STOREFRONT",
+        "target": "084",
+        "pagesWithTerm": 45,
+        "pagesHit": 6,
+        "recall": 0.1333
+      },
+      {
+        "term": "FLASHING",
+        "target": "076",
+        "pagesWithTerm": 45,
+        "pagesHit": 29,
+        "recall": 0.6444
+      },
+      {
+        "term": "WATERPROOF",
+        "target": "071",
+        "pagesWithTerm": 25,
+        "pagesHit": 6,
+        "recall": 0.24
+      }
+    ]
+  }
+}
