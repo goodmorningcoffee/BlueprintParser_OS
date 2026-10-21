@@ -8,7 +8,8 @@
 //   • digest contract — the apply re-scans and refuses (409) unless the report matches the one
 //     the admin reviewed; all-projects mode needs a digest per project and touches only those;
 //   • bulk = exact only (run after calibration, RUN_BULK_ENABLED); near only as named blocks
-//     on a single project;
+//     on a single project; a project with any revision evidence (report.bulkHold) takes no
+//     bulk at all — its blocks, exact ones included, go one at a time;
 //   • skipped: demo / not-completed projects, pages carrying human work, already-hidden pages,
 //     any hide that would leave no visible copy;
 //   • concurrency (critic #9): inside withProjectWrite, AFTER the project row is locked FOR
@@ -23,6 +24,7 @@ import { logger } from "@/lib/logger";
 import { annotations, pages, projectMutationLeases, projects, qtoWorkflows } from "@/lib/db/schema";
 import {
   blockHides,
+  bulkPairs,
   bulkTiers,
   defaultKeep,
   getDuplicateOf,
@@ -100,8 +102,11 @@ export function planHides(
   // A bulk tier whose blocks keep the latest copy by default (run, once RUN_BULK_ENABLED)
   // resolves block by block, so bulk never hides the copy a revision may live in.
   const tierBlocks = new Map<string, DuplicateKeep | undefined>();
-  for (const pair of report.pairs) {
-    if (!tiers.includes(pair.tier) || plan.has(pair.page)) continue;
+  if (tiers.length && report.bulkHold) {
+    throw new ApiError("CONFLICT", `Bulk removal is off for this project: it ${report.bulkHold}. Remove its blocks one at a time`);
+  }
+  for (const pair of bulkPairs(report, tiers)) {
+    if (plan.has(pair.page)) continue;
     if (pair.blockId && defaultKeep(pair.tier) === "latest") tierBlocks.set(pair.blockId, undefined);
     else plan.set(pair.page, { page: pair.page, canonical: pair.canonical, tier: pair.tier, content: pair.content, full: pair.full });
   }

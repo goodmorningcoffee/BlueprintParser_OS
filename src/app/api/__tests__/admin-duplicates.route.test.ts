@@ -215,11 +215,35 @@ describe.skipIf(!dbUp)("admin duplicates — apply / restore", () => {
     expect(line.blocks[0]).toMatchObject({ tier: "near", label: "likely revision set" });
     expect(line.counts.exact).toBe(0);
     expect(line.pairs.find((x: any) => !x.identical).diff.length).toBeGreaterThan(0);
+    expect(line.bulkHold).toBe("holds a likely revision set");
     const bulk = await apply({ projectPublicId: p.publicId, reportDigest: line.reportDigest, tiers: ["exact"] });
-    expect(bulk.body.hidden).toEqual([]);
+    expect(bulk.status).toBe(409);
+    expect(await marks(p.id)).toEqual({});
     const r = await apply({ projectPublicId: p.publicId, reportDigest: line.reportDigest, blocks: [line.blocks[0].id], keep: "latest" });
     expect(r.status).toBe(200);
     expect(r.body.hidden.map((h: any) => [h.page, h.canonical, h.tier])).toEqual([[1, 5, "near"], [2, 6, "near"], [3, 7, "near"], [4, 8, "near"]]);
+  });
+
+  it("verify-r3: a re-issue with an inserted sheet holds bulk (single and all:true); its exact block goes one at a time", async () => {
+    const { company, admin } = await world();
+    const p = await createProject(company.id, admin.id);
+    const sheet = (i: number) => page(0, `A-${301 + i}`, body(1300 + i));
+    const ifcSheets = [0, 1, 2, 3, 4, 50, 5, 6, 7, 8, 9].map(sheet);
+    ifcSheets[0] = page(0, "A-301", tweak(body(1300), 2, "ifc"));
+    const all = [...Array.from({ length: 10 }, (_, i) => sheet(i)), ...ifcSheets];
+    for (const [i, s] of all.entries()) await createPage(p.id, i + 1, { rawText: s.rawText, drawingNumber: s.drawingNumber });
+    asUser(admin);
+    const line = projectLine((await scan({ projectPublicIds: [p.publicId] })).lines, p.publicId)!;
+    expect(line.blocks.map((b: any) => [b.id, b.tier])).toEqual([["b1d10l5", "near"], ["b6d11l5", "exact"]]);
+    expect(line.bulkHold).toBe("holds a likely revision set");
+    const one = await apply({ projectPublicId: p.publicId, reportDigest: line.reportDigest, tiers: ["exact"] });
+    expect(one.status).toBe(409);
+    expect(one.body.error.message).toContain("Bulk removal is off for this project");
+    const many = await apply({ all: true, tiers: ["exact"], digests: { [p.publicId]: line.reportDigest } });
+    expect(many.body.results).toEqual([{ projectPublicId: p.publicId, skipped: expect.stringContaining("Bulk removal is off") }]);
+    expect(await marks(p.id)).toEqual({});
+    const block = await apply({ projectPublicId: p.publicId, reportDigest: line.reportDigest, blocks: ["b6d11l5"] });
+    expect(block.body.hidden.map((h: any) => [h.page, h.canonical])).toEqual([[17, 6], [18, 7], [19, 8], [20, 9], [21, 10]]);
   });
 
   it("skips pages carrying human work; machine annotations do not block", async () => {
@@ -345,6 +369,7 @@ describe("planHides (pure)", () => {
     counts: { pages: 8, blank: 0, exact: 1, run: 3, near: 0, possible: 0, blocks: 1 },
     blocks: [{ id: "b1d3l3", start: 1, offset: 3, length: 3, tier: "run", label: "repeat set", minContent: 1, minFull: 0.998 }],
     pairs: [pair(4, 1, "run", "b1d3l3"), pair(5, 2, "run", "b1d3l3"), pair(6, 3, "run", "b1d3l3"), pair(8, 7, "exact", null)],
+    bulkHold: null,
   };
   it("a bulk tier whose blocks keep the latest copy (run) hides the EARLIER copy; exact lone pairs hide the later page", () => {
     // run is not a bulk tier while RUN_BULK_ENABLED=false (validateTiers 400s it); planHides is
@@ -353,5 +378,10 @@ describe("planHides (pure)", () => {
       [1, 4, "run"], [2, 5, "run"], [3, 6, "run"], [8, 7, "exact"],
     ]);
     expect(planHides(report, [], ["b1d3l3"], "earliest").map((h) => h.page)).toEqual([4, 5, 6]);
+  });
+  it("a held report refuses every bulk tier (409) but still resolves a named block", () => {
+    const held: DuplicateReport = { ...report, bulkHold: "holds a likely revision set" };
+    expect(() => planHides(held, ["exact"], [], undefined)).toThrow(/Bulk removal is off for this project: it holds a likely revision set/);
+    expect(planHides(held, [], ["b1d3l3"], "earliest").map((h) => h.page)).toEqual([4, 5, 6]);
   });
 });

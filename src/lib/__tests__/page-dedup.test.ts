@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blockHides,
+  bulkPairs,
   bulkTiers,
   crossProjectReport,
   defaultKeep,
@@ -171,7 +172,7 @@ describe("page-dedup detector goldens", () => {
 // verify-r1 regressions: revision sets that the block rule alone let into bulk, the ratio-only
 // run gate on dense sheets, and the two tier-rule mutants (M7, M9) no golden used to kill.
 describe("page-dedup verify-r1 regressions", () => {
-  const bulk = (r: ReturnType<typeof detectDuplicates>) => r.pairs.filter((p) => bulkTiers().includes(p.tier));
+  const bulk = (r: ReturnType<typeof detectDuplicates>) => bulkPairs(r);
 
   it("revision set split by one rewritten sheet: the unchanged re-issues on both sides are near, nothing bulk", () => {
     const permit = set(10, 1, 2100);
@@ -234,12 +235,14 @@ describe("page-dedup verify-r1 regressions", () => {
     expect(report.blocks[0].minFull).toBeLessThan(0.995);
   });
 
-  it("revision context is cut into d-long chunks: a clean double upload stays exact when its third copy is revised", () => {
+  it("revision context is cut into d-long chunks: a clean double upload stays exact when its third copy is revised (but bulk holds the project)", () => {
     const first = set(4, 1, 2600);
     const third = copyAt(first, 8).map((p, i) => (i === 1 ? { ...p, rawText: tweak((p.rawText ?? "").split("\n"), 2, "rev").join("\n") } : p));
     const report = detectDuplicates([...first, ...copyAt(first, 4), ...third]);
     expect(report.blocks.map((b) => [b.id, b.tier])).toEqual([["b1d4l4", "exact"], ["b1d8l4", "near"]]);
-    expect(bulk(report).map((p) => p.page)).toEqual([5, 6, 7, 8]);
+    // verify-r3 project-level rule: a near block anywhere turns bulk off; b1d4l4 goes by block
+    expect(report.bulkHold).toBe("holds a likely revision set");
+    expect(bulk(report)).toEqual([]);
     expect(report.pairs.filter((p) => p.page > 8).every((p) => p.tier === "near")).toBe(true);
   });
 
@@ -255,7 +258,7 @@ describe("page-dedup verify-r1 regressions", () => {
 });
 
 describe("page-dedup verify-r2 regressions (changed sheet's number missing or misread)", () => {
-  const bulk = (r: ReturnType<typeof detectDuplicates>) => r.pairs.filter((p) => bulkTiers().includes(p.tier));
+  const bulk = (r: ReturnType<typeof detectDuplicates>) => bulkPairs(r);
   // a light revision (one changed word) whose extracted number is `drawingNumber`
   const revised = (p: DedupPageInput, drawingNumber: string | null): DedupPageInput => ({
     ...p,
@@ -288,6 +291,8 @@ describe("page-dedup verify-r2 regressions (changed sheet's number missing or mi
     const s8 = set(8, 1, 3100);
     const report = detectDuplicates([...s8, { ...s8[2], pageNumber: 9 }, page(10, "S-1", body(3150)), page(11, "S-2", body(3151)), { ...s8[5], pageNumber: 12 }]);
     expect(report.pairs.map((p) => [p.page, p.canonical, p.tier])).toEqual([[9, 3, "exact"], [12, 6, "exact"]]);
+    // positionally this is a 4-sheet re-issue with two rewritten middle sheets: bulk holds
+    expect(report.bulkHold).toBe("has a repeated set split by changed sheets");
   });
 
   it("a complete clean copy never grows into an alike neighbour (growth stops at a multiple of d)", () => {
@@ -353,12 +358,127 @@ describe("page-dedup verify-r2 regressions (changed sheet's number missing or mi
     expect(bulk(report)).toHaveLength(5);
   });
 
-  it("RESIDUAL (visible decision): a REWRITTEN first sheet whose number is also missing stays outside the run", () => {
-    // its text is unlike its earlier copy and it carries no number, so nothing ties it to the
-    // set; an unrelated neighbour looks the same. The identical rest stays exact.
-    const ifc = copyAt(permit, 10).map((p, i) => (i === 0 ? page(p.pageNumber, null, body(9998)) : p));
-    const report = detectDuplicates([...permit, ...ifc]);
-    expect(report.blocks.map((b) => [b.id, b.tier])).toEqual([["b2d10l9", "exact"]]);
+  it("RESIDUAL (visible decision): a changed FIRST or LAST sheet that is unscored stays outside the run and the rest is bulk", () => {
+    // Unscored = number missing or misread AND text below the 0.70 review floor. That is not
+    // only a rewrite: ≈ 8 % of words changed already falls below it (verify-r3 -03 log). Nothing
+    // ties the sheet to the set (an unrelated neighbour looks the same), so the identical rest
+    // stays exact and bulk-removable. Interior sheets are covered by the bulk hold (verify-r3).
+    for (const at of [0, 9]) {
+      const ifc = copyAt(permit, 10).map((p, i) => (i === at ? page(p.pageNumber, null, body(9998)) : p));
+      const report = detectDuplicates([...permit, ...ifc]);
+      expect(report.blocks.map((b) => [b.id, b.tier])).toEqual([[at ? "b1d10l9" : "b2d10l9", "exact"]]);
+      expect(report.bulkHold).toBeNull();
+      expect(bulk(report)).toHaveLength(9);
+    }
+  });
+});
+
+// verify-r3: a re-issue that inserts, drops or reorders a sheet moves part of the set to another
+// offset, out of reach of the per-offset revision context. Any revision evidence in a project
+// therefore turns bulk off for the WHOLE project (report.bulkHold); its blocks go one at a time.
+describe("page-dedup verify-r3 regressions (project-level bulk hold)", () => {
+  const bulk = (r: ReturnType<typeof detectDuplicates>) => bulkPairs(r);
+  const REVISION = "holds a likely revision set";
+  interface Sheet { dn: string | null; lines: string[] }
+  const sheets = (count: number, seed: number, words?: number): Sheet[] =>
+    Array.from({ length: count }, (_, i) => ({ dn: num(i), lines: body(seed + i, words) }));
+  const lay = (list: readonly Sheet[], first: number) => list.map((s, i) => page(first + i, s.dn, s.lines));
+  const light = (s: Sheet, dn: string | null = s.dn): Sheet => ({ dn, lines: tweak(s.lines, 2, "revised") });
+  // ≈ 20 % of the lines rewritten: unscored once the number is missing or misread
+  const heavy = (s: Sheet, dn: string | null, seed: number): Sheet => ({ dn, lines: s.lines.map((l, i) => (i % 5 === 1 ? body(seed + i, 8)[0] : l)) });
+  const permit = sheets(10, 4000);
+  const P = lay(permit, 1);
+  const blocksOf = (r: ReturnType<typeof detectDuplicates>) => r.blocks.map((b) => [b.id, b.tier]);
+
+  it("A1 / A1b two adjacent rewritten interior sheets (numbers null or misread): both halves exact, bulk holds", () => {
+    for (const dn of [() => null, (i: number) => `${num(i)}Q`]) {
+      const ifc = permit.map((s, i) => (i === 4 || i === 5 ? heavy(s, dn(i), 9000 + i * 10) : s));
+      const report = detectDuplicates([...P, ...lay(ifc, 11)]);
+      expect(blocksOf(report)).toEqual([["b1d10l4", "exact"], ["b7d10l4", "exact"]]);
+      expect(report.bulkHold).toBe("has a repeated set split by changed sheets");
+      expect(bulk(report)).toEqual([]);
+    }
+  });
+
+  it("A2 IFC inserts a sheet mid-set and revises the cover: the exact half at d+1 is not bulk", () => {
+    const ifc = [light(permit[0]), ...permit.slice(1, 5), { dn: num(50), lines: body(4050) }, ...permit.slice(5)];
+    const report = detectDuplicates([...P, ...lay(ifc, 11)]);
+    expect(blocksOf(report)).toEqual([["b1d10l5", "near"], ["b6d11l5", "exact"]]);
+    expect(report.bulkHold).toBe(REVISION);
+    expect(bulk(report)).toEqual([]);
+  });
+
+  it("A3 IFC drops a sheet with a light revision before it: the exact tail at d-1 is not bulk", () => {
+    const ifc = permit.filter((_, i) => i !== 6).map((s, i) => (i === 5 ? light(s) : s));
+    const report = detectDuplicates([...P, ...lay(ifc, 11)]);
+    expect(blocksOf(report)).toEqual([["b1d10l6", "near"], ["b8d9l3", "exact"]]);
+    expect(bulk(report)).toEqual([]);
+  });
+
+  it("A5 IFC reorders the disciplines (S before A), one A sheet revised: the exact S block is not bulk", () => {
+    const arch = permit.slice(0, 5);
+    const struct = permit.slice(5).map((s, i) => ({ ...s, dn: `S-${100 + i}` }));
+    const ifc = [...struct, ...arch.map((s, i) => (i === 2 ? light(s) : s))];
+    const report = detectDuplicates([...lay([...arch, ...struct], 1), ...lay(ifc, 11)]);
+    expect(blocksOf(report)).toEqual([["b6d5l5", "exact"], ["b1d15l5", "near"]]);
+    expect(bulk(report)).toEqual([]);
+  });
+
+  it("insert with a NULL-numbered revised last sheet: a changed alike pair beside the exact block holds bulk", () => {
+    const ifc = [...permit.slice(0, 9), { dn: num(70), lines: body(4070) }, light(permit[9], null)];
+    const report = detectDuplicates([...P, ...lay(ifc, 11)]);
+    expect(blocksOf(report)).toEqual([["b1d10l9", "exact"]]);
+    expect(report.bulkHold).toBe(REVISION);
+    expect(bulk(report)).toEqual([]);
+  });
+
+  it("every insert / drop position × every revised sheet, numbered and null-numbered: bulk hides nothing", () => {
+    const base = sheets(6, 4100);
+    const B = lay(base, 1);
+    for (const nullNumber of [false, true]) {
+      for (let k = 0; k <= 6; k++) {
+        for (let j = 0; j < 6; j++) {
+          const inserted = [...base.slice(0, k), { dn: num(40), lines: body(4140) }, ...base.slice(k)];
+          const at = j < k ? j : j + 1; // revise an original sheet, never the inserted one
+          inserted[at] = light(inserted[at], nullNumber ? null : inserted[at].dn);
+          expect(bulk(detectDuplicates([...B, ...lay(inserted, 7)])), `insert k=${k} j=${j} null=${nullNumber}`).toEqual([]);
+          if (k === 6) continue;
+          const dropped = base.filter((_, i) => i !== k);
+          const jj = Math.min(j, dropped.length - 1);
+          dropped[jj] = light(dropped[jj], nullNumber ? null : dropped[jj].dn);
+          expect(bulk(detectDuplicates([...B, ...lay(dropped, 7)])), `drop k=${k} j=${jj} null=${nullNumber}`).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it("A4 control: IFC appends sheets after a revised set → near block, nothing bulk", () => {
+    const ifc = [...permit.map((s, i) => (i === 3 ? light(s) : s)), { dn: num(60), lines: body(4060) }, { dn: num(61), lines: body(4061) }];
+    const report = detectDuplicates([...P, ...lay(ifc, 11)]);
+    expect(blocksOf(report)).toEqual([["b1d10l10", "near"]]);
+    expect(bulk(report)).toEqual([]);
+  });
+
+  it("controls: a plain exact double (and triple) set has no hold and stays fully bulk-removable", () => {
+    const two = detectDuplicates([...P, ...lay(permit, 11)]);
+    expect(blocksOf(two)).toEqual([["b1d10l10", "exact"]]);
+    expect(two.bulkHold).toBeNull();
+    expect(bulk(two).map((p) => [p.page, p.canonical])).toEqual(permit.map((_, i) => [11 + i, 1 + i]));
+    const three = detectDuplicates([...P, ...lay(permit, 11), ...lay(permit, 21)]);
+    expect(three.bulkHold).toBeNull();
+    expect(bulk(three)).toHaveLength(20);
+  });
+
+  it("M4: the run gate needs EQUAL numbers — a dense one-word revision with a null number is a changed slot", () => {
+    // 1,400 words: one changed word is ≤ 6 shingles and full ≥ 0.995, so only `sameNumber`
+    // keeps slot 3 from passing the run gate and making its identical neighbours bulk exact
+    // the number is still printed on the sheet, just not extracted (drawingNumber null)
+    const dense = sheets(6, 4200, 1400);
+    const ifc = lay(dense.map((s, i) => (i === 2 ? light(s) : s)), 7).map((p) => (p.pageNumber === 9 ? { ...p, drawingNumber: null } : p));
+    const report = detectDuplicates([...lay(dense, 1), ...ifc]);
+    expect(blocksOf(report)).toEqual([["b4d6l3", "near"]]);
+    expect(report.pairs.find((p) => p.page === 9)).toMatchObject({ canonical: 3, sameNumber: false, identical: false });
+    expect(bulk(report)).toEqual([]);
   });
 });
 

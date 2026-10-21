@@ -15,10 +15,17 @@
 //   • revision context: a same-offset run of scored pairs (numbers equal, missing or misread,
 //     see revisionContext) holding any changed page is a re-issue, so its text-identical pages
 //     are near too, even when the changed sheet splits the link run into two blocks or leaves
-//     lone identical pairs. Without it one rewritten sheet in an IFC re-issue let "remove all
-//     exact" hide the rest of the IFC set (verify-r1, verify-r2). Identical pages with no
-//     same-offset changed neighbour stay exact (the plan's rule: the stored text is all there
-//     is; a graphics-only re-issue is indistinguishable).
+//     lone identical pairs. Without it one changed sheet in an IFC re-issue let "remove all
+//     exact" hide the rest of the IFC set (verify-r1, verify-r2). It sees one offset at a time,
+//     so a changed sheet it cannot score (number missing or misread AND text below the 0.70
+//     floor, which ≈ 8 % of words changed already reaches) breaks the run there;
+//   • bulk hold (holdReason, verify-r3): an inserted, dropped or reordered sheet moves part of a
+//     re-issue to another offset, and unscorable changed sheets split a run, so ANY revision
+//     evidence in a project turns "remove all" off for the whole project; its blocks, exact
+//     ones too, go one at a time. Residual: an unscorable changed FIRST or LAST sheet leaves no
+//     evidence, so the rest of that set stays bulk exact. Identical pages with no changed
+//     neighbour stay exact (the plan's rule: the stored text is all there is; a graphics-only
+//     re-issue is indistinguishable).
 //   • default keep: exact → first copy; run / near → latest copy, since their texts differ and
 //     the later copy is the likelier re-issue (owner decision 7, extended to run).
 
@@ -209,6 +216,7 @@ export function detectDuplicates(input: readonly DedupPageInput[]): DuplicateRep
     pair.canonical = target;
   }
 
+  const bulkHold = holdReason(scores, revision, blocks, pages);
   const sorted = [...pairs.values()].sort((x, y) => x.page - y.page);
   const count = (t: DuplicateTier) => sorted.filter((p) => p.tier === t).length;
   return {
@@ -223,7 +231,79 @@ export function detectDuplicates(input: readonly DedupPageInput[]): DuplicateRep
     },
     blocks: blocks.sort((x, y) => x.start + x.offset - (y.start + y.offset)),
     pairs: sorted,
+    bulkHold,
   };
+}
+
+/**
+ * The pairs "remove all" may hide: none while the project is on hold (`bulkHold`), else every
+ * pair of a bulk tier. planHides reads this, so the hold is one rule for every bulk path.
+ */
+export function bulkPairs(report: DuplicateReport, tiers: readonly DuplicateTier[] = bulkTiers()): DuplicatePair[] {
+  if (report.bulkHold) return [];
+  return report.pairs.filter((p) => tiers.includes(p.tier));
+}
+
+/** A re-issue that inserts or drops up to this many sheets still counts as beside its copy. */
+const REISSUE_SHIFT = 3;
+
+/**
+ * Why "remove all" must skip this project, or null. Conservative project-level rule
+ * (verify-r3): a re-issue that inserts, drops or reorders a sheet moves part of the set to
+ * another offset, where the per-offset revision context cannot see the changed sheet, so ANY
+ * revision evidence turns bulk off for the whole project; its blocks stay removable one at a
+ * time. Evidence, over the scored pairs:
+ *   1. a likely-revision-set block, or an identical pair inside a revision context;
+ *   2. a repeated drawing number whose text is ≥ 90 % alike but fails the run gate;
+ *   3. a changed pair ≥ 90 % alike (a number missing) within REISSUE_SHIFT pages and offset
+ *      of a run of copies (identical or run-gate pairs at one offset) — a revised first/last
+ *      sheet next to an inserted or dropped one;
+ *   4. two runs of copies at one offset d split by < d slots that are not blank in both
+ *      copies — changed sheets whose numbers are missing or misread and whose
+ *      text fell below the review floor (≈ 8 % of words changed already does).
+ * Not seen: a changed first or last sheet that is unscored (number missing or misread AND
+ * text below the 0.70 floor) — nothing ties it to the set, so the rest stays bulk exact.
+ */
+function holdReason(scores: ReadonlyMap<string, Score>, revision: ReadonlySet<string>, blocks: readonly DuplicateBlock[], pages: readonly Prepared[]): string | null {
+  const REVISION = "holds a likely revision set";
+  if (blocks.some((b) => b.tier === "near")) return REVISION;
+  const copiesAt = new Map<number, number[]>();
+  const changed: [number, number][] = [];
+  for (const [k, s] of scores) {
+    if (s.identical && revision.has(k)) return REVISION;
+    const [a, b] = k.split(":").map(Number);
+    if (passesRun(s)) {
+      const list = copiesAt.get(b - a);
+      if (list) list.push(a);
+      else copiesAt.set(b - a, [a]);
+    } else if (s.content >= DEDUP_THRESHOLDS.near) {
+      if (s.sameNumber) return "repeats a drawing number with changed text";
+      changed.push([a, b]);
+    }
+  }
+  const byPage = new Map(pages.map((p) => [p.pageNumber, p]));
+  const blankSlot = (a: number, d: number) => byPage.get(a)?.eligible === false && byPage.get(a + d)?.eligible === false;
+  const runs: { d: number; first: number; last: number }[] = [];
+  for (const [d, starts] of copiesAt) {
+    const sorted = [...new Set(starts)].sort((x, y) => x - y);
+    let first = sorted[0];
+    for (let i = 1; i <= sorted.length; i++) {
+      if (i < sorted.length && sorted[i] === sorted[i - 1] + 1) continue;
+      runs.push({ d, first, last: sorted[i - 1] });
+      if (i < sorted.length) first = sorted[i];
+    }
+  }
+  for (const [a, b] of changed) {
+    const near = runs.some((r) => Math.abs(b - a - r.d) <= REISSUE_SHIFT && a >= r.first - REISSUE_SHIFT && a <= r.last + REISSUE_SHIFT);
+    if (near) return REVISION;
+  }
+  runs.sort((x, y) => x.d - y.d || x.first - y.first);
+  for (let i = 1; i < runs.length; i++) {
+    const [prev, next] = [runs[i - 1], runs[i]];
+    if (prev.d !== next.d || next.first - prev.last - 1 >= next.d) continue;
+    for (let a = prev.last + 1; a < next.first; a++) if (!blankSlot(a, next.d)) return "has a repeated set split by changed sheets";
+  }
+  return null;
 }
 
 /** Identical, or a same-number pair within the run gate (ratio AND absolute change cap). */

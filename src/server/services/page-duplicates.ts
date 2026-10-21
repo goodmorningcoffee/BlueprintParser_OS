@@ -167,6 +167,7 @@ function projectLine(project: DuplicateScopeProject, stored: readonly StoredDedu
     reportDigest: digest,
     counts: report.counts,
     blocks: report.blocks,
+    bulkHold: report.bulkHold,
     pairs,
     hidden,
     thumbnailBase: projectAssetUrl(project.publicId, "thumbnails"),

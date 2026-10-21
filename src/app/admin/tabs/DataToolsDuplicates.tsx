@@ -4,7 +4,8 @@
  * Admin › Data tools › Duplicates. Scan (changes nothing) → review blocks and pairs with
  * thumbnails side by side → hide. Hiding is reversible (Restore) and page numbers never
  * change. Only Exact goes in bulk; a repeat set or likely revision set is removed one block
- * at a time, keeping the latest copy by default (their texts differ).
+ * at a time, keeping the latest copy by default (their texts differ). A project showing any
+ * revision evidence (bulkHold) takes no bulk at all: every block, exact ones too, one at a time.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,6 +20,7 @@ interface ProjectReport {
   reportDigest: string;
   counts: DuplicateCounts;
   blocks: DuplicateBlock[];
+  bulkHold: string | null;
   pairs: ReportPair[];
   hidden: { page: number; canonical: number; tier: string }[];
   thumbnailBase: string;
@@ -105,7 +107,10 @@ function ProjectPanel({ report, query, onChanged }: { report: ProjectReport; que
         <span className="text-xs text-[var(--muted)]">
           {counts.pages} pages · exact {counts.exact} · repeat {counts.run} · near {counts.near} · possible {counts.possible} · hidden {report.hidden.length}
         </span>
-        {exactCount > 0 && (
+        {exactCount > 0 && report.bulkHold && (
+          <span className="text-xs text-[var(--muted)]">No bulk: project {report.bulkHold}</span>
+        )}
+        {exactCount > 0 && !report.bulkHold && (
           <button disabled={busy} className="text-xs px-2 py-1 rounded bg-[var(--accent)] text-white disabled:opacity-50"
             onClick={() => act({ reportDigest: report.reportDigest, tiers: ["exact"] })}>Remove {exactCount} exact</button>
         )}
@@ -125,7 +130,7 @@ function ProjectPanel({ report, query, onChanged }: { report: ProjectReport; que
                     Pages {b.start + b.offset}–{b.start + b.offset + b.length - 1} repeat pages {b.start}–{b.start + b.length - 1}
                     {" "}· {b.tier} · {b.label} · min full {pct(b.minFull)}
                   </span>
-                  {b.tier !== "exact" && (
+                  {(b.tier !== "exact" || report.bulkHold) && (
                     <>
                       <select value={choice} onChange={(e) => setKeep({ ...keep, [b.id]: e.target.value as DuplicateKeep })}
                         className="text-xs bg-[var(--bg)] border border-[var(--border)] rounded px-1">
@@ -217,7 +222,7 @@ export default function DataToolsDuplicates({ isRootAdmin }: { isRootAdmin: bool
     }
   }, [query, target]);
 
-  const withExact = scan.reports.filter((r) => r.pairs.some((p) => p.tier === "exact"));
+  const withExact = scan.reports.filter((r) => !r.bulkHold && r.pairs.some((p) => p.tier === "exact"));
   async function removeAllExact() {
     const digests = Object.fromEntries(withExact.map((r) => [r.project.publicId, r.reportDigest]));
     const { ok, data } = await postJson(`/api/admin/duplicates/apply${query}`, { all: true, tiers: ["exact"], digests });

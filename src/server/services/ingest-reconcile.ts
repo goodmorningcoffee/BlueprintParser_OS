@@ -12,7 +12,10 @@
 // Lease ownership proof (the lease carries no execution identity): (a) the project has exactly one
 // ingest row and it is this row; (b) projects.jobId equals the execution name; (c) the lease was
 // created inside [startDate, stopDate] (applied in TypeScript; the lease SELECT has no time
-// predicate, so every active-lease WHERE stays fail-closed for check:project-security-policy).
+// predicate, so every active-lease WHERE stays fail-closed for check:project-security-policy);
+// (d) the lease has not heartbeated after stopDate + HEARTBEAT_AFTER_STOP_SLACK_MS (a holder still
+// heartbeating outlived the execution AWS reports stopped — e.g. ABORTED while ecs:StopTask failed
+// — so it may still be writing; also in TypeScript, refused rather than reclaimed).
 // ⚠ Never log or persist the execution `input` (it carries the webhook secret) or the provider
 // `cause` (an ECS runTask failure cause embeds the task's container overrides).
 
@@ -35,6 +38,8 @@ import {
 
 export const TERMINAL_GRACE_MS = 3 * 60_000;
 export const NEVER_STARTED_MIN_AGE_MS = 15 * 60_000;
+/** Proof (d) slack: a final heartbeat can land just after stopDate (the beat runs every ttl/3, 100 s). */
+export const HEARTBEAT_AFTER_STOP_SLACK_MS = 60_000;
 const ERROR_MAX_CHARS = 200;
 
 export type TerminalExecutionStatus =
@@ -299,7 +304,7 @@ export async function reconcileIngestJob(
     }
 
     // Lease reclaim — only for a provider-terminal close, and only under all three ownership
-    // proofs. The SELECT has no time predicate (expiry is diagnostic only); proof (c), the
+    // proofs plus the heartbeat check (d). The SELECT has no time predicate (expiry is diagnostic only); proof (c), the
     // [startDate, stopDate] window, is applied in TypeScript and the row is deleted by token.
     let leasesReclaimed = 0;
     let leaseRefusal: string | undefined;
@@ -308,6 +313,7 @@ export async function reconcileIngestJob(
         .select({
           token: projectMutationLeases.token,
           createdAt: projectMutationLeases.createdAt,
+          heartbeatAt: projectMutationLeases.heartbeatAt,
           lifecycleEpoch: projectMutationLeases.lifecycleEpoch,
         })
         .from(projectMutationLeases)
@@ -330,14 +336,18 @@ export async function reconcileIngestJob(
           );
         const start = provider.startDate.getTime();
         const stop = provider.stopDate.getTime();
-        const owned = workerLeases.filter((lease) => {
+        const inWindow = (lease: (typeof workerLeases)[number]) => {
           const created = lease.createdAt.getTime();
           return (
             created >= start &&
             created <= stop &&
             lease.lifecycleEpoch === capability.lifecycleEpoch
           );
-        });
+        };
+        // proof (d): a holder still heartbeating after the stop may still be writing
+        const quiet = (lease: (typeof workerLeases)[number]) =>
+          lease.heartbeatAt.getTime() <= stop + HEARTBEAT_AFTER_STOP_SLACK_MS;
+        const owned = workerLeases.filter((lease) => inWindow(lease) && quiet(lease));
         if (ingestRows.length !== 1 || ingestRows[0].id !== job.id) {
           leaseRefusal = `project has ${ingestRows.length} ingest jobs, so the lease cannot be tied to this execution`;
         } else if (!executionName || project?.jobId !== executionName) {
@@ -355,7 +365,9 @@ export async function reconcileIngestJob(
           }
           leasesReclaimed = owned.length;
           if (owned.length < workerLeases.length) {
-            leaseRefusal = "a worker lease was created outside this execution's run window or lifecycle generation";
+            leaseRefusal = workerLeases.some((lease) => inWindow(lease) && !quiet(lease))
+              ? "holder heartbeated after AWS reported stop"
+              : "a worker lease was created outside this execution's run window or lifecycle generation";
           }
         }
       }

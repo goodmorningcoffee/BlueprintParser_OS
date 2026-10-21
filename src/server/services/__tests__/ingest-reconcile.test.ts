@@ -193,7 +193,11 @@ async function workerLease(
   });
   await db
     .update(projectMutationLeases)
-    .set({ createdAt: sql`CURRENT_TIMESTAMP - (${createdAgoMs} * INTERVAL '1 millisecond')` })
+    // an orphan: its holder stopped heartbeating when it was created
+    .set({
+      createdAt: sql`CURRENT_TIMESTAMP - (${createdAgoMs} * INTERVAL '1 millisecond')`,
+      heartbeatAt: sql`CURRENT_TIMESTAMP - (${createdAgoMs} * INTERVAL '1 millisecond')`,
+    })
     .where(eq(projectMutationLeases.token, lease.token));
   return lease;
 }
@@ -315,6 +319,40 @@ describe.skipIf(!dbUp)("reconcileIngestJob + delete (DB)", () => {
       "Project has an active mutation lease",
     );
   });
+
+  it("V2: AWS reports ABORTED but the holder heartbeated after the stop → lease kept, delete refuses", async () => {
+    const { project, job, capability } = await seedIngest();
+    const lease = await workerLease(project, capability, 40 * MIN);
+    await db
+      .update(projectMutationLeases)
+      .set({ heartbeatAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(projectMutationLeases.token, lease.token));
+    awsTerminal("ABORTED", 50 * MIN, 10 * MIN);
+    await expectConflict(
+      deleteProjectFully({ id: project.id, dataUrl: project.dataUrl, jobId: project.jobId }, capability),
+      "Project has an active mutation lease (holder heartbeated after AWS reported stop",
+    );
+    expect(await db.select().from(projects).where(eq(projects.id, project.id))).toHaveLength(1);
+    expect(await leasesOf(project.id)).toHaveLength(1);
+    const [row] = await db.select().from(processingJobs).where(eq(processingJobs.id, job.id));
+    expect(row.status).toBe("failed");
+  }, 20_000);
+
+  it("V2 direct reconcile: a heartbeat within 60 s of the stop is still reclaimable; later is refused", async () => {
+    for (const [beatAgoMs, reclaimed] of [[10 * MIN - 30_000, 1], [10 * MIN - 90_000, 0]] as const) {
+      const { project, job, capability } = await seedIngest();
+      const lease = await workerLease(project, capability, 40 * MIN);
+      await db
+        .update(projectMutationLeases)
+        .set({ heartbeatAt: sql`CURRENT_TIMESTAMP - (${beatAgoMs} * INTERVAL '1 millisecond')` })
+        .where(eq(projectMutationLeases.token, lease.token));
+      awsTerminal("ABORTED", 50 * MIN, 10 * MIN);
+      const outcome = await reconcileIngestJob(job, project.publicId, capability);
+      expect(outcome).toMatchObject({ changed: true, leasesReclaimed: reclaimed });
+      if (reclaimed) expect(outcome.leaseRefusal).toBeUndefined();
+      else expect(outcome.leaseRefusal).toBe("holder heartbeated after AWS reported stop");
+    }
+  }, 30_000);
 
   it("lease created BEFORE the execution's startDate survives (window lower bound)", async () => {
     const { project, job, capability } = await seedIngest();

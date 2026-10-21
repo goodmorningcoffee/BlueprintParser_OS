@@ -88,7 +88,11 @@ async function leaseOf(project: typeof projects.$inferSelect, kind: string, crea
   });
   await db
     .update(projectMutationLeases)
-    .set({ createdAt: sql`CURRENT_TIMESTAMP - (${createdAgoMs} * INTERVAL '1 millisecond')` })
+    // an orphan: its holder stopped heartbeating when it was created
+    .set({
+      createdAt: sql`CURRENT_TIMESTAMP - (${createdAgoMs} * INTERVAL '1 millisecond')`,
+      heartbeatAt: sql`CURRENT_TIMESTAMP - (${createdAgoMs} * INTERVAL '1 millisecond')`,
+    })
     .where(eq(projectMutationLeases.token, lease.token));
   return lease;
 }

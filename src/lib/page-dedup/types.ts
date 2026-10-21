@@ -63,6 +63,8 @@ export interface DuplicateReport {
   blocks: DuplicateBlock[];
   /** One entry per duplicate page (`page` unique), sorted by page. */
   pairs: DuplicatePair[];
+  /** Non-null ⇒ "remove all" skips this project (it shows revision evidence); why, in words. */
+  bulkHold: string | null;
 }
 
 export type DuplicateKeep = "latest" | "earliest";
