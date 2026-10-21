@@ -137,6 +137,7 @@ export async function searchProjectPages(
           FROM pages
           WHERE project_id = ${project.id}
             AND search_vector @@ phraseto_tsquery('english', ${searchText})
+            AND (page_intelligence #>> '{duplicateOf,hiddenAt}') IS NULL
           ORDER BY rank DESC
         `
       : sql`
@@ -150,6 +151,7 @@ export async function searchProjectPages(
           FROM pages
           WHERE project_id = ${project.id}
             AND search_vector @@ plainto_tsquery('english', ${searchText})
+            AND (page_intelligence #>> '{duplicateOf,hiddenAt}') IS NULL
           ORDER BY rank DESC
         `
   );
@@ -248,6 +250,7 @@ export async function globalSearch(
     WHERE p.company_id = ${companyId}
       AND p.status = 'completed'
       AND pg.search_vector @@ plainto_tsquery('english', ${query})
+      AND (pg.page_intelligence #>> '{duplicateOf,hiddenAt}') IS NULL
     GROUP BY p.id, p.public_id, p.name
     ORDER BY match_count DESC
   `);
@@ -292,6 +295,7 @@ export async function searchGallery(
     WHERE p.is_demo = true
       AND p.status = 'completed'
       AND pg.search_vector @@ plainto_tsquery('english', ${query})
+      AND (pg.page_intelligence #>> '{duplicateOf,hiddenAt}') IS NULL
     GROUP BY p.id, p.public_id, p.name
     ORDER BY match_count DESC
   `);

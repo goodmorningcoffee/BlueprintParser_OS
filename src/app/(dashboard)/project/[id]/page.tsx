@@ -10,6 +10,7 @@ import {
   type ProjectResponse,
 } from "@/lib/project-lifecycle";
 import { useSearch } from "@/hooks/useSearch";
+import { useLoadHiddenDuplicates } from "@/hooks/useHiddenDuplicates";
 import { isEditableKeyboardTarget } from "@/lib/keyboard-target";
 import { useUiStore } from "@/stores/uiStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
@@ -31,6 +32,7 @@ export default function ProjectPage() {
   const loadedIdRef = useRef<string | null>(null);
 
   useSearch();
+  useLoadHiddenDuplicates(project?.id);
 
   const load = useCallback(() => {
     activeOpenRef.current?.dispose();

@@ -11,7 +11,8 @@
 
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, not } from "drizzle-orm";
+import { onVisiblePage, visiblePage } from "@/lib/page-dedup/visibility";
 import {
   findOccurrences,
   scanClassForTexts,
@@ -155,6 +156,7 @@ async function execSearchPages(query: string, ctx: ToolContext) {
     FROM pages p
     WHERE p.project_id = ${ctx.projectId}
       AND p.search_vector @@ plainto_tsquery('english', ${query})
+      AND (p.page_intelligence #>> '{duplicateOf,hiddenAt}') IS NULL
     ORDER BY rank DESC LIMIT 20
   `);
   return { query, results: results.rows };
@@ -247,17 +249,21 @@ async function execLookupPagesByIndex(index: string, key: string, ctx: ToolConte
 
   const idx = indexMap[index];
   if (!idx) return { error: `Unknown index: ${index}` };
+  // Summaries predate hiding; drop hidden duplicates from every page list returned.
+  const hiddenRows = await db.select({ n: pages.pageNumber }).from(pages).where(and(eq(pages.projectId, ctx.projectId), not(visiblePage(pages.pageIntelligence))));
+  const hidden = new Set(hiddenRows.map((r) => r.n));
+  const shown = (list: number[]) => list.filter((n) => !hidden.has(n));
 
   // Try exact match first, then prefix match
   const exact = idx[key];
-  if (exact) return { index, key, pages: exact };
+  if (exact) return { index, key, pages: shown(exact) };
 
   // Prefix search for CSI (e.g., "08" matches "08 11 16")
   const prefixMatches: Record<string, number[]> = {};
   const keyUpper = key.toUpperCase().replace(/\s/g, "");
   for (const [k, v] of Object.entries(idx)) {
     if (k.toUpperCase().replace(/\s/g, "").startsWith(keyUpper)) {
-      prefixMatches[k] = v;
+      prefixMatches[k] = shown(v);
     }
   }
   if (Object.keys(prefixMatches).length > 0) return { index, key, prefixMatches };
@@ -268,6 +274,7 @@ async function execGetAnnotations(input: Record<string, unknown>, ctx: ToolConte
   // Push all possible filters to DB query
   const conditions = [eq(annotations.projectId, ctx.projectId)];
   if (input.pageNumber) conditions.push(eq(annotations.pageNumber, input.pageNumber as number));
+  else conditions.push(onVisiblePage(annotations.projectId, annotations.pageNumber));
   if (input.source) conditions.push(eq(annotations.source, input.source as string));
   if (input.className) conditions.push(eq(annotations.name, input.className as string));
 
@@ -424,6 +431,7 @@ async function execScanYoloClassTexts(yoloClass: string, yoloModel: string | und
   // Filter annotations at DB level — only load the target class
   const annConditions = [eq(annotations.projectId, ctx.projectId), eq(annotations.source, "yolo"), eq(annotations.name, yoloClass)];
   if (pageNumber) annConditions.push(eq(annotations.pageNumber, pageNumber));
+  else annConditions.push(onVisiblePage(annotations.projectId, annotations.pageNumber));
 
   const filteredAnns = await db
     .select({ id: annotations.id, pageNumber: annotations.pageNumber, name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, source: annotations.source, data: annotations.data, note: annotations.note })
@@ -462,6 +470,7 @@ async function execMapTagsToPages(tagsStr: string, yoloClass: string | undefined
   const annConditions = [eq(annotations.projectId, ctx.projectId)];
   if (yoloClass) { annConditions.push(eq(annotations.source, "yolo")); annConditions.push(eq(annotations.name, yoloClass)); }
   if (pageNumber) annConditions.push(eq(annotations.pageNumber, pageNumber));
+  else annConditions.push(onVisiblePage(annotations.projectId, annotations.pageNumber));
 
   const filteredAnns = await db
     .select({ id: annotations.id, pageNumber: annotations.pageNumber, name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, source: annotations.source, data: annotations.data, note: annotations.note })
@@ -477,6 +486,7 @@ async function execMapTagsToPages(tagsStr: string, yoloClass: string | undefined
   // Only load textract for relevant pages
   const pageConditions = [eq(pages.projectId, ctx.projectId)];
   if (pageNumber) pageConditions.push(eq(pages.pageNumber, pageNumber));
+  else pageConditions.push(visiblePage(pages.pageIntelligence));
 
   const pageRows = await db
     .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
@@ -520,7 +530,7 @@ async function execDetectTagPatterns(ctx: ToolContext) {
   const allAnns = await db
     .select({ id: annotations.id, pageNumber: annotations.pageNumber, name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, source: annotations.source })
     .from(annotations)
-    .where(and(eq(annotations.projectId, ctx.projectId), eq(annotations.source, "yolo")));
+    .where(and(eq(annotations.projectId, ctx.projectId), eq(annotations.source, "yolo"), onVisiblePage(annotations.projectId, annotations.pageNumber)));
 
   if (allAnns.length === 0) return { patterns: [] };
 

@@ -24,6 +24,7 @@ import SettingsTab from "./tabs/SettingsTab";
 import LogsTab from "./tabs/LogsTab";
 import PipelineTab from "./tabs/PipelineTab";
 import LlmContextTab from "./tabs/LlmContextTab";
+import DataToolsTab from "./tabs/DataToolsTab";
 
 interface ProjectItem {
   id: string;
@@ -790,6 +791,7 @@ export default function AdminPage() {
         {activeTab === "logs" && session?.user?.isRootAdmin && (
           <LogsTab />
         )}
+        {activeTab === "data-tools" && <DataToolsTab isRootAdmin={session?.user?.isRootAdmin === true} />}
       </main>
     </div>
   );

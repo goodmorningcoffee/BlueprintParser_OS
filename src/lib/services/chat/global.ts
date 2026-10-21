@@ -90,6 +90,7 @@ export async function handleGlobalChat(
     FROM pages pg JOIN projects p ON pg.project_id = p.id
     WHERE p.company_id = ${session.user.companyId} AND p.status = 'completed'
       AND pg.search_vector @@ plainto_tsquery('english', ${message})
+      AND (pg.page_intelligence #>> '{duplicateOf,hiddenAt}') IS NULL
     ORDER BY rank DESC LIMIT 10
   `);
 

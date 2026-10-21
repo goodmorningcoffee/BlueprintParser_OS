@@ -19,6 +19,7 @@ import { useAnnotations } from "@/queries/useAnnotations";
 import { useYoloTagById } from "@/queries/useYoloTags";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
 import { extractDisciplinePrefix, disciplineOrder } from "@/lib/page-utils";
+import { useHiddenDuplicates } from "@/hooks/useHiddenDuplicates";
 
 interface PageSidebarProps {
   pdfDoc: PDFDocumentProxy | null;
@@ -31,6 +32,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Slice selectors (only re-render when relevant slice changes)
   const { pageNumber, numPages } = useNavigation();
   const { pageNames, publicId, assetBaseUrl } = useProject();
+  const duplicates = useHiddenDuplicates(publicId);
   const keynotes = useKeynotesByPage();
   const csiCodes = useCsiCodesByPage();
   const textAnnotations = useTextAnnotationsByPage();
@@ -306,6 +308,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Check if a page is hidden by active filters
   function isPageHidden(n: number): boolean {
     return (
+      (!duplicates.showHidden && duplicates.hidden[n] !== undefined) ||
       (isSearchFiltered && !searchResults.includes(n)) ||
       (isKeynoteFiltered && !keynoteFilteredPages.includes(n)) ||
       (isAnnotationFiltered && !annotationFilteredPages.includes(n)) ||
@@ -342,7 +345,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       isAnnotationFiltered, annotationFilteredPages, isTradeFiltered, tradeFilteredPages,
       isTextAnnotationFiltered, textAnnotationFilteredPages, isTakeoffFiltered, takeoffFilteredPages,
       isCsiFiltered, csiFilteredPages, isYoloTagFiltered, yoloTagFilteredPages,
-      isSymbolSearchFiltered, symbolSearchFilteredPages]);
+      isSymbolSearchFiltered, symbolSearchFilteredPages, duplicates.hidden, duplicates.showHidden]);
 
   // Virtual scroll: compute which page buttons to render (~20 instead of all)
   const visibleStartIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - VIRTUAL_BUFFER);
@@ -431,6 +434,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   function renderPageButton(n: number) {
     const isActive = n === pageNumber;
     const name = pageNames[n] || `Page ${n}`;
+    const duplicateOf = duplicates.hidden[n];
 
     return (
       <button
@@ -441,7 +445,8 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
           isActive
             ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40"
             : "hover:bg-[var(--surface-hover)] border border-transparent"
-        }`}
+        }${duplicateOf !== undefined ? " opacity-50" : ""}`}
+        title={duplicateOf !== undefined ? `Hidden duplicate of page ${duplicateOf}` : undefined}
       >
         {/* Thumbnail */}
         <div className="aspect-[4/3] bg-[var(--bg)] rounded overflow-hidden mb-1 relative">
@@ -477,6 +482,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
           >
             {name}
           </div>
+          {duplicateOf !== undefined && (
+            <span className="text-[10px] text-[var(--muted)] shrink-0">dup of p.{duplicateOf}</span>
+          )}
           {searchMatches[n] && searchMatches[n].length > 0 && (
             <span className="bg-yellow-500/20 text-yellow-300 text-[10px] px-1.5 rounded-full shrink-0">
               {searchMatches[n].length}
@@ -550,6 +558,14 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             {groupBySheet ? "Grouped" : "Group"}
           </button>
         </div>
+        {duplicates.count > 0 && (
+          <button
+            onClick={() => duplicates.setShowHidden(!duplicates.showHidden)}
+            className="w-full text-left text-[10px] text-[var(--muted)] hover:text-[var(--fg)] px-1 pb-2 mb-2 border-b border-[var(--border)]"
+          >
+            {duplicates.showHidden ? "Hide" : "Show"} {duplicates.count} hidden duplicate{duplicates.count === 1 ? "" : "s"}
+          </button>
+        )}
 
         {/* Filter badges */}
         {isSearchFiltered && (
