@@ -37,7 +37,7 @@ export default async function setup({
   provide: (key: string, value: unknown) => void;
 }) {
   const csiPrivate = [
-    { file: "src/data/csi-kb.json", ruling: "owner ruling D1", how: "Rebuild it", gen: "eval/csi/build-kb-v2.ts", tests: "csi-kb-artifact, csi-kb-loader" },
+    { file: "src/data/csi-kb.json", ruling: "owner ruling D1", how: "Rebuild it", gen: "eval/csi/build-kb-v2.ts", tests: "csi-kb-artifact, csi-kb-loader, csi-span-match" },
     { file: "src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json", ruling: "owner ruling 2026-10-20, as D1", how: "Regenerate it", gen: "eval/csi/mf-fixture-extract.ts", tests: "csi-mf-parse fixture describes" },
   ];
   const absent = csiPrivate
