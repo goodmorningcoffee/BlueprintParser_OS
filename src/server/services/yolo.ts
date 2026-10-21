@@ -160,9 +160,9 @@ export async function yoloRun(
     );
   }
 
-  // Check YOLO job quota
+  // Check YOLO job quota (root exempt + per-user/company overrides — owner ruling 2026-10-21)
   if (toggles.quotaEnabled) {
-    const quota = await checkYoloQuota(session.user.companyId);
+    const quota = await checkYoloQuota(session.user.companyId, session.user.isRootAdmin, session.user.dbId);
     if (!quota.allowed) {
       // NO || fallback (YQ-3, frozen); message typed optional but always set on denial
       throw new ApiError("RATE_LIMITED", quota.message as string);

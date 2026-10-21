@@ -16,11 +16,18 @@ import { appSettings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
+import { QUOTA_OVERRIDES_KEY } from "@/lib/quota-overrides";
 
-export async function getAppSettings(): Promise<unknown> {
+// [2026-10-21] The quota-overrides document lives in this table but is ROOT-ONLY to read and is
+// written only through /api/admin/quota-overrides (strict validation + one audit row per change).
+// This generic route therefore hides it from non-root admins and refuses to write it.
+export async function getAppSettings(session?: AuthSession | null): Promise<unknown> {
   const rows = await db.select().from(appSettings);
   const settings: Record<string, unknown> = {};
-  for (const r of rows) settings[r.key] = r.value;
+  for (const r of rows) {
+    if (r.key === QUOTA_OVERRIDES_KEY && session?.user?.isRootAdmin !== true) continue;
+    settings[r.key] = r.value;
+  }
   return settings;
 }
 
@@ -33,6 +40,9 @@ export async function putAppSetting(rawBody: Record<string, unknown>, session: A
   const { key, value } = rawBody as { key?: string; value?: unknown };
   if (!key || value === undefined) {
     throw new ApiError("VALIDATION", "key and value required");
+  }
+  if (key === QUOTA_OVERRIDES_KEY) {
+    throw new ApiError("VALIDATION", "Use /api/admin/quota-overrides to change quota overrides");
   }
 
   // Normalize URLs in header_links to always include protocol

@@ -50,9 +50,9 @@
 //        leading non-digit reaches the NaN-500. Swapping to Number() would flip "5abc" 404→500.
 //   FQ-3 security repair: delete retires the Label Studio project before the DB row and propagates
 //        provider failure so publication/project deletion remain blocked and retryable.
-//   FQ-5 create: the rate-limit bypass predicate is role==="admin", NOT isRootAdmin — so a
-//        member-role root admin bypasses the OWNERSHIP lookup but NOT the rate limit. Do NOT
-//        unify. (FQ-5's demo half died with FQ-8: no role bypasses the demo denial now.)
+//   FQ-5 create: the rate-limit bypass is role==="admin" OR isRootAdmin (owner ruling 2026-10-21:
+//        root is exempt from every quota; this superseded the July "do not unify" freeze note).
+//        (FQ-5's demo half died with FQ-8: no role bypasses the demo denial now.)
 //   FQ-6 create rate limit counts a ROLLING 24h window (NOW() - INTERVAL '1 day'), not a calendar
 //        day, despite the "/day" message.
 //   FQ-7 was retired by the P2 close review: page selections are now strict finite integers inside
@@ -502,10 +502,10 @@ export async function createLabelingSessions(
     writeCapability,
     { kind: "labeling-session-create", idempotencyKey: String(project.id) },
     async (mutationLease) => {
-      // Rate limit: max 10 labeling sessions per company per day (admin bypasses).
-      // FQ-5: bypass predicate here is role==="admin" (NOT isRootAdmin — different from the
-      // ownership lookup above). FQ-6: rolling 24h window despite the "/day" wording.
-      if (session.user.role !== "admin") {
+      // Rate limit: max 10 labeling sessions per company per day (admin and root bypass).
+      // FQ-5: root joined the bypass by owner ruling 2026-10-21 (root is exempt from every
+      // quota). FQ-6: rolling 24h window despite the "/day" wording.
+      if (session.user.role !== "admin" && !session.user.isRootAdmin) {
         const todayCount = await db.execute(
           sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions
           WHERE company_id = ${session.user.companyId}

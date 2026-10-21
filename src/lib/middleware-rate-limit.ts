@@ -19,6 +19,9 @@ export function pruneExpiredRateBuckets(now: number): void {
   for (const [key, bucket] of store) {
     if (bucket.resetAt < now) store.delete(key);
   }
+  for (const [key, bucket] of rootParserLaneStore) {
+    if (bucket.resetAt < now) rootParserLaneStore.delete(key);
+  }
 }
 
 export function isRateLimited(
@@ -172,8 +175,8 @@ const RATE_RULES: RateRule[] = [
     keyType: "user",
   },
   // Effectively unlimited on purpose: the real cap on YOLO runs is the daily quota
-  // `checkYoloQuota` (10/day/company), enforced in the yolo service before the model is
-  // invoked. This bucket exists only so the path has a named rule rather than falling to the
+  // `checkYoloQuota` (10/day/company by default; root-exempt, overridable per user/company in
+  // src/lib/quota-overrides.ts), enforced in the yolo service before the model is invoked. This bucket exists only so the path has a named rule rather than falling to the
   // general IP backstop; it is not the abuse control. Neighbouring pattern rules run 3–200.
   {
     pattern: "/api/yolo/run",
@@ -325,4 +328,103 @@ export function apiIpBackstopForRule(rule: RateRule | undefined): IpBackstop {
     limit: GENERAL_API_BACKSTOP_LIMIT,
     windowMs: GENERAL_API_BACKSTOP_WINDOW_MS,
   };
+}
+
+// ─── Root admin admission (owner ruling 2026-10-21: "root admin exempt from everything") ─────
+//
+// A root admin is recognised ONLY from the verified session token: getToken() decrypts the
+// AUTH_SECRET-encrypted JWE, so neither the isRootAdmin claim nor dbId can be forged by a client.
+// A cookie that fails verification yields null here and the caller is treated as anonymous.
+
+/** The verified root admin's user id, or null for everyone else. */
+export function verifiedRootUserId(token: unknown): number | null {
+  if (typeof token !== "object" || token === null) return null;
+  const claims = token as { isRootAdmin?: unknown; dbId?: unknown };
+  return claims.isRootAdmin === true &&
+    typeof claims.dbId === "number" &&
+    Number.isSafeInteger(claims.dbId) &&
+    claims.dbId > 0
+    ? claims.dbId
+    : null;
+}
+
+// The token's root claim is only a HINT. It was true at the token's last refresh, and a route
+// handler's auth() never rewrites the cookie, so a client that never calls GET /api/auth/session
+// can hold an unrefreshed root claim for the whole 24 h session after a demotion or deletion.
+// So the claim is re-confirmed against users.isRootAdmin (the same read Auth.js runs on every
+// session refresh), cached per user for ROOT_CLAIM_RECHECK_MS: after a demotion, a task stops
+// exempting that user within this window. A failed read, a missing user or a demoted user all
+// mean "not root" — fail closed to today's limits, cached for the same window so a DB outage
+// costs at most one read per claimed-root user per window. Only verified root claims reach the
+// lookup, so neither anonymous nor non-root callers cause a DB read here.
+export const ROOT_CLAIM_RECHECK_MS = 30_000;
+const ROOT_CLAIM_CACHE_MAX = 1_000;
+const rootClaimCache = new Map<number, { confirmed: Promise<boolean>; checkedAt: number }>();
+
+/** The verified root admin's id, re-confirmed against the database; null for everyone else. */
+export async function confirmedRootUserId(
+  token: unknown,
+  isRootInDatabase: (userId: number) => Promise<boolean>,
+  now: number = Date.now(),
+): Promise<number | null> {
+  const claimedId = verifiedRootUserId(token);
+  if (claimedId === null) return null;
+  let entry = rootClaimCache.get(claimedId);
+  if (!entry || now - entry.checkedAt >= ROOT_CLAIM_RECHECK_MS || now < entry.checkedAt) {
+    if (rootClaimCache.size >= ROOT_CLAIM_CACHE_MAX) rootClaimCache.clear();
+    entry = {
+      confirmed: Promise.resolve()
+        .then(() => isRootInDatabase(claimedId))
+        .then(
+          (isRoot) => isRoot === true,
+          () => false,
+        ),
+      checkedAt: now,
+    };
+    rootClaimCache.set(claimedId, entry);
+  }
+  return (await entry.confirmed) ? claimedId : null;
+}
+
+// Pre-auth rules stay on for root. A browser holding a root cookie still sends it to sign-in and
+// registration, and those rules bound password guessing against EVERY account (each attempt is a
+// bcrypt compare) — exempting the cookie holder would hand that throttle to anyone with it.
+const ROOT_NEVER_EXEMPT_RULE_PATTERNS: ReadonlySet<string> = new Set([
+  "/api/register",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/callback/credentials",
+]);
+
+/** Whether a root caller skips this route rule AND the IP backstop for the same request. */
+export function isRootExemptRule(rule: RateRule | undefined): boolean {
+  return !rule || !ROOT_NEVER_EXEMPT_RULE_PATTERNS.has(rule.pattern);
+}
+
+// The parser routes (symbol-search, shape-parse, table-parse, table-structure, bucket-fill) start
+// local Ghostscript/python children on a 4 GB task, and signed-in callers skip the heavy-process
+// gate. So root gets a PRIORITY LANE, not unlimited admission: he never touches the IP ban,
+// cooldown or IP burst stores (he cannot be banned, by himself or an IP neighbour), and is held
+// only to this per-user ceiling with a plain 429 and no escalation. The bound protects memory,
+// not money. Keys come from verified root ids only, so this store cannot be grown by an attacker
+// and never fails closed on capacity the way the shared store does.
+export const ROOT_PARSER_LANE_LIMIT = 30;
+export const ROOT_PARSER_LANE_WINDOW_MS = 10_000;
+const rootParserLaneStore = new Map<string, RateBucket>();
+
+/** Seconds until the root lane admits again, or 0 when this request is admitted. */
+export function rootParserLaneRetryAfter(
+  rootUserId: number,
+  routePrefix: string,
+  now: number = Date.now(),
+): number {
+  const key = `${rootUserId}:${routePrefix}`;
+  const bucket = rootParserLaneStore.get(key);
+  if (!bucket || bucket.resetAt < now) {
+    rootParserLaneStore.set(key, { count: 1, resetAt: now + ROOT_PARSER_LANE_WINDOW_MS });
+    return 0;
+  }
+  bucket.count += 1;
+  if (bucket.count <= ROOT_PARSER_LANE_LIMIT) return 0;
+  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
 }

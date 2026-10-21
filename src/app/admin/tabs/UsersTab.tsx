@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import QuotaOverrideEditor, { hasQuotaOverride, useQuotaOverrides } from "./QuotaOverrideEditor";
 
 interface UserItem {
   id: string;
@@ -8,6 +9,7 @@ interface UserItem {
   email: string;
   role: string;
   canRunModels: boolean;
+  isRootAdmin?: boolean;
 }
 
 interface UsersTabProps {
@@ -18,12 +20,16 @@ interface UsersTabProps {
   onCreateUser: () => Promise<void> | void;
   onToggleCanRunModels: (userId: string, canRunModels: boolean) => void;
   onDeleteUser: (userId: string, username: string) => void;
+  /** The VIEWER is root: only then are daily-quota overrides shown (the API is root-only). */
+  isRootAdmin?: boolean;
 }
 
 export default function UsersTab({
-  users, currentEmail, newUser, setNewUser, onCreateUser, onToggleCanRunModels, onDeleteUser,
+  users, currentEmail, newUser, setNewUser, onCreateUser, onToggleCanRunModels, onDeleteUser, isRootAdmin = false,
 }: UsersTabProps) {
   const [creatingUser, setCreatingUser] = useState(false);
+  const quotas = useQuotaOverrides(isRootAdmin);
+  const [quotaUserId, setQuotaUserId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
 
@@ -53,6 +59,7 @@ export default function UsersTab({
     <div className="space-y-6">
       <section>
         <h2 className="text-lg font-semibold mb-3">Users</h2>
+        {isRootAdmin && quotas.error && <div className="text-xs text-red-400 mb-2">{quotas.error}</div>}
         <div className="border border-[var(--border)] rounded-lg overflow-hidden mb-4">
           <table className="w-full text-sm">
             <thead>
@@ -61,12 +68,14 @@ export default function UsersTab({
                 <th className="px-3 py-2">Email</th>
                 <th className="px-3 py-2">Role</th>
                 <th className="px-3 py-2 text-center">Can Run Models</th>
+                {isRootAdmin && <th className="px-3 py-2 text-center">Daily Quotas</th>}
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-[var(--border)] last:border-0">
+                <Fragment key={u.id}>
+                <tr className="border-b border-[var(--border)] last:border-0">
                   <td className="px-3 py-2 font-medium">{u.username}</td>
                   <td className="px-3 py-2 text-[var(--muted)]">{u.email}</td>
                   <td className="px-3 py-2">
@@ -86,6 +95,16 @@ export default function UsersTab({
                       {u.canRunModels ? "Yes" : "No"}
                     </button>
                   </td>
+                  {isRootAdmin && (
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => setQuotaUserId(quotaUserId === u.id ? null : u.id)}
+                        className="px-3 py-1 text-xs rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                      >
+                        {u.isRootAdmin ? "Exempt (root)" : hasQuotaOverride(quotas.doc, "user", Number(u.id)) ? "Custom" : "Default"}
+                      </button>
+                    </td>
+                  )}
                   <td className="px-3 py-2 text-right">
                     {u.email !== currentEmail && (
                       <button
@@ -97,6 +116,24 @@ export default function UsersTab({
                     )}
                   </td>
                 </tr>
+                {isRootAdmin && quotaUserId === u.id && (
+                  <tr className="border-b border-[var(--border)]">
+                    <td colSpan={6} className="px-3 py-2">
+                      <QuotaOverrideEditor
+                        target="user"
+                        id={Number(u.id)}
+                        label={u.username}
+                        role={u.role}
+                        isRootAdmin={u.isRootAdmin}
+                        doc={quotas.doc}
+                        defaults={quotas.defaults}
+                        onSaved={quotas.setDoc}
+                        onClose={() => setQuotaUserId(null)}
+                      />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

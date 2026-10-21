@@ -8973,6 +8973,66 @@ async function validateMiddlewareRateLimitIdentityPolicy() {
       routeRuleBranch ?? handler ?? middleware.source,
     );
   }
+
+  // [2026-10-21 owner ruling] Root admins skip the app's policy rate limits. That exemption may
+  // come ONLY from the verified token's isRootAdmin claim + a positive safe-integer dbId, and the
+  // pre-auth rules (sign-in, registration, password reset) must keep binding a root cookie holder.
+  const rootHelper = functionFor(ratePolicy, "verifiedRootUserId");
+  // [2026-10-21 fix round 1] The claim alone can outlive a demotion by the whole 24 h session
+  // (a route handler's auth() never rewrites the cookie), so it must be re-confirmed against the
+  // users row through refreshJwtUserAuthority, failing closed when the read fails.
+  const rootConfirm = functionFor(ratePolicy, "confirmedRootUserId");
+  const rootLookup = variableInitializer(middleware.source, "isRootInDatabase");
+  const rootRuleGate = functionFor(ratePolicy, "isRootExemptRule");
+  const rootNeverExempt = variableInitializer(
+    ratePolicy.source,
+    "ROOT_NEVER_EXEMPT_RULE_PATTERNS",
+  );
+  if (
+    /\broot(?:UserId|Exempt)\b/u.test(handlerText) &&
+    (!rootHelper ||
+      !textHasAll(rootHelper.getText(ratePolicy.source), [
+        "claims.isRootAdmin === true",
+        'typeof claims.dbId === "number"',
+        "Number.isSafeInteger(claims.dbId)",
+        "claims.dbId > 0",
+      ]) ||
+      !rootConfirm ||
+      !textHasAll(rootConfirm.getText(ratePolicy.source), [
+        "verifiedRootUserId(token)",
+        "isRootInDatabase(claimedId)",
+        "isRoot === true",
+        "() => false",
+        "ROOT_CLAIM_RECHECK_MS",
+      ]) ||
+      !rootLookup ||
+      !textHasAll(rootLookup.getText(middleware.source), [
+        "{ dbId: userId }",
+        "refreshJwtUserAuthority(fresh)",
+        "?.isRootAdmin === true",
+      ]) ||
+      !textHasAll(handlerText, [
+        "const rootUserId = await confirmedRootUserId(await verifiedAuthToken, isRootInDatabase, now)",
+        "isRootExemptRule(matchedRule)",
+      ]) ||
+      handlerText.includes("verifiedRootUserId(") ||
+      handlerText.includes("headers.get(\"x-root") ||
+      !rootRuleGate ||
+      !rootNeverExempt ||
+      !textHasAll(rootNeverExempt.getText(ratePolicy.source), [
+        '"/api/register"',
+        '"/api/auth/forgot-password"',
+        '"/api/auth/reset-password"',
+        '"/api/auth/callback/credentials"',
+      ]))
+  ) {
+    report(
+      "MIDDLEWARE_ROOT_EXEMPTION_IDENTITY_DRIFT",
+      "root rate-limit exemption must derive only from the verified token's isRootAdmin claim, re-confirmed against users.isRootAdmin (fail closed), and must keep the pre-auth rules binding",
+      fileName,
+      rootConfirm ?? rootHelper ?? handler ?? middleware.source,
+    );
+  }
 }
 
 async function validateEdgeClientIpPolicy() {

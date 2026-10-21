@@ -464,7 +464,7 @@ export async function deleteProject(
  * Create a project: validate the staging manifest, enforce the company-prefix dataUrl tenancy guard + the
  * upload quota, insert the row, then trigger processing (SFN in prod / processProject fire-and-forget in
  * dev). Order is auth-FIRST (the shell 401s before this handler runs), then field validation. Frozen quirks:
- *   • checkUploadQuota called with 2 args (companyId, role) — root admins ARE quota-limited (NO isRootAdmin).
+ *   • checkUploadQuota(companyId, role, isRootAdmin, dbId) — root EXEMPT + per-user overrides (owner ruling 2026-10-21).
  *   • stagingFiles must be the exact isolated keys issued for this project path; the legacy
  *     staging-less/direct-final path is disabled because its reusable signer crossed publication.
  *   • the "Staged file missing" error interpolates the human `filename`, not the stagingKey.
@@ -513,10 +513,10 @@ export async function createProject(
     );
   }
 
-  // Check upload quota (2-arg call — isRootAdmin defaults false, so root admins are NOT exempt; frozen).
+  // Upload quota: root admins exempt, per-user/company overrides apply (owner ruling 2026-10-21).
   const quota = await checkUploadQuota(
     session.user.companyId,
-    session.user.role,
+    session.user.role, session.user.isRootAdmin, session.user.dbId,
   );
   if (!quota.allowed) {
     throw new ApiError(

@@ -43,6 +43,7 @@ import { GET as credsGET } from "@/app/api/s3/credentials/route";
 import { projectUploadStagingKey } from "@/lib/project-upload-authority";
 import {
   asUser,
+  createUser,
   createWorld,
   makeReq,
   readJson,
@@ -137,7 +138,7 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
     }); // interpolated allowlist pinned [S033 fold: A applied]
   });
 
-  it("2-ARG quota (companyId, role) 429 no-fallback; happy fanout preserves order + shape", async () => {
+  it("quota (companyId, role, isRootAdmin, dbId) 429 no-fallback; happy fanout preserves order + shape", async () => {
     const { user, company } = await createWorld();
     asUser(user);
     h.checkUploadQuota.mockResolvedValue({
@@ -149,7 +150,9 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
     expect(r.body).toEqual({
       error: { code: "RATE_LIMITED", message: "Daily project limit reached" },
     }); // [S033 fold: A applied]
-    expect(h.checkUploadQuota).toHaveBeenCalledWith(user.companyId, user.role); // 2-arg pinned
+    // owner ruling 2026-10-21: was the 2-arg S012 pin (root quota-limited); root is now exempt and
+    // per-user overrides need the user id, so the call carries both.
+    expect(h.checkUploadQuota).toHaveBeenCalledWith(user.companyId, user.role, false, user.id);
     h.checkUploadQuota.mockResolvedValue({ allowed: true });
     r = await readJson(await call({ filenames: ["b.pdf", "a.PNG"] }));
     expect(r.status).toBe(200);
@@ -163,6 +166,15 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
     expect(
       r.body.files[0].stagingKey.startsWith(`${r.body.projectPath}/`),
     ).toBe(false);
+  });
+
+  it("owner ruling 2026-10-21: a root admin's staging call passes isRootAdmin=true (quota exempt)", async () => {
+    const { company } = await createWorld();
+    const root = await createUser(company.id, { isRootAdmin: true });
+    asUser(root);
+    const r = await readJson(await call({ filenames: ["a.pdf"] }));
+    expect(r.status).toBe(200);
+    expect(h.checkUploadQuota).toHaveBeenCalledExactlyOnceWith(company.id, root.role, true, root.id);
   });
 });
 

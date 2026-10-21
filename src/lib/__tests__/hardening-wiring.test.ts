@@ -54,7 +54,8 @@ describe("hardening wiring", () => {
       "message.length > MAX_MESSAGE_CHARS",
       "if (!demoProject)",
       'assertDemoFeatureEnabled(demoProject.companyId, "chat")',
-      "await checkDemoChatQuota()",
+      // owner ruling 2026-10-21: the call now carries the verified root flag (root skips the pool)
+      "await checkDemoChatQuota(",
       "await resolveLLMConfig(",
     ].map((needle) => source.indexOf(needle));
     expect(order.every((index) => index !== -1)).toBe(true);

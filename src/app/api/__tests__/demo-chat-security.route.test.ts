@@ -27,7 +27,15 @@ vi.mock("@/lib/llm", async () => ({
 import { POST } from "@/app/api/demo/chat/route";
 import { db } from "@/lib/db";
 import { chatMessages } from "@/lib/db/schema";
-import { createPage, createWorld, makeReq, publishDemoFixture } from "@/test/harness";
+import {
+  asUser,
+  createPage,
+  createUser,
+  createWorld,
+  makeReq,
+  publishDemoFixture,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -62,6 +70,25 @@ describe.skipIf(!dbUp)("POST /api/demo/chat security policy", () => {
 
     const after = await db.select().from(chatMessages);
     expect(after).toEqual(before);
+    expect(h.checkDemoChatQuota).toHaveBeenCalledExactlyOnceWith(false); // anonymous: pool consumed
+  });
+
+  it("owner ruling 2026-10-21: a verified root admin skips the shared demo pool (flag passed, no consume)", async () => {
+    const { project, company } = await createWorld({ status: "completed" });
+    await createPage(project.id, 1, { rawText: "Public demo OCR" });
+    await publishDemoFixture(project.id);
+    const root = await createUser(company.id, { isRootAdmin: true });
+    asUser(root);
+    try {
+      const response = await POST(
+        makeReq("/api/demo/chat", { method: "POST", body: { message: "What is shown?" } }),
+      );
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(h.checkDemoChatQuota).toHaveBeenCalledExactlyOnceWith(true);
+    } finally {
+      signedOut();
+    }
   });
 });
 
