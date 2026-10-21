@@ -4,7 +4,7 @@
 // S012 locked; owner 2026-07-05: one P2 workstream with the pageIntelligence split + notes
 // consolidation). Nothing here redesigns — byte-faithful shell migration only.
 // ENGINE BYTE-UNTOUCHED: @/lib/csi-detect. Char: __tests__/csi.route.test.ts (CQ-1..CQ-3).
-//   • CQ-1 aggregate: company-scoped completed-only jsonb explode, GROUP BY code fields,
+//   • CQ-1 aggregate: company-scoped completed-only jsonb explode, GROUP BY code (S6: key only),
 //     ORDER BY page_count DESC LIMIT 200; bare-array response; projectSheetCounts = the
 //     per-project fanout of the non-DISTINCT ARRAY_AGG.
 //   • CQ-2 detect PUBLIC (deliberate — pure local matching, the docs' "public entry");
@@ -23,13 +23,18 @@ import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 
 // ── GET /api/csi ──────────────────────────────────────────────────────────────
+// [csi-v2 S6] One row per CODE, keyed like csiDedupeKey (separator-strip, upper-case), so the
+// legacy unspaced "081113", a v2 spaced "08 11 13" and a YOLO placeholder row for the same code
+// no longer split into separate rows (the old GROUP BY took description/trade/division too).
+// Shown code = MIN under "C" collation (prefers the spaced form); description/trade/division =
+// the most frequent value (mode()).
 export async function csiAggregate(session: AuthSession): Promise<unknown> {
   const results = await db.execute(sql`
     SELECT
-      code->>'code' AS code,
-      code->>'description' AS description,
-      code->>'trade' AS trade,
-      code->>'division' AS division,
+      MIN(code->>'code' COLLATE "C") AS code,
+      mode() WITHIN GROUP (ORDER BY code->>'description') AS description,
+      mode() WITHIN GROUP (ORDER BY code->>'trade') AS trade,
+      mode() WITHIN GROUP (ORDER BY code->>'division') AS division,
       COUNT(DISTINCT p.id)::int AS project_count,
       COUNT(*)::int AS page_count,
       ARRAY_AGG(DISTINCT p.public_id) AS project_ids,
@@ -40,7 +45,7 @@ export async function csiAggregate(session: AuthSession): Promise<unknown> {
     WHERE p.company_id = ${session.user.companyId}
       AND p.status = 'completed'
       AND pg.csi_codes IS NOT NULL
-    GROUP BY code->>'code', code->>'description', code->>'trade', code->>'division'
+    GROUP BY COALESCE(NULLIF(upper(regexp_replace(code->>'code', '[[:space:].-]', '', 'g')), ''), code->>'code')
     ORDER BY page_count DESC
     LIMIT 200
   `);

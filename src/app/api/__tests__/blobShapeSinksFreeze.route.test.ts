@@ -657,7 +657,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] PATCH /api/pages/intelligence — shallow-merg
     // fixed at its source (csi-utils.ts). (Pre-fix this asserted a third "081113" duplicate row.)
     expect(st.csi).toEqual([
       { code: "08 11 13", description: "existing door", division: "08", trade: "" }, // first-wins, untouched
-      { code: "23 05 00", description: "new hvac", division: "23", trade: "" }, // genuinely new code added
+      { code: "23 05 00", description: "new hvac", division: "23 00 00", trade: "" }, // new code; [csi-v2 S6] division "NN 00 00" (was "23")
     ]);
   });
 });

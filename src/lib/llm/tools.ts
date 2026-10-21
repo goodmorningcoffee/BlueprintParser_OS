@@ -19,6 +19,7 @@ import {
   type MatchContext,
 } from "@/lib/tag-mapping";
 import { detectCsiCodes } from "@/lib/csi-detect";
+import { csiCodesForLlm } from "@/lib/csi-utils";
 import { detectTagPatterns } from "@/lib/tag-patterns";
 import { logger } from "@/lib/logger";
 import type { ClientAnnotation, TextractPageData } from "@/types";
@@ -112,7 +113,7 @@ export async function executeToolCall(
       return execGetPageOcrText(input.pageNumber, ctx);
     case "detectCsiFromText":
       if (typeof input.text !== "string") return { error: "text must be a string" };
-      return detectCsiCodes(input.text);
+      return csiCodesForLlm(detectCsiCodes(input.text)); // [csi-v2 S6] {code, description, trade, confidence}
     case "scanYoloClassTexts":
       if (typeof input.yoloClass !== "string") return { error: "yoloClass must be a string" };
       return execScanYoloClassTexts(input.yoloClass, input.yoloModel as string | undefined, typeof input.pageNumber === "number" ? input.pageNumber : undefined, ctx);
@@ -221,7 +222,7 @@ async function execGetPageDetails(pageNumber: number, ctx: ToolContext) {
       data: r.data ? { headers: (r.data as any).headers, rowCount: (r.data as any).rows?.length || (r.data as any).keynotes?.length || 0, tagColumn: (r.data as any).tagColumn } : null,
     })),
     csiSpatialSummary: intel?.csiSpatialMap?.summary,
-    csiCodes: page.csiCodes,
+    csiCodes: csiCodesForLlm(page.csiCodes), // [csi-v2 S6] slim: no triggers/bboxes (see the comment above)
     textAnnotationSummary: page.textAnnotations?.summary,
     keynoteCount: Array.isArray(page.keynotes) ? page.keynotes.length : 0,
   };

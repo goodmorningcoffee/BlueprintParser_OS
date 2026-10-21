@@ -6,7 +6,7 @@
 // ENGINE is mocked (route contract only). Frozen:
 //   • CQ-1 GET /api/csi: requireAuth-first (signed-out 401 flat) → raw SQL aggregate:
 //     company-scoped, status='completed' only, jsonb_array_elements over pages.csi_codes,
-//     GROUP BY code fields, ORDER BY page_count DESC, LIMIT 200 → BARE-ARRAY response of
+//     GROUP BY code ([csi-v2 S6] key only), ORDER BY page_count DESC, LIMIT 200 → BARE-ARRAY response of
 //     {code,description,trade,division,projectCount,pageCount,projectIds,projectSheetCounts}
 //     (sheetCounts = per-project fanout of the non-DISTINCT aggregation).
 //   • CQ-2 detect is PUBLIC (deliberate — pure local matching; docs call it the public
@@ -104,6 +104,34 @@ describe.skipIf(!dbUp)("GET /api/csi — company aggregate (CQ-1)", () => {
     expect(b).toMatchObject({ projectCount: 1, pageCount: 1 });
     // ORDER BY page_count DESC → A before B among our rows
     expect(body.indexOf(a)).toBeLessThan(body.indexOf(b));
+  });
+
+  // [csi-v2 S6] GROUP BY code only, keyed like csiDedupeKey. Measured pre-S6 (c6ad951): these four
+  // pages gave THREE rows (unspaced legacy, spaced v2, and the YOLO placeholder split by division).
+  it("one row per code across stored formats and differing description/trade/division", async () => {
+    const { user, project } = await createWorld();
+    const legacy = { code: "084113", description: "entrances and storefronts", trade: "Openings", division: "08 00 00" };
+    const v2 = { code: "08 41 13", description: "Aluminum-Framed Entrances and Storefronts", trade: "Openings", division: "08 00 00", confidence: 0.9 };
+    const yolo = { code: "08 41 13", description: "From YOLO class config", trade: "", division: "08" };
+    await createPage(project.id, 1, { csiCodes: [legacy] as never });
+    await createPage(project.id, 2, { csiCodes: [v2] as never });
+    await createPage(project.id, 3, { csiCodes: [v2] as never });
+    await createPage(project.id, 4, { csiCodes: [yolo] as never });
+
+    asUser(user);
+    const { status, body } = await readJson(await csiGET(makeReq("/api/csi", { method: "GET" })));
+    expect(status).toBe(200);
+    const rows = body.filter((r: { code: string }) => r.code.replace(/\s/g, "") === "084113");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      code: "08 41 13", // spaced form preferred (MIN under "C" collation)
+      description: "Aluminum-Framed Entrances and Storefronts", // most frequent
+      trade: "Openings",
+      division: "08 00 00",
+      projectCount: 1,
+      pageCount: 4,
+    });
+    expect(rows[0].projectSheetCounts[project.publicId]).toBe(4);
   });
 });
 

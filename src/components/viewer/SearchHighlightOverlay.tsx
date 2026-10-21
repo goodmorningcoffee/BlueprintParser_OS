@@ -6,6 +6,7 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import type { SearchWordMatch, TextractWord } from "@/types";
+import { csiTriggerHits } from "@/lib/csi-utils";
 
 interface SearchHighlightOverlayProps {
   width: number;
@@ -128,7 +129,7 @@ export default memo(function SearchHighlightOverlay({
 
     if (matchingCode.triggers !== undefined) {
       // New path: stored triggers — precise and fast, no runtime matching
-      return matchingCode.triggers.map((t) => ({ text: t.text, bbox: t.bbox }));
+      return csiTriggerHits(matchingCode.triggers); // [csi-v2 S6] per-word `bboxes ?? [bbox]`
     }
 
     // Fallback for old cached data (pre-trigger): runtime phrase matching
@@ -151,9 +152,7 @@ export default memo(function SearchHighlightOverlay({
     for (const code of matchingCodes) {
       if (code.triggers !== undefined) {
         // New path: stored triggers — precise and fast, no runtime matching
-        for (const t of code.triggers) {
-          hits.push({ text: t.text, bbox: t.bbox });
-        }
+        hits.push(...csiTriggerHits(code.triggers)); // [csi-v2 S6] per-word `bboxes ?? [bbox]`
       } else {
         // Fallback for old cached data (pre-trigger): runtime phrase matching
         const pageWords = textractData?.words;

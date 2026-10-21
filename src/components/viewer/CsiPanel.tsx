@@ -8,6 +8,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import { useCsiGraph } from "@/queries/useCsiGraph";
 import type { CsiCode } from "@/types";
+import { csiCodeMatchesQuery } from "@/lib/csi-utils";
 import HelpTooltip from "./HelpTooltip";
 
 /** Group CSI codes by division (first 2 digits). */
@@ -76,10 +77,7 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
   // Filter by search
   const filtered = useMemo(() => {
     if (!searchQuery) return currentCodes;
-    const q = searchQuery.toLowerCase();
-    return currentCodes.filter(c =>
-      c.code.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
-    );
+    return currentCodes.filter(c => csiCodeMatchesQuery(c, searchQuery)); // [csi-v2 S6] code via csiDedupeKey
   }, [currentCodes, searchQuery]);
 
   // Group by division
@@ -88,9 +86,8 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
   // Autocomplete suggestions
   const suggestions = useMemo(() => {
     if (searchQuery.length < 2) return [];
-    const q = searchQuery.toLowerCase();
     return currentCodes
-      .filter(c => c.code.toLowerCase().includes(q) || c.description.toLowerCase().includes(q))
+      .filter(c => csiCodeMatchesQuery(c, searchQuery))
       .slice(0, 8);
   }, [currentCodes, searchQuery]);
 

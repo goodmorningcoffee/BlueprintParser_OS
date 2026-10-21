@@ -44,6 +44,7 @@ import { logger } from "@/lib/logger";
 import { migrateRule, type LegacyHeuristicRule } from "@/lib/heuristic-rule-migrate";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
 import { isWholeWordMatch } from "@/lib/text-match-utils";
+import { csiDedupeKey } from "@/lib/csi-utils";
 
 // ═══════════════════════════════════════════════════════════════════
 // Rule Types
@@ -633,7 +634,9 @@ export function runHeuristicEngine(
       // Infer CSI tags
       let csiTags: CsiCode[] | undefined;
       if (rule.outputCsiCode && normalizedCtx.csiCodes) {
-        const match = normalizedCtx.csiCodes.find(c => c.code === rule.outputCsiCode);
+        // [csi-v2 S6] csiDedupeKey: a rule's "08 11 16" now matches the legacy stored "081116" too.
+        const want = csiDedupeKey(rule.outputCsiCode);
+        const match = normalizedCtx.csiCodes.find(c => csiDedupeKey(c.code) === want);
         if (match) csiTags = [match];
       }
 

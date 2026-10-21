@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
+import { normalizeCsiCode, normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 
 interface HeuristicRule {
   id: string;
@@ -676,6 +676,7 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                         type="text"
                         value={rule.outputCsiCode || ""}
                         onChange={(e) => updateRule(rule.id, { outputCsiCode: e.target.value || undefined })}
+                        onBlur={(e) => /* [csi-v2 S6] "081116" → "08 11 16"; on blur, so typing is not reformatted */ updateRule(rule.id, { outputCsiCode: normalizeCsiCode(e.target.value) || undefined })}
                         placeholder="e.g. 08 11 16"
                         className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-blue-400/50 font-mono"
                       />

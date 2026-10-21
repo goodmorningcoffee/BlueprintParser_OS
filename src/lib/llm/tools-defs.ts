@@ -130,7 +130,7 @@ export const BP_TOOLS: ToolDefinition[] = [
   },
   {
     name: "detectCsiFromText",
-    description: "Run CSI MasterFormat code detection on arbitrary text. Returns matching CSI codes with descriptions, trades, and divisions. Use to identify what construction category a piece of text belongs to.",
+    description: "Run CSI MasterFormat code detection on arbitrary text. Returns matching CSI codes with descriptions, trades, and a confidence when the engine provides one. Use to identify what construction category a piece of text belongs to.",
     input_schema: {
       type: "object",
       properties: {
