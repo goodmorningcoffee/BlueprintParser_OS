@@ -54,6 +54,7 @@ import {
   CSI_DB_CACHE_TTL_MS,
 } from "@/lib/csi-company-db";
 import { invalidateCache } from "@/lib/admin-logs/query-cache";
+import { CSI_V2_LOWEST_EMITTED_CONFIDENCE } from "@/lib/csi-v2-config";
 import {
   loadBuiltinCsiDatabase,
   CSI_DB_MAX_BYTES,
@@ -88,11 +89,11 @@ describe("getCompanyCsiContext — no-op / fallback shapes", () => {
     expect(h.download).not.toHaveBeenCalled();
   });
 
-  it("no customDatabaseS3Key → builtin + parsed config, ZERO S3", async () => {
-    h.companyRows.set(7, { csi: { matchingConfidenceThreshold: 0.7 } });
+  it("no customDatabaseS3Key → builtin + parsed config, ZERO S3 ([csi-v2 S6] a pre-v2 stored threshold above 0.704 is read as tau)", async () => {
+    h.companyRows.set(7, { csi: { matchingConfidenceThreshold: 0.8 } });
     const ctx = await getCompanyCsiContext(7);
     expect(ctx.db).toBe(loadBuiltinCsiDatabase());
-    expect(ctx.config).toEqual({ matchingConfidenceThreshold: 0.7 });
+    expect(ctx.config).toEqual({ tau: 0.8 });
     expect(h.download).not.toHaveBeenCalled();
   });
 
@@ -126,7 +127,7 @@ describe("getCompanyCsiContext — no-op / fallback shapes", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 describe("getCompanyCsiContext — custom DB resolution + cache", () => {
   it("valid pointer → custom bundle (+ config); downloadFromS3 called EXACTLY ONCE across 3 concurrent + 5 sequential", async () => {
-    h.companyRows.set(2, { csi: { customDatabaseS3Key: CUSTOM_KEY(2), matchingConfidenceThreshold: 0.55 } });
+    h.companyRows.set(2, { csi: { customDatabaseS3Key: CUSTOM_KEY(2), tau: 0.8, maxCodesPerPage: 12 } });
     h.download.mockResolvedValue(buf(CUSTOM_TSV));
 
     // cold concurrent burst → inflight coalescing collapses to ONE fetch
@@ -142,7 +143,7 @@ describe("getCompanyCsiContext — custom DB resolution + cache", () => {
     for (const ctx of [a, b, c]) {
       expect(ctx.db).not.toBe(loadBuiltinCsiDatabase());
       expect(ctx.db.entries.some((e) => e.code === "99 99 99")).toBe(true);
-      expect(ctx.config).toEqual({ matchingConfidenceThreshold: 0.55 });
+      expect(ctx.config).toEqual({ tau: 0.8, maxCodesPerPage: 12 });
     }
   });
 
@@ -257,7 +258,7 @@ describe("getCompanyCsiContext — key isolation (companies 1 vs 11, C3-F-9)", (
     expect(c11.db.entries.some((e) => e.code === "22 22 22")).toBe(true);
     expect(h.download).toHaveBeenCalledTimes(2);
 
-    invalidateCache(csiDbCacheKey(1)); // must NOT touch csi-db:11:v1 (delimiter-terminated)
+    invalidateCache(csiDbCacheKey(1)); // must NOT touch csi-db:11:v2 (delimiter-terminated)
     await getCompanyCsiContext(11); // still cached → no new fetch
     expect(h.download).toHaveBeenCalledTimes(2);
     await getCompanyCsiContext(1); // evicted → refetch
@@ -266,7 +267,7 @@ describe("getCompanyCsiContext — key isolation (companies 1 vs 11, C3-F-9)", (
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-describe("pickEngineConfig — typed subset + I-10 threshold guard", () => {
+describe("pickEngineConfig — [csi-v2 S6] v2 subset {tau, maxCodesPerPage} + I-10 guard", () => {
   it("garbage scalars → undefined", () => {
     expect(pickEngineConfig(5)).toBeUndefined();
     expect(pickEngineConfig(null)).toBeUndefined();
@@ -274,33 +275,42 @@ describe("pickEngineConfig — typed subset + I-10 threshold guard", () => {
     expect(pickEngineConfig([1, 2])).toBeUndefined();
   });
 
-  it("only valid-typed fields survive; wrong-typed dropped", () => {
-    expect(pickEngineConfig({ tier2Weight: "x", matchingConfidenceThreshold: 0.5 }))
-      .toEqual({ matchingConfidenceThreshold: 0.5 });
-    expect(pickEngineConfig({ tier2MinWords: 3, tier3Weight: 0.2, bogus: 9 }))
-      .toEqual({ tier2MinWords: 3, tier3Weight: 0.2 });
+  it("only valid-typed v2 fields survive; pre-v2 tier keys and unknown keys are ignored", () => {
+    expect(pickEngineConfig({ tau: 0.8, maxCodesPerPage: 25, bogus: 9 })).toEqual({ tau: 0.8, maxCodesPerPage: 25 });
+    expect(pickEngineConfig({ tau: "x", maxCodesPerPage: 25 })).toEqual({ maxCodesPerPage: 25 });
+    expect(pickEngineConfig({ tier2MinWords: 3, tier3Weight: 0.2, tier1WeightByWordCount: [0, 0.5, 1] })).toBeUndefined();
   });
 
-  it("matchingConfidenceThreshold <= 0 is DROPPED (I-10); NaN/Infinity dropped", () => {
-    expect(pickEngineConfig({ matchingConfidenceThreshold: 0 })).toBeUndefined();
-    expect(pickEngineConfig({ matchingConfidenceThreshold: -0.5 })).toBeUndefined();
-    expect(pickEngineConfig({ matchingConfidenceThreshold: NaN })).toBeUndefined();
-    expect(pickEngineConfig({ matchingConfidenceThreshold: Infinity })).toBeUndefined();
+  it("a pre-v2 matchingConfidenceThreshold is read as tau only above 0.704; a stored tau wins over it", () => {
+    expect(pickEngineConfig({ matchingConfidenceThreshold: 0.8 })).toEqual({ tau: 0.8 });
+    expect(pickEngineConfig({ matchingConfidenceThreshold: 0.8, tau: 0.85 })).toEqual({ tau: 0.85 });
+    expect(pickEngineConfig({ matchingConfidenceThreshold: 0.5, tau: 0.85 })).toEqual({ tau: 0.85 });
+    // the pre-v2 admin's default 0.4 (saved with every pre-v2 save) and anything ≤ 0.704 is ignored:
+    // on the old scale it cannot mean "list more than v2's default" (review fix round 1)
+    for (const low of [0.4, 0.5, 0.7, CSI_V2_LOWEST_EMITTED_CONFIDENCE]) {
+      expect(pickEngineConfig({ matchingConfidenceThreshold: low })).toBeUndefined();
+      expect(pickEngineConfig({ matchingConfidenceThreshold: low, maxCodesPerPage: 9 })).toEqual({ maxCodesPerPage: 9 });
+    }
+    expect(pickEngineConfig({ matchingConfidenceThreshold: 0.705 })).toEqual({ tau: 0.705 });
+  });
+
+  it("I-10: a tau (or legacy threshold) <= 0, > 1, NaN or Infinity is DROPPED", () => {
+    for (const bad of [0, -0.5, 1.5, NaN, Infinity]) {
+      expect(pickEngineConfig({ tau: bad })).toBeUndefined();
+      expect(pickEngineConfig({ matchingConfidenceThreshold: bad })).toBeUndefined();
+    }
     // a valid sibling still survives while the bad threshold is dropped
-    expect(pickEngineConfig({ matchingConfidenceThreshold: 0, tier2Weight: 0.4 }))
-      .toEqual({ tier2Weight: 0.4 });
+    expect(pickEngineConfig({ tau: 0, maxCodesPerPage: 10 })).toEqual({ maxCodesPerPage: 10 });
   });
 
-  it("tier1WeightByWordCount is all-or-nothing: valid array kept, empty/garbage dropped", () => {
-    expect(pickEngineConfig({ tier1WeightByWordCount: [0, 0.5, 1] }))
-      .toEqual({ tier1WeightByWordCount: [0, 0.5, 1] });
-    expect(pickEngineConfig({ tier1WeightByWordCount: [] })).toBeUndefined();
-    expect(pickEngineConfig({ tier1WeightByWordCount: [1, "x"] })).toBeUndefined();
+  it("maxCodesPerPage must be an integer in [1, 200]", () => {
+    for (const bad of [0, -3, 201, 2.5, "40"]) expect(pickEngineConfig({ maxCodesPerPage: bad })).toBeUndefined();
+    expect(pickEngineConfig({ maxCodesPerPage: 1 })).toEqual({ maxCodesPerPage: 1 });
+    expect(pickEngineConfig({ maxCodesPerPage: 200 })).toEqual({ maxCodesPerPage: 200 });
   });
 
-  it("all-invalid → undefined", () => {
-    expect(pickEngineConfig({ tier2Weight: "no", tier2MinWords: "no", matchingConfidenceThreshold: -1 }))
-      .toBeUndefined();
+  it("the cache key is delimiter-terminated and versioned :v2", () => {
+    expect(csiDbCacheKey(7)).toBe("csi-db:7:v2");
   });
 });
 

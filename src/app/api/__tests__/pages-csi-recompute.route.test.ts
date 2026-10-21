@@ -52,6 +52,19 @@ describe.skipIf(!dbUp)("POST /api/pages/csi-recompute", () => {
     expect(body.csiCodes).toEqual(FIXTURE);
     const [r] = await db.select({ csi: pages.csiCodes }).from(pages).where(eq(pages.id, page.id)).limit(1);
     expect(r?.csi).toEqual(FIXTURE);
+    // [csi-v2 S6] Textract lines + the page's drawing number reach the adapter (PLAN §7 context threading)
+    expect(vi.mocked(detectCsiCodes).mock.calls[0][0]).toBe("GYP BOARD");
+    expect(vi.mocked(detectCsiCodes).mock.calls[0][1]).toEqual({ lines: TD.lines, context: { drawingNumber: null } });
+  });
+
+  it("[csi-v2 S6] a page's drawingNumber is threaded as context", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1, { textractData: TD as never, rawText: "GYP BOARD", drawingNumber: "C-101" });
+    asUser(user);
+    const { status } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+    expect(status).toBe(200);
+    expect(vi.mocked(detectCsiCodes)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(detectCsiCodes).mock.calls[0][1]).toEqual({ lines: TD.lines, context: { drawingNumber: "C-101" } });
   });
 
   it("ADDITIVE: accepts the new publicId field", async () => {

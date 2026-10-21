@@ -103,7 +103,7 @@ function csiBadge(container: HTMLElement): HTMLElement | undefined {
   const page = container.querySelector<HTMLElement>('[data-page-num="1"]');
   if (!page) return undefined;
   return [...page.querySelectorAll<HTMLElement>("span")].find(
-    (node) => node.textContent === "2",
+    (node) => node.textContent === "2 spans",
   );
 }
 

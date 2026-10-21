@@ -402,4 +402,18 @@ describe("csi shapes — CsiCode + trigger", () => {
   });
   it("CsiCodeTrigger rejects a wrong-typed tier", () =>
     expect(zCsiCodeTrigger.safeParse({ ...trigger, tier: 4 }).success).toBe(false));
+  // [csi-v2 S6] the three optional fields the v2 tagger persists (types/index.ts rebudget)
+  const v2 = {
+    ...code,
+    confidence: 0.91,
+    level: 4,
+    triggers: [{ ...trigger, bboxes: [[0.1, 0.2, 0.02, 0.03], [0.13, 0.2, 0.02, 0.03]] }],
+  };
+  it("[csi-v2] CsiCode with confidence/level and a trigger with bboxes parses green", () =>
+    expect(zCsiCode.parse(v2)).toEqual(v2));
+  it("[csi-v2] wrong-typed confidence / level / bboxes are rejected", () => {
+    expect(zCsiCode.safeParse({ ...code, confidence: "high" }).success).toBe(false);
+    expect(zCsiCode.safeParse({ ...code, level: "4" }).success).toBe(false);
+    expect(zCsiCodeTrigger.safeParse({ ...trigger, bboxes: [[0.1, 0.2]] }).success).toBe(false);
+  });
 });

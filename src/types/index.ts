@@ -332,7 +332,8 @@ export interface KeynoteShapeData {
 export interface CsiCodeTrigger {
   text: string; // matched word/phrase (lowercased, as it appeared)
   bbox: BboxLTWH; // normalized 0-1 bbox on the full page
-  tier: 1 | 2 | 3; // 1=exact phrase, 2=bag-of-words, 3=anchor word
+  tier: 1 | 2 | 3; // pre-v2: 1=exact phrase, 2=bag-of-words, 3=anchor; v2: tier of the code's confidence
+  bboxes?: BboxLTWH[]; // [csi-v2] one box per matched word (bbox = their union); absent on pre-v2 data
 }
 
 export interface CsiCode {
@@ -340,6 +341,8 @@ export interface CsiCode {
   description: string;
   trade: string;
   division: string;
+  confidence?: number; // [csi-v2] page-level confidence 0..1 (PLAN §6.8); absent on pre-v2 data
+  level?: number; // [csi-v2] MasterFormat level 2..5 ('NN 00 00' = 2 … 'NN NN NN.NN' = 5)
   /** Words/phrases on the page that triggered this code's detection.
    *  Optional for backward compat with cached data from before triggers existed. */
   triggers?: CsiCodeTrigger[];

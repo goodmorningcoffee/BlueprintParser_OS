@@ -392,11 +392,12 @@ describe.skipIf(!dbUp)("spec-parse — engine contract + response shapes (PQ-4/5
       LTWH_OF_BBOX,
       { includeSubSections: false }, // !!undefined
     );
-    // [refactor jul9 P2-A C6, C1 approval 2026-07-09] 4-arg: undefined words + undefined
-    // config (no company csi) + builtin db bundle. Join format still frozen.
+    // [refactor jul9 P2-A C6, C1 approval 2026-07-09] 4-arg: [csi-v2 S6] page context
+    // {pageKind:'spec'} (no words) + undefined config (no company csi) + builtin db bundle.
+    // Join format still frozen.
     expect(h.detectCsiCodes).toHaveBeenCalledWith(
       "PART 1 — GENERAL\n1.01 scope.",
-      undefined,
+      { context: { pageKind: "spec" } },
       undefined,
       expect.objectContaining({ entries: expect.any(Array), wordFrequency: expect.any(Map) }),
     );
@@ -448,9 +449,10 @@ describe.skipIf(!dbUp)("spec-parse — engine contract + response shapes (PQ-4/5
     });
     await call(ROUTES.spec, bodyFor(project.id));
     // [refactor jul9 P2-A C6, C1 approval 2026-07-09] 4-arg extension; join format frozen.
+    // [csi-v2 S6] 2nd arg = the spec page context.
     expect(h.detectCsiCodes).toHaveBeenCalledWith(
       "H1\nb1\n\nH2\nb2",
-      undefined,
+      { context: { pageKind: "spec" } },
       undefined,
       expect.objectContaining({ entries: expect.any(Array), wordFrequency: expect.any(Map) }),
     );

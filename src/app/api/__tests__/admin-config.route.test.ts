@@ -370,29 +370,37 @@ describe.skipIf(!dbUp)("admin/csi/config (CSI)", () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
     expect((await rowOf(company.id)).pc?.csi).toEqual({});
-    // valid partial → stored
-    r = await put(csiPUT, "/api/admin/csi/config", { matchingConfidenceThreshold: 0.7 });
+    // [csi-v2 S6] valid partial of the v2 fields → stored
+    r = await put(csiPUT, "/api/admin/csi/config", { tau: 0.7 });
     expect(r.status).toBe(200);
-    expect((await rowOf(company.id)).pc?.csi).toEqual({ matchingConfidenceThreshold: 0.7 });
-    // non-positive threshold rejected (D-15): 0 and -1 → 400, no write (last valid value stands)
-    for (const bad of [{ matchingConfidenceThreshold: 0 }, { matchingConfidenceThreshold: -1 }]) {
+    expect((await rowOf(company.id)).pc?.csi).toEqual({ tau: 0.7 });
+    // non-positive / > 1 tau and out-of-range maxCodesPerPage rejected (D-15/I-10): 400, no write
+    for (const bad of [{ tau: 0 }, { tau: -1 }, { tau: 1.5 }, { maxCodesPerPage: 0 }, { maxCodesPerPage: 201 }, { maxCodesPerPage: 2.5 }]) {
       r = await put(csiPUT, "/api/admin/csi/config", bad);
       expect(r.status).toBe(400);
       expect(r.body.error.code).toBe("VALIDATION");
     }
-    expect((await rowOf(company.id)).pc?.csi).toEqual({ matchingConfidenceThreshold: 0.7 });
+    expect((await rowOf(company.id)).pc?.csi).toEqual({ tau: 0.7 });
+    // [csi-v2 S6] the pre-v2 engine keys + orphan tagger sliders a stale tab may still send are
+    // STRIPPED (never stored); only the v2 fields survive
+    r = await put(csiPUT, "/api/admin/csi/config", {
+      tau: 0.8, maxCodesPerPage: 25, matchingConfidenceThreshold: 0.4, tier2Weight: 0.75,
+      tier1WeightByWordCount: [0, 0.01], taggerKeywordOverlap: 0.6, maxCsiTagsPerAnnotation: 2, contextBudgetOverrides: { m: 1 },
+    });
+    expect(r.status).toBe(200);
+    expect((await rowOf(company.id)).pc?.csi).toEqual({ tau: 0.8, maxCodesPerPage: 25 });
     // unknown key alongside nothing valid → stored WITHOUT the unknown key
     r = await put(csiPUT, "/api/admin/csi/config", { zzz: 1 });
     expect(r.status).toBe(200);
     expect((await rowOf(company.id)).pc?.csi).toEqual({});
     // client-sent customDatabaseS3Key is IGNORED (stripped — upload route owns it, I-7 belt, D-5)
     r = await put(csiPUT, "/api/admin/csi/config", {
-      matchingConfidenceThreshold: 0.6,
+      tau: 0.9,
       customDatabaseS3Key: "csi-databases/company-999/x.tsv",
     });
     expect(r.status).toBe(200);
     const stored = (await rowOf(company.id)).pc?.csi as Record<string, unknown>;
-    expect(stored).toEqual({ matchingConfidenceThreshold: 0.6 }); // no injected pointer
+    expect(stored).toEqual({ tau: 0.9 }); // no injected pointer
     // siblings + updatedAt survive every write above (csi does NOT touch updatedAt)
     const after = await rowOf(company.id);
     expect(after.pc?.demo).toEqual(SEED.demo);
@@ -407,12 +415,13 @@ describe.skipIf(!dbUp)("admin/csi/config (CSI)", () => {
       __sentinel: SEED.__sentinel,
     });
     asUser(admin);
-    // client sends ONLY a threshold (the CsiTab send-everything contract minus the triple) →
-    // triple re-attached verbatim by putCsiConfig; threshold applied
-    const r = await put(csiPUT, "/api/admin/csi/config", { matchingConfidenceThreshold: 0.5 });
+    // client sends ONLY the v2 fields (the CsiTab send-everything contract minus the triple) →
+    // triple re-attached verbatim by putCsiConfig; config applied
+    const r = await put(csiPUT, "/api/admin/csi/config", { tau: 0.5, maxCodesPerPage: 40 });
     expect(r.status).toBe(200);
     expect((await rowOf(company.id)).pc?.csi).toEqual({
-      matchingConfidenceThreshold: 0.5,
+      tau: 0.5,
+      maxCodesPerPage: 40,
       customDatabaseS3Key: "csi-databases/company-1/custom-csi.tsv",
       customDatabaseName: "MyDB",
       customDatabaseCodes: 99,

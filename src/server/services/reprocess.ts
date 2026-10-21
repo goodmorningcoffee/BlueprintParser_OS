@@ -818,7 +818,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             id: pages.id,
             pageNumber: pages.pageNumber,
             textractData: pages.textractData,
-            rawText: pages.rawText,
+            rawText: pages.rawText, drawingNumber: pages.drawingNumber, // [csi-v2 S6] CSI context
           })
           .from(pages)
           .where(eq(pages.projectId, project.id))
@@ -853,11 +853,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               }
             } catch { /* legacy migration-safety swallow (column now exists) — kept verbatim */ }
 
-            // Re-run CSI detection (before text annotations, since CSI feeds into them).
-            // Pass Textract words so trigger bboxes are recorded on each detected code.
+            // Re-run CSI detection (before text annotations, since CSI feeds into them). [csi-v2 S6]
+            // Pass Textract lines + drawing number so trigger spans + bboxes land on each code.
             const rawText = page.rawText || extractRawText(textractData);
             // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
-            const csiCodes = detectCsiCodes(rawText, textractData.words, csiCtx.config, csiCtx.db);
+            const csiCodes = detectCsiCodes(rawText, { lines: textractData.lines, context: { drawingNumber: page.drawingNumber } }, csiCtx.config, csiCtx.db);
 
             // Re-run text annotation detectors (with CSI codes + pipeline config)
             const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);

@@ -268,9 +268,10 @@ describe.skipIf(!dbUp)("POST /api/annotations — batch mode", () => {
 // builtin (D-2), with a never-throw builtin fallback (I-4). Real-engine suite: detect + the
 // csi-company-db resolver run REAL against the test DB; only downloadFromS3 is stubbed.
 //
-// INPUT is the C0-characterized concrete/foundation phrase: 11 codes under DEFAULT config,
-// ZERO under matchingConfidenceThreshold 0.99 (nothing reaches 0.99 confidence). See
-// src/lib/__tests__/csi-detect.test.ts.
+// INPUT is the concrete/foundation phrase pinned in src/lib/__tests__/csi-detect.test.ts:
+// [csi-v2 S6] the v2 tagger emits 03 30 00 + 31 66 16 (confidence 0.88 each) under the DEFAULT
+// config and ZERO under tau 0.99 (one occurrence scores 0.88). Codes are spaced ('03 30 00').
+// A pre-v2 stored matchingConfidenceThreshold above 0.704 is read as tau (pickCsiV2Config).
 const DETECTS_UNDER_DEFAULT =
   "Provide cast in place concrete for all foundation walls and footings.";
 
@@ -290,22 +291,29 @@ const postNote = async (publicId: string, note: string) =>
   );
 
 describe.skipIf(!dbUp)("POST /api/annotations — company config threads into detect (D-1)", () => {
-  it("stored matchingConfidenceThreshold: 0.99 suppresses codes that the default config detects", async () => {
+  it("stored tau: 0.99 (and a pre-v2 matchingConfidenceThreshold: 0.99) suppresses codes the default config detects", async () => {
     // Company A: no stored config → default engine → codes detected (I-6 byte-identical path).
     const a = await csiWorld();
     asUser(a.user);
     const { status: sA, body: bodyA } = await postNote(a.project.publicId, DETECTS_UNDER_DEFAULT);
     expect(sA).toBe(200);
     expect(Array.isArray(bodyA.data?.csiCodes)).toBe(true);
-    expect(bodyA.data.csiCodes).toContain("033000"); // stable default hit (C0 baseline)
+    expect(bodyA.data.csiCodes).toContain("03 30 00"); // stable default hit (csi-detect.test.ts)
 
-    // Company B: SAME note, but stored threshold 0.99 → the lever now bites → no auto codes.
-    const b = await csiWorld({ csi: { matchingConfidenceThreshold: 0.99 } });
+    // Company B: SAME note, but stored tau 0.99 → the lever now bites → no auto codes.
+    const b = await csiWorld({ csi: { tau: 0.99 } });
     asUser(b.user);
     const { status: sB, body: bodyB } = await postNote(b.project.publicId, DETECTS_UNDER_DEFAULT);
     expect(sB).toBe(200);
     // No manual data + no auto codes → mergeAutoCsi returns null (data untouched).
     expect(bodyB.data).toBeNull();
+
+    // Company C: a row saved by the pre-v2 admin — its threshold is read as tau → same result.
+    const c = await csiWorld({ csi: { matchingConfidenceThreshold: 0.99 } });
+    asUser(c.user);
+    const { status: sC, body: bodyC } = await postNote(c.project.publicId, DETECTS_UNDER_DEFAULT);
+    expect(sC).toBe(200);
+    expect(bodyC.data).toBeNull();
 
     // downloadFromS3 untouched — neither company has a custom-DB pointer.
     expect(vi.mocked(downloadFromS3)).not.toHaveBeenCalled();
@@ -346,6 +354,12 @@ describe.skipIf(!dbUp)("POST /api/annotations — custom CSI DB threads into det
     expect(status).toBe(200);
     expect(body.data.csiCodes).toContain("99 99 99"); // routed to the custom DB (not in builtin)
     expect(vi.mocked(downloadFromS3)).toHaveBeenCalled();
+
+    // [csi-v2 S6] ADD semantics: the custom rows are an overlay, so builtin codes still detect.
+    const { status: s2, body: b2 } = await postNote(proj.publicId, DETECTS_UNDER_DEFAULT);
+    expect(s2).toBe(200);
+    expect(b2.data.csiCodes).toContain("03 30 00");
+    expect(b2.data.csiCodes).not.toContain("99 99 99");
   });
 
   it("custom-DB load failure → builtin fallback (200, never throws); second request adds ZERO S3 calls", async () => {
@@ -359,7 +373,7 @@ describe.skipIf(!dbUp)("POST /api/annotations — custom CSI DB threads into det
     // First POST: I-4 fallback to builtin → the concrete note still detects builtin codes, 200.
     const { status: s1, body: b1 } = await postNote(proj.publicId, DETECTS_UNDER_DEFAULT);
     expect(s1).toBe(200);
-    expect(b1.data.csiCodes).toContain("033000"); // builtin fallback detected
+    expect(b1.data.csiCodes).toContain("03 30 00"); // builtin fallback detected
 
     // Second POST: the failure is cached for the TTL (anti-retry-storm) → no extra S3 GET.
     const { status: s2 } = await postNote(proj.publicId, DETECTS_UNDER_DEFAULT);

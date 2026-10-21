@@ -5,6 +5,7 @@
 // their services; put cross-cutting primitives here.
 
 import { z } from "zod";
+import { CSI_V2_MAX_CODES_MAX, CSI_V2_MAX_CODES_MIN, CSI_V2_TAU_MAX } from "@/lib/csi-v2-config";
 
 export { zSplitAnnotationRequest } from "@/lib/annotation-split-contract";
 
@@ -76,18 +77,11 @@ export type PageRangeInput = z.infer<typeof zPageRange>;
  * keys stripped + triple preserved), D-15 (non-positive threshold rejected).
  */
 export const zCsiConfigPut = z.object({
-  // the 6 engine fields (csi-detect-defs.ts CsiDetectConfig)
-  matchingConfidenceThreshold: z.number().finite().positive().optional(), // .positive(): I-10 (a non-positive threshold returns the ENTIRE DB per detect call); UI slider min=0.1 (CsiTab.tsx:224) so no legit save can send <=0
-  tier2MinWords: z.number().int().nonnegative().optional(),
-  tier3MinWords: z.number().int().nonnegative().optional(),
-  tier2Weight: z.number().finite().optional(),
-  tier3Weight: z.number().finite().optional(),
-  tier1WeightByWordCount: z.array(z.number().finite()).max(32).optional(), // weights stay TYPE-ONLY: UI sliders min=0 (CsiTab.tsx:272-300); 0-weight is engine-safe (C0 pathological-weight pins), so no .positive() here
-  // the 4 admin-UI orphan fields — validated & stored (status-quo storage; CsiTab sends them
-  // every save, so rejecting would 400 every admin save; removing the dead sliders = UI half, N-4)
-  taggerKeywordOverlap: z.number().finite().optional(),
-  taggerMinWordMatches: z.number().int().nonnegative().optional(),
-  maxCsiTagsPerAnnotation: z.number().int().nonnegative().optional(),
-  contextBudgetOverrides: z.record(z.string(), z.number().finite()).optional(),
+  // [csi-v2 S6] the v2 engine fields (csi-v2-config.ts CsiV2Config; PLAN §7). The pre-v2 tier
+  // weights, the 3 orphan tagger sliders and contextBudgetOverrides are gone from the PUT: sent by a
+  // stale tab they are STRIPPED (non-strict, as above), never stored. A stored pre-v2
+  // matchingConfidenceThreshold is still READ as tau (pickCsiV2Config). .positive(): I-10.
+  tau: z.number().finite().positive().max(CSI_V2_TAU_MAX).optional(),
+  maxCodesPerPage: z.number().int().min(CSI_V2_MAX_CODES_MIN).max(CSI_V2_MAX_CODES_MAX).optional(),
 });
 export type CsiConfigPutBody = z.infer<typeof zCsiConfigPut>;

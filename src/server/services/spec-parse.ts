@@ -50,8 +50,8 @@ export async function specParse(rawBody: Record<string, unknown>) {
   let csiTags: CsiCode[] = [];
   try {
     const bodyText = result.sections.map((s) => `${s.sectionHeader}\n${s.body}`).join("\n\n");
-    // [refactor jul9 P2-A C1] 4-arg (undefined middle): thread company config + DB (D-1/D-2).
-    csiTags = detectCsiCodes(bodyText, undefined, csiCtx.config, csiCtx.db);
+    // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2). [csi-v2 S6] pageKind spec.
+    csiTags = detectCsiCodes(bodyText, { context: { pageKind: "spec" } }, csiCtx.config, csiCtx.db);
   } catch (err) {
     logger.warn("[spec-parse] CSI detect failed (non-fatal):", err);
   }

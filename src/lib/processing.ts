@@ -441,14 +441,14 @@ async function processProjectWithLease(
           );
         }
 
-        // Detect CSI codes from OCR text. Pass Textract words so each detected
-        // code records its trigger word bboxes (for trade filter highlights).
+        // Detect CSI codes from the Textract LINES (+ drawing number → discipline context) so
+        // each code records its trigger spans with word bboxes. [csi-v2 S6] line-neutral edit.
         let csiCodes: CsiCode[] = [];
         try {
           // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
           csiCodes = detectCsiCodes(
             rawText,
-            textractData.words,
+            { lines: textractData.lines, context: { drawingNumber } },
             csiCtx.config,
             csiCtx.db,
           );

@@ -2,28 +2,22 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
-import { DEFAULT_CSI_DETECT_CONFIG, type CsiDetectConfig } from "@/lib/csi-detect-defs";
+import {
+  CSI_V2_LOWEST_EMITTED_CONFIDENCE,
+  CSI_V2_MAX_CODES_MAX,
+  CSI_V2_MAX_CODES_MIN,
+  DEFAULT_CSI_V2_CONFIG,
+  pickCsiV2Config,
+  type CsiV2Config,
+} from "@/lib/csi-v2-config";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
-// CsiConfig is a superset of CsiDetectConfig — the extra fields belong to
-// adjacent systems (CSI tagger, LLM context budgets), not the detection engine.
-interface CsiConfig extends CsiDetectConfig {
-  taggerKeywordOverlap: number;         // min % word overlap for CSI tagging annotations (0-1)
-  taggerMinWordMatches: number;         // min absolute word matches for CSI tagging
-  maxCsiTagsPerAnnotation: number;      // max CSI tags shown per annotation in LLM context
-  contextBudgetOverrides: Record<string, number>; // model → context budget chars
-}
+// [csi-v2 S6] The v2 tagger has exactly two settings (PLAN §7). The pre-v2 tier weights and the
+// three tagger sliders (keyword overlap, min word matches, max tags per annotation) are gone: the
+// first had no v2 meaning and the second were never read by any code.
+type CsiConfig = CsiV2Config;
 
-const DEFAULTS: CsiConfig = {
-  // Canonical detection defaults — imported from csi-detect-defs.ts so the
-  // admin UI and the detection engine can never drift.
-  ...DEFAULT_CSI_DETECT_CONFIG,
-  // Admin-only fields for adjacent systems (not used by detectCsiCodes)
-  taggerKeywordOverlap: 0.6,
-  taggerMinWordMatches: 3,
-  maxCsiTagsPerAnnotation: 2,
-  contextBudgetOverrides: {},
-};
+const DEFAULTS: CsiConfig = { ...DEFAULT_CSI_V2_CONFIG };
 
 interface CsiTabProps {
   reprocessing: boolean;
@@ -65,7 +59,8 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
       const res = await fetch("/api/admin/csi/config");
       if (res.ok) {
         const data = await res.json();
-        setConfig({ ...DEFAULTS, ...data.config });
+        // pre-v2 rows: matchingConfidenceThreshold > 0.704 is read as tau, other legacy keys are ignored
+        setConfig({ ...DEFAULTS, ...pickCsiV2Config(data.config) });
         setStats(data.stats);
       }
     } catch { /* use defaults */ }
@@ -102,16 +97,6 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
     setConfig(prev => ({ ...prev, [key]: value }));
   }
 
-  function updateTier1Weight(index: number, value: number) {
-    setConfig(prev => {
-      const src = prev.tier1WeightByWordCount || DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount;
-      const next = [...src];
-      while (next.length <= index) next.push(next[next.length - 1] ?? 0);
-      next[index] = value;
-      return { ...prev, tier1WeightByWordCount: next };
-    });
-  }
-
   if (loading) {
     return <div className="text-[var(--muted)] text-sm py-8 text-center">Loading CSI configuration...</div>;
   }
@@ -122,7 +107,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
       <div>
         <h2 className="text-lg font-semibold">CSI Code Configuration</h2>
         <p className="text-sm text-[var(--muted)] mt-1">
-          Configure CSI MasterFormat code detection, matching tiers, and tagging thresholds.
+          Configure CSI MasterFormat code detection.
         </p>
       </div>
 
@@ -152,7 +137,9 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
       <section className="border border-[var(--border)] rounded-lg p-4 space-y-3">
         <h3 className="text-sm font-semibold text-[var(--fg)]">CSI Database</h3>
         <p className="text-xs text-[var(--muted)]">
-          Using built-in MasterFormat 2018 + 2016 merged database. Upload a custom CSI list to override, or use the default.
+          The built-in list is MasterFormat 2018 (titles, keyword index, and common drawing abbreviations).
+          An uploaded custom list ADDS codes and phrases on top of it; a phrase the built-in list already
+          uses keeps its built-in code, and one-word entries only hint a division.
         </p>
         <div className="flex gap-3 items-center flex-wrap">
           <label className="flex items-center gap-2 px-3 py-2 text-xs rounded border border-[var(--border)] text-[var(--fg)] hover:border-[var(--accent)]/50 cursor-pointer">
@@ -201,142 +188,33 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
         </div>
       </section>
 
-      {/* Matching Thresholds */}
+      {/* Detection (v2 tagger) */}
       <section className="border border-[var(--border)] rounded-lg p-4 space-y-4">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">Detection Matching</h3>
-        <p className="text-xs text-[var(--muted)]">Controls how CSI codes are detected in OCR text. Three matching tiers run from strict to loose.</p>
+        <h3 className="text-sm font-semibold text-[var(--fg)]">Detection</h3>
+        <p className="text-xs text-[var(--muted)]">Controls which matched CSI codes are listed on a page.</p>
         <details className="text-[10px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded p-2">
-          <summary className="cursor-pointer text-[var(--accent)] font-medium">How the three tiers work</summary>
+          <summary className="cursor-pointer text-[var(--accent)] font-medium">How detection works</summary>
           <div className="mt-2 space-y-1.5">
-            <p><strong className="text-[var(--fg)]">Tier 1 — Exact Phrase (95%):</strong> Finds the full CSI description as consecutive words in the OCR text. Example: &ldquo;hollow metal door&rdquo; matches CSI 08 11 16. Base confidence 95%, then multiplied by the Tier 1 word-count weight below.</p>
-            <p><strong className="text-[var(--fg)]">Tier 2 — Scattered Words (up to Tier 2 Weight):</strong> Finds CSI words scattered in text, not consecutive. &ldquo;door&rdquo; + &ldquo;metal&rdquo; + &ldquo;hollow&rdquo; in any order. Higher weight = accept more scattered matches. Only activates when the CSI description has enough significant words (Tier 2 Min Words).</p>
-            <p><strong className="text-[var(--fg)]">Tier 3 — Anchor Keywords (up to Tier 3 Weight):</strong> For long CSI descriptions, matches only the rarest/most distinctive words. Lower confidence. Only activates for descriptions with many words (Tier 3 Min Words).</p>
-            <p><strong className="text-[var(--fg)]">Confidence Threshold:</strong> Matches below this score are discarded. Lower = more matches but noisier. Higher = fewer but more precise.</p>
+            <p><strong className="text-[var(--fg)]">Spans:</strong> each OCR line (or table cell) is matched against MasterFormat titles, keyword-index phrases and a curated list of drawing abbreviations (GWB, ACT, HM&hellip;). A phrase counts only when the code&apos;s distinctive words are present, at least 80% of the phrase&apos;s weight is found, and the words sit close together without crossing punctuation. Score: 1.00 for the exact words in order, 0.85 when they are out of order or spread out. The most specific matching code wins (&ldquo;hollow metal doors&rdquo; &rarr; 08 13 13, not 08 00 00).</p>
+            <p><strong className="text-[var(--fg)]">Page confidence:</strong> a code&apos;s best span score &times; a repetition factor &mdash; 0.88 for one occurrence, +0.03 per extra occurrence, up to 1.00 at five.</p>
+            <p><strong className="text-[var(--fg)]">Always filtered, whatever the settings:</strong> codes whose best span scores under 0.80, phrases marked &ldquo;by others&rdquo; / N.I.C., one-word matches that are not curated abbreviations, Division 00/01 codes on drawings, and site/process divisions (33&ndash;35, 40&ndash;48) unless matched at least twice by their own phrases or the sheet is a civil (C-) sheet.</p>
           </div>
         </details>
 
         <div className="grid gap-4">
           <SliderField
-            label="Minimum Confidence Threshold"
-            description="Only report CSI matches above this confidence level"
-            value={config.matchingConfidenceThreshold}
-            onChange={(v) => updateConfig("matchingConfidenceThreshold", v)}
-            min={0.1} max={0.9} step={0.05}
-          />
-          <SliderField
-            label="Tier 2 Weight (Bag-of-Words)"
-            description="Maximum confidence for non-consecutive word matching"
-            value={config.tier2Weight}
-            onChange={(v) => updateConfig("tier2Weight", v)}
-            min={0.3} max={0.95} step={0.05}
-          />
-          <SliderField
-            label="Tier 3 Weight (Keyword Anchors)"
-            description="Maximum confidence for anchor-word matching on long descriptions"
-            value={config.tier3Weight}
-            onChange={(v) => updateConfig("tier3Weight", v)}
-            min={0.2} max={0.7} step={0.05}
+            label="Minimum confidence (tau)"
+            description={`List a code only when its page confidence reaches this value. Every listed code already scores at least ${(CSI_V2_LOWEST_EMITTED_CONFIDENCE * 100).toFixed(1)}%, so lower values change nothing. The default ${(DEFAULT_CSI_V2_CONFIG.tau * 100).toFixed(0)}% keeps a single exact phrase (88%) and drops a single loose match (0.85 × 0.88 ≈ 74.8%) unless it repeats on the page.`}
+            value={config.tau}
+            onChange={(v) => updateConfig("tau", v)}
+            min={0.7} max={1} step={0.01}
           />
           <NumberField
-            label="Tier 2 Minimum Words"
-            description="CSI descriptions need this many significant words to use Tier 2 matching"
-            value={config.tier2MinWords}
-            onChange={(v) => updateConfig("tier2MinWords", v)}
-            min={2} max={8}
-          />
-          <NumberField
-            label="Tier 3 Minimum Words"
-            description="CSI descriptions need this many significant words to use Tier 3 anchor matching"
-            value={config.tier3MinWords}
-            onChange={(v) => updateConfig("tier3MinWords", v)}
-            min={3} max={12}
-          />
-        </div>
-
-        {/* Tier 1 word-count weights — down-weights short-description matches */}
-        <div className="mt-2 pt-3 border-t border-[var(--border)]">
-          <h4 className="text-xs font-semibold text-[var(--fg)] mb-1">Tier 1 Word-Count Weights</h4>
-          <p className="text-[10px] text-[var(--muted)] mb-3 leading-snug">
-            Multiplies Tier 1 (95%) confidence by a weight based on how many significant words
-            the CSI description has. Default 1% for 1-word descriptions means codes like
-            &ldquo;doors&rdquo; or &ldquo;concrete&rdquo; score 0.0095 and fall below the
-            confidence threshold, killing false positives. 3+ word descriptions keep most
-            of their confidence. Set a weight to 0 to disable that bucket entirely.
-          </p>
-          <div className="grid gap-3">
-            <SliderField
-              label="1-word description weight"
-              description="E.g. single-word codes like 'doors', 'concrete', 'metals'"
-              value={config.tier1WeightByWordCount?.[1] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[1]}
-              onChange={(v) => updateTier1Weight(1, v)}
-              min={0} max={1} step={0.01}
-            />
-            <SliderField
-              label="2-word description weight"
-              description="E.g. 'structural steel', 'wood doors', 'roof insulation'"
-              value={config.tier1WeightByWordCount?.[2] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[2]}
-              onChange={(v) => updateTier1Weight(2, v)}
-              min={0} max={1} step={0.01}
-            />
-            <SliderField
-              label="3-word description weight"
-              description="E.g. 'cast in place concrete', 'hollow metal doors'"
-              value={config.tier1WeightByWordCount?.[3] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[3]}
-              onChange={(v) => updateTier1Weight(3, v)}
-              min={0} max={1} step={0.01}
-            />
-            <SliderField
-              label="4-word description weight"
-              description="E.g. 'fluid applied waterproofing membrane'"
-              value={config.tier1WeightByWordCount?.[4] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[4]}
-              onChange={(v) => updateTier1Weight(4, v)}
-              min={0} max={1} step={0.01}
-            />
-            <SliderField
-              label="5+ word description weight"
-              description="Longer, highly specific phrases — used for 5 or more significant words"
-              value={config.tier1WeightByWordCount?.[5] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[5]}
-              onChange={(v) => updateTier1Weight(5, v)}
-              min={0} max={1} step={0.01}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* CSI Tagging */}
-      <section className="border border-[var(--border)] rounded-lg p-4 space-y-4">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">Annotation Tagging</h3>
-        <p className="text-xs text-[var(--muted)]">Controls how detected CSI codes are tagged onto text annotations for the LLM.</p>
-        <details className="text-[10px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded p-2">
-          <summary className="cursor-pointer text-[var(--accent)] font-medium">How annotation tagging works</summary>
-          <div className="mt-2 space-y-1.5">
-            <p><strong className="text-[var(--fg)]">Keyword Overlap:</strong> What % of the CSI description&apos;s significant words must appear in the annotation text. At 60%, &ldquo;hollow metal door frame&rdquo; (4 significant words) needs 3 matching words in the annotation.</p>
-            <p><strong className="text-[var(--fg)]">Min Word Matches:</strong> Absolute minimum — even if the % threshold is met, this many words must match. Prevents false positives on short descriptions.</p>
-            <p><strong className="text-[var(--fg)]">Max Tags per Annotation:</strong> Caps how many CSI codes are attached to one annotation. Keeps LLM context focused. At 2, each annotation gets at most 2 CSI codes even if more match.</p>
-          </div>
-        </details>
-
-        <div className="grid gap-4">
-          <SliderField
-            label="Keyword Overlap Threshold"
-            description="Minimum word overlap between annotation text and CSI description to tag"
-            value={config.taggerKeywordOverlap}
-            onChange={(v) => updateConfig("taggerKeywordOverlap", v)}
-            min={0.3} max={0.9} step={0.05}
-          />
-          <NumberField
-            label="Minimum Word Matches"
-            description="At least this many words must match to apply a CSI tag"
-            value={config.taggerMinWordMatches}
-            onChange={(v) => updateConfig("taggerMinWordMatches", v)}
-            min={1} max={6}
-          />
-          <NumberField
-            label="Max CSI Tags per Annotation"
-            description="Limit CSI tags shown per annotation in LLM context"
-            value={config.maxCsiTagsPerAnnotation}
-            onChange={(v) => updateConfig("maxCsiTagsPerAnnotation", v)}
-            min={1} max={10}
+            label="Max codes per page"
+            description={`Keep at most this many codes per page, highest confidence first (default ${DEFAULT_CSI_V2_CONFIG.maxCodesPerPage}). On the evaluation drawings a page lists 4 codes at the median and 15 at the 90th percentile, so the cap rarely applies.`}
+            value={config.maxCodesPerPage}
+            onChange={(v) => updateConfig("maxCodesPerPage", Math.min(CSI_V2_MAX_CODES_MAX, Math.max(CSI_V2_MAX_CODES_MIN, v)))}
+            min={CSI_V2_MAX_CODES_MIN} max={CSI_V2_MAX_CODES_MAX}
           />
         </div>
       </section>

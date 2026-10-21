@@ -178,9 +178,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     return counts;
   }, [activeTradeFilter, csiCodes]);
 
-  // Per-page count of trigger hits for the active CSI code. Uses stored
-  // triggers when available (fast, precise), falls back to runtime phrase
-  // matching for old cached data.
+  // Per-page count of matched SPANS for the active CSI code ([csi-v2 S6] one trigger = one span,
+  // labelled "spans" in the pill). Uses stored triggers when available (fast, precise), falls
+  // back to runtime phrase matching for old cached data.
   const csiWordCounts = useMemo(() => {
     if (!activeCsiFilter) return {};
     const counts: Record<number, number> = {};
@@ -493,8 +493,8 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             </span>
           )}
           {isCsiFiltered && csiWordCounts[n] > 0 && (
-            <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0">
-              {csiWordCounts[n]}
+            <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0" title="Text spans on this page that matched the selected CSI code">
+              {csiWordCounts[n]} {csiWordCounts[n] === 1 ? "span" : "spans"}
             </span>
           )}
           {isTextAnnotationFiltered && textAnnotationCounts[n] > 0 && (

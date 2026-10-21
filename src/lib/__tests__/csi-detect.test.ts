@@ -1,254 +1,311 @@
 /**
- * csi-detect.test.ts — CSI detection engine FREEZE-FIRST baselines.
+ * csi-detect.test.ts — the `detectCsiCodes` / `detectCsiFromGrid` ADAPTER over the v2 tagger.
  *
- * [refactor jul9 P2-A C1] Commit C0 of the CSI Option C1 server-half arc
- * (SPEC_FINAL §6.2-1). These tests pin CURRENT engine behavior against the
- * builtin masterformat DB BEFORE the C1 mechanical refactor (csi-database
- * module extraction + optional `db` param). They must stay green, untouched,
- * through C1 — that green-through IS the "byte-identical refactor" proof.
+ * [csi-v2 S6] Rewritten for the v2 engine (IMPLEMENTATION §II S6). The pre-v2 freeze-first pins
+ * (3-tier code sets, threshold-0 blowup, tier1WeightByWordCount spread semantics) described the
+ * legacy engine, which now lives byte-identical in `csi-detect-legacy.ts` and is pinned by
+ * `eval/csi/baseline-old-engine.json` + csi-baseline-freshness.test.ts. Kept contracts:
+ *   - `rawText` under 10 characters → [];
+ *   - the 4th `db` param: the builtin bundle ≡ omitted; a custom bundle ADDS codes (per-tenant
+ *     overlay, csi-kb-overlay.ts): the builtin rows come back unchanged and first (the overlay KB
+ *     alone CAN move them — pinned below — so the adapter merges two runs);
+ *   - `detectCsiFromGrid` forwards config + db and reads CELLS (header + value), never one string.
+ * Every expected code/confidence below was MEASURED on kb-v2.4 (sha256 5110a515…) before pinning.
  *
- * All expected values below are characterization pins captured at HEAD
- * 1bfc328 against src/data/csi-masterformat.tsv (8,951 data rows).
+ * KB-backed: `skipIf` when `src/data/csi-kb.json` is absent (fresh clone / GitHub CI);
+ * `scripts/bp-suite` sets BP_REQUIRE_CSI_KB=1, which turns a skip into a failed run.
  */
 import { describe, it, expect } from "vitest";
-import { detectCsiCodes, detectCsiFromGrid } from "@/lib/csi-detect";
-// [refactor jul9 P2-A C1] added in commit C1 for the explicit-db tests at the
-// bottom of this file (SPEC_FINAL §6.2-1). Imported from @/lib/csi-database
-// directly — NOT via csi-detect — by design (C3-F-1 mock-factory hazard).
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { detectCsiCodes, detectCsiFromGrid, csiKbFor, CSI_MIN_TEXT_CHARS } from "@/lib/csi-detect";
 import { loadBuiltinCsiDatabase, parseCsiTsv } from "@/lib/csi-database";
+import { buildCsiOverlayKb, OVERLAY_FILLER_FACTOR, overlayCode, overlayLevelOf, overlayParentOf } from "@/lib/csi-kb-overlay";
+import { CSI_KB_FILLER_FACTOR } from "@/lib/csi-kb";
+import { pickCsiV2Config, CSI_V2_LOWEST_EMITTED_CONFIDENCE, DEFAULT_CSI_V2_CONFIG } from "@/lib/csi-v2-config";
+import { DEFAULT_CSI_V2_PAGE_CONFIG, REPETITION_BASE, REPETITION_STEP, STRONG_SPAN_MIN, detectCsiV2 } from "@/lib/csi-page";
 
-// Fixed input: fires Tier 1 ("cast in place concrete" — the TSV description
-// "cast-in-place concrete" is hyphen-normalized on the DB side, so the
-// spaced form subphrase-matches) plus Tier 2 bag-of-words hits
-// (foundation/walls/concrete overlap entries).
-const INPUT =
-  "Provide cast in place concrete for all foundation walls and footings.";
+const HAS_KB = existsSync(join(process.cwd(), "src/data/csi-kb.json"));
 
-// The full default-config detection set for INPUT (sorted by code).
-// Characterization pin — captured, not designed.
-const DEFAULT_CODES = [
-  "030130",
-  "030130.51",
-  "030130.61",
-  "030130.71",
-  "030130.72",
-  "030630",
-  "033000",
-  "033053",
-  "316213.13",
-  "316616.23",
-  "323213",
-];
+const INPUT = "Provide cast in place concrete for all foundation walls and footings.";
+const codesOf = (rows: { code: string }[]) => rows.map((r) => r.code).sort();
+const confs = (rows: { code: string; confidence?: number }[]) => rows.map((r) => `${r.code}@${r.confidence}`);
 
-// Builtin DB scale: unique codes with >= 1 significant word. With a zero
-// threshold EVERY such entry passes the confidence gate (bestConf >= 0 is
-// always true), so the engine returns the entire database. See the
-// "threshold-0 blowup" pin below.
-const FULL_PASSTHROUGH_SCALE = 8951;
+const FAKE_TSV = [
+  "col0\tcol1\tcode\tdescription\ttrade\tdivision",
+  "x\tx\t99 99 99\tzebra fixture widget\tFixture Trade\t99 00 00",
+].join("\n");
 
-const codesOf = (results: { code: string }[]) =>
-  results.map((r) => r.code).sort();
-
-describe("detectCsiCodes — default-config baselines (builtin DB)", () => {
-  it("detects a stable code set for a fixed concrete/foundation input", () => {
-    const result = detectCsiCodes(INPUT);
-    expect(codesOf(result)).toEqual(DEFAULT_CODES);
-  });
-
-  it("returns full CsiCode shape (code/description/trade/division)", () => {
-    const result = detectCsiCodes(INPUT);
-    const exact = result.find((r) => r.code === "033000");
-    expect(exact).toEqual({
-      code: "033000",
-      description: "cast-in-place concrete",
-      trade: "Concrete",
-      division: "03 00 00",
-    });
-  });
-
+describe("detectCsiCodes — contracts that need no KB", () => {
   it("returns [] for short input (< 10 chars)", () => {
+    expect(CSI_MIN_TEXT_CHARS).toBe(10);
     expect(detectCsiCodes("abc")).toEqual([]);
     expect(detectCsiCodes("")).toEqual([]);
     expect(detectCsiCodes("123456789")).toEqual([]); // 9 chars — under the gate
   });
+
+  it("detectCsiFromGrid keeps the gate over the joined headers + values", () => {
+    expect(detectCsiFromGrid(["A"], [{ A: "GWB" }])).toEqual([]); // "A GWB" = 5 chars
+  });
 });
 
-describe("detectCsiCodes — threshold lever", () => {
-  it("matchingConfidenceThreshold: 0.99 yields a subset of the default result (empty here — max tier conf is 0.95*0.8)", () => {
-    const strict = detectCsiCodes(INPUT, undefined, {
-      matchingConfidenceThreshold: 0.99,
+describe.skipIf(!HAS_KB)("detectCsiCodes — default config (builtin KB)", () => {
+  it("detects a stable code set for a fixed concrete/foundation input", () => {
+    expect(confs(detectCsiCodes(INPUT))).toEqual(["31 66 16@0.88", "03 30 00@0.88"]);
+  });
+
+  it("returns the v2 CsiCode row: spaced code, 2018 title, trade, NN 00 00 division, confidence, level", () => {
+    const row = detectCsiCodes(INPUT).find((r) => r.code === "03 30 00");
+    expect(row).toEqual({
+      code: "03 30 00",
+      description: "Cast-in-Place Concrete",
+      trade: "Concrete",
+      division: "03 00 00",
+      confidence: 0.88,
+      level: 3,
     });
+  });
+
+  it("bare text carries no geometry, so the `triggers` key is absent", () => {
+    for (const r of detectCsiCodes(INPUT)) expect("triggers" in r).toBe(false);
+  });
+
+  it("a 3-token Division 00 title in TEXT still auto-fills (annotation-groups contract)", () => {
+    expect(codesOf(detectCsiCodes("list of drawing sheets"))).toEqual(["00 01 15"]);
+  });
+});
+
+describe.skipIf(!HAS_KB)("detectCsiCodes — config levers {tau, maxCodesPerPage}", () => {
+  it("tau 0.99 yields a subset of the default result (empty here: one occurrence scores 0.88)", () => {
+    const strict = detectCsiCodes(INPUT, undefined, { tau: 0.99 });
     const defaults = new Set(codesOf(detectCsiCodes(INPUT)));
-    for (const r of strict) expect(defaults.has(r.code)).toBe(true); // subset
-    expect(strict).toEqual([]); // nothing can reach 0.99 confidence
+    for (const r of strict) expect(defaults.has(r.code)).toBe(true);
+    expect(strict).toEqual([]);
   });
 
-  it("threshold-0 blowup pin: {matchingConfidenceThreshold: 0} returns the ENTIRE builtin DB", () => {
-    // [refactor jul9 P2-A C1] This pin documents WHY invariant I-10 exists
-    // (SPEC_FINAL §0, C3-F-2): a non-positive threshold makes the gate
-    // `bestConf < threshold` unpassable-to-fail, so every entry with at
-    // least one significant word is returned — whole-DB output per call,
-    // O(entries × pageWords) work on the ingest hot path. C3's
-    // pickEngineConfig drops non-positive STORED thresholds and C5's zod
-    // `.positive()` rejects them at the PUT, making this unreachable via
-    // company config. The engine-level behavior itself is pinned here and
-    // deliberately NOT "fixed" — direct callers passing an explicit config
-    // keep byte-identical behavior.
-    const all = detectCsiCodes(INPUT, undefined, {
-      matchingConfidenceThreshold: 0,
-    });
-    expect(all.length).toBe(FULL_PASSTHROUGH_SCALE);
+  it("maxCodesPerPage 1 keeps the top code (equal confidence → deeper level first)", () => {
+    expect(confs(detectCsiCodes(INPUT, undefined, { maxCodesPerPage: 1 }))).toEqual(["31 66 16@0.88"]);
+  });
+
+  it("undefined, {} and the explicit defaults are the same run", () => {
+    const a = detectCsiCodes(INPUT);
+    expect(detectCsiCodes(INPUT, undefined, {})).toEqual(a);
+    expect(detectCsiCodes(INPUT, undefined, { ...DEFAULT_CSI_V2_CONFIG })).toEqual(a);
   });
 });
 
-describe("detectCsiCodes — tier1WeightByWordCount all-or-nothing spread semantics", () => {
-  // "gypsum sheathing" (code 061643) has exactly 2 significant words. Under
-  // the default weights [0, 0.01, 0.19, 0.80, 0.80, 0.80] its Tier 1 conf is
-  // 0.95 * 0.19 = 0.1805 < 0.4 threshold, and Tier 2/3 word-count gates
-  // (>= 3 / >= 5) skip it entirely — so it is NOT detected by default.
-  const GYPSUM_INPUT = "Install gypsum sheathing on exterior stud walls.";
-
-  it("default: 2-significant-word entries are down-weighted below threshold", () => {
-    expect(codesOf(detectCsiCodes(GYPSUM_INPUT))).toEqual([]);
+describe("pickCsiV2Config — stored config reader (shared by the resolver and CsiTab)", () => {
+  it("reads tau and maxCodesPerPage; a pre-v2 matchingConfidenceThreshold is read as tau only above 0.704", () => {
+    expect(pickCsiV2Config({ tau: 0.8, maxCodesPerPage: 12 })).toEqual({ tau: 0.8, maxCodesPerPage: 12 });
+    expect(pickCsiV2Config({ matchingConfidenceThreshold: 0.85, tier2Weight: 0.75 })).toEqual({ tau: 0.85 });
+    expect(pickCsiV2Config({ tau: 0.9, matchingConfidenceThreshold: 0.85 })).toEqual({ tau: 0.9 }); // tau wins
+    // the pre-v2 admin's DEFAULT 0.4 rode along on every pre-v2 save; on the old scale it must not
+    // lower the v2 default (review fix round 1: 3,070 → 3,459 corpus codes if read as tau)
+    expect(pickCsiV2Config({ matchingConfidenceThreshold: 0.4, tier2Weight: 0.75 })).toBeUndefined();
+    expect(pickCsiV2Config({ matchingConfidenceThreshold: CSI_V2_LOWEST_EMITTED_CONFIDENCE })).toBeUndefined();
   });
 
-  it("a partial array REPLACES the whole default array (shallow config spread), with last-value fallback", () => {
-    // [refactor jul9 P2-A C1] All-or-nothing pin (SPEC_FINAL §6.2-1): the
-    // engine merges config with `{...DEFAULT_CONFIG, ...config}` — a partial
-    // tier1WeightByWordCount array replaces the ENTIRE default array, it is
-    // never index-merged. With [0, 0.9], wordCount 2 >= array length so the
-    // LAST value (0.9) applies: 0.95 * 0.9 = 0.855 >= 0.4 → detected.
-    // If the array were index-merged with the default, index 2 would have
-    // stayed 0.19 and this input would still detect nothing.
-    const partial = detectCsiCodes(GYPSUM_INPUT, undefined, {
-      tier1WeightByWordCount: [0, 0.9],
-    });
-    expect(codesOf(partial)).toEqual(["061600", "061643"]);
+  it("client-safe defaults and the admin explainer's floor agree with the engine's constants", () => {
+    expect(DEFAULT_CSI_V2_CONFIG).toEqual(DEFAULT_CSI_V2_PAGE_CONFIG);
+    expect(CSI_V2_LOWEST_EMITTED_CONFIDENCE).toBeCloseTo(STRONG_SPAN_MIN * (REPETITION_BASE + REPETITION_STEP), 12);
+  });
 
-    // Equivalence with the explicit full-length array — proves the partial
-    // array's last-value fallback covers all higher word counts.
-    const explicitFull = detectCsiCodes(GYPSUM_INPUT, undefined, {
-      tier1WeightByWordCount: [0, 0.9, 0.9, 0.9, 0.9, 0.9],
-    });
-    expect(partial).toEqual(explicitFull);
+  it("drops out-of-range / wrong-typed values (I-10: tau must be in (0, 1])", () => {
+    for (const bad of [0, -0.5, 1.01, NaN, Infinity, "0.8"]) expect(pickCsiV2Config({ tau: bad })).toBeUndefined();
+    for (const bad of [0, 201, 2.5, "40", -1]) expect(pickCsiV2Config({ maxCodesPerPage: bad })).toBeUndefined();
+    for (const junk of [null, undefined, 5, [1], "x"]) expect(pickCsiV2Config(junk)).toBeUndefined();
   });
 });
 
-describe("detectCsiCodes — pathological weights are blowup-free (weights stay type-only in the PUT schema)", () => {
-  // [refactor jul9 P2-A C1] SPEC_FINAL §6.2-1 / C3-F-2 / §9 R-3: these pins
-  // prove that zero/negative WEIGHTS are safe (empty-or-reduced results, no
-  // throw, no whole-DB blowup) — which is why C5's zod schema constrains only
-  // matchingConfidenceThreshold (.positive(), I-10) and leaves the weights
-  // type-only (the admin UI sliders legitimately emit 0).
-
-  it("tier2Weight: 0 — tier 2 disabled, result reduced to the pure Tier-1 hit, no throw", () => {
-    const result = detectCsiCodes(INPUT, undefined, { tier2Weight: 0 });
-    expect(codesOf(result)).toEqual(["033000"]);
+describe.skipIf(!HAS_KB)("detectCsiCodes — context (drawing number → discipline)", () => {
+  it("a civil sheet opens the facility gate; other sheets keep it shut (PLAN §6.7)", () => {
+    const t = "DUCTILE IRON UTILITY PIPING";
+    expect(confs(detectCsiCodes(t))).toEqual([]);
+    expect(confs(detectCsiCodes(t, { context: { drawingNumber: "C-101" } }))).toEqual(["33 05 19@0.88"]);
+    expect(confs(detectCsiCodes(t, { context: { drawingNumber: "A-101" } }))).toEqual([]);
   });
 
-  it("tier3Weight: -1 — tier 3 disabled, no throw; this input never relied on tier 3", () => {
-    const result = detectCsiCodes(INPUT, undefined, { tier3Weight: -1 });
-    expect(codesOf(result)).toEqual(DEFAULT_CODES);
-  });
-
-  it("tier1WeightByWordCount all zeros — tier 1 suppressed, tier 2 still rescues, no throw", () => {
-    const result = detectCsiCodes(INPUT, undefined, {
-      tier1WeightByWordCount: [0, 0, 0, 0, 0],
-    });
-    expect(codesOf(result)).toEqual(DEFAULT_CODES);
-  });
-
-  it("all three pathological weights combined — empty result, no throw", () => {
-    const result = detectCsiCodes(INPUT, undefined, {
-      tier2Weight: 0,
-      tier3Weight: -1,
-      tier1WeightByWordCount: [0, 0, 0, 0, 0],
-    });
-    expect(result).toEqual([]);
+  it("the discipline decides a cross-division tie (PLAN §6.5)", () => {
+    const t = "BALL VALVE SCHEDULE NOTES";
+    expect(codesOf(detectCsiCodes(t))).toEqual([]);
+    expect(codesOf(detectCsiCodes(t, { context: { drawingNumber: "P-201" } }))).toEqual(["22 05 23"]);
+    expect(codesOf(detectCsiCodes(t, { context: { drawingNumber: "M-201" } }))).toEqual(["23 05 23"]);
+    // an explicit discipline outranks the drawing-number prefix; a null drawing number is no context
+    expect(codesOf(detectCsiCodes(t, { context: { drawingNumber: "M-201", discipline: "P" } }))).toEqual(["22 05 23"]);
+    expect(codesOf(detectCsiCodes(t, { context: { drawingNumber: null } }))).toEqual([]);
   });
 });
 
-// ═══════════════════════════════════════════════════════════════
-// [refactor jul9 P2-A C1] Added in commit C1 (SPEC_FINAL §6.2-1, last bullet).
-// Everything ABOVE this block is the untouched C0 freeze-first baseline.
-// ═══════════════════════════════════════════════════════════════
-
-describe("detectCsiCodes — explicit db param (C1)", () => {
+describe.skipIf(!HAS_KB)("detectCsiCodes — explicit db param (company overlay)", () => {
   it("4-arg call with loadBuiltinCsiDatabase() deep-equals the 3-arg call", () => {
-    // I-6: an explicitly-passed builtin bundle must be indistinguishable from
-    // the omitted-param default path.
-    const threeArg = detectCsiCodes(INPUT, undefined, undefined);
-    const fourArg = detectCsiCodes(INPUT, undefined, undefined, loadBuiltinCsiDatabase());
-    expect(fourArg).toEqual(threeArg);
+    expect(detectCsiCodes(INPUT, undefined, undefined, loadBuiltinCsiDatabase()))
+      .toEqual(detectCsiCodes(INPUT, undefined, undefined));
+    expect(csiKbFor(loadBuiltinCsiDatabase())).toBe(csiKbFor());
   });
-
-  // Synthetic single-entry DB via the same parser the resolver (C3) will use.
-  // Layout matches parseCsiTsv: header skipped; cols[2]=code / [3]=description /
-  // [4]=trade / [5]=division (cols 0-1 are ignored filler).
-  const FAKE_TSV = [
-    "col0\tcol1\tcode\tdescription\ttrade\tdivision",
-    "x\tx\t99 99 99\tzebra fixture widget\tFixture Trade\t99 00 00",
-  ].join("\n");
 
   it("a synthetic parseCsiTsv bundle is detected via the db param; builtin run does not detect it", () => {
     const bundle = parseCsiTsv(FAKE_TSV);
-    expect(bundle.entries).toHaveLength(1);
-    expect(bundle.entries[0].code).toBe("99 99 99");
-    // I-2: the bundle carries its OWN wordFrequency built from its entries.
-    expect(bundle.wordFrequency.get("zebra")).toBe(1);
-
-    // Consecutive phrase → Tier 1 hit (3 significant words, default weight 0.8).
     const input = "Furnish the zebra fixture widget assembly per plan detail.";
     const viaDb = detectCsiCodes(input, undefined, undefined, bundle);
-    expect(viaDb.map((r) => r.code)).toContain("99 99 99");
     expect(viaDb.find((r) => r.code === "99 99 99")).toEqual({
       code: "99 99 99",
       description: "zebra fixture widget",
       trade: "Fixture Trade",
       division: "99 00 00",
+      confidence: 0.88,
+      level: 4,
     });
-
-    // The builtin DB has no such code — proves routing, not a coincidence.
-    const viaBuiltin = detectCsiCodes(input);
-    expect(viaBuiltin.map((r) => r.code)).not.toContain("99 99 99");
+    expect(codesOf(detectCsiCodes(input))).not.toContain("99 99 99");
   });
 
-  it("scattered-words Tier-2 detection against the db bundle exercises anchor scoring with the bundle's own wordFrequency (I-2)", () => {
-    // 5-significant-word entry; input contains all words NON-consecutively so
-    // Tier 1 misses and Tier 2 fires (ratio 1 → 1² × tier2Weight 0.75 ≥ 0.4).
-    // The multi-tier boost then calls anchorScore with the bundle's map — a
-    // regression here (e.g. builtin frequencies leaking in) would throw or
-    // change confidence gating.
-    const tsv = [
-      "col0\tcol1\tcode\tdescription\ttrade\tdivision",
-      "x\tx\t98 98 98\tzebra flange gasket widget spindle\tFixture Trade\t98 00 00",
-    ].join("\n");
-    const bundle = parseCsiTsv(tsv);
-    expect(bundle.entries[0].wordCount).toBe(5);
+  it("the overlay is memoised per bundle; builtin patterns and IDF are frozen in it", () => {
+    const bundle = parseCsiTsv(FAKE_TSV);
+    const kb = csiKbFor(bundle);
+    expect(csiKbFor(bundle)).toBe(kb); // built once per bundle
+    expect(detectCsiCodes(INPUT, undefined, undefined, bundle)).toEqual(detectCsiCodes(INPUT));
+    const base = csiKbFor();
+    if (!base || !kb) throw new Error("KB missing");
+    expect(kb.patterns.slice(0, base.patterns.length)).toEqual(base.patterns);
+    for (const [t, v] of base.idf) expect(kb.idf.get(t)).toBe(v);
+  });
 
-    // NOTE: no punctuation adjacent to the phrase words — the engine tokenizes
-    // on whitespace WITHOUT stripping punctuation ("flange," ≠ "flange").
-    const scattered =
-      "Provide zebra units and gasket seals with flange mounts plus spindle brackets and widget covers";
-    const viaDb = detectCsiCodes(scattered, undefined, undefined, bundle);
-    expect(viaDb.map((r) => r.code)).toContain("98 98 98");
+  // Review fix round 1: frozen IDF/anchors do NOT keep builtin results fixed — overlay patterns take
+  // part in dominance/ownership. The adapter therefore returns the builtin run's rows unchanged and
+  // first, plus the codes the custom list names that the builtin run did not emit (measured, kb-v2.4).
+  const H = "c0\tc1\tcode\tdescription\ttrade\tdivision";
+  const PAINTED = parseCsiTsv([H, "x\tx\t081313\thollow metal doors painted\tDoors\t08 00 00"].join("\n"));
+  const ACME = parseCsiTsv([H, "x\tx\t089901\thollow metal doors acme\tDoors\t08 00 00"].join("\n"));
+
+  it("the overlay KB ALONE can move builtin results (why the adapter merges two runs)", () => {
+    const ov = csiKbFor(PAINTED);
+    if (!ov) throw new Error("KB missing");
+    const t = "HOLLOW METAL DOORS PAINTED AND HOLLOW METAL DOORS AND FRAMES.";
+    expect(confs(detectCsiCodes(t))).toEqual(["08 11 13@0.88", "08 13 13@0.88", "09 91 00@0.88"]);
+    expect(confs(detectCsiV2({ text: t }, {}, ov).codes)).toEqual(["08 10 00@0.792"]); // all three builtin codes lost
+    expect(detectCsiCodes(t, undefined, undefined, PAINTED)).toEqual(detectCsiCodes(t)); // adapter: unchanged
+  });
+
+  it("a custom list never moves a builtin row: builtin rows come back unchanged and first, overlay codes are added", () => {
+    const pages = [
+      "PROVIDE HOLLOW METAL DOORS ACME AT ALL STAIRS.",
+      "PROVIDE HOLLOW METAL DOORS AT ALL STAIRS.",
+      "HOLLOW METAL DOORS PAINTED AND HOLLOW METAL DOORS AND FRAMES.",
+      "HOLLOW METAL FRAMES; HOLLOW METAL DOORS PAINTED",
+      "HOLLOW METAL DOORS PAINTED, HOLLOW METAL FRAMES",
+      INPUT,
+    ];
+    for (const bundle of [PAINTED, ACME]) {
+      for (const t of pages) {
+        const builtin = detectCsiCodes(t);
+        expect(detectCsiCodes(t, undefined, undefined, bundle).slice(0, builtin.length)).toEqual(builtin);
+      }
+    }
+    // a NEW tenant code on a phrase that extends a builtin title: both are listed (the overlay KB alone
+    // would have replaced 08 13 13 with 08 99 01)
+    expect(confs(detectCsiCodes(pages[0], undefined, undefined, ACME))).toEqual(["08 13 13@0.88", "08 99 01@0.88"]);
+    // a tenant phrase for a BUILTIN code adds that code where the builtin run missed it
+    expect(confs(detectCsiCodes(pages[4]))).toEqual(["09 91 00@0.88"]);
+    expect(confs(detectCsiCodes(pages[4], undefined, undefined, PAINTED))).toEqual(["09 91 00@0.88", "08 13 13@0.88"]);
+  });
+
+  it("additions only fill the slots left under maxCodesPerPage", () => {
+    const t = "PROVIDE HOLLOW METAL DOORS ACME AT ALL STAIRS.";
+    expect(codesOf(detectCsiCodes(t, undefined, { maxCodesPerPage: 1 }, ACME))).toEqual(["08 13 13"]);
+    expect(codesOf(detectCsiCodes(t, undefined, { maxCodesPerPage: 2 }, ACME))).toEqual(["08 13 13", "08 99 01"]);
+  });
+
+  it("the cap holds when the overlay run ranks two custom codes above a builtin one (fix round 2)", () => {
+    // Both custom codes sort before 08 13 13 at equal confidence/level, so the overlay run's own cap
+    // keeps them both and pushes 08 13 13 out: without the adapter's `.slice(0, room)` this returns 3
+    // codes under a cap of 2 (measured on the mutant: 08 13 13, 01 99 97 and 01 99 98).
+    const TWO = parseCsiTsv([H, "x\tx\t01 99 98\tzebra fixture widget\tFixture Trade\t01 00 00",
+      "x\tx\t01 99 97\tquokka harness rig\tRig Trade\t01 00 00"].join("\n"));
+    const t = "PROVIDE HOLLOW METAL DOORS AT ALL STAIRS. FURNISH THE ZEBRA FIXTURE WIDGET AND THE QUOKKA HARNESS RIG PER PLAN.";
+    expect(confs(detectCsiCodes(t))).toEqual(["08 13 13@0.88"]);
+    expect(confs(detectCsiCodes(t, undefined, { maxCodesPerPage: 2 }, TWO))).toEqual(["08 13 13@0.88", "01 99 97@0.88"]);
+    expect(confs(detectCsiCodes(t, undefined, { maxCodesPerPage: 3 }, TWO)))
+      .toEqual(["08 13 13@0.88", "01 99 97@0.88", "01 99 98@0.88"]);
   });
 });
 
-describe("detectCsiFromGrid — explicit db param (C1)", () => {
-  it("forwards the db bundle to detectCsiCodes", () => {
-    const bundle = parseCsiTsv(
-      [
-        "col0\tcol1\tcode\tdescription\ttrade\tdivision",
-        "x\tx\t99 99 99\tzebra fixture widget\tFixture Trade\t99 00 00",
-      ].join("\n"),
-    );
+describe.skipIf(!HAS_KB)("buildCsiOverlayKb — custom rows become title patterns", () => {
+  const TSV = [
+    "c0\tc1\tcode\tdescription\ttrade\tdivision",
+    "x\tx\t99 99 99\tzebra fixture widget\tFixture Trade\t99 00 00",
+    "x\tx\t998877\tGypsum Board\tT\t99", // same token set as a builtin title → skipped
+    "x\tx\tABC-1\tquokka harness rig\tT\tZZ", // not a MasterFormat code → skipped
+    "x\tx\t99 99 98\tquokka\tT\t99", // one word → hint only
+    "x\tx\t09 29 00\tquokka drywall partition\tFinishes\t09", // a builtin code gains a pattern
+  ].join("\n");
+
+  it("measured stats, patterns and frozen base", () => {
+    const base = csiKbFor();
+    if (!base) throw new Error("KB missing");
+    const before = base.byCode.get("09 29 00")?.patternIds.length;
+    const ov = buildCsiOverlayKb(base, parseCsiTsv(TSV));
+    expect(ov.stats).toEqual({
+      rows: 5, patternsAdded: 3, codesAdded: 2, skippedBadCode: 1, skippedNoTokens: 0, skippedTooLong: 0,
+      skippedBuiltinDuplicate: 1, skippedOverlayDuplicate: 0,
+    });
+    expect(ov.defaultIdf).toBeCloseTo(Math.max(...base.idf.values()), 4);
+    const added = ov.kb.patterns.slice(base.patterns.length);
+    expect(added.map((p) => [p.code, p.tokens.join(" "), p.anchor, p.diff.join(","), p.hintOnly === true])).toEqual([
+      ["99 99 99", "zebra fixture widget", 0, "0", false],
+      ["99 99 98", "quokka", 0, "0", true],
+      ["09 29 00", "quokka drywall partition", 0, "0,1,2", false],
+    ]);
+    // the builtin token keeps its builtin idf; an overlay-only token gets the default idf
+    expect(added[0].mass[1]).toBe(Math.round((base.idf.get("fixture") ?? -1) * 1e4) / 1e4);
+    expect(added[0].mass[0]).toBe(ov.defaultIdf);
+    // the base KB object is untouched; the overlay holds a COPY of the extended code
+    expect(base.byCode.get("09 29 00")?.patternIds.length).toBe(before);
+    expect(ov.kb.byCode.get("09 29 00")?.patternIds.length).toBe((before ?? 0) + 1);
+    expect(ov.kb.byCode.get("99 99 99")).toMatchObject({ level: 4, parent: null, division: "99 00 00", trade: "Fixture Trade" });
+    expect(OVERLAY_FILLER_FACTOR).toBe(CSI_KB_FILLER_FACTOR);
+  });
+
+  it("overlay rows match at runtime; a one-word row only hints", () => {
+    const bundle = parseCsiTsv(TSV);
+    expect(codesOf(detectCsiCodes("QUOKKA DRYWALL PARTITION TYPE A", undefined, undefined, bundle))).toEqual(["09 29 00"]);
+    expect(detectCsiCodes("QUOKKA ONLY HERE TODAY", undefined, undefined, bundle)).toEqual([]);
+  });
+
+  it("code helpers: shape normalisation, level, nearest existing parent", () => {
+    expect(overlayCode("092900")).toBe("09 29 00");
+    expect(overlayCode("08111313")).toBe("08 11 13.13");
+    expect(overlayCode("09")).toBe("09 00 00");
+    expect(overlayCode("0929")).toBe("09 29 00");
+    expect(overlayCode("ABC-1")).toBeNull();
+    expect([overlayLevelOf("09 00 00"), overlayLevelOf("09 20 00"), overlayLevelOf("09 29 00"), overlayLevelOf("09 29 13"), overlayLevelOf("08 11 13.13")])
+      .toEqual([2, 3, 3, 4, 5]); // MasterFormat: 'NN NN 00' is level 3 like 'NN N0 00'
+    const known = new Set(["09 00 00", "09 20 00"]);
+    expect(overlayParentOf("09 29 77", (c) => known.has(c))).toBe("09 20 00");
+    expect(overlayParentOf("99 99 99", (c) => known.has(c))).toBeNull();
+  });
+});
+
+describe.skipIf(!HAS_KB)("detectCsiFromGrid — cells, config and db forwarding", () => {
+  it("forwards the db bundle", () => {
+    const bundle = parseCsiTsv(FAKE_TSV);
     const result = detectCsiFromGrid(
       ["Item", "Description"],
       [{ Item: "A1", Description: "zebra fixture widget assembly" }],
       undefined,
       bundle,
     );
-    expect(result.map((r) => r.code)).toContain("99 99 99");
+    expect(codesOf(result)).toContain("99 99 99");
+  });
+
+  it("reads each value as ONE cell with its header — never one string joined across cells", () => {
+    // joined, the words read "HOLLOW METAL DOORS" → 08 13 13; as cells they never meet
+    expect(codesOf(detectCsiCodes("MATERIAL TYPE HOLLOW METAL DOORS"))).toEqual(["08 13 13"]);
+    expect(codesOf(detectCsiFromGrid(["MATERIAL", "TYPE"], [{ MATERIAL: "HOLLOW METAL", TYPE: "DOORS" }]))).toEqual(["08 11 13"]);
+  });
+
+  it("forwards config; a grid with headers but no values is read header by header; no triggers", () => {
+    expect(detectCsiFromGrid(["HOLLOW METAL DOORS"], [], { tau: 0.99 })).toEqual([]);
+    const rows = detectCsiFromGrid(["HOLLOW METAL DOORS"], []);
+    expect(codesOf(rows)).toEqual(["08 13 13"]);
+    for (const r of rows) expect("triggers" in r).toBe(false);
   });
 });

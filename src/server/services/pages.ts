@@ -710,7 +710,7 @@ export async function recomputePageCsi(body: Record<string, unknown>) {
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
   const [pageRow] = await db
-    .select({ id: pages.id, textractData: pages.textractData, rawText: pages.rawText })
+    .select({ id: pages.id, textractData: pages.textractData, rawText: pages.rawText, drawingNumber: pages.drawingNumber })
     .from(pages)
     .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)))
     .limit(1);
@@ -727,7 +727,7 @@ export async function recomputePageCsi(body: Record<string, unknown>) {
   let csiCodes;
   try {
     // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
-    csiCodes = detectCsiCodes(rawText, textractData.words, csiCtx.config, csiCtx.db);
+    csiCodes = detectCsiCodes(rawText, { lines: textractData.lines, context: { drawingNumber: pageRow.drawingNumber } }, csiCtx.config, csiCtx.db);
   } catch (err) {
     logger.error("[csi-recompute] detectCsiCodes failed:", err);
     // Sanctioned diff B: was `apiError(err.message, 500)` (leak) → generic INTERNAL 500.

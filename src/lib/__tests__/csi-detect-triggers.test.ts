@@ -1,292 +1,137 @@
 /**
- * csi-detect-triggers.test.ts — CSI trigger/TIER labeling FREEZE-FIRST baseline.
+ * csi-detect-triggers.test.ts — the v2 TRIGGER output of `detectCsiCodes` (one trigger per span).
  *
- * [csi-rebuild P0.2] Companion to csi-detect.test.ts, which pins the engine's
- * CODE output. This file pins the other half: the per-word TRIGGER output and
- * the tier each trigger is labeled with.
- *
- * WHY A NEW FILE: csi-detect.test.ts carries an explicit "everything above this
- * block is the untouched C0 freeze-first baseline" contract (its line ~173).
- * These pins are a different arc; keeping them separate leaves that contract
- * legible.
- *
- * WHY IT MATTERS: before this file, NO test in the suite called detectCsiCodes
- * with a real `textractWords` array — every existing call passes `undefined` —
- * so `collectTriggersForEntry`, `normalizeTextractWords`, and the anchor
- * labeling path had zero coverage. The rebuild (PLAN P2) flips tier meaning to
- * evidence-strength. Without these pins that flip would land silently.
- *
- * THE INVERSION BEING FROZEN (this is the defect, pinned deliberately, NOT a
- * bug to fix here): the engine labels the RAREST / most diagnostic word of an
- * entry as tier 3, and ordinary phrase words as tier 2. The downstream ingest
- * then maps tier → confidence as
- *
- *     CSI_TIER_CONF = {1: 0.95, 2: 0.70, 3: 0.50}
- *     # tier -> confidence for CSI trigger marks (1=exact phrase, 2=bag-of-words, 3=anchor)
- *
- * (in the downstream heatmap ingest, `ingest/marks.py:54` — that file lives
- * outside this repo, under gitignore/brainstorms_notes/rebuild_notes/, so it is
- * quoted here rather than imported). The comment there says "3=anchor" — so the
- * strongest evidence class is knowingly assigned the LOWEST confidence.
- *
- * Corpus scale of the inversion, from the P0.1 baseline over all 471 pages:
- * 206,106 tier-3 triggers vs 19,949 tier-2 and 32 tier-1. ~91% of all evidence
- * is the tier weighted 0.50.
- *
- * When P2 flips tier semantics, these tests SHOULD fail. That is their job.
- * Update them deliberately, in the same commit as the flip.
+ * [csi-v2 S6] Replaces the pre-v2 freeze of the 3-tier per-WORD trigger labels (whose inversion —
+ * the rarest word labelled tier 3, the LOWEST downstream confidence — was the defect the rebuild
+ * exists to fix; IMPLEMENTATION §II S6). A v2 trigger is a matched SPAN: `text` (the span as
+ * printed, lowercased), `bbox` (union of its words), `bboxes` (one per word), `tier` (from the
+ * CODE's confidence: ≥ 0.8 → 1, ≥ 0.6 → 2, else 3), plus provenance (`pattern`, `source`,
+ * `score`, `line`, `tokenStart`/`tokenEnd`, `emitted`).
+ * Kept contracts: no geometry → the `triggers` key is absent; triggers ride ONLY on emitted codes.
+ * Every expected value was MEASURED on kb-v2.4 before pinning. KB-backed tests `skipIf` the KB is
+ * absent (scripts/bp-suite makes that a failure).
  */
 import { describe, it, expect } from "vitest";
-import { detectCsiCodes } from "@/lib/csi-detect";
-import { parseCsiTsv, type CsiDatabase, type CsiEntry } from "@/lib/csi-database";
-import type { CsiCode, CsiCodeTrigger, TextractWord } from "@/types";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { detectCsiCodes, linesFromWordsByGeometry, linesFromWordsByText } from "@/lib/csi-detect";
+import type { BboxLTWH, TextractLine, TextractWord } from "@/types";
+import { csiTriggerHits } from "@/lib/csi-utils";
 
-// ═══════════════════════════════════════════════════════════════
-// Controlled fixture DB
-//
-// Frequencies are engineered so the anchor set is UNAMBIGUOUS — no reliance on
-// sort tie-breaking. getAnchorWords takes the 4 rarest of an entry's
-// phraseWords, so for entry 90 00 01:
-//
-//   zebra 1 · flange 1 · gasket 1 · widget 2 · spindle 3
-//   → anchors = {zebra, flange, gasket, widget};  spindle is NOT an anchor.
-//
-// The three ties at frequency 1 are all inside the top 4 either way, so the
-// SET is fixed regardless of how ties order.
-// ═══════════════════════════════════════════════════════════════
+const HAS_KB = existsSync(join(process.cwd(), "src/data/csi-kb.json"));
 
-const FIXTURE_TSV = [
-  "col0\tcol1\tcode\tdescription\ttrade\tdivision",
-  "x\tx\t90 00 01\tzebra flange gasket widget spindle\tFixture Trade\t90 00 00",
-  "x\tx\t90 00 02\twidget spindle assembly panel\tFixture Trade\t90 00 00",
-  "x\tx\t90 00 03\tspindle panel bracket cover\tFixture Trade\t90 00 00",
-  "x\tx\t90 00 04\tpanel cover bracket mount\tFixture Trade\t90 00 00",
-].join("\n");
-
-const DB = parseCsiTsv(FIXTURE_TSV);
-const TARGET = "90 00 01";
-
-/** The anchors of the target entry, per the frequency table above. */
-const ANCHORS = ["zebra", "flange", "gasket", "widget"];
-/** A phrase word of the target entry that is NOT an anchor (too common). */
-const NON_ANCHOR = "spindle";
-
-/** Build a TextractWord list from tokens, with deterministic non-overlapping bboxes. */
-function words(tokens: string[]): TextractWord[] {
-  return tokens.map((text, i) => ({
-    text,
-    confidence: 99,
-    // Explicit, binary-exact values — no 0.1*i float drift.
-    bbox: [i / 8, 0.25, 0.0625, 0.03125] as [number, number, number, number],
+/** Words laid out on rows: y = 0.1 × (row + 1); x steps of 1/8, width 0.1 (gap 0.025 < 1.2 × height,
+ *  so the geometric fallback keeps a row together). */
+function wordsOf(rows: string[][]): TextractWord[] {
+  const out: TextractWord[] = [];
+  rows.forEach((row, r) => row.forEach((text, i) => {
+    out.push({ text, confidence: 90, bbox: [i / 8, (r + 1) / 10, 0.1, 0.03125] });
   }));
+  return out;
 }
+const textOf = (rows: string[][]) => rows.map((r) => r.join(" ")).join("\n");
 
-function triggersOf(result: CsiCode[], code: string): CsiCodeTrigger[] {
-  const hit = result.find(r => r.code === code);
-  expect(hit, `expected ${code} to be detected`).toBeDefined();
-  return hit!.triggers ?? [];
-}
+const ROWS = [["HOLLOW", "METAL", "DOORS"], ["GYPSUM", "BOARD"]];
 
-const asPairs = (ts: CsiCodeTrigger[]) => ts.map(t => [t.text, t.tier] as const);
+describe("words → lines (adapter helpers, no KB)", () => {
+  it("character alignment reproduces rawText's lines, whitespace-insensitive", () => {
+    const words = wordsOf(ROWS);
+    const lines = linesFromWordsByText(textOf(ROWS), words);
+    expect(lines?.map((l) => l.text)).toEqual(["HOLLOW METAL DOORS", "GYPSUM BOARD"]);
+    expect(lines?.[0].words).toEqual(words.slice(0, 3));
+    expect(lines?.[1].bbox).toEqual([0, 0.2, 0.225, 0.03125]);
+    // a word Textract split differently from the line text still aligns ("GYP" + "BD" vs "GYPBD")
+    expect(linesFromWordsByText("GYPBD", wordsOf([["GYP", "BD"]]))?.map((l) => l.text)).toEqual(["GYP BD"]);
+  });
 
-describe("frequency fixture sanity (guards the tests below)", () => {
-  it("word frequencies make the anchor set unambiguous", () => {
-    expect(DB.entries).toHaveLength(4);
-    expect(DB.wordFrequency.get("zebra")).toBe(1);
-    expect(DB.wordFrequency.get("flange")).toBe(1);
-    expect(DB.wordFrequency.get("gasket")).toBe(1);
-    expect(DB.wordFrequency.get("widget")).toBe(2);
-    expect(DB.wordFrequency.get("spindle")).toBe(3);
+  it("returns null when the words do not spell rawText (then the adapter groups them by geometry)", () => {
+    expect(linesFromWordsByText("HOLLOW METAL DOORS", wordsOf([["WOOD", "DOORS"]]))).toBeNull();
+    expect(linesFromWordsByText("HOLLOW", wordsOf([["HOLLOW", "EXTRA"]]))).toBeNull(); // words left over
+  });
 
-    const target = DB.entries.find(e => e.code === TARGET)!;
-    expect(target.wordCount).toBe(5);
-    expect(target.phraseWords).toEqual([...ANCHORS, NON_ANCHOR]);
+  it("geometric grouping: rows by vertical centre, split at a wide horizontal gap", () => {
+    const w: TextractWord[] = [
+      { text: "B", confidence: 90, bbox: [0.16, 0.1, 0.05, 0.02] }, // gap 0.01 < 1.2 × 0.02
+      { text: "A", confidence: 90, bbox: [0.1, 0.1, 0.05, 0.02] },
+      { text: "FAR", confidence: 90, bbox: [0.6, 0.1, 0.05, 0.02] },
+      { text: "NEXT", confidence: 90, bbox: [0.1, 0.3, 0.05, 0.02] },
+    ];
+    expect(linesFromWordsByGeometry(w).map((l: TextractLine) => l.text)).toEqual(["A B", "FAR", "NEXT"]);
   });
 });
 
-describe("trigger tiers — THE INVERSION (rarest word gets the LOWEST downstream confidence)", () => {
-  // Scattered so no consecutive allWords span exists → tier 1 cannot fire and
-  // the tier-3/tier-2 split is observable on its own.
-  const TOKENS = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-  const TEXT = TOKENS.join(" ");
-
-  it("anchors are labeled tier 3 and ordinary phrase words tier 2", () => {
-    const result = detectCsiCodes(TEXT, words(TOKENS), undefined, DB);
-    const pairs = asPairs(triggersOf(result, TARGET));
-
-    // Tier 3 is collected BEFORE tier 2, so anchors come first in page order.
-    expect(pairs).toEqual([
-      ["zebra", 3],
-      ["flange", 3],
-      ["gasket", 3],
-      ["widget", 3],
-      ["spindle", 2],
-    ]);
+describe.skipIf(!HAS_KB)("the triggers key itself", () => {
+  it("omitting words omits the key entirely — it is absent, not an empty array", () => {
+    const r = detectCsiCodes(textOf(ROWS));
+    expect(r.length).toBeGreaterThan(0);
+    for (const c of r) expect("triggers" in c).toBe(false);
   });
 
-  it("the inversion, stated as an assertion: more diagnostic ⇒ lower confidence", () => {
-    // Quoted from ingest/marks.py:54 (downstream, outside this repo).
-    const CSI_TIER_CONF: Record<1 | 2 | 3, number> = { 1: 0.95, 2: 0.7, 3: 0.5 };
+  it("an EMPTY words array still yields the key (geometry was offered, nothing to place)", () => {
+    const r = detectCsiCodes("HOLLOW METAL DOORS", []);
+    expect(r.map((c) => [c.code, c.triggers])).toEqual([["08 13 13", []]]);
+  });
 
-    const result = detectCsiCodes(TEXT, words(TOKENS), undefined, DB);
-    const ts = triggersOf(result, TARGET);
+  it("triggers ride ONLY on emitted codes: a BY OTHERS span emits no code and no trigger", () => {
+    const rows = [["GYPSUM", "BOARD"], ["HOLLOW", "METAL", "DOORS", "BY", "OTHERS"]];
+    const r = detectCsiCodes(textOf(rows), wordsOf(rows));
+    expect(r.map((c) => c.code)).toEqual(["09 29 00"]);
+    expect(r[0].triggers?.map((t) => t.text)).toEqual(["gypsum board"]);
+  });
 
-    const rarest = ts.find(t => t.text === "zebra")!;   // document frequency 1
-    const common = ts.find(t => t.text === NON_ANCHOR)!; // document frequency 3
-
-    // "zebra" identifies the entry almost uniquely; "spindle" is shared by 3 of
-    // 4 entries. Evidence strength says zebra > spindle.
-    expect(DB.wordFrequency.get("zebra")!).toBeLessThan(DB.wordFrequency.get(NON_ANCHOR)!);
-
-    // …yet the tier it receives maps to a STRICTLY LOWER confidence downstream.
-    expect(CSI_TIER_CONF[rarest.tier]).toBeLessThan(CSI_TIER_CONF[common.tier]);
-    expect(CSI_TIER_CONF[rarest.tier]).toBe(0.5);
-    expect(CSI_TIER_CONF[common.tier]).toBe(0.7);
+  it("an EMITTED code stores only spans that count: its BY OTHERS span is not a trigger (review fix round 1)", () => {
+    // csi-page keeps the excluded span on the code as emitted:false; stored, it was highlighted by the
+    // viewer search (csiTriggerHits) and counted by the sidebar's "N spans" pill
+    const rows = [["PROVIDE", "HOLLOW", "METAL", "DOORS", "AT", "STAIRS"], ["HOLLOW", "METAL", "DOORS", "BY", "OTHERS"]];
+    const r = detectCsiCodes(textOf(rows), wordsOf(rows));
+    expect(r.map((c) => `${c.code}@${c.confidence}`)).toEqual(["08 13 13@0.88"]);
+    expect(r[0].triggers?.map((t) => [t.text, (t as { line?: number }).line, (t as { emitted?: boolean }).emitted]))
+      .toEqual([["hollow metal doors", 0, true]]);
+    expect(csiTriggerHits(r[0].triggers ?? [])).toHaveLength(3);
   });
 });
 
-describe("trigger tiers — labeling priority is phrase > anchor > word, one label per word INDEX", () => {
-  it("a consecutive span consumes its words: one tier-1 trigger, no tier-2/3 for those indices", () => {
-    const tokens = ["alpha", "zebra", "flange", "gasket", "widget", "spindle", "beta"];
-    const result = detectCsiCodes(tokens.join(" "), words(tokens), undefined, DB);
-    const ts = triggersOf(result, TARGET);
+describe.skipIf(!HAS_KB)("span triggers (v2)", () => {
+  const words = wordsOf(ROWS);
+  const result = detectCsiCodes(textOf(ROWS), words);
 
-    // Every phrase word sits inside the span, so tier 1 is the ONLY label —
-    // even though zebra/flange/gasket/widget are anchors.
-    expect(ts).toHaveLength(1);
-    expect(ts[0].tier).toBe(1);
-    expect(ts[0].text).toBe("zebra flange gasket widget spindle");
+  it("one trigger per span, with provenance; tier comes from the code's confidence", () => {
+    expect(result.map((c) => `${c.code}@${c.confidence}`)).toEqual(["08 13 13@0.88", "09 29 00@0.88"]);
+    const t = result[0].triggers?.[0];
+    expect(t).toMatchObject({
+      text: "hollow metal doors", tier: 1, tokenStart: 0, tokenEnd: 2, pattern: "Hollow Metal Doors",
+      source: "title", score: 1, emitted: true, line: 0,
+    });
+    expect(result[1].triggers?.map((x) => [x.text, x.tier])).toEqual([["gypsum board", 1]]);
   });
 
-  it("labels are per-INDEX, not per-word: a repeat outside the span still gets its own tier-3 label", () => {
-    //                 0        1       2        3         4         5          6
-    const tokens = ["zebra", "beta", "zebra", "flange", "gasket", "widget", "spindle"];
-    const result = detectCsiCodes(tokens.join(" "), words(tokens), undefined, DB);
-    const ts = triggersOf(result, TARGET);
-
-    // Span matches at indices 2..6. The zebra at index 0 is untouched by the
-    // span and is an anchor, so it is labeled tier 3 on its own.
-    expect(asPairs(ts)).toEqual([
-      ["zebra flange gasket widget spindle", 1],
-      ["zebra", 3],
-    ]);
+  it("bboxes are the matched words' own boxes; bbox is their union", () => {
+    const t = result[0].triggers?.[0] as { bbox: BboxLTWH; bboxes?: BboxLTWH[] };
+    expect(t.bboxes).toEqual(words.slice(0, 3).map((w) => w.bbox));
+    expect(t.bbox[0]).toBe(0);
+    expect(t.bbox[1]).toBe(0.1);
+    expect(t.bbox[2]).toBeCloseTo(0.35, 12);
+    expect(t.bbox[3]).toBeCloseTo(0.03125, 12);
   });
 
-  it("tier-1 bbox is the union across the matched span", () => {
-    const tokens = ["alpha", "zebra", "flange", "gasket", "widget", "spindle", "beta"];
-    const ws = words(tokens);
-    const result = detectCsiCodes(tokens.join(" "), ws, undefined, DB);
-    const span = triggersOf(result, TARGET)[0];
-
-    // Span covers indices 1..5. Each word is [i/8, 0.25, 0.0625, 0.03125].
-    const first = ws[1].bbox;
-    const last = ws[5].bbox;
-    const expectedLeft = first[0];
-    const expectedRight = last[0] + last[2];
-    expect(span.bbox[0]).toBeCloseTo(expectedLeft, 10);
-    expect(span.bbox[1]).toBeCloseTo(0.25, 10);
-    expect(span.bbox[2]).toBeCloseTo(expectedRight - expectedLeft, 10);
-    expect(span.bbox[3]).toBeCloseTo(0.03125, 10); // all words share one row
-  });
-});
-
-describe("anchor selection mechanics", () => {
-  it("only the 4 RAREST phrase words are anchors — the 5th falls through to tier 2", () => {
-    const tokens = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-    const result = detectCsiCodes(tokens.join(" "), words(tokens), undefined, DB);
-    const ts = triggersOf(result, TARGET);
-
-    const tier3Words = ts.filter(t => t.tier === 3).map(t => t.text);
-    expect(tier3Words).toHaveLength(4); // getAnchorWords topN default
-    expect(new Set(tier3Words)).toEqual(new Set(ANCHORS));
-    expect(tier3Words).not.toContain(NON_ANCHOR);
+  it("Textract lines in, or the same words rebuilt into lines, give the same codes and triggers", () => {
+    const lines = linesFromWordsByText(textOf(ROWS), words);
+    if (!lines) throw new Error("alignment failed");
+    expect(detectCsiCodes(textOf(ROWS), { lines })).toEqual(result);
+    expect(detectCsiCodes(textOf(ROWS), { words })).toEqual(result);
   });
 
-  it("an EMPTY wordFrequency map falls back to the first N phrase words (documented guard)", () => {
-    // Hand-built bundle: parseCsiTsv can never produce an empty frequency map
-    // alongside non-empty entries, but the guard at getAnchorWords exists for
-    // the builtin-DB-file-not-found path, which memoizes an empty bundle.
-    const entry: CsiEntry = {
-      code: "91 00 01",
-      phraseWords: ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"],
-      allWords: ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"],
-      description: "alpha bravo charlie delta echo foxtrot",
-      trade: "Fixture Trade",
-      division: "91 00 00",
-      wordCount: 6,
-    };
-    const emptyFreqDb: CsiDatabase = { entries: [entry], wordFrequency: new Map() };
-
-    // Scattered so tier 1 cannot fire and the anchor split is visible.
-    const tokens = ["alpha", "x1", "bravo", "x2", "charlie", "x3", "delta", "x4", "echo", "x5", "foxtrot"];
-    const result = detectCsiCodes(tokens.join(" "), words(tokens), undefined, emptyFreqDb);
-    const ts = triggersOf(result, "91 00 01");
-
-    // slice(0, 4) of phraseWords — positional, not frequency-ranked.
-    expect(ts.filter(t => t.tier === 3).map(t => t.text)).toEqual(["alpha", "bravo", "charlie", "delta"]);
-    expect(ts.filter(t => t.tier === 2).map(t => t.text)).toEqual(["echo", "foxtrot"]);
-  });
-});
-
-describe("word normalization parity between detection and trigger collection", () => {
-  it("QUIRK: punctuation is NOT stripped, so a trigger can be missed for a word detection matched", () => {
-    // rawText and the Textract word list disagree only in punctuation. Detection
-    // tokenizes rawText on whitespace; trigger collection lowercases the word
-    // text and nothing more. So "gasket," never equals "gasket".
-    const tokens = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-    const ws = words(tokens);
-    ws[4] = { ...ws[4], text: "gasket," };
-
-    // rawText keeps the CLEAN token, so the code is still detected…
-    const result = detectCsiCodes(tokens.join(" "), ws, undefined, DB);
-    const ts = triggersOf(result, TARGET);
-
-    // …but no trigger is produced for the punctuated word.
-    expect(ts.map(t => t.text)).not.toContain("gasket");
-    expect(ts.map(t => t.text)).not.toContain("gasket,");
-    expect(ts.filter(t => t.tier === 3)).toHaveLength(3); // one anchor lost
+  it("words that do not spell rawText fall back to geometric lines (still with triggers)", () => {
+    const r = detectCsiCodes("unrelated raw text here", words);
+    expect(r.map((c) => c.code)).toEqual(["08 13 13", "09 29 00"]);
+    expect(r[0].triggers?.[0].bboxes).toEqual(words.slice(0, 3).map((w) => w.bbox));
   });
 
-  it("uppercase Textract text still matches (lowercasing IS applied)", () => {
-    const tokens = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-    const ws = words(tokens).map(w => ({ ...w, text: w.text.toUpperCase() }));
-    const result = detectCsiCodes(tokens.join(" "), ws, undefined, DB);
-    expect(triggersOf(result, TARGET)).toHaveLength(5);
-  });
-
-  it("empty-text words are skipped rather than labeled", () => {
-    const tokens = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-    const ws = words(tokens);
-    ws.splice(1, 0, { text: "", confidence: 99, bbox: [0.9, 0.9, 0.01, 0.01] });
-    const result = detectCsiCodes(tokens.join(" "), ws, undefined, DB);
-    const ts = triggersOf(result, TARGET);
-    expect(ts.map(t => t.text)).not.toContain("");
-    expect(ts).toHaveLength(5);
-  });
-});
-
-describe("the triggers key itself", () => {
-  it("omitting textractWords omits the key entirely — it is absent, not an empty array", () => {
-    const tokens = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-    const result = detectCsiCodes(tokens.join(" "), undefined, undefined, DB);
-    const hit = result.find(r => r.code === TARGET)!;
-    expect(hit).toBeDefined();
-    expect("triggers" in hit).toBe(false);
-  });
-
-  it("triggers are collected ONLY for codes that cleared the confidence threshold", () => {
-    const tokens = ["zebra", "alpha", "flange", "beta", "gasket", "gamma", "widget", "delta", "spindle"];
-    const ws = words(tokens);
-
-    // Entry 90 00 02 shares widget+spindle with the input but scores
-    // (2/4)² × 0.75 = 0.1875 — below the 0.4 gate.
-    const result = detectCsiCodes(tokens.join(" "), ws, undefined, DB);
-    expect(result.map(r => r.code)).toEqual([TARGET]);
-
-    // Drop the threshold and it appears, now WITH triggers of its own.
-    const loose = detectCsiCodes(tokens.join(" "), ws, { matchingConfidenceThreshold: 0.1 }, DB);
-    const second = loose.find(r => r.code === "90 00 02");
-    expect(second).toBeDefined();
-    expect(second!.triggers!.length).toBeGreaterThan(0);
+  it("repetition: the same phrase on two lines is two triggers and raises confidence (0.88 → 0.91)", () => {
+    const rows = [["GYPSUM", "BOARD"], ["GYPSUM", "BOARD"]];
+    const r = detectCsiCodes(textOf(rows), wordsOf(rows));
+    expect(r.map((c) => [c.code, c.triggers?.length, c.triggers?.map((t) => (t as { line?: number }).line)]))
+      .toEqual([["09 29 00", 2, [0, 1]]]);
+    expect(r[0].confidence).toBeCloseTo(0.91, 12);
   });
 });

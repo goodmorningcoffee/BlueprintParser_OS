@@ -1,117 +1,61 @@
 /**
- * csi-reachability.test.ts — how much of MasterFormat the engine can NEVER emit.
+ * csi-reachability.test.ts — how much of MasterFormat the v2 tagger can emit at all.
  *
- * [csi-rebuild P1.2a] This pins a DEFECT, not a desired property. At default
- * config a code fires Tier 1 at `0.95 × tier1WeightByWordCount[n]`, and Tiers 2
- * and 3 are gated at `wordCount >= 3` / `>= 5`. So an entry whose title has
- * fewer than 3 significant words scores at most `0.95 × 0.19 = 0.1805` against a
- * `0.4` threshold and clears no other tier — it is unreachable for ANY input.
+ * [csi-v2 S6] Rewritten to the v2 rule (IMPLEMENTATION §II S6; PLAN v1 §7 "v2 reachability rule
+ * with the delta recorded"). The pre-v2 census pinned a DEFECT of the 3-tier engine: at its
+ * default config every entry with fewer than 3 significant words was unreachable for ANY input —
+ * 2,362 of 8,951 TSV entries (26.4%), Furnishings 169/280, and everyday codes such as 09 91 00
+ * Painting, 09 29 00 Gypsum Board and 09 51 00 Acoustical Ceilings among them.
  *
- * Plan 2 §1 called this BRITTLE-1 and gave three examples. This is the census,
- * computed from the live database through the live parser rather than restated
- * from a document.
+ * THE v2 RULE (an executable check, not a hand model of the engine; `reachOf` in
+ * eval/csi/v2-baseline.ts, which also records the census in the v2 engine baseline): a code is REACHABLE iff the
+ * printed text of at least one of its non-hint-only patterns, fed to `detectCsiV2` as free text on
+ * two lines (one repeat lifts a loose 0.85 match over the default tau) at the DEFAULT config, emits
+ * that code — with `context.discipline = 'C'`, the one context that opens the facility gate
+ * (divisions 33–35, 40–48), so the census asks "is there ANY page".
+ * What stays unreachable, by design (PLAN §6.3/§6.7): codes whose only patterns are one word and
+ * not a curated csi_terms row (hint-only), Division 00/01 codes whose patterns are shorter than 3
+ * tokens (text callers need ≥ 3; drawings never emit 00/01), and titles that lose to a deeper or
+ * curated owner of the same words (frontier / E13 term ownership).
  *
- * WHY IT IS A TEST: `eval/csi/GRANULARITY_RUBRIC.md` §2.1 tells the gold-set
- * labeler this blind spot exists and how big it is, and the labeler is
- * instructed to label TRUE content regardless. A number quoted in a markdown
- * file and verified nowhere would drift away from the code the first time
- * anyone touches the weights.
+ * DELTA (measured on kb-v2.4, 2026-10-21): unreachable 2,362 / 8,951 (26.4%) pre-v2 →
+ * 409 / 8,935 (4.6%) v2. Of the 409: 145 have no usable pattern (143 hint-only, 2 none), 166 are
+ * in Divisions 00/01 (the two groups overlap), 23 are Furnishings (was 169).
  *
- * P2 MUST BREAK THIS TEST. Making these codes reachable is the point of the
- * rebuild. When it does, update the numbers here in the same commit and record
- * the new census — the delta is the headline result.
+ * KB-backed: skipIf the KB is absent (scripts/bp-suite turns a skip into a failure).
  */
 import { describe, it, expect } from "vitest";
-import { loadBuiltinCsiDatabase } from "@/lib/csi-database";
-import { DEFAULT_CSI_DETECT_CONFIG } from "@/lib/csi-detect-defs";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { loadCsiKb } from "@/lib/csi-kb";
+import { reachCensus, type Reach } from "../../../eval/csi/v2-baseline";
 
-/**
- * Can this entry clear the confidence threshold under ANY input?
- *
- * ⚠ THIS IS A MODEL OF THE ENGINE, NOT THE ENGINE. It re-derives the tier
- * ceilings by hand rather than calling `detectCsiCodes`, because the real
- * question — "is there ANY input that surfaces this code?" — is a statement
- * about the engine's upper bound, which no single call can answer. Only the
- * database and its word counts come from live code (`loadBuiltinCsiDatabase`).
- *
- * The consequence: **if the tier logic in csi-detect.ts changes, this model must
- * be re-derived by hand.** It will not fail on its own. Re-read
- * `detectCsiCodes`'s scoring block before trusting these numbers after any
- * engine edit — `csi-baseline-freshness.test.ts` is what tells you an edit
- * happened.
- *
- * The model: best case is every word present, so Tier 2 reaches
- * `1² × tier2Weight` and Tier 3 reaches `1 × tier3Weight`, each behind its own
- * word-count gate; Tier 1's ceiling is the weight for that word count. The
- * multi-tier boost only applies once something already scored, so the ceiling is
- * the max of the three. If none clears the threshold, no page can surface the code.
- */
-function isReachable(wordCount: number): boolean {
-  const cfg = DEFAULT_CSI_DETECT_CONFIG;
-  const w = cfg.tier1WeightByWordCount;
-  const tier1 = 0.95 * (wordCount < w.length ? w[wordCount] : w[w.length - 1]);
-  const tier2 = wordCount >= cfg.tier2MinWords ? cfg.tier2Weight : 0;
-  const tier3 = wordCount >= cfg.tier3MinWords ? cfg.tier3Weight : 0;
-  // The multi-tier boost only applies once something already scored, so the
-  // ceiling is the max of the three.
-  return Math.max(tier1, tier2, tier3) >= cfg.matchingConfidenceThreshold;
-}
+const HAS_KB = existsSync(join(process.cwd(), "src/data/csi-kb.json"));
 
-describe("MasterFormat reachability under the default config", () => {
-  it("a quarter of the database can never be emitted, for any input", () => {
-    const db = loadBuiltinCsiDatabase();
-    expect(db.entries.length).toBe(8951);
+describe.skipIf(!HAS_KB)("MasterFormat reachability under the v2 rule (default config)", () => {
+  const kb = HAS_KB ? loadCsiKb() : null;
+  const res = kb ? reachCensus(kb) : new Map<string, Reach>();
+  const count = (w: Reach) => [...res.values()].filter((v) => v === w).length;
 
-    const unreachable = db.entries.filter(e => !isReachable(e.wordCount));
-    expect(unreachable).toHaveLength(2362);
-    expect(unreachable.length / db.entries.length).toBeCloseTo(0.264, 3);
+  it("the census: 8,526 of 8,935 codes are reachable (4.6% unreachable, was 26.4%)", () => {
+    expect(res.size).toBe(8935);
+    expect({ reachable: count("reachable"), noPattern: count("noPattern"), hintOnly: count("hintOnly"), lost: count("lost") })
+      .toEqual({ reachable: 8526, noPattern: 2, hintOnly: 143, lost: 264 });
+    expect((res.size - count("reachable")) / res.size).toBeCloseTo(0.0458, 4);
   });
 
-  it("the boundary is exactly 'fewer than 3 significant words'", () => {
-    const db = loadBuiltinCsiDatabase();
-    for (const e of db.entries) {
-      expect(isReachable(e.wordCount), `${e.code} "${e.description}" (${e.wordCount} words)`).toBe(
-        e.wordCount >= 3,
-      );
+  it("the everyday interior codes the pre-v2 engine could never emit are reachable now", () => {
+    for (const code of ["09 91 00", "09 91 23", "09 29 00", "09 51 00", "09 30 00", "06 22 00", "06 10 00"]) {
+      expect(res.get(code), code).toBe("reachable");
     }
   });
 
-  it("everyday interior systems are among the unreachable", () => {
-    const db = loadBuiltinCsiDatabase();
-    const byCode = new Map(db.entries.map(e => [e.code, e]));
-    // The codes GRANULARITY_RUBRIC.md §2.1 quotes. If any becomes reachable,
-    // the rubric's worked example A is out of date too.
-    for (const code of ["099100", "099123", "092900", "095100", "093000", "062200", "061000"]) {
-      const e = byCode.get(code);
-      expect(e, `${code} missing from the builtin DB`).toBeDefined();
-      expect(isReachable(e!.wordCount), `${code} "${e!.description}" is now reachable`).toBe(false);
-    }
-  });
-
-  it("the blind spot is division-skewed, which is what makes misses biased", () => {
-    // plan 2 §0 requires misses be division-UNBIASED. They are not: the share of
-    // unreachable codes ranges from ~10% to 60% across divisions, so the engine's
-    // recall failures concentrate in specific trades. This is the measured basis
-    // for the gold set's stratification rule (LABELING_PROTOCOL §3.1).
-    const db = loadBuiltinCsiDatabase();
-    const tally = new Map<string, { total: number; unreachable: number }>();
-    for (const e of db.entries) {
-      const d = e.code.slice(0, 2);
-      const t = tally.get(d) ?? { total: 0, unreachable: 0 };
-      t.total++;
-      if (!isReachable(e.wordCount)) t.unreachable++;
-      tally.set(d, t);
-    }
-
-    const furnishings = tally.get("12")!;
-    expect(furnishings.total).toBe(280);
-    expect(furnishings.unreachable).toBe(169);
-    expect(furnishings.unreachable / furnishings.total).toBeGreaterThan(0.55);
-
-    // The spread across substantial divisions is what "biased" means here.
-    const shares = [...tally.values()]
-      .filter(t => t.total >= 50)
-      .map(t => t.unreachable / t.total);
-    expect(Math.max(...shares) - Math.min(...shares)).toBeGreaterThan(0.3);
+  it("what is left is concentrated where the gates put it: Divisions 00/01 and one-word titles", () => {
+    const unreach = [...res].filter(([, w]) => w !== "reachable").map(([c]) => c);
+    const projectDiv = unreach.filter((c) => c.startsWith("00") || c.startsWith("01")).length;
+    expect(projectDiv).toBe(166);
+    expect(res.get("12 00 00")).toBe("hintOnly"); // "Furnishings" — one word, hint only (E6)
+    // Furnishings was 169/280 unreachable pre-v2
+    expect(unreach.filter((c) => c.startsWith("12")).length).toBe(23);
   });
 });

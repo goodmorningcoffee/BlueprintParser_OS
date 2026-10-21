@@ -20,6 +20,7 @@ export const zCsiCodeTrigger = z
     text: z.string(),
     bbox: zBboxLTWH, // LTWH [left,top,width,height], normalized 0-1
     tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    bboxes: z.array(zBboxLTWH).optional(), // [csi-v2] per-word boxes; bbox = their union
   })
   .loose();
 export type CsiCodeTrigger = z.infer<typeof zCsiCodeTrigger>;
@@ -37,6 +38,8 @@ export const zCsiCode = z
     description: z.string(),
     trade: z.string(),
     division: z.string(),
+    confidence: z.number().optional(), // [csi-v2] page-level confidence 0..1; absent on pre-v2 data
+    level: z.number().optional(), // [csi-v2] MasterFormat level 2..5
     triggers: z.array(zCsiCodeTrigger).optional(),
   })
   .loose();

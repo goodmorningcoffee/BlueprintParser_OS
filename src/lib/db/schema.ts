@@ -61,14 +61,12 @@ export const companies = pgTable("companies", {
       enabledDetectors?: string[];
     };
     csi?: {
+      // [csi-v2 S6] v2 engine config (csi-v2-config.ts). Pre-v2 rows may still carry
+      // matchingConfidenceThreshold (read as tau) and other legacy keys (ignored; dropped by the
+      // next admin save, which zCsiConfigPut strips to the v2 fields).
+      tau?: number;
+      maxCodesPerPage?: number;
       matchingConfidenceThreshold?: number;
-      taggerKeywordOverlap?: number;
-      taggerMinWordMatches?: number;
-      maxCsiTagsPerAnnotation?: number;
-      tier2MinWords?: number;
-      tier3MinWords?: number;
-      tier2Weight?: number;
-      tier3Weight?: number;
       customDatabaseS3Key?: string;
       customDatabaseName?: string;
       customDatabaseCodes?: number;

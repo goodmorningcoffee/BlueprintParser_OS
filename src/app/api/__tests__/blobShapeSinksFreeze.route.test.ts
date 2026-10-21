@@ -91,7 +91,7 @@ function expectDataExactly(actual: unknown, expected: Record<string, unknown>) {
 }
 
 // A note that reliably auto-detects CSI codes under the default engine (same phrase the sibling
-// annotations.route.test.ts §6.2 uses: it detects the "033000" concrete/foundation code). The
+// annotations.route.test.ts §6.2 uses: it detects the "03 30 00" concrete/foundation code). The
 // EXACT detected set below is pinned from OBSERVED behavior (not assumed) — it is the default
 // builtin-masterformat output for this exact note at HEAD 454490c. A masterformat DB refresh is
 // expected to move this set; update it in the same commit if so (this coupling is a deliberate
@@ -99,20 +99,13 @@ function expectDataExactly(actual: unknown, expected: Record<string, unknown>) {
 // detect returns, and the detected content itself is owned by csi-detect's own tests).
 const TRIGGERING_NOTE =
   "Provide cast in place concrete for all foundation walls and footings.";
-// [OBSERVED @HEAD 454490c] detectCsiCodes(TRIGGERING_NOTE).map(c => c.code) under the builtin CSI DB.
-const AUTO_CODES = [
-  "030130",
-  "030130.51",
-  "030130.61",
-  "030130.71",
-  "030130.72",
-  "030630",
-  "033000",
-  "033053",
-  "316213.13",
-  "316616.23",
-  "323213",
-];
+// [csi-v2 S6 OBSERVED] detectCsiCodes(TRIGGERING_NOTE).map(c => c.code) under the v2 tagger's builtin
+// KB (kb-v2.4): two spaced codes, confidence-desc then deeper-level first (csi-detect.test.ts pins it).
+// (Pre-v2 @HEAD 454490c it was 11 unspaced codes from 030130 to 323213.)
+const AUTO_CODES = ["31 66 16", "03 30 00"];
+// The manual "03 30 00" now EQUALS an auto code, so the Set-dedupe drops the auto duplicate:
+// manual entries first, then the auto codes not already present.
+const MERGED_WITH_MANUAL = ["03 30 00", "31 66 16"];
 
 describe.skipIf(!dbUp)("[P4.1 U0] POST /api/annotations single — createAnnotationSingle sink (verbatim jsonb)", () => {
   // note null ⇒ mergeAutoCsi returns existingData unchanged (annotations.ts:87), so the client blob
@@ -326,7 +319,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] mergeAutoCsi on create — annotations.ts:79-9
     const [row] = await annotationsFor(project.id);
     const persisted = row.data as Record<string, unknown>;
     // Only csiCodes is rewritten: manual entries retained, auto codes appended, Set-deduped.
-    expect(persisted.csiCodes).toEqual(["03 30 00", ...AUTO_CODES]);
+    expect(persisted.csiCodes).toEqual(MERGED_WITH_MANUAL);
     // Sentinel + every non-csi key untouched (the shallow-copy semantics).
     expect(persisted[SENTINEL]).toBe("preserve");
     expect(persisted.type).toBe("count-marker");
@@ -416,7 +409,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] PUT /api/annotations/[id] — updateAnnotation
     expect(body.autoCsiCodes).toEqual([...AUTO_CODES]); // detection reported to the caller
     const persisted = (await rowById(id)).data as Record<string, unknown>;
     // Seeded from the existing row (updates.data undefined → annotation.data): manual + auto union.
-    expect(persisted.csiCodes).toEqual(["03 30 00", ...AUTO_CODES]);
+    expect(persisted.csiCodes).toEqual(MERGED_WITH_MANUAL);
     expect(persisted[SENTINEL]).toBe("preserve"); // unknown key survives the in-place merge
     expect(persisted.type).toBe("count-marker");
     expect(persisted.color).toBe("#keep");
@@ -440,7 +433,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] PUT /api/annotations/[id] — updateAnnotation
     expect(status).toBe(200);
     const persisted = (await rowById(id)).data as Record<string, unknown>;
     // Base = body.data (old sentinel dropped); csiCodes = union(body.data.csiCodes, detected).
-    expect(persisted.csiCodes).toEqual(["03 30 00", ...AUTO_CODES]);
+    expect(persisted.csiCodes).toEqual(MERGED_WITH_MANUAL);
     expect(persisted.newKey).toBe("kept");
     expect(persisted.color).toBe("#c");
     expect(persisted[SENTINEL]).toBeUndefined();

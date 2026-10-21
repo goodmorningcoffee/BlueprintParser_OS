@@ -21,9 +21,14 @@
  *   guard); the prefix helper is shared with the upload writer (csi-database.ts).
  * • I-9: oversized stored objects (bytes or rows) are refused → builtin, so a
  *   pre-existing giant S3 object cannot become hot-path resident.
- * • I-10: `pickEngineConfig` drops a non-positive `matchingConfidenceThreshold`
- *   (a legacy z.unknown()-era stored ≤0 would otherwise return the WHOLE DB per
- *   detect call — an ingest-hot-path availability hazard).
+ * • I-10: `pickEngineConfig` drops a non-positive threshold (a legacy z.unknown()-era
+ *   stored ≤0 returned the WHOLE DB per detect call under the pre-v2 engine).
+ * • [csi-v2 S6] The engine is the v2 tagger (csi-detect.ts adapter). `config` is
+ *   `{tau, maxCodesPerPage}` (csi-v2-config.ts `pickCsiV2Config`; a pre-v2 stored
+ *   `matchingConfidenceThreshold` above 0.704 is read as tau). The resolved custom bundle becomes a
+ *   per-tenant KB OVERLAY inside the adapter (csi-kb-overlay.ts — custom rows ADD title
+ *   patterns, builtin IDF/anchors frozen), memoised on the cached bundle object, so it is
+ *   built once per company per TTL per process. Cache key suffix bumped to ":v2".
  *
  * ── Staleness model (precise — SPEC_FINAL §1.7 docstring block) ─────────────
  * • The pipelineConfig POINTER is a fresh per-request PK read (NOT cached), so
@@ -60,64 +65,39 @@ import {
   CSI_DB_MAX_ENTRIES,
   type CsiDatabase,
 } from "@/lib/csi-database";
-import type { CsiDetectConfig } from "@/lib/csi-detect-defs";
+import { pickCsiV2Config, type CsiV2Config } from "@/lib/csi-v2-config";
 import { logger } from "@/lib/logger";
 
 /** Resolved per-company CSI context handed to `detectCsiCodes` / `detectCsiFromGrid`. */
 export interface CompanyCsiContext {
-  /** Custom uploaded DB if resolvable+valid, otherwise the builtin masterformat. */
+  /** Custom uploaded DB if resolvable+valid, otherwise the builtin masterformat (= the builtin KB). */
   db: CsiDatabase;
   /** Validated engine-config subset; `undefined` when the company stored nothing usable. */
-  config: Partial<CsiDetectConfig> | undefined;
+  config: Partial<CsiV2Config> | undefined;
 }
 
 // [refactor jul9 P2-A C1] custom-DB payload cache TTL (SPEC_FINAL §1.7).
 export const CSI_DB_CACHE_TTL_MS = 15 * 60_000;
 
 // [refactor jul9 P2-A C1] delimiter-TERMINATED cache key (C1-F3 / C2-F5 / C3-F-9):
-// the trailing ":v1" (not a bare `csi-db:${id}`) prevents prefix over-invalidation —
+// the trailing version suffix (not a bare `csi-db:${id}`) prevents prefix over-invalidation —
 // invalidating company 1 must NOT evict company 11. invalidateCache is called with
-// the FULL key, so the ":v1" suffix also bounds the startsWith match to this exact key.
+// the FULL key, so the suffix also bounds the startsWith match to this exact key.
+// [csi-v2 S6] ":v1" → ":v2" — the cached bundle now feeds the v2 overlay (PLAN §7).
 export function csiDbCacheKey(companyId: number): string {
-  return `csi-db:${companyId}:v1`;
+  return `csi-db:${companyId}:v2`;
 }
 
 /**
- * [refactor jul9 P2-A C1] Copy ONLY the 6 `CsiDetectConfig` fields out of a
- * stored (untrusted) `csi` blob, each type-checked; return `undefined` if none
- * survive so the engine falls through to DEFAULT_CSI_DETECT_CONFIG byte-for-byte.
- *
- * Exported for unit tests only (module-private in intent). The 4 orphan admin-UI
- * fields and the `customDatabase*` pointer triple are deliberately NOT copied —
- * no engine slot exists for them.
- *
- * `tier1WeightByWordCount` is ALL-OR-NOTHING: the engine's `{...DEFAULT, ...config}`
- * shallow spread replaces the whole array, so a partial/garbage array is dropped
- * wholesale rather than merged element-wise.
- *
- * I-10: `matchingConfidenceThreshold` must be `> 0` — a non-positive threshold is
- * an availability hazard (returns the entire DB per detect call), not a preference.
+ * [csi-v2 S6] The validated v2 engine config from a stored (untrusted) `csi` blob —
+ * `{tau?, maxCodesPerPage?}` or `undefined` (csi-v2-config.ts `pickCsiV2Config`, which the admin
+ * UI shares). Pre-v2 keys are tolerated: `matchingConfidenceThreshold` > 0.704 is read as `tau`; the tier
+ * weights, the orphan tagger sliders and the custom-DB pointer triple are ignored.
+ * I-10 still holds: a non-positive (or > 1) tau is dropped, never handed to the engine.
+ * Exported for unit tests only (module-private in intent).
  */
-export function pickEngineConfig(csi: unknown): Partial<CsiDetectConfig> | undefined {
-  if (!csi || typeof csi !== "object" || Array.isArray(csi)) return undefined;
-  const src = csi as Record<string, unknown>;
-  const out: Partial<CsiDetectConfig> = {};
-
-  const t = src.matchingConfidenceThreshold;
-  if (typeof t === "number" && Number.isFinite(t) && t > 0) out.matchingConfidenceThreshold = t; // I-10
-
-  const finiteFields = ["tier2MinWords", "tier3MinWords", "tier2Weight", "tier3Weight"] as const;
-  for (const f of finiteFields) {
-    const v = src[f];
-    if (typeof v === "number" && Number.isFinite(v)) out[f] = v;
-  }
-
-  const w = src.tier1WeightByWordCount;
-  if (Array.isArray(w) && w.length > 0 && w.every(n => typeof n === "number" && Number.isFinite(n))) {
-    out.tier1WeightByWordCount = w as number[];
-  }
-
-  return Object.keys(out).length > 0 ? out : undefined;
+export function pickEngineConfig(csi: unknown): Partial<CsiV2Config> | undefined {
+  return pickCsiV2Config(csi);
 }
 
 /**

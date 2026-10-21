@@ -435,8 +435,12 @@ const MAX_LINES_BASELINE = {
       // field PLAN §5 phase 3 requires. Bumped deliberately rather than absorbed: the field is
       // mandatory, and the comment documenting it was cut to a trailing one-liner first so the
       // bump is the true minimum. This ceiling exists to stop drift, not to block a required field.
+      // [csi-v2 S6 rebudget 2026-10-21] 1164 -> 1167: THREE optional fields the v2 CSI tagger
+      // persists — `CsiCode.confidence`, `CsiCode.level` (PLAN §6.8 output) and
+      // `CsiCodeTrigger.bboxes` (per-word highlight boxes). Each is a one-line declaration with a
+      // trailing comment; mirrored in types/shapes/csi.ts + shapes.test.ts in the same unit.
       path: "src/types/index.ts",
-      maxLines: 1164,
+      maxLines: 1167,
       reason: "legacy-schema-catalog",
     },
     {

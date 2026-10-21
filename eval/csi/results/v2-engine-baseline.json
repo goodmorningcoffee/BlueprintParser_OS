@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "csi-v2-baseline/1",
+  "engineSha": {
+    "src/lib/csi-tokenize.ts": "758d525585d050f09d41cc0bbc7c9b1d8ac2002ffe7e7527da3267a188782d9a",
+    "src/lib/csi-kb-types.ts": "04d4344543be9b0bc6b5b184e7592fd9f718c1e77d9d22e005883208716c5432",
+    "src/lib/csi-kb.ts": "a4260eb290b96eff52ae782eadbafd883d227096802b2444984a9fe156a150dc",
+    "src/lib/csi-span-own.ts": "c92b0a6474c5da5622bbac4ff92e43ac76855e0b8e35e1b358420a602156a145",
+    "src/lib/csi-span-match.ts": "0af49711c96acc158e3bc42a0f6381515257e817c49643448acd3351c7786b83",
+    "src/lib/csi-page.ts": "dceeba7a421657d4e12d706512963c0e17b130c8ebf3da93dd89255747970340",
+    "src/lib/csi-kb-overlay.ts": "0a832cb4470a605a9c80b6b122eb88f03ae5a7a59588780727b493c8f256a510",
+    "src/lib/csi-v2-config.ts": "021796f4ea90f017b29f07a3efceb54acfe6d6847f12de38ddea5cd14a428506",
+    "src/lib/csi-detect.ts": "3c573c4b7fa672a414ae532d481a467b84d9cb8687b4a18ca2d70e24451c3b6e"
+  },
+  "kb": {
+    "file": "src/data/csi-kb.json",
+    "sha256": "5110a51547cdfed752316019c5cb43675501cf5c311e59773c9004213f36e970",
+    "builderVersion": "kb-v2.4",
+    "codes": 8935,
+    "patterns": 20323
+  },
+  "reach": {
+    "codes": 8935,
+    "reachable": 8526,
+    "noPattern": 2,
+    "hintOnly": 143,
+    "lost": 264
+  }
+}
