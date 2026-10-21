@@ -25,7 +25,8 @@
  *       @0.884 [1-4] here, 04 20 00 [3-4] under the literal rule. Same invariant (no span crosses
  *       a boundary); measured cost of the literal rule: titles owned exact 8,446 → 8,445, corpus
  *       units with a code 8,252 → 8,251 (logs/s3-20261020T2320Z-fix1-e5-literal.txt).
- *       s = coverage × (contiguous ? 1 : 0.85); a generic pattern needs s = 1; a multi-token
+ *       s = coverage × (contiguous ? 1 : 0.85, or 0.7 for a strict-order pattern out of printed order —
+ *       S5); a `<=N` one-word term row needs a unit of ≤ N tokens (S5); a generic pattern needs s = 1; a multi-token
  *       pattern matched by ONE token is dropped (J5); one-token patterns yield spans only when
  *       `oneWordOk`, else they are hint-only (E6).
  *   5.4 regex term rows (E7) on the raw text, s = 1.
@@ -45,7 +46,7 @@ import type { LoadedKb } from "@/lib/csi-kb-types";
 import type { BboxLTWH } from "@/types";
 import {
   CONTIGUITY_FACTOR, COVERAGE_MIN, DISCIPLINE_DIVISIONS, EPS, F_GENERIC, F_HINT, F_ONEWORD, F_ORDERFREE, F_REGEX,
-  WINDOW_SLACK, applyDescendantRule, applyFrontier, groupRanges, ownRanges, prepareKb,
+  OUT_OF_ORDER_FACTOR, WINDOW_SLACK, applyDescendantRule, applyFrontier, groupRanges, ownRanges, prepareKb,
   type Prepared, type RangeTrace, type Span, type SupportedSpan,
 } from "@/lib/csi-span-own";
 
@@ -152,6 +153,7 @@ function supportPattern(prep: Prepared, ua: UnitArrays, pid: number, key: number
     return;
   }
   if (np === 1 && !(f & F_ONEWORD)) return; // one-word only with oneWordOk (§6.3)
+  if (np === 1 && prep.unitCap[pid] > 0 && ua.tid.length > prep.unitCap[pid]) return; // S5 d3: `<=N` term rows
   // prefilters (speed only): every diff token present; best-case mass reaches the gate
   let ub = 0;
   for (let j = 0; j < np; j++) {
@@ -217,7 +219,8 @@ function supportPattern(prep: Prepared, ua: UnitArrays, pid: number, key: number
     let k = 0;
     for (let j = 0; j < np; j++) if (posBuf[j] >= 0) { positions[k] = posBuf[j]; matched[k] = tok[a0 + j]; k++; }
     positions.sort();
-    out.push({ pid, codeIdx: prep.codeIdx[pid], lo, hi, s: coverage * (contiguous ? 1 : CONTIGUITY_FACTOR), coverage, contiguous, positions, matched, isRegex: false });
+    const factor = contiguous ? 1 : !(f & F_ORDERFREE) && !ordered ? OUT_OF_ORDER_FACTOR : CONTIGUITY_FACTOR;
+    out.push({ pid, codeIdx: prep.codeIdx[pid], lo, hi, s: coverage * factor, coverage, contiguous, positions, matched, isRegex: false });
   }
 }
 

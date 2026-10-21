@@ -2,27 +2,27 @@
   "schemaVersion": "csi-v2-baseline/1",
   "engineSha": {
     "src/lib/csi-tokenize.ts": "758d525585d050f09d41cc0bbc7c9b1d8ac2002ffe7e7527da3267a188782d9a",
-    "src/lib/csi-kb-types.ts": "04d4344543be9b0bc6b5b184e7592fd9f718c1e77d9d22e005883208716c5432",
+    "src/lib/csi-kb-types.ts": "1a4d7d5a9ad7701a445a67af6e0c86d7bf31abc79029d9ae6e9c129b4d6cfcdf",
     "src/lib/csi-kb.ts": "a4260eb290b96eff52ae782eadbafd883d227096802b2444984a9fe156a150dc",
-    "src/lib/csi-span-own.ts": "c92b0a6474c5da5622bbac4ff92e43ac76855e0b8e35e1b358420a602156a145",
-    "src/lib/csi-span-match.ts": "0af49711c96acc158e3bc42a0f6381515257e817c49643448acd3351c7786b83",
-    "src/lib/csi-page.ts": "dceeba7a421657d4e12d706512963c0e17b130c8ebf3da93dd89255747970340",
+    "src/lib/csi-span-own.ts": "a320a3a1df4774ed061a39156c82c14590154f8496ff6815023b824bb7de3900",
+    "src/lib/csi-span-match.ts": "b539a708688ac58c071b155c0360506cd016defe0cc39717b2f589d3cce3f2cc",
+    "src/lib/csi-page.ts": "e7568ebe54eb87d57c889339ae8935fee234b8decc56448f76eef456747c911e",
     "src/lib/csi-kb-overlay.ts": "0a832cb4470a605a9c80b6b122eb88f03ae5a7a59588780727b493c8f256a510",
     "src/lib/csi-v2-config.ts": "021796f4ea90f017b29f07a3efceb54acfe6d6847f12de38ddea5cd14a428506",
     "src/lib/csi-detect.ts": "3c573c4b7fa672a414ae532d481a467b84d9cb8687b4a18ca2d70e24451c3b6e"
   },
   "kb": {
     "file": "src/data/csi-kb.json",
-    "sha256": "5110a51547cdfed752316019c5cb43675501cf5c311e59773c9004213f36e970",
-    "builderVersion": "kb-v2.4",
+    "sha256": "a71867fa5d8f44e1856e29278b9cb89acb6a228c01724c294e70407aafd61920",
+    "builderVersion": "kb-v2.5",
     "codes": 8935,
-    "patterns": 20323
+    "patterns": 20319
   },
   "reach": {
     "codes": 8935,
-    "reachable": 8526,
-    "noPattern": 2,
+    "reachable": 8513,
+    "noPattern": 5,
     "hintOnly": 143,
-    "lost": 264
+    "lost": 274
   }
 }

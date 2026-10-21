@@ -10,6 +10,9 @@
  * EVERY page expectation below was MEASURED with the real engine before it was pinned
  * (2026-10-21, kb-v2.4) by a probe that prints codes / spans / hints for the same synthetic pages
  * (log: gitignore/projects/csi_tagger_v2/logs/s4-20261021T0305Z-probe.txt). Generic trade phrases only.
+ * S5 tune (2026-10-21, kb-v2.5): every pin that moved was re-measured before re-pinning (log
+ * …/logs/s5t-20261021T0640Z-page-facts.txt): the hint stop list (SCALE gives no 10 00 00 hint) and the
+ * facility gate counting distinct PATTERNS, not ranges. Every confidence / score pin re-measured unchanged.
  * Mutation check (each gate / sort key / repetition rule disabled in turn; every mutant fails ≥ 1 test):
  * gitignore/projects/csi_tagger_v2/logs/s4-20261021T0305Z-mutations.txt and …/s4-20261021T0330Z-mutations.txt;
  * the boundary-pin blocks close the 8 + 5 + 2 survivors found in review (…/s4-20261021T0330Z-fix1-mutations.txt, …-fix2-mutations.txt,
@@ -159,17 +162,21 @@ describe.skipIf(!HAS_KB)("csi-page: §6.7 gates per input kind", () => {
     const asLines = run(lines("PROJECT NAME", "SCALE", "DATE"));
     expect(asLines.codes).toEqual([]);
     expect(drops(asLines)).toEqual(["00 01 01:project_geometry"]);
-    expect(asLines.divisionHints).toEqual(["00 00 00", "10 00 00"]);
+    expect(asLines.divisionHints).toEqual(["00 00 00"]); // S5: `scale` is a HINT_STOP_TOKENS word (kb-v2.4 also hinted 10 00 00)
     const asText = run({ text: "PROJECT NAME\nSCALE\nDATE" });
     expect(asText.codes).toEqual([]);
     expect(drops(asText)).toEqual(["00 01 01:project_short"]);
   });
-  it("facility division (33): one range → dropped; two code-unique ranges → emitted; ctx C → emitted", () => {
+  it("facility division (33): one pattern → dropped, also when repeated; two DISTINCT code-unique patterns → emitted; ctx C → emitted", () => {
     const one = run(lines("DUCTILE IRON UTILITY PIPING"));
     expect(one.codes).toEqual([]);
     expect(drops(one)).toEqual(["33 05 19:facility"]);
     expect(one.divisionHints).toEqual([]); // the facility gate adds no hint
-    expect(confs(run(lines("DUCTILE IRON UTILITY PIPING", "DUCTILE IRON UTILITY PIPING")))).toEqual(["33 05 19@0.9100"]);
+    // S5 (row i): the gate counts distinct PATTERNS — the same phrase twice is one piece of evidence (emitted at kb-v2.4)
+    const twice = run(lines("DUCTILE IRON UTILITY PIPING", "DUCTILE IRON UTILITY PIPING"));
+    expect(twice.codes).toEqual([]);
+    expect(drops(twice)).toEqual(["33 05 19:facility", "33 05 19:facility"]);
+    expect(confs(run(lines("DUCTILE IRON UTILITY PIPING", "PRESSURE PIPING TIED JOINT RESTRAINT SYSTEM")))).toEqual(["33 05 19@0.9100"]);
     expect(confs(run({ ...lines("DUCTILE IRON UTILITY PIPING"), context: { discipline: "C" } }))).toEqual(["33 05 19@0.8800"]);
     expect(confs(run({ text: "DUCTILE IRON UTILITY PIPING", context: { discipline: "C" } }))).toEqual(["33 05 19@0.8800"]);
   });
@@ -339,7 +346,7 @@ describe.skipIf(!HAS_KB)("csi-page: boundary pins (fix round 1 — each kills a 
   it("distinct ranges within ONE line count separately: GYPSUM BOARD twice on a line → 0.91", () => {
     expect(confs(run(lines("GYPSUM BOARD GYPSUM BOARD")))).toEqual(["09 29 00@0.9100"]);
   });
-  it("§6.7 facility gate counts DISTINCT ranges: two spans in one column are one range → dropped", () => {
+  it("§6.7 facility gate: two spans in one column (one range, one pattern) → dropped", () => {
     const cells: V2Cell[] = [0, 1].map(() => ({ header: "PIPE", text: "DUCTILE IRON UTILITY PIPING" }));
     expect(drops(run({ cells }))).toEqual(["33 05 19:facility", "33 05 19:facility"]);
   });
@@ -398,7 +405,9 @@ describe.skipIf(!HAS_KB)("csi-page: boundary pins (fix round 3 — each kills a 
     expect(r.codes).toEqual([]);
     expect(drops(r)).toEqual(["33 34 00:facility", "33 34 00:facility"]);
     expect(r.spans.map((s) => (s.score ?? Number.NaN).toFixed(4))).toEqual(["1.0000", "0.9000"]);
-    expect(confs(run(lines(OWN, OWN)))).toEqual(["33 34 00@0.9100"]); // two OWN ranges pass the gate
+    // S5: the same OWN phrase twice is one pattern → dropped; a second DISTINCT unique pattern (an alt) passes the gate
+    expect(drops(run(lines(OWN, OWN)))).toEqual(["33 34 00:facility", "33 34 00:facility"]);
+    expect(confs(run(lines(OWN, "LEACH FIELD")))).toEqual(["33 34 00@0.9100"]);
     const c = run({ ...lines(OWN, FAM), context: { discipline: "C" } });
     expect(confs(c)).toEqual(["33 34 00@0.9100"]);
     expect(c.codes[0].alternatives).toEqual(["33 34 00", "33 34 53"]);

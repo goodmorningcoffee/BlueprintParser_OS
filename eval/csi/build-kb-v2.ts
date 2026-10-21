@@ -21,7 +21,9 @@
  *   4. filters — a term row owns its set (E13); a code's MF title owns its set against other codes'
  *                alt/index/see, process titles (div 40–49) excepted for building codes (kb-v2.4);
  *                empty, ≤2-char (non-term, PLAN §5.3), index facet rows (sub-entry text ⊆ head, E12e),
- *                alt/index/see ≡ a descendant's title (D6 as extended by E12e), dedupe (E12c).
+ *                alt/index/see ≡ a descendant's title (D6 as extended by E12e), dedupe (E12c);
+ *                S5 (kb-v2.5): a title that lost a one-letter word owns nothing and every pattern of
+ *                its code with its reduced set is dropped; CURATED_DROPS (measured wrong on drawings).
  *   5. weights — codeDF over every token source; idf = ln(N/codeDF); floor = codeDF ≥ 200;
  *                boilerplate and filler as CANONICAL tokens (D4); anchor = rarest non-floored
  *                NON-FILLER token, else the rarest non-floored filler token (E12e), else null.
@@ -56,7 +58,7 @@ import type { CsiKb, CsiKbHeader, KbCode, KbPattern, KbSource } from "@/lib/csi-
 import { DEFAULT_PDF, REJECT_TITLE_RE, TITLE_STRIP_RE, dedupeAdjacentWords, extractPages, levelOf, parseDocument, stripTitle, type MfParsed } from "./mf-parse";
 
 /** Manual constant (D3): bump on ANY builder-logic change; the artifact test pins it. */
-export const BUILDER_VERSION = "kb-v2.4";
+export const BUILDER_VERSION = "kb-v2.5";
 export const SCHEMA_VERSION = "csi-kb/2" as const;
 export const KB_OUT = "src/data/csi-kb.json";
 export const REPORT_OUT = "eval/csi/kb-report.json";
@@ -79,6 +81,23 @@ export const BOILERPLATE_WORDS = [
   "provide", "contractor", "work", "existing", "see", "required", "general", "project", "drawing",
   "plan", "detail", "scale", "type", "location", "all", "any", "new", "no",
 ]; // PLAN §5.5
+/** S5 (kb-v2.5, logs/s5-20261021T0510Z-tuning-variants.txt row e4): a one-letter word other than
+ *  "a" that the tokenizer drops ("Wood I-Joists" → {wood, joist}). Such a title's reduced token set
+ *  says less than the title, so it owns nothing (title-owns rule), and when another code prints that
+ *  set too, every pattern of its code with the set is dropped (3× WOOD JOISTS: 06 17 33 → 06 11 00
+ *  Wood Framing, W3 → R3). */
+export const LOST_LETTER_RE = /(^|[\s\-\/(])[B-Zb-z](?=[\s\-\/),]|$)/;
+/** S5 (kb-v2.5): patterns judged wrong on drawings, dropped by (code, sorted canonical token set),
+ *  every source. Measured rows of logs/s5-20261021T0510Z-tuning-variants.txt: b (05 45 00 −9 W9;
+ *  33 82 63.16 −8 W8; 28 40 00 −13 W7 D3 R3) and j (07 80 00 −16 W13 D3: on drawings "fire
+ *  protection" means sprinkler / NFPA, not Fire and Smoke Protection); gold Δ 0 or −1 FP each.
+ *  A dropped title still owns its set against other codes (it did in the measured KB). */
+export const CURATED_DROPS: readonly (readonly [code: string, setKey: string])[] = [
+  ["05 45 00", "device mount"],
+  ["07 80 00", "fire protection"],
+  ["28 40 00", "life safety"],
+  ["33 82 63.16", "control panel"],
+];
 /** D5: a TSV-only title that is junk (a code, the index banner, `api`, no letters). */
 export const TSV_JUNK_RE = /^\d\d \d\d \d\d\b|keyword index|^api$|^[^a-z]*$/i;
 const SOURCE_RANK: Record<KbSource, number> = { title: 0, tsv: 1, alt: 2, index: 3, see: 4, term: 5 };
@@ -132,11 +151,14 @@ export function readMasterformatTsv(raw: string): Map<string, TsvRow> {
 
 export interface TermRow {
   term: string; code: string; kind: "abbrev" | "vernacular" | "regex"; discipline: string; oneWordOk: boolean; note: string;
+  /** oneWordOk `<=N` (S5 d3): the one-word row matches only in a unit of at most N tokens. */
+  oneWordMaxUnit?: number;
 }
 const TERM_HEADER = "term\tcode\tkind\tdiscipline\toneWordOk\tnote";
 const DISCIPLINES = new Set(["", "A", "S", "M", "P", "E", "FP", "C"]);
 
-/** `csi_terms.tsv` (IMPLEMENTATION §I). Throws on any malformed row — the table is curated. */
+/** `csi_terms.tsv` (IMPLEMENTATION §I). Throws on any malformed row — the table is curated.
+ *  oneWordOk is `0`, `1`, or `<=N` (S5, kb-v2.5): one word is enough, but only in a unit of ≤ N tokens. */
 export function parseTermsTsv(raw: string): TermRow[] {
   const lines = raw.split(/\r?\n/).filter((l) => l.length > 0);
   if (lines[0] !== TERM_HEADER) throw new Error(`[kbv2] csi_terms.tsv header must be: ${TERM_HEADER}`);
@@ -147,9 +169,12 @@ export function parseTermsTsv(raw: string): TermRow[] {
     if (!/^\d\d \d\d \d\d(?:\.\d\d)?$/.test(code)) throw new Error(`[kbv2] ${where}: bad code '${code}'`);
     if (kind !== "abbrev" && kind !== "vernacular" && kind !== "regex") throw new Error(`[kbv2] ${where}: bad kind '${kind}'`);
     if (!DISCIPLINES.has(discipline)) throw new Error(`[kbv2] ${where}: bad discipline '${discipline}'`);
-    if (ok !== "0" && ok !== "1") throw new Error(`[kbv2] ${where}: oneWordOk must be 0|1`);
+    const cap = /^<=([1-9]\d*)$/.exec(ok);
+    if (ok !== "0" && ok !== "1" && !cap) throw new Error(`[kbv2] ${where}: oneWordOk must be 0|1|<=N`);
     if (kind === "regex") new RegExp(term, "i"); // throws on an invalid pattern
-    return { term: term.trim(), code, kind, discipline, oneWordOk: ok === "1", note };
+    const row: TermRow = { term: term.trim(), code, kind, discipline, oneWordOk: ok !== "0", note };
+    if (cap) row.oneWordMaxUnit = Number(cap[1]);
+    return row;
   });
 }
 
@@ -191,7 +216,7 @@ export interface BuildInputs {
 
 interface Cand {
   code: string; source: KbSource; kind: "tokens" | "regex"; text: string; order: number;
-  tokens: string[]; oneWordOk?: boolean; discipline?: string; regex?: string;
+  tokens: string[]; oneWordOk?: boolean; oneWordMaxUnit?: number; discipline?: string; regex?: string;
   /** index rows with a head only: the sub-entry text and its head (for the E12e facet filter). */
   sub?: string; head?: string;
 }
@@ -298,7 +323,10 @@ export function buildKb(inp: BuildInputs): BuildResult {
   }
   for (const r of termRows) {
     if (!has(r.code)) throw new Error(`[kbv2] csi_terms row '${r.term}' → ${r.code}: code not in the KB`);
-    const base = { code: r.code, source: "term" as const, text: r.term, oneWordOk: r.oneWordOk, ...(r.discipline ? { discipline: r.discipline } : {}) };
+    const base = {
+      code: r.code, source: "term" as const, text: r.term, oneWordOk: r.oneWordOk,
+      ...(r.oneWordMaxUnit ? { oneWordMaxUnit: r.oneWordMaxUnit } : {}), ...(r.discipline ? { discipline: r.discipline } : {}),
+    };
     if (r.kind === "regex") add({ ...base, kind: "regex", regex: r.term });
     else add({ ...base, kind: "tokens" });
   }
@@ -351,15 +379,32 @@ export function buildKb(inp: BuildInputs): BuildResult {
     if (c.source !== "title" || c.kind !== "tokens" || !c.tokens.length) continue;
     const k = setKey(c.tokens);
     if (termSetCodes.has(k)) continue;
+    if (LOST_LETTER_RE.test(c.text)) { bump("titleLostLetterNoOwn"); continue; } // S5 e4
     titleSetCodes.set(k, (titleSetCodes.get(k) ?? new Set<string>()).add(c.code));
   }
   const titleOwnersOf = (c: Cand): string[] => {
     const all = [...(titleSetCodes.get(setKey(c.tokens)) ?? [])];
     return isProcessDivision(c.code) ? all : all.filter((x) => !isProcessDivision(x));
   };
+  // S5 (kb-v2.5): `code|setKey` pairs dropped from every source — a lost-letter title's reduced set
+  // (row e4) and CURATED_DROPS (rows b, j). Term rows are never dropped here.
+  const s5Drop = new Set<string>(CURATED_DROPS.map(([code, k]) => `${code}|${k}`));
+  // A lost-letter title's set is dropped only when ANOTHER code also prints it (alt/index/see): there the
+  // reduced set names that code's thing (WOOD JOISTS = 06 11 00), and the title would shadow it. A set no
+  // other code prints stays (X-RAY SHIELDING keeps 13 49 13) — same corpus result, no code made unreachable.
+  const otherSets = new Map<string, Set<string>>();
+  for (const c of cands) {
+    if (c.kind !== "tokens" || (c.source !== "alt" && c.source !== "index" && c.source !== "see")) continue;
+    otherSets.set(setKey(c.tokens), (otherSets.get(setKey(c.tokens)) ?? new Set<string>()).add(c.code));
+  }
+  for (const c of cands) {
+    if (c.source !== "title" || c.kind !== "tokens" || !c.tokens.length || !LOST_LETTER_RE.test(c.text)) continue;
+    if ([...(otherSets.get(setKey(c.tokens)) ?? [])].some((x) => x !== c.code)) s5Drop.add(`${c.code}|${setKey(c.tokens)}`);
+  }
   const seen = new Set<string>();
   const kept: Cand[] = [];
   for (const c of cands) {
+    if (c.kind === "tokens" && c.source !== "term" && s5Drop.has(`${c.code}|${setKey(c.tokens)}`)) { bump(`s5Dropped_${c.source}`); continue; }
     if (c.kind === "tokens" && c.source !== "term") {
       const owners = termSetCodes.get(setKey(c.tokens));
       if (owners && !owners.has(c.code)) { bump(`${c.source}EqOtherCodeTermRow`); continue; }
@@ -512,8 +557,9 @@ export function buildKb(inp: BuildInputs): BuildResult {
       const covered = new Set(up.flatMap((q) => kept[q].tokens));
       ts.forEach((t, i) => { if (!covered.has(t)) diff.add(i); });
     }
-    const opt: Pick<KbPattern, "oneWordOk" | "hintOnly" | "discipline"> = {};
+    const opt: Pick<KbPattern, "oneWordOk" | "oneWordMaxUnit" | "hintOnly" | "discipline"> = {};
     if (c.source === "term") opt.oneWordOk = c.oneWordOk === true;
+    if (c.oneWordMaxUnit && ts.length === 1) opt.oneWordMaxUnit = c.oneWordMaxUnit;
     if (ts.length === 1 && c.oneWordOk !== true) opt.hintOnly = true; // E6
     if (c.discipline) opt.discipline = c.discipline;
     return {

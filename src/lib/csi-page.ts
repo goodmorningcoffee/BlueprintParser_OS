@@ -21,8 +21,8 @@
  *       by_others (§6.6)              → excluded from codes, kept as an `emitted:false` record;
  *       division 00/01, lines/cells   → hint only (`project_geometry`), its division joins the hints;
  *       division 00/01, text          → allowed only from a pattern of ≥ 3 tokens (`project_short`);
- *       divisions 33–35, 40–48 (CODE) → emit only with ≥ 2 distinct ranges owned by the code itself
- *                                       (not a family owner) from CODE-UNIQUE patterns (the pattern's
+ *       divisions 33–35, 40–48 (CODE) → emit only with ≥ 2 distinct patterns (S5; was ranges) owned by
+ *                                       the code itself (not a family owner), CODE-UNIQUE (the pattern's
  *                                       token set — or regex — belongs to no other code), or
  *                                       `context.discipline === 'C'` (`facility`).
  *   4 confidence (§6.8): conf = clamp(best s × (0.85 + 0.03·min(distinct ranges, 5)), 0, 1) over the
@@ -70,8 +70,10 @@ export const REPETITION_STEP = 0.03;
 export const REPETITION_CAP = 5;
 /** §6.7: a text caller may emit division 00/01 only from a pattern of at least this many tokens. */
 export const PROJECT_TEXT_MIN_TOKENS = 3;
-/** §12 measured (225 + 150 spans): divisions 33–35 / 40–48 need this many code-unique ranges. */
-export const FACILITY_MIN_UNIQUE_RANGES = 2;
+/** §12 measured (225 + 150 spans): divisions 33–35 / 40–48 need this many DISTINCT code-unique
+ *  patterns (S5 row i: counting patterns, not ranges, removes 27 of 29 civil emits on non-civil
+ *  sheets, W22 D4 R1, gold Δ 0 — the same phrase repeated is one piece of evidence). */
+export const FACILITY_MIN_UNIQUE_PATTERNS = 2;
 /** §I: tier 1 at conf ≥ 0.8, tier 2 at ≥ 0.6, else 3. */
 export const TIER1_MIN = 0.8;
 export const TIER2_MIN = 0.6;
@@ -298,9 +300,9 @@ export function detectCsiV2(input: V2Input, config: Partial<V2Config>, kb: Loade
     if (codeIdx === undefined) continue; // unreachable: every span code comes from the KB
     let live = recs.filter((r) => r.drop === undefined);
     if (live.length && isFacilityDivision(code) && ctx?.discipline !== 'C') {
-      const own = new Set<string>();
-      for (const r of live) if (!r.span.familyOf && unique[r.span.patternId] === 1) own.add(r.repKey);
-      if (own.size < FACILITY_MIN_UNIQUE_RANGES) {
+      const own = new Set<number>();
+      for (const r of live) if (!r.span.familyOf && unique[r.span.patternId] === 1) own.add(r.span.patternId);
+      if (own.size < FACILITY_MIN_UNIQUE_PATTERNS) {
         for (const r of live) r.drop = 'facility';
         live = [];
       }

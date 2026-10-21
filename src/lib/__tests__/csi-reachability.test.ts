@@ -21,6 +21,11 @@
  * DELTA (measured on kb-v2.4, 2026-10-21): unreachable 2,362 / 8,951 (26.4%) pre-v2 →
  * 409 / 8,935 (4.6%) v2. Of the 409: 145 have no usable pattern (143 hint-only, 2 none), 166 are
  * in Divisions 00/01 (the two groups overlap), 23 are Furnishings (was 169).
+ * S5 tune (kb-v2.5, measured 2026-10-21, log gitignore/projects/csi_tagger_v2/logs/s5t-20261021T0640Z-span-facts.txt):
+ * 409 → 422 unreachable. noPattern 2 → 5 (12 24 16.13 and 31 62 16.16 lose their lost-letter title set to
+ * the code that also prints it; 33 82 63.16 "Control Panels" is a curated drop); lost 264 → 274
+ * (measured, not itemised: candidates are the other curated drops, the new term rows owning their
+ * words and the 0.7 out-of-order factor). Accepted for the S5 net gold/corpus gain.
  *
  * KB-backed: skipIf the KB is absent (scripts/bp-suite turns a skip into a failure).
  */
@@ -37,11 +42,11 @@ describe.skipIf(!HAS_KB)("MasterFormat reachability under the v2 rule (default c
   const res = kb ? reachCensus(kb) : new Map<string, Reach>();
   const count = (w: Reach) => [...res.values()].filter((v) => v === w).length;
 
-  it("the census: 8,526 of 8,935 codes are reachable (4.6% unreachable, was 26.4%)", () => {
+  it("the census: 8,513 of 8,935 codes are reachable (4.7% unreachable, was 26.4%)", () => {
     expect(res.size).toBe(8935);
     expect({ reachable: count("reachable"), noPattern: count("noPattern"), hintOnly: count("hintOnly"), lost: count("lost") })
-      .toEqual({ reachable: 8526, noPattern: 2, hintOnly: 143, lost: 264 });
-    expect((res.size - count("reachable")) / res.size).toBeCloseTo(0.0458, 4);
+      .toEqual({ reachable: 8513, noPattern: 5, hintOnly: 143, lost: 274 });
+    expect((res.size - count("reachable")) / res.size).toBeCloseTo(0.0472, 4);
   });
 
   it("the everyday interior codes the pre-v2 engine could never emit are reachable now", () => {

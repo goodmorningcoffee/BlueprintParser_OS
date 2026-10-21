@@ -20,6 +20,7 @@ export interface KbPattern {
   up: number[];               // pattern ids this pattern extends (maximal subsets, other codes)
   orderFree: boolean;         // true for index/term sets
   oneWordOk?: boolean;        // only meaningful when tokens.length === 1
+  oneWordMaxUnit?: number;    // one-word term rows only (S5, kb-v2.5): span only in a unit of <= N tokens
   hintOnly?: boolean;         // E6/E12: build-time = tokens.length === 1 && !oneWordOk; never yields spans
   discipline?: string;        // term rows only: 'A'|'S'|'M'|'P'|'E'|'FP'|'C'
   regex?: string;             // kind === 'regex' only (e.g. 'R-\\d+ INSULATION')

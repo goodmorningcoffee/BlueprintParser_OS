@@ -33,7 +33,9 @@ import type { CsiKb, KbCode, KbPattern } from "@/lib/csi-kb-types";
 import {
   BOILERPLATE_WORDS,
   BUILDER_VERSION,
+  CURATED_DROPS,
   FILLER_WORDS,
+  LOST_LETTER_RE,
   PDF_SOURCE,
   SOURCE_PATHS,
   TSV_JUNK_RE,
@@ -241,9 +243,10 @@ describe.skipIf(!HAS_KB)("csi-kb.json structure", () => {
       if (o.length && !o.includes(p.code)) residual.push(`${p.id} ${p.code}/${p.source} '${p.text}' = title of ${o.join(",")}`);
     }
     expect(residual).toEqual([]);
-    // Measured at kb-v2.4 (counted AFTER the facet and D6 filters, so only what the ruling added).
+    // Measured at kb-v2.4 (counted AFTER the facet and D6 filters, so only what the ruling added): [29, 135, 2].
+    // kb-v2.5 (S5): index 135 → 134 — the lost-letter title 06 17 33 owns nothing, so 06 11 00 keeps "wood joists".
     const c = kb.header.counts;
-    expect([c.altEqOtherCodeTitle, c.indexEqOtherCodeTitle, c.seeEqOtherCodeTitle]).toEqual([29, 135, 2]);
+    expect([c.altEqOtherCodeTitle, c.indexEqOtherCodeTitle, c.seeEqOtherCodeTitle]).toEqual([29, 134, 2]);
   });
 
   it("owner ruling 2026-10-20 (kb-v2.4): process-division titles (40–49) do not take a building code's pattern", () => {
@@ -466,7 +469,7 @@ describe.skipIf(!HAS_KB)("TSV sources", () => {
 
   it("csi_terms.tsv parity: every row tokenizes through the same tokenizer and is present as a term pattern", () => {
     const rows = parseTermsTsv(read("src/data/csi_terms.tsv"));
-    expect(rows).toHaveLength(55); // 61 seed rows − 6 dropped by the S2 term review (2026-10-20)
+    expect(rows).toHaveLength(59); // 61 seed rows − 6 dropped by the S2 term review (2026-10-20) + 4 S5 rows (kb-v2.5)
     const terms = kb.patterns.filter((p) => p.source === "term");
     for (const r of rows) {
       const hit = r.kind === "regex"
@@ -492,5 +495,43 @@ describe.skipIf(!HAS_KB)("TSV sources", () => {
     }
     expect(fam.size).toBeGreaterThan(0);
     for (const [t, s] of fam) expect([...s], t).toHaveLength(1);
+  });
+});
+
+describe("S5 term-table grammar (kb-v2.5): oneWordOk is 0, 1 or <=N", () => {
+  const H = "term\tcode\tkind\tdiscipline\toneWordOk\tnote\n";
+  it("<=N sets oneWordOk and the unit cap; anything else is rejected", () => {
+    expect(parseTermsTsv(H + "ACT\t09 51 00\tabbrev\t\t<=4\t\n")[0]).toMatchObject({ oneWordOk: true, oneWordMaxUnit: 4 });
+    expect(parseTermsTsv(H + "CMU\t04 22 00\tabbrev\t\t1\t\n")[0].oneWordMaxUnit).toBeUndefined();
+    for (const bad of ["<=0", "2", "<4", "<= 4", "1:4"]) {
+      expect(() => parseTermsTsv(H + `ACT\t09 51 00\tabbrev\t\t${bad}\t\n`), bad).toThrow(/oneWordOk must be 0\|1\|<=N/);
+    }
+  });
+  it("LOST_LETTER_RE flags a dropped one-letter word, not the article A", () => {
+    expect(["Wood I-Joists", "Steel H Piles", "Z-Pleated Window Shades", "Type I Tanks"].every((t) => LOST_LETTER_RE.test(t))).toBe(true);
+    expect(["A Wood Joist", "Wood Joists", "Gypsum Board", "X10 Panels"].some((t) => LOST_LETTER_RE.test(t))).toBe(false);
+  });
+});
+
+describe.skipIf(!HAS_KB)("S5 builder rules (kb-v2.5, measured 2026-10-21: logs/s5-20261021T0510Z-tuning-variants.txt)", () => {
+  it("CURATED_DROPS: no pattern of the code keeps the set; the S5 drop counters are pinned", () => {
+    for (const [code, key] of CURATED_DROPS) {
+      expect(kb.patterns.filter((p) => p.code === code && p.kind === "tokens" && setKey(p.tokens) === key).map((p) => p.id), `${code} {${key}}`).toEqual([]);
+    }
+    const c = kb.header.counts;
+    // measured (KB diff vs kb-v2.4): titles 06 17 33, 12 24 16.13, 31 62 16.16, 28 40 00, 33 82 63.16; index 06 17 33,
+    // 07 80 00, 28 40 00 (4 rows before dedupe); see 05 45 00
+    expect([c.s5Dropped_title, c.s5Dropped_index, c.s5Dropped_see, c.s5Dropped_alt ?? 0]).toEqual([5, 4, 1, 0]);
+    expect(c.titleLostLetterNoOwn).toBe(10);
+  });
+  it("a lost-letter title's set is dropped only where another code prints it (WOOD JOISTS), kept elsewhere (X-RAY)", () => {
+    expect(kb.patterns.filter((p) => p.code === "06 17 33" && setKey(p.tokens) === "joist wood")).toEqual([]);
+    expect(kb.patterns.filter((p) => p.code === "06 11 00" && p.source === "index" && setKey(p.tokens) === "joist wood")).toHaveLength(1);
+    expect(titleOf("13 49 13").text).toBe("Integrated X-Ray Shielding Assemblies");
+    expect(byCode.get("06 17 33")?.patternIds.length).toBeGreaterThan(0); // other patterns of the code remain
+  });
+  it("the ACT row carries the unit cap; no other pattern does", () => {
+    const capped = kb.patterns.filter((p) => p.oneWordMaxUnit !== undefined).map((p) => `${p.code} ${p.text} ${p.oneWordMaxUnit}`);
+    expect(capped).toEqual(["09 51 00 ACT 4"]);
   });
 });

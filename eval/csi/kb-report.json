@@ -1,10 +1,10 @@
 {
   "schemaVersion": "csi-kb-report/1",
-  "builderVersion": "kb-v2.4",
-  "kbBytes": 6405722,
-  "kbSha256": "5110a51547cdfed752316019c5cb43675501cf5c311e59773c9004213f36e970",
+  "builderVersion": "kb-v2.5",
+  "kbBytes": 6405945,
+  "kbSha256": "a71867fa5d8f44e1856e29278b9cb89acb6a228c01724c294e70407aafd61920",
   "counts": {
-    "N": 8933,
+    "N": 8930,
     "abbrevRowsPdf": 83,
     "abbrevRowsPdfInTerms": 3,
     "altDupOfDescendantTitle": 89,
@@ -12,13 +12,13 @@
     "altEqOtherCodeTitle": 29,
     "codes": 8935,
     "codesMaster": 8934,
-    "codesWithoutPattern": 2,
+    "codesWithoutPattern": 5,
     "danglingIndexCodesParsed": 126,
     "danglingIndexRows": 126,
     "danglingSeeParsed": 5,
-    "dedupedPatterns": 1516,
+    "dedupedPatterns": 1515,
     "dedupedPatterns_alt": 8,
-    "dedupedPatterns_index": 1505,
+    "dedupedPatterns_index": 1504,
     "dedupedPatterns_see": 2,
     "dedupedPatterns_term": 1,
     "emptyTokenDropped_alt": 6,
@@ -32,19 +32,22 @@
     "indexEmptySubEntryRows": 20,
     "indexEntriesParsed": 12511,
     "indexEqOtherCodeTermRow": 4,
-    "indexEqOtherCodeTitle": 135,
+    "indexEqOtherCodeTitle": 134,
     "indexFacetRows": 3,
     "latticePostingScan": 12,
     "le2CharDropped_alt": 23,
-    "patterns": 20323,
+    "patterns": 20319,
     "patterns_alt": 962,
-    "patterns_index": 10167,
+    "patterns_index": 10165,
     "patterns_regex": 2,
-    "patterns_see": 207,
-    "patterns_term": 54,
-    "patterns_title": 8932,
+    "patterns_see": 206,
+    "patterns_term": 58,
+    "patterns_title": 8927,
     "patterns_tsv": 1,
-    "reachDenominator": 19314,
+    "reachDenominator": 19307,
+    "s5Dropped_index": 4,
+    "s5Dropped_see": 1,
+    "s5Dropped_title": 5,
     "seeDupOfDescendantTitle": 1,
     "seeEqOtherCodeTermRow": 1,
     "seeEqOtherCodeTitle": 2,
@@ -55,9 +58,10 @@
     "seeResolvedViaTitle": 29,
     "seeUnresolved": 28,
     "synonymsParsed": 253,
-    "termRows": 55,
-    "titleDiffParentUntitled": 8,
+    "termRows": 59,
+    "titleDiffParentUntitled": 17,
     "titleEqOtherCodeTermRow": 2,
+    "titleLostLetterNoOwn": 10,
     "tradeInherited": 2,
     "tsvOnlyCandidates": 19,
     "tsvOnlyDropped": 18,
@@ -75,42 +79,42 @@
     "le2CharPatterns": 0,
     "misHeadedGoldens": 0,
     "oneWordTermMultiFamily": 0,
-    "reach_oneTokenTolerance": 6653,
-    "reach_diffMassGE80": 4499
+    "reach_oneTokenTolerance": 6640,
+    "reach_diffMassGE80": 4510
   },
   "reach": {
-    "denominator": 19314,
+    "denominator": 19307,
     "denominator_alt": 641,
-    "denominator_index": 9852,
-    "denominator_see": 160,
-    "denominator_term": 30,
-    "denominator_title": 8630,
+    "denominator_index": 9850,
+    "denominator_see": 159,
+    "denominator_term": 31,
+    "denominator_title": 8625,
     "denominator_tsv": 1,
     "diffMassGE80_alt": 59,
-    "diffMassGE80_index": 1127,
-    "diffMassGE80_see": 20,
+    "diffMassGE80_index": 1144,
+    "diffMassGE80_see": 19,
     "diffMassGE80_term": 3,
-    "diffMassGE80_title": 3290,
+    "diffMassGE80_title": 3285,
     "oneTokenTolerance_alt": 95,
-    "oneTokenTolerance_index": 3075,
+    "oneTokenTolerance_index": 3067,
     "oneTokenTolerance_see": 12,
     "oneTokenTolerance_term": 1,
-    "oneTokenTolerance_title": 3470,
-    "oneTokenToleranceShare": 0.3445,
-    "diffMassGE80Share": 0.2329
+    "oneTokenTolerance_title": 3465,
+    "oneTokenToleranceShare": 0.3439,
+    "diffMassGE80Share": 0.2336
   },
   "patternsBySource": {
-    "title": 8932,
+    "title": 8927,
     "tsv": 1,
     "alt": 962,
-    "index": 10167,
-    "see": 207,
-    "term": 54
+    "index": 10165,
+    "see": 206,
+    "term": 58
   },
   "floorTokens": {
     "air": 229,
     "concrete": 353,
-    "control": 410,
+    "control": 409,
     "equipment": 1078,
     "gas": 218,
     "maintenance": 336,
@@ -126,7 +130,7 @@
     "utility": 217,
     "wall": 214,
     "water": 330,
-    "wood": 208
+    "wood": 207
   },
   "boilerplateTokens": {
     "all": 5,
@@ -173,7 +177,7 @@
     ],
     [
       "control",
-      410
+      409
     ],
     [
       "concrete",
@@ -233,7 +237,7 @@
     ],
     [
       "wood",
-      208
+      207
     ],
     [
       "electrical",
@@ -261,7 +265,7 @@
     ],
     [
       "steel",
-      172
+      171
     ],
     [
       "roof",
@@ -281,7 +285,7 @@
     ],
     [
       "panel",
-      160
+      159
     ],
     [
       "tank",
@@ -333,7 +337,7 @@
     ],
     [
       "device",
-      121
+      120
     ],
     [
       "period",
@@ -356,8 +360,8 @@
       107
     ],
     [
-      "window",
-      107
+      "commissioning",
+      106
     ]
   ]
 }

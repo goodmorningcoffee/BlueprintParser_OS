@@ -11,7 +11,7 @@ HM	08 11 13	abbrev		1	hollow metal (doors and frames)
 HM DOOR	08 13 13	vernacular		0	
 HM FRAME	08 12 13	vernacular		0	
 HOLLOW METAL	08 11 13	vernacular		0	
-ACT	09 51 00	abbrev		1	acoustical ceiling (tile/panel unknown)
+ACT	09 51 00	abbrev		<=4	acoustical ceiling (tile/panel unknown); one word only in a unit of <= 4 tokens (S5 d3: long notes say 'act' as a verb)
 ACT LAY-IN	09 51 13	vernacular		0	lay-in → panel ceilings
 LAY-IN CEILING	09 51 13	vernacular		0	
 CMU	04 22 00	abbrev		1	concrete masonry unit
@@ -54,3 +54,7 @@ BALL VALVE	23 05 23	vernacular	M	0
 GATE VALVE	22 05 23	vernacular	P	0	
 GATE VALVE	23 05 23	vernacular	M	0	
 SEWAGE PUMP	22 13 29	vernacular	P	0	sanitary sewerage pumps
+AIR CONDITIONING	23 00 00	vernacular		0	S5 f1: +12 codes (R11 D1), gold 0
+INSULATION	07 21 00	vernacular		1	S5 h: thermal insulation family; +86 (sample R25 D7 W8, W = pipe/duct), gold R +0.0202
+FLASHING	07 62 00	vernacular		1	S5 h: sheet metal flashing and trim; +29 (R25 D2 W2)
+WATERPROOFING	07 10 00	vernacular		1	S5 h: WATERPROOF folds to the same token; +25 (R22 D3)

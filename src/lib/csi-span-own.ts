@@ -31,6 +31,12 @@ export const COVERAGE_MIN = 0.8;
 export const WINDOW_SLACK = 2;
 /** §12 guess: s multiplier for a non-contiguous or out-of-order (strict-order) match. */
 export const CONTIGUITY_FACTOR = 0.85;
+/** S5 measured (logs/s5-20261021T0510Z-tuning-variants.txt row a_ooo; 0.7 ≡ 0.8): s multiplier for a
+ *  strict-order pattern matched OUT of printed order — below the 0.8 emission gate (−4 codes, W4). */
+export const OUT_OF_ORDER_FACTOR = 0.7;
+/** S5 measured (row c1): canonical tokens whose one-word hint-only patterns give no hint — too common
+ *  on drawings to name a division (hints/page 11.10 → 9.98; codes Δ 0 by construction). */
+export const HINT_STOP_TOKENS: ReadonlySet<string> = new Set(["scale", "code", "mechanical", "information", "cover", "low", "ada", "product", "hvac"]);
 /** §12 guess: a family owner (common ancestor) owns at the best member's s × 0.9 (E11). */
 export const FAMILY_DISCOUNT = 0.9;
 /** §12 (E11/§6.5): the common ancestor must be at least level 3 to own on behalf of a family. */
@@ -92,6 +98,8 @@ export interface Prepared {
   vocab: Set<string>;
   off: Int32Array; tok: Int32Array; stok: Int32Array; mass: Float64Array; isDiff: Uint8Array; total: Float64Array;
   anchorSlot: Int32Array; codeIdx: Int32Array; flags: Uint8Array; srcRank: Uint8Array;
+  /** per pattern: `oneWordMaxUnit` (S5 d3), 0 = no cap. */
+  unitCap: Int32Array;
   discipline: (string | undefined)[];
   codes: string[]; codeIndex: Map<string, number>; parentIdx: Int32Array; level: Int8Array; division: string[];
   regexRows: { pid: number; re: RegExp }[];
@@ -137,6 +145,7 @@ export function prepareKb(kb: LoadedKb): Prepared {
   const anchorSlot = new Int32Array(P).fill(-1);
   const codeIdx = new Int32Array(P);
   const flags = new Uint8Array(P);
+  const unitCap = new Int32Array(P);
   const srcRank = new Uint8Array(P);
   const discipline: (string | undefined)[] = new Array<string | undefined>(P);
   const regexRows: { pid: number; re: RegExp }[] = [];
@@ -148,7 +157,8 @@ export function prepareKb(kb: LoadedKb): Prepared {
     srcRank[p] = SOURCE_RANK[pat.source];
     discipline[p] = pat.discipline;
     let f = 0;
-    if (pat.hintOnly) f |= F_HINT;
+    if (pat.hintOnly && !HINT_STOP_TOKENS.has(pat.tokens[0])) f |= F_HINT; // a stopped one is inert (np 1, no F_ONEWORD)
+    unitCap[p] = pat.oneWordMaxUnit ?? 0;
     if (pat.orderFree) f |= F_ORDERFREE;
     if (pat.source === "term") f |= F_TERM;
     if (pat.oneWordOk) f |= F_ONEWORD;
@@ -182,7 +192,7 @@ export function prepareKb(kb: LoadedKb): Prepared {
   }
   const prep: Prepared = {
     kb, vocab: new Set(kb.tokenId.keys()),
-    off, tok, stok, mass, isDiff, total, anchorSlot, codeIdx, flags, srcRank, discipline,
+    off, tok, stok, mass, isDiff, total, anchorSlot, codeIdx, flags, unitCap, srcRank, discipline,
     codes, codeIndex, parentIdx, level, division, regexRows,
     posBuf: new Int32Array(MAX_PATTERN_TOKENS), stamp: new Int32Array(P), epoch: 0,
     ancestorsMemo: new Map(),

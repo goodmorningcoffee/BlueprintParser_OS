@@ -24,6 +24,10 @@
  * fix3 (2026-10-21): E2 at diff shares <= 0.15 (where the rest of the pattern clears even 0.85, so E2
  * alone decides) and the printed-order tie-break for equidistant occurrences; measured and mutant-checked
  * in gitignore/projects/csi_tagger_v2/logs/s3c-20261021T0140Z-fix3-*.
+ * S5 tune (2026-10-21, kb-v2.5 + the S5 runtime rules): every pin that moved was RE-MEASURED before it was
+ *   re-pinned — table rows by a regenerator over this TABLE, trace facts and probes by
+ *   gitignore/projects/csi_tagger_v2/logs/s5t-20261021T0640Z-span-facts.txt, the self-retrieval / S400 / index
+ *   numbers by `eval/csi/span-measure.ts` (log …/logs/s5t-20261021T0640Z-span-measure.txt). Rows marked S5.
  * Two §II table claims are FALSE on kb-v2.4 and are pinned as measured: `PAINTING` → 09 91 00 via
  * the oneWordOk term row PAINT (not a hint; J11), and the window row is not `GYPSUM QQQ…` (J12).
  */
@@ -87,13 +91,14 @@ const TABLE: [string, In, string | undefined, string[], string[]][] = [
   // fix2: a diff token LEFT of the anchor, behind a boundary — a title (00 31 26.36, `existing` slot 0,
   // anchor `drum` slot 3) and an INDEX pattern (00 31 32, `soil` slot 0, anchor `boring` slot 1)
   ["diff mandatory", "EXISTING HAZARDOUS WASTE DRUM INFORMATION", undefined, ["00 31 26.36@1.000 title [0-4]"], []],
-  ["diff mandatory", "EXISTING: HAZARDOUS WASTE DRUM INFORMATION", undefined, [], ["28 00 00"]],
+  // S5 (kb-v2.5): `information` is a HINT_STOP_TOKENS word, so its 28 00 00 hint is gone
+  ["diff mandatory", "EXISTING: HAZARDOUS WASTE DRUM INFORMATION", undefined, [], []],
   ["diff mandatory", "SOIL BORING AVAILABLE INFORMATION DATA", undefined, ["00 31 32@1.000 index [0-4]"], []],
   ["diff mandatory", "SOIL: BORING AVAILABLE INFORMATION DATA", undefined, ["00 30 00@1.000 title [2-3]"], []],
   // fix3: a diff token carrying <= 0.15 of the mass, so the REST clears even a 0.85 coverage bar — E2 is the
   // only gate. Omitted, behind a boundary, and (09 05 61.13) present but beyond the ±(n+1) radius. Right of
   // the anchor: 09 05 61.13 title (`control` 0.132), 33 05 19 index (`pipe` 0.145); left of it: 02 83 13
-  // title (`control` 0.126), 23 83 16 index (`water` 0.140). Each full form first, to show it is a real match.
+  // title (`control` 0.127; 0.126 at kb-v2.4), 23 83 16 index (`water` 0.140). Each full form first, to show it is a real match.
   ["diff mandatory", "MOISTURE VAPOR EMISSION CONTROL", undefined, ["09 05 61.13@1.000 title [0-3]"], []],
   ["diff mandatory", "MOISTURE VAPOR EMISSION", undefined, [], []],
   ["diff mandatory", "MOISTURE VAPOR EMISSION; CONTROL", undefined, [], []],
@@ -112,7 +117,8 @@ const TABLE: [string, In, string | undefined, string[], string[]][] = [
   ["window", "CONCRETE QQQ ZZZ FOOTING XXX WWW SCHEDULE", undefined, [], ["03 00 00"]],
   // fix1: width n+2 vs n+3 with every token inside the ±(n+1) radius — the E5 gate alone decides
   ["window", "CONCRETE QQQ ZZZ FOOTING XXX SCHEDULE", undefined, [], ["03 00 00"]],
-  ["window", "PLAIN REINFORCEMENT BARS QQQ ZZZ STEEL", undefined, ["03 21 11@0.850 title [0-5]"], []],
+  // S5: STEEL after BARS is out of printed order for the strict-order title → OUT_OF_ORDER_FACTOR 0.7 (was 0.85)
+  ["window", "PLAIN REINFORCEMENT BARS QQQ ZZZ STEEL", undefined, ["03 21 11@0.700 title [0-5]"], []],
   ["window", "PLAIN REINFORCEMENT BARS QQQ ZZZ XXX STEEL", undefined, ["03 21 00@1.000 title [1-2]"], []],
   ["window", "BAMBOO QQQ FLOORING", undefined, ["09 64 36@0.850 title [0-2]"], []],
   ["window", "BAMBOO QQQ RRR FLOORING", undefined, ["09 64 36@0.850 title [0-3]"], []],
@@ -147,7 +153,8 @@ const TABLE: [string, In, string | undefined, string[], string[]][] = [
   // fix3: the printed-order tie-break for two occurrences EQUIDISTANT from the anchor (design §0 E1/E5 row):
   // a slot right of the anchor takes the right one, a slot left of it the left one
   ["tie-break", "THERMAL INSULATION", undefined, ["07 21 00@1.000 title [0-1]"], []],
-  ["tie-break", "INSULATION THERMAL INSULATION", undefined, ["07 21 00@1.000 title [1-2]"], []],
+  // S5: the INSULATION term row (07 21 00, oneWordOk) owns the lone first word; the title still takes [1-2]
+  ["tie-break", "INSULATION THERMAL INSULATION", undefined, ["07 21 00@1.000 term [0-0]","07 21 00@1.000 title [1-2]"], []],
   ["tie-break", "ROOF REPLACEMENT ROOF", undefined, ["07 01 50.81@1.000 title [0-1]"], []],
   ["tie-break", "CONCRETE ACCELERATOR CONCRETE", undefined, ["03 05 00@1.000 index [1-2]"], ["03 00 00"]],
   ["tie-break", "CONCRETE ADMIXTURE CONCRETE", undefined, ["03 05 00@1.000 index [0-1]"], ["03 00 00"]],
@@ -247,6 +254,10 @@ const TABLE: [string, In, string | undefined, string[], string[]][] = [
   ["ACT", "ACT", undefined, ["09 51 00@1.000 term [0-0]"], []],
   ["ACT", "ACT LAY-IN", undefined, ["09 51 13@1.000 term [0-1]"], []],
   ["ACT", "ACT 2x4 LAY-IN", undefined, ["09 51 13@0.850 term [0-2]"], []],
+  // S5 d3 (csi_terms ACT oneWordOk `<=4`): the one-word ACT row needs a unit of <= 4 tokens — 4 owns, 5 does not
+  ["ACT", "ACT ABOVE OFFICE CORRIDOR", undefined, ["09 51 00@1.000 term [0-0]"], []],
+  ["ACT", "ACT ABOVE OFFICE CORRIDOR LOBBY", undefined, [], []],
+  ["ACT", "OWNER MAY ACT ON BEHALF OF TENANT REPRESENTATIVE", undefined, [], []],
   // ── two ranges
   ["two ranges", "PTD GWB", undefined, ["09 91 00@1.000 term [0-0]","09 29 00@1.000 term [1-1]"], []],
   ["two ranges", "HOLLOW METAL DOOR GYPSUM BOARD", undefined, ["08 13 13@1.000 title [0-2]","09 29 00@1.000 title [3-4]"], []],
@@ -271,13 +282,17 @@ const TABLE: [string, In, string | undefined, string[], string[]][] = [
   ["E13 overlap", "CONCRETE REINFORCING; PLAIN STEEL REINFORCEMENT BARS", undefined, ["03 20 00@1.000 title [0-1]","03 21 11@1.000 title [2-5]"], []],
   // ── E14
   ["E14", "HEATING, VENTILATING, AND AIR CONDITIONING", undefined, ["23 00 00@1.000 title [0-3]"], []],
-  ["E14", "VENTILATING AND AIR CONDITIONING", undefined, [], []],
-  ["E14", "AIR CONDITIONING", undefined, [], []],
-  ["E14", "HVAC", undefined, [], ["23 00 00","28 00 00"]],
-  ["E14", "WOOD JOISTS", undefined, ["06 17 33@1.000 title [0-1]"], []],
+  // S5 (kb-v2.5): term row AIR CONDITIONING → 23 00 00; `hvac` is a HINT_STOP_TOKENS word; the lost-letter
+  // title 06 17 33 "Wood I-Joists" owns nothing and its {wood, joist} patterns are dropped → 06 11 00 index
+  ["E14", "VENTILATING AND AIR CONDITIONING", undefined, ["23 00 00@1.000 term [1-2]"], []],
+  ["E14", "AIR CONDITIONING", undefined, ["23 00 00@1.000 term [0-1]"], []],
+  ["E14", "HVAC", undefined, [], []],
+  ["E14", "WOOD JOISTS", undefined, ["06 11 00@1.000 index [0-1]"], []],
   // ── known misses
   ["known misses", "UNIT PAVERS", undefined, [], []],
-  ["known misses", "PIPE INSULATION", undefined, [], []],
+  // S5: the INSULATION term row owns INSULATION here — a known WRONG code (pipe insulation is 22 07 19);
+  // the S5 sample judged 8 of 40 INSULATION additions W for exactly this, accepted for the net gain
+  ["known misses", "PIPE INSULATION", undefined, ["07 21 00@1.000 term [1-1]"], []],
   ["known misses", "GROUNDING AND BONDING", undefined, [], []],
   ["known misses", "CHAIN LINK FENCES", undefined, [], ["05 00 00","32 00 00"]],
   ["known misses", "ELASTOMERIC ROOFING", undefined, [], []],
@@ -333,10 +348,11 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
       const total = p.mass.reduce((a, b) => a + b, 0);
       return [p.source, i, p.anchor, p.diff.includes(i), (p.mass[i] / total).toFixed(3), 1 - p.mass[i] / total >= 0.85];
     };
-    // [source, diff slot, anchor slot, is diff, share, rest of the pattern >= 0.85 of the mass] — all MEASURED (kb-v2.4)
+    // [source, diff slot, anchor slot, is diff, share, rest of the pattern >= 0.85 of the mass] — all MEASURED (kb-v2.5;
+    // 02 83 13 was 0.126 at kb-v2.4: S5 changed N 8,933 → 8,930 and a few codeDFs, so every IDF moved slightly)
     expect(share("09 05 61.13", "Moisture Vapor Emission Control", "control")).toEqual(["title", 3, 2, true, "0.132", true]);
     expect(share("33 05 19", "ductile-iron utility, piping", "pipe")).toEqual(["index", 3, 0, true, "0.145", true]);
-    expect(share("02 83 13", "Lead Hazard Control Activities", "control")).toEqual(["title", 2, 3, true, "0.126", true]);
+    expect(share("02 83 13", "Lead Hazard Control Activities", "control")).toEqual(["title", 2, 3, true, "0.127", true]);
     expect(share("23 83 16", "hot water, baseboard radiation", "water")).toEqual(["index", 1, 2, true, "0.140", true]);
     // omitted (the presence prefilter), behind a boundary and beyond the radius (the per-placement check):
     // NOTHING of these codes is supported, though the matched rest would score 0.868 / 0.855 / 0.874 / 0.860
@@ -356,8 +372,11 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
     expect(facts("07 01 50.81", "Roof Replacement", "roof")).toEqual(["title", 1, 0]);
     expect(facts("03 05 00", "accelerators, concrete", "concrete")).toEqual(["index", 0, 1]);
     expect(facts("03 05 00", "concrete, admixtures", "concrete")).toEqual(["index", 1, 0]);
-    // strict order: the wrong pick is out of order, [0-1] @0.850 / [1-2] @0.850; order-free: the span moves
-    expect(trace("INSULATION THERMAL INSULATION").supported.map(fmtSup)).toEqual(["07 21 00@1.000 title [1-2]"]);
+    // strict order: the wrong pick is out of order, [0-1] @0.700 / [1-2] @0.700 (S5); order-free: the span moves.
+    // S5: the INSULATION term row (oneWordOk) adds its own one-word spans on both INSULATION tokens
+    expect(trace("INSULATION THERMAL INSULATION").supported.map(fmtSup)).toEqual([
+      "07 21 00@1.000 term [0-0]", "07 21 00@1.000 term [2-2]", "07 21 00@1.000 title [1-2]",
+    ]);
     expect(trace("ROOF REPLACEMENT ROOF").supported.map(fmtSup)).toEqual(["07 01 50.81@1.000 title [0-1]"]);
     expect(trace("CONCRETE ACCELERATOR CONCRETE").supported.map(fmtSup)).toEqual(["03 05 00@1.000 index [1-2]"]);
     expect(trace("CONCRETE ADMIXTURE CONCRETE").supported.map(fmtSup)).toEqual(["03 05 00@1.000 index [0-1]"]);
@@ -369,7 +388,8 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
     expect(trace("CONCRETE QQQ ZZZ FOOTING XXX WWW SCHEDULE").supported).toEqual([]);
     // fix1: n + 3 is already out (every token within the ±(n+1) radius, so only the gate decides)
     expect(trace("CONCRETE QQQ ZZZ FOOTING XXX SCHEDULE").supported).toEqual([]);
-    expect(trace("PLAIN REINFORCEMENT BARS QQQ ZZZ STEEL").supported.map(fmtSup)).toContain("03 21 11@0.850 title [0-5]");
+    // S5: STEEL after BARS is out of printed order → OUT_OF_ORDER_FACTOR 0.7 (was 0.85)
+    expect(trace("PLAIN REINFORCEMENT BARS QQQ ZZZ STEEL").supported.map(fmtSup)).toContain("03 21 11@0.700 title [0-5]");
     expect(supCodes(trace("PLAIN REINFORCEMENT BARS QQQ ZZZ XXX STEEL").supported)).toEqual(["03 21 00"]);
     // fix2, the radius alone: SCHEDULE at n+1 from the BOUND pivot is placed (then the gate rejects), at n+2 it is not
     expect(trace("SEPARATELY BOUND LIST QQQ QQQ QQQ SCHEDULE").supported).toEqual([]);
@@ -389,12 +409,12 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
     ]);
   });
 
-  it("order (J10): GYPSUM BOARD supports 09 21 16 at 0.831 and E4 drops it; BOARD GYPSUM's strict-order title is 0.85, the order-free index wins", () => {
+  it("order (J10): GYPSUM BOARD supports 09 21 16 at 0.831 and E4 drops it; BOARD GYPSUM's strict-order title is 0.7 (S5 OUT_OF_ORDER_FACTOR), the order-free index wins", () => {
     const g = trace("GYPSUM BOARD");
     expect(g.supported.map(fmtSup)).toContain("09 21 16@0.831 title [0-1]");
     expect(supCodes(g.frontier)).toEqual(["09 29 00"]);
     const b = trace("BOARD GYPSUM");
-    expect(b.supported.map(fmtSup)).toContain("09 29 00@0.850 title [0-1]");
+    expect(b.supported.map(fmtSup)).toContain("09 29 00@0.700 title [0-1]");
     expect(b.supported.map(fmtSup)).toContain("09 29 00@1.000 index [0-1]");
     expect(trace("GYPSUM WALL BOARD").supported.map(fmtSup)).toContain("09 29 00@0.850 title [0-2]");
   });
@@ -479,8 +499,9 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
   });
 
   it("E13 overlap (fix1): an ancestor in a SEPARATE range survives beside its descendant", () => {
+    // S5: the INSULATION term row's [1-1] span survives beside the title; its [3-3] span dies to 07 21 16 (E13)
     expect(trace("THERMAL INSULATION; BATT INSULATION").survivors.map(fmtSup)).toEqual([
-      "07 21 00@1.000 title [0-1]", "07 21 16@1.000 see [2-3]", "07 21 16@1.000 term [2-3]",
+      "07 21 00@1.000 title [0-1]", "07 21 00@1.000 term [1-1]", "07 21 16@1.000 see [2-3]", "07 21 16@1.000 term [2-3]",
     ]);
     expect(supCodes(trace("CONCRETE REINFORCING; PLAIN STEEL REINFORCEMENT BARS").survivors)).toEqual(["03 20 00", "03 21 11"]);
   });
@@ -512,9 +533,9 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
     expect(t.ranges[0].top.map(fmtSup)).toEqual(["07 21 19@1.000 term [0-1]"]);
   });
 
-  it("J2 E13 guard: 04 01 20.51 at 0.85 survives (it is not >= 04 01 20's 1.0) but does not own", () => {
+  it("J2 E13 guard: 04 01 20.51 at 0.7 (S5: out of printed order) survives (it is not >= 04 01 20's 1.0) but does not own", () => {
     const t = trace("MAINTENANCE OF UNIT MASONRY");
-    expect(t.survivors.map(fmtSup)).toEqual(["04 01 20@1.000 title [0-2]", "04 01 20.51@0.850 title [0-2]"]);
+    expect(t.survivors.map(fmtSup)).toEqual(["04 01 20@1.000 title [0-2]", "04 01 20.51@0.700 title [0-2]"]);
     expect(codesOf(t.spans)).toEqual(["04 01 20"]);
   });
 
@@ -524,9 +545,10 @@ describe.skipIf(!HAS_KB)("S3 trace facts — each rule falsifiable through trace
     expect(supCodes(t.frontier)).toEqual(["01 61 00"]);
   });
 
-  it("E14 (J14, known misses — not S3 fixes): VENTILATING AND AIR CONDITIONING supports nothing; WOOD JOISTS → 06 17 33", () => {
-    expect(trace("VENTILATING AND AIR CONDITIONING").supported).toEqual([]);
-    expect(codesOf(trace("WOOD JOISTS").spans)).toEqual(["06 17 33"]);
+  it("E14 (J14, S3 known misses fixed by S5 data): VENTILATING AND AIR CONDITIONING → the 23 00 00 term row; WOOD JOISTS → 06 11 00", () => {
+    // kb-v2.4: the first supported nothing and the second went to 06 17 33 (lost-letter title "Wood I-Joists")
+    expect(trace("VENTILATING AND AIR CONDITIONING").supported.map(fmtSup)).toEqual(["23 00 00@1.000 term [1-2]"]);
+    expect(codesOf(trace("WOOD JOISTS").spans)).toEqual(["06 11 00"]);
   });
 });
 
@@ -561,9 +583,9 @@ function ownedUnderPlainE13(t: MatchTrace): string[] {
 }
 
 describe.skipIf(!HAS_KB)("S3 invariants + self-retrieval over ALL multi-token titles (design §7.2; superset of §II's 200)", () => {
-  it("0 violations on every unit; owned exact / present / empty pinned EXACTLY (measured 8,446 / 8,446 / 91)", () => {
+  it("0 violations on every unit; owned exact / present / empty pinned EXACTLY (measured 8,442 / 8,442 / 91)", () => {
     const titles = kb.patterns.filter((p) => p.source === "title" && p.kind === "tokens" && p.tokens.length >= 2);
-    expect(titles).toHaveLength(8630);
+    expect(titles).toHaveLength(8625); // kb-v2.5: S5 dropped 5 titles (3 lost-letter: 06 17 33, 12 24 16.13, 31 62 16.16; 28 40 00; 33 82 63.16); 8,630 at kb-v2.4
     let exact = 0, present = 0, empty = 0;
     const bad: string[] = [];
     for (const p of titles) {
@@ -595,11 +617,12 @@ describe.skipIf(!HAS_KB)("S3 invariants + self-retrieval over ALL multi-token ti
     expect(bad).toEqual([]);
     console.log(`[csi-span-match] titles n=${titles.length}: owned exact ${exact} · present ${present} · empty ${empty}`);
     // fix2: exact, not floors — a one-sided floor let behaviour changes that moved the metric the
-    // "good" way (8,447 / 8,447 / 90) pass; any change to these must be re-measured and re-pinned
-    expect([exact, present, empty]).toEqual([8446, 8446, 91]);
+    // "good" way (8,447 / 8,447 / 90) pass; any change to these must be re-measured and re-pinned.
+    // S5 (kb-v2.5): 8,446 / 8,446 / 91 → 8,442 / 8,442 / 91 (span-measure "ALL E13=guard", log s5t-20261021T0640Z)
+    expect([exact, present, empty]).toEqual([8442, 8442, 91]);
   }, 60_000);
 
-  it("E13 descendant rule on the 400-title stride sample: guard 392 exact / 2 empty, plain 390 (measured; J2 keeps the guard)", () => {
+  it("E13 descendant rule on the 400-title stride sample: guard 393 exact / 1 empty, plain 391 (measured kb-v2.5; J2 keeps the guard)", () => {
     const titles = kb.patterns.filter((p) => p.source === "title" && p.kind === "tokens" && p.tokens.length >= 2);
     const step = Math.floor(titles.length / 400);
     const s400 = titles.filter((_, i) => i % step === 0).slice(0, 400);
@@ -612,16 +635,17 @@ describe.skipIf(!HAS_KB)("S3 invariants + self-retrieval over ALL multi-token ti
       const pl = ownedUnderPlainE13(t);
       if (pl.length === 1 && pl[0] === p.code) plainExact++;
     }
-    expect([s400.length, guardExact, guardEmpty]).toEqual([400, 392, 2]);
-    // plain E13 (no s guard), same ownership: 390 measured (span-measure "S400 E13=plain")
-    expect(plainExact).toBe(390);
+    // S5 (kb-v2.5): kb-v2.4 measured 392 / 2 and plain 390; the stride sample shifted with the 5 dropped titles
+    expect([s400.length, guardExact, guardEmpty]).toEqual([400, 393, 1]);
+    // plain E13 (no s guard), same ownership: 391 measured (span-measure "S400 E13=plain", log s5t-20261021T0640Z)
+    expect(plainExact).toBe(391);
   }, 30_000);
 });
 
 describe.skipIf(!HAS_KB)("S3 index self-test (design §7.3; page gates off)", () => {
-  it("every multi-token index phrase fed back owns its code, an ancestor, or a family containing it — 9,771 / 9,852 pinned exactly", () => {
+  it("every multi-token index phrase fed back owns its code, an ancestor, or a family containing it — 9,769 / 9,850 pinned exactly", () => {
     const pats = kb.patterns.filter((p) => p.source === "index" && p.kind === "tokens" && p.tokens.length >= 2);
-    expect(pats).toHaveLength(9852);
+    expect(pats).toHaveLength(9850); // kb-v2.5 (S5 drops; 9,852 at kb-v2.4)
     let own = 0, anc = 0, fam = 0, empty = 0, other = 0;
     for (const p of pats) {
       const sp = matchUnit(unitFromText(p.text, kb), kb).spans;
@@ -634,9 +658,10 @@ describe.skipIf(!HAS_KB)("S3 index self-test (design §7.3; page gates off)", ()
     }
     const pass = own + anc + fam;
     console.log(`[csi-span-match] index self-test n=${pats.length}: PASS ${pass} (own ${own} · ancestor ${anc} · familyOf ${fam}) · other ${other} · empty ${empty}`);
-    expect(pass).toBeGreaterThanOrEqual(9771);
+    expect(pass).toBeGreaterThanOrEqual(9769);
     // fix2: the breakdown is pinned exactly too (measured), so a shift between buckets fails
-    expect([own, anc, fam, other, empty]).toEqual([9741, 30, 0, 16, 65]);
+    // S5 (kb-v2.5, span-measure M2 "index", log s5t-20261021T0640Z): own 9,741 → 9,739, the rest unchanged
+    expect([own, anc, fam, other, empty]).toEqual([9739, 30, 0, 16, 65]);
   }, 60_000);
 });
 
@@ -672,7 +697,7 @@ describe.skipIf(!HAS_KB)("S3 probe set (fixtures/csi-v2/probe-set.json; generic 
     expect(PROBES.length).toBe(150);
   });
 
-  it("every non-knownMiss row passes and the pass rate is >= 90% (measured 141/141; 9 knownMiss rows)", () => {
+  it("every non-knownMiss row passes and the pass rate is >= 90% (measured 143/143; 7 knownMiss rows — S5 cleared 3, flagged HVAC)", () => {
     const live = PROBES.filter((r) => !r.knownMiss);
     const failed = live.filter((r) => !probePasses(r)).map((r) => r.text);
     expect(failed).toEqual([]);
