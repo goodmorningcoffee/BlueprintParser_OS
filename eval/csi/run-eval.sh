@@ -2,7 +2,7 @@
 # run-eval.sh — CSI v2 S5 end-to-end eval (IMPLEMENTATION §II S5, PLAN §8).
 #
 #   eval/csi/run-eval.sh old   # scores the frozen OLD baseline only (runs today)
-#   eval/csi/run-eval.sh v2    # capture v2 (STUB until S5-proper) → score → compare → sweep τ
+#   eval/csi/run-eval.sh v2    # capture v2 (± context) → score → compare → sweep τ (± context)
 #
 # Steps: verify corpus (wc=471, sha 5c3a9cde…) → esbuild bundles named csi-* (the scripts' argv
 # guards key on those names) → capture → score.ts with --frame (HARD-FAIL on "NO stratum weights"
@@ -48,20 +48,12 @@ ENGINES=(--engine=old="$OLD_CAPTURE")
 if [ "$LABEL" = v2 ]; then
   lrows=$(wc -l < "$LINES" 2>/dev/null || echo 0)
   [ "$lrows" -eq 471 ] || { echo "run-eval: $LINES rows=$lrows, expected 471 — run eval/csi/extract-corpus-lines.sh" >&2; exit 1; }
-  # ┌─ STUB — S5-proper fills this ─────────────────────────────────────────────┐
-  # │ eval/csi/capture-v2.ts joins corpus.ndjson + corpus-lines.ndjson on        │
-  # │ bundle:pageNumber and, per page, calls (IMPLEMENTATION §I)                 │
-  # │   detectCsiV2({ lines, context: { drawingNumber, discipline } },           │
-  # │               { tau: 0 }, loadCsiKb())          → build/v2-engine.json     │
-  # │   detectCsiV2({ lines }, { tau: 0 }, loadCsiKb()) → build/v2-engine-noctx  │
-  # │ in the baseline shape {pages:[{bundle,page,codes,inputSha,codeDetails}]},  │
-  # │ codeDetails = V2Code[] (confidence REQUIRED: sweep-tau re-derives τ from   │
-  # │ it), plus engineSha (v2 files) and kbSha; span dumps → $PRIVATE only.      │
-  # └────────────────────────────────────────────────────────────────────────────┘
-  if [ ! -f eval/csi/capture-v2.ts ]; then
-    echo "run-eval: STUB — eval/csi/capture-v2.ts (calls detectCsiV2) is S5-proper work and does not exist yet." >&2
-    exit 4
-  fi
+  # capture-v2.ts joins corpus.ndjson + corpus-lines.ndjson on bundle:pageNumber and calls, per page,
+  #   detectCsiV2({ lines, context: { discipline, drawingNumber } }, config, kb) → build/v2-engine.json
+  #   detectCsiV2({ lines }, config, kb)                                         → build/v2-engine-noctx.json
+  # `codes` at the default config (τ 0.75), `codeDetails` at τ=0 with confidence (the sweep re-derives
+  # τ from them and step 6 checks derived(0.75) == codes); engineSha + kbSha in the header. Span dumps
+  # (drawing text) → $PRIVATE only.
   bundle capture-v2 csi-capture-v2
   node build/csi-capture-v2.js "$CORPUS" "$LINES" build/v2-engine.json build/v2-engine-noctx.json "$PRIVATE"
   ENGINES+=(--engine=v2=build/v2-engine.json --engine=v2-noctx=build/v2-engine-noctx.json)
@@ -91,6 +83,15 @@ echo "[run-eval] numbers → $RESULTS" >&2
 # ── 6. τ sweep (v2 only), against OLD on the SAME deduped gold ───────────────────
 if [ "$LABEL" = v2 ]; then
   OR=$(jq '.results.old.strict.section.recall' "$RESULTS"); OP=$(jq '.results.old.strict.section.precision' "$RESULTS")
-  node build/csi-sweep-tau.js --gold="$GOLD" --frame="$FRAME" --corpus="$CORPUS" --capture=build/v2-engine.json \
-    --old-recall="$OR" --old-precision="$OP" --out="eval/csi/results/v2-sweep-$STAMP.json"
+  for cap in v2-engine v2-engine-noctx; do
+    node build/csi-sweep-tau.js --gold="$GOLD" --frame="$FRAME" --corpus="$CORPUS" --capture="build/$cap.json" \
+      --check=0.75="build/$cap.json" --old-recall="$OR" --old-precision="$OP" --out="build/sweep-$cap-$STAMP.json"
+  done
+fi
+
+# ── 7. fold the sweeps (numbers only) into the committed results file ──────────────
+if [ "$LABEL" = v2 ]; then
+  jq --slurpfile a "build/sweep-v2-engine-$STAMP.json" --slurpfile b "build/sweep-v2-engine-noctx-$STAMP.json" \
+    '.sweep = { "v2": $a[0], "v2-noctx": $b[0] }' "$RESULTS" > "$RESULTS.tmp" && mv "$RESULTS.tmp" "$RESULTS"
+  echo "[run-eval] τ sweeps (± context) folded into $RESULTS" >&2
 fi

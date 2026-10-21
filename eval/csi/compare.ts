@@ -51,6 +51,8 @@ export interface CapturePage {
   rawTextSha?: string;
   codeDetails?: CodeDetail[];
   spans?: { emitted?: boolean }[];
+  /** capture-v2.ts per-page checks (PLAN §8 integrity inputs that need the KB). */
+  checks?: { emittedCodes: number; emittedSpans: number; childWithoutDiffToken: number; familySpans?: number; hints?: number; parentBesideDescendantSameRange?: number };
 }
 export interface Capture { pages: CapturePage[]; engineSha?: unknown; kbSha?: unknown }
 
@@ -317,6 +319,7 @@ export function integrity(pages: CapturePage[], info: (p: CapturePage) => PageIn
   let parentBesideDescendant = 0, pagesWithPBD = 0;
   let civilOnNonCivil = 0, civilOnUnknown = 0;
   let detailPages = 0, fanOut = 0, codesWithoutDetail = 0;
+  let checkPages = 0, childWithoutDiff = 0, pbdSameRange = 0, pagesCodesGtSpans = 0, familySpans = 0, emittedSpans = 0, hints = 0;
   const pairs = new Map<string, number>();
   for (const p of pages) {
     const ks = [...new Set(p.codes.map(c => chainKey(c, "exact")))];
@@ -330,12 +333,22 @@ export function integrity(pages: CapturePage[], info: (p: CapturePage) => PageIn
       if (disc === null) civilOnUnknown++;
       else if (disc.toUpperCase() !== "C") civilOnNonCivil++;
     }
+    if (p.checks) {
+      checkPages++;
+      childWithoutDiff += p.checks.childWithoutDiffToken;
+      if (p.checks.emittedCodes > p.checks.emittedSpans) pagesCodesGtSpans++;
+      familySpans += p.checks.familySpans ?? 0;
+      emittedSpans += p.checks.emittedSpans;
+      hints += p.checks.hints ?? 0;
+      pbdSameRange += p.checks.parentBesideDescendantSameRange ?? 0;
+    }
     if (p.codeDetails) {
       detailPages++;
       const by = new Map(p.codeDetails.map(d => [exact(d.code), d]));
       for (const c of new Set(p.codes.map(exact))) {
         const d = by.get(c);
         if (!d) { codesWithoutDetail++; continue; }
+        // a τ=0 capture's codeDetails include codes not in `codes`; only emitted codes are looked up
         const owned = (d.triggers ?? []).filter(t => t.emitted !== false);
         if (owned.length === 0) fanOut++;
         for (const t of owned) if (t.pattern) {
@@ -346,21 +359,27 @@ export function integrity(pages: CapturePage[], info: (p: CapturePage) => PageIn
     }
   }
   const hasDetails = detailPages > 0;
+  const hasChecks = checkPages > 0;
   const top = [...pairs.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 40);
   return {
     counters: {
       parentBesideDescendant, pagesWithParentBesideDescendant: pagesWithPBD,
       civilDivOnNonCivilSheet: civilOnNonCivil, civilDivOnUnknownDiscipline: civilOnUnknown,
       emitsWithoutOwnedSpan: hasDetails ? fanOut + codesWithoutDetail : null,
-      childWithoutDiffToken: null,
+      parentBesideDescendantSameRange: hasChecks ? pbdSameRange : null,
+      childWithoutDiffToken: hasChecks ? childWithoutDiff : null,
+      pagesEmitsGtOwnedSpans: hasChecks ? pagesCodesGtSpans : null,
+      emittedSpans: hasChecks ? emittedSpans : null,
+      familyOwnerSpans: hasChecks ? familySpans : null,
+      hintsPerPage: hasChecks && pages.length ? +(hints / pages.length).toFixed(3) : null,
       notesOnlySupportShare: null,
       legendPageCodesPerPageVsMedian: null,
       topPairsDistinct: hasDetails ? pairs.size : null,
     },
     notAvailable: [
       hasDetails ? null : "emitsWithoutOwnedSpan/topPairs: capture has no codeDetails (OLD engine shape)",
-      "childWithoutDiffToken: needs KB diff tokens joined to span tokens — S5-proper (capture-v2)",
-      "notesOnlySupportShare / legendPageCodesPerPageVsMedian: need pageKind per page — S5-proper",
+      hasChecks ? null : "childWithoutDiffToken / pagesEmitsGtOwnedSpans: capture has no per-page checks (capture-v2 only)",
+      "notesOnlySupportShare / legendPageCodesPerPageVsMedian: need pageKind per page; the corpus carries none (P1 trigger)",
     ].filter(Boolean) as string[],
     /** PRIVATE: KB pattern text. Only ever written to --private-out. */
     topPairs: top.map(([k, n]) => ({ code: k.split("\t")[0], pattern: k.split("\t")[1], n })),
