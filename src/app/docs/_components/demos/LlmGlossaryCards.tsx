@@ -10,7 +10,7 @@ const TERMS = [
   {
     term: "CSI code",
     plain: "A 6-digit number from the Construction Specifications Institute MasterFormat. Example: 08 14 00 = Wood Doors. The primary industry-standard scheme for organizing construction scope.",
-    bp: "Detected by the 3-tier matcher in src/lib/csi-detect.ts. Stored in pages.csi_codes JSONB. Drives CSI heatmaps, network graph, and LLM context.",
+    bp: "Detected by the CSI tagger (src/lib/csi-detect.ts → csi-page.ts). Stored in pages.csi_codes JSONB. Drives CSI heatmaps, network graph, and LLM context.",
   },
   {
     term: "Takeoff",

@@ -109,7 +109,7 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
     label: "CSI",
     endpoints: [
       { method: "GET", path: "/api/csi", auth: "session", desc: "Aggregate CSI codes across the current company's projects." },
-      { method: "POST", path: "/api/csi/detect", auth: "session", desc: "Run the 3-tier CSI matcher on arbitrary text.", params: [{ name: "text", type: "string", required: true, desc: "Text to analyze." }] },
+      { method: "POST", path: "/api/csi/detect", auth: "public", desc: "Run the CSI tagger on arbitrary text; returns { csiTags: [{ code, description }] }.", params: [{ name: "text", type: "string", required: true, desc: "Text to analyze." }] },
       { method: "GET", path: "/api/admin/csi/config", auth: "admin", desc: "Per-company CSI detection thresholds and custom database config." },
       { method: "POST", path: "/api/admin/csi/upload", auth: "admin", desc: "Upload a custom CSI MasterFormat TSV." },
     ],

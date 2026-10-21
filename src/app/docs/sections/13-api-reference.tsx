@@ -89,10 +89,10 @@ export function Section13ApiReference() {
           </li>
           <li>
             <InlineCode>POST /api/csi/detect</InlineCode> is the public entry
-            point to the 3-tier CSI matcher (see Section 04). Accepts a{" "}
-            <InlineCode>text</InlineCode> string in the body, returns an array
-            of matches with codes, descriptions, divisions, trades, and
-            confidence scores.
+            point to the CSI tagger (see Section 04). Accepts a{" "}
+            <InlineCode>text</InlineCode> string in the body and returns{" "}
+            <InlineCode>{"{ csiTags: [{ code, description }] }"}</InlineCode>
+            &mdash; the codes the tagger lists for that text.
           </li>
           <li>
             <InlineCode>/api/demo/*</InlineCode> is a parallel, read-only

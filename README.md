@@ -467,7 +467,7 @@ Step Functions → ECS Task
   │     Returns: words[], lines[], tables[] (never throws — empty on total failure)
   │
   ├── 3. Drawing number extraction (title block regex + position scoring)
-  ├── 4. CSI code detection (3-tier matching against 8,951-row MasterFormat DB)
+  ├── 4. CSI code detection (deterministic span tagger over a MasterFormat 2018 lookup table)
   ├── 5. Text annotation detection (30+ regex detectors: phone, email, equipment, dims...)
   ├── 6. Page intelligence:
   │     ├── System 1: Text region classification (OCR word clustering → table-like, notes, key-value)
@@ -496,23 +496,21 @@ POST /api/yolo/load → Load results from S3
 
 ---
 
-## CSI Code Detection (3-Tier Matching)
+## CSI Code Detection (Span Tagger)
 
 CSI MasterFormat codes are the universal embedding layer that connects every system — OCR text, YOLO detections, parsed tables, spatial zones, and LLM context all tagged with CSI codes.
 
-### Detection Algorithm (`csi-detect.ts`)
+### Detection Algorithm (`csi-detect.ts` → `csi-page.ts`)
 
-Matches raw OCR text against the 8,951-row MasterFormat 2004 database (`csi-masterformat.tsv`). Three independent tiers, each with configurable thresholds:
+A deterministic tagger — no AI model at detection time, so the same page always gets the same codes, and each code points at the words on the sheet that produced it.
 
-| Tier  | Method          | Confidence | Description                                                                |
-| ----- | --------------- | ---------- | -------------------------------------------------------------------------- |
-| **1** | Exact subphrase | 0.95       | Consecutive words from CSI description appear together in text             |
-| **2** | Bag-of-words    | up to 0.75 | Score = `(matched/total)²` — squared penalty rewards near-complete overlap |
-| **3** | Keyword anchors | up to 0.50 | Rare words weighted by inverse document frequency (IDF-like)               |
+- **Lookup table.** Built once, offline, from the MasterFormat 2018 PDF: 8,935 codes and ~20,300 phrases (section titles, index phrases, alternate titles, "see" cross-references, and a short curated list of drawing abbreviations such as GWB, ACT, HM). The table (`src/data/csi-kb.json`) is not in git — it is rebuilt from the PDF (see the header of `eval/csi/build-kb-v2.ts`) and verified by the image build (`scripts/verify-csi-kb.mjs`).
+- **Spans.** Each OCR line, table cell or sentence is matched on its own. A phrase matches when the words that distinguish it from its parent are all present, ≥ 80% of its weight is present, and the words sit close together without crossing punctuation. Score: 1.00 exact, 0.85 spread out or reordered. A lone generic word ("concrete") is never a tag; one-word matches count only for curated abbreviations.
+- **Ownership.** The most specific matching code wins ("HOLLOW METAL FRAME" → 08 12 13, not 08 10 00). Siblings that tie hand the words to their shared parent; codes from different divisions are settled by the sheet's discipline (A-, S-, M-, P-, E-, FP-, C-) or not at all.
+- **Page rules.** Text ending in BY OTHERS / N.I.C. never tags the page; Division 00/01 only hints on drawings; site and process divisions (33–35, 40–48) need two different matching phrases or a civil sheet.
+- **Confidence.** Best span score × repetition (0.88 once, +0.03 per extra occurrence, 1.00 at five). A code is listed when confidence ≥ `tau` (default 0.75), capped at `maxCodesPerPage` (default 40). Those are the only two settings (Admin → CSI); a company's custom CSI list adds codes on top of the built-in table.
 
-- Multi-tier boost: +0.05 when both Tier 2 and Tier 3 agree (independent signals confirming each other)
-- Stop-word filtering, minimum word count thresholds per tier
-- All thresholds admin-configurable via pipeline control panel
+Measured on the 471-page evaluation corpus: 41.5 → 6.4 codes per page versus the previous engine; on 19 hand-labelled (not yet certified) pilot pages, precision 4% → 35% and recall 21% → 37%. Re-measure with `eval/csi/run-eval.sh v2` (see `eval/csi/README.md`). The previous engine is kept unchanged in `src/lib/csi-detect-legacy.ts` as the evaluation baseline only.
 
 ### CSI Embedding Strategy
 

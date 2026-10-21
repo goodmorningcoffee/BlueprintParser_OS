@@ -11,6 +11,47 @@
 > **Nor is the parser fixture `src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json`** (owner ruling
 > 2026-10-20, same as D1: verbatim PDF page text); regenerate it per the header of `mf-fixture-extract.ts`.
 
+## CSI v2 — running the eval (`run-eval.sh`)
+
+The v2 tagger (`src/lib/csi-page.ts`, reached through `src/lib/csi-detect.ts`) is measured by one
+script, run from the repo root:
+
+```bash
+eval/csi/run-eval.sh old   # score the frozen OLD engine baseline only
+eval/csi/run-eval.sh v2    # capture v2 (with and without sheet context) → score → compare → τ sweep
+```
+
+**Inputs** (all outside the repo; override with the env vars):
+
+| env var | default | what |
+|---|---|---|
+| `CSI_CORPUS` | `$CSI_WORK/corpus.ndjson` | the frozen 471-page corpus (`extract-corpus.sh`); the script checks 471 rows + its sha256 and refuses anything else |
+| `CSI_CORPUS_LINES` | `$CSI_WORK/corpus-lines.ndjson` | the same pages as Textract LINES, which v2 reads; build once with `extract-corpus-lines.sh <bundles-dir> <out.ndjson>` |
+| `CSI_GOLD` | `…/gitignore/projects/csi_private_eval/gold-pilot.json` | the pilot labels (client text — never copy into `eval/csi/`) |
+| `CSI_PRIVATE` | `…/gitignore/projects/csi_private_eval/v2` | where anything carrying drawing text goes |
+| `CSI_WORK` | `…/gitignore/csi_baseline_work` | work dir holding the two corpus files |
+
+`src/data/csi-kb.json` must exist (it is gitignored; see the note above). Needs `node`, `npx esbuild`, `jq`.
+
+**Outputs.** Numbers only → `eval/csi/results/<old|v2>-<YYYY-MM-DD>.json` (safe to commit: precision,
+recall, F0.5, codes per page, integrity counters, per-abbreviation recall, and the τ sweep for both
+the context and no-context captures). Anything that carries drawing text — per-span dumps
+(`v2-spans*.ndjson`), the top (code, phrase) pairs — goes to `$CSI_PRIVATE` only. Intermediate
+bundles and captures go to `build/` (gitignored).
+
+**Reading it.** `results.<engine>.strict.section` is the headline cell (precision / recall / F0.5
+against the pilot gold, deduped by page text); `corpus.<engine>` is codes per page over the whole
+corpus; `sweep.v2.rows` shows what each τ would have done. The pilot gold is **uncertified**
+(`inputs.gold.certified: false`), so every precision/recall number is directional. First v2 run
+(2026-10-21, after the S5 tuning): strict section precision 0.039 → 0.351, recall 0.205 → 0.370,
+codes/page 41.5 → 6.4.
+
+The old engine is now `src/lib/csi-detect-legacy.ts` (byte-identical to the pre-v2 `csi-detect.ts`);
+`baseline-old-engine.json` still records its hashes under the old path name, and
+`csi-baseline-freshness.test.ts` compares them against the legacy file.
+
+## The pre-v2 baseline and gold set
+
 | file | what it is | phase |
 |---|---|---|
 | `baseline-old-engine.json` | what the OLD engine **emits** over all 471 pages | P0.1 |
@@ -89,7 +130,7 @@ node build/csi-capture.js /path/to/work/corpus.ndjson eval/csi/baseline-old-engi
 `corpus.ndjson` is ~48 MB and is **not** committed — keep it outside the repo.
 The artifact records `corpusSha` so a later run can prove it scored the same
 inputs, and `engineSha` for the four files that define engine behavior
-(`csi-detect.ts`, `csi-detect-defs.ts`, `csi-database.ts`, the masterformat TSV).
+(`csi-detect.ts` — now `csi-detect-legacy.ts`, `csi-detect-defs.ts`, `csi-database.ts`, the masterformat TSV).
 **If any `engineSha` no longer matches the working tree, this baseline is stale
 by construction** — recapture before comparing against it.
 

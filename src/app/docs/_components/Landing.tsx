@@ -53,7 +53,7 @@ const CARDS: FeatureCard[] = [
   {
     title: "CSI Engine",
     href: "#csi-engine",
-    desc: "3-tier detection, 9×9 spatial heatmap, and the project-wide CSI network graph.",
+    desc: "Deterministic span tagger, 9×9 spatial heatmap, and the project-wide CSI network graph.",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <circle cx="12" cy="6" r="2.5" />

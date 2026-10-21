@@ -3,26 +3,25 @@
 import { useEffect, useState } from "react";
 import { CsiChip } from "./CsiChipDemo";
 
-interface CsiMatch {
+/** One row of `POST /api/csi/detect` → `{ csiTags: [{ code, description }] }`. */
+interface CsiTag {
   code: string;
   description: string;
-  division: string;
-  trade: string;
-  confidence?: number;
-  tier?: number;
 }
 
-/** Hits the real /api/csi/detect endpoint with a debounce. Falls back to a
- *  static example when the user is unauthenticated or the backend errors. */
+const DEFAULT_TEXT = "PTD GWB on MTL STUD. ACT 2x4 lay-in ceiling. Hollow metal doors and frames by others.";
+
+/** Hits the real /api/csi/detect endpoint (the v2 tagger) with a debounce and renders the
+ *  returned `csiTags`. Falls back to a recorded example when the backend errors. */
 export function CsiTierExplainer() {
-  const [text, setText] = useState("hot water heater installation per section 22 34 13");
-  const [matches, setMatches] = useState<CsiMatch[] | null>(null);
+  const [text, setText] = useState(DEFAULT_TEXT);
+  const [tags, setTags] = useState<CsiTag[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<"idle" | "ok" | "error" | "unauth">("idle");
 
   useEffect(() => {
     if (!text.trim()) {
-      setMatches(null);
+      setTags(null);
       return;
     }
     const ctrl = new AbortController();
@@ -37,19 +36,20 @@ export function CsiTierExplainer() {
         });
         if (res.status === 401 || res.status === 403) {
           setStatus("unauth");
-          setMatches(FALLBACK_MATCHES);
+          setTags(FALLBACK_TAGS);
         } else if (!res.ok) {
           setStatus("error");
-          setMatches(FALLBACK_MATCHES);
+          setTags(FALLBACK_TAGS);
         } else {
-          const data = await res.json();
-          const rows: CsiMatch[] = Array.isArray(data) ? data : data?.codes ?? data?.matches ?? [];
+          const data: unknown = await res.json();
+          const rows = (data as { csiTags?: unknown })?.csiTags;
           setStatus("ok");
-          setMatches(rows.slice(0, 6));
+          setTags(Array.isArray(rows) ? (rows as CsiTag[]).slice(0, 8) : []);
         }
       } catch {
+        if (ctrl.signal.aborted) return;
         setStatus("error");
-        setMatches(FALLBACK_MATCHES);
+        setTags(FALLBACK_TAGS);
       } finally {
         setLoading(false);
       }
@@ -63,38 +63,37 @@ export function CsiTierExplainer() {
   return (
     <div className="space-y-3 max-w-2xl">
       <label className="block text-[11px] text-[var(--muted)]">
-        Type any construction phrase — the backend runs the 3-tier matcher and returns detected divisions.
+        Type a line of drawing text — the backend runs the same CSI tagger the pipeline uses and returns
+        the codes it would list. A single generic word (&quot;concrete&quot;) lists nothing; text ending
+        in &quot;by others&quot; or &quot;N.I.C.&quot; is not tagged.
       </label>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
         className="w-full px-3 py-2 text-sm bg-[var(--bg)] border border-[var(--border)] rounded font-mono focus:outline-none focus:border-[var(--accent)]"
-        placeholder="e.g. concrete slab on grade, hydronic heating, GWB partition..."
+        placeholder="e.g. PTD GWB on MTL STUD, ACT 2x4 lay-in ceiling, cast-in-place concrete slab on grade..."
       />
       <div className="flex items-center gap-2 min-h-5">
         {loading && <span className="text-[11px] text-[var(--muted)] animate-pulse">detecting…</span>}
-        {!loading && status === "ok" && matches && (
-          <span className="text-[11px] text-emerald-400">✓ {matches.length} match{matches.length === 1 ? "" : "es"} from /api/csi/detect</span>
+        {!loading && status === "ok" && tags && (
+          <span className="text-[11px] text-emerald-400">
+            ✓ {tags.length} code{tags.length === 1 ? "" : "s"} from /api/csi/detect
+          </span>
         )}
         {!loading && status === "unauth" && (
           <span className="text-[11px] text-amber-400">
-            Not signed in — showing cached example. Sign in to exercise the live endpoint.
+            Not signed in — showing a recorded example.
           </span>
         )}
         {!loading && status === "error" && (
-          <span className="text-[11px] text-red-400">Backend unavailable — showing cached example.</span>
+          <span className="text-[11px] text-red-400">Backend unavailable — showing a recorded example.</span>
         )}
       </div>
-      {matches && matches.length > 0 && (
+      {tags && tags.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {matches.map((m, i) => (
-            <CsiChip
-              key={`${m.code}-${i}`}
-              code={m.code}
-              description={m.description}
-              confidence={m.confidence}
-            />
+          {tags.map((t, i) => (
+            <CsiChip key={`${t.code}-${i}`} code={t.code} description={t.description} />
           ))}
         </div>
       )}
@@ -102,8 +101,10 @@ export function CsiTierExplainer() {
   );
 }
 
-const FALLBACK_MATCHES: CsiMatch[] = [
-  { code: "22 34 13", description: "Instantaneous, Gas, Domestic Water Heaters", division: "22", trade: "Plumbing", confidence: 0.95 },
-  { code: "22 33 00", description: "Electric Domestic Water Heaters", division: "22", trade: "Plumbing", confidence: 0.74 },
-  { code: "22 00 00", description: "Plumbing", division: "22", trade: "Plumbing", confidence: 0.52 },
+/** Recorded from the v2 tagger on DEFAULT_TEXT (2026-10-21): the door line is dropped by "by others". */
+const FALLBACK_TAGS: CsiTag[] = [
+  { code: "09 22 16", description: "Non-Structural Metal Framing" },
+  { code: "09 51 13", description: "Acoustical Panel Ceilings" },
+  { code: "09 29 00", description: "Gypsum Board" },
+  { code: "09 91 00", description: "Painting" },
 ];

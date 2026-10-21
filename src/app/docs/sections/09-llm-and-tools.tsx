@@ -127,8 +127,8 @@ export function Section09LlmAndTools() {
           </li>
           <li>
             <strong>Engine invocation</strong> &mdash;{" "}
-            <InlineCode>detectCsiFromText</InlineCode> lets the model run the 3-tier
-            CSI matcher on a user&apos;s phrase.{" "}
+            <InlineCode>detectCsiFromText</InlineCode> lets the model run the
+            CSI tagger on a user&apos;s phrase.{" "}
             <InlineCode>detectTagPatterns</InlineCode> runs the tag-pattern
             detector. Tools can wrap BP engines so the model can do analysis on
             the fly.

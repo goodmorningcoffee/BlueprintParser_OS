@@ -107,7 +107,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
       <div>
         <h2 className="text-lg font-semibold">CSI Code Configuration</h2>
         <p className="text-sm text-[var(--muted)] mt-1">
-          Configure CSI MasterFormat code detection.
+          Configure CSI MasterFormat code detection. The tagger is deterministic (no AI model at detection time); every listed code points to the words on the sheet that produced it.
         </p>
       </div>
 
@@ -195,7 +195,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
         <details className="text-[10px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded p-2">
           <summary className="cursor-pointer text-[var(--accent)] font-medium">How detection works</summary>
           <div className="mt-2 space-y-1.5">
-            <p><strong className="text-[var(--fg)]">Spans:</strong> each OCR line (or table cell) is matched against MasterFormat titles, keyword-index phrases and a curated list of drawing abbreviations (GWB, ACT, HM&hellip;). A phrase counts only when the code&apos;s distinctive words are present, at least 80% of the phrase&apos;s weight is found, and the words sit close together without crossing punctuation. Score: 1.00 for the exact words in order, 0.85 when they are out of order or spread out. The most specific matching code wins (&ldquo;hollow metal doors&rdquo; &rarr; 08 13 13, not 08 00 00).</p>
+            <p><strong className="text-[var(--fg)]">Spans:</strong> each OCR line (or table cell) is matched against MasterFormat titles, keyword-index phrases and a curated list of drawing abbreviations (GWB, ACT, HM&hellip;). A phrase counts only when the code&apos;s distinctive words are present, at least 80% of the phrase&apos;s weight is found, and the words sit close together without crossing punctuation. Score: 1.00 for the exact words in order, 0.85 when they are spread out or reordered, 0.70 when a phrase whose word order matters is out of order. The most specific matching code wins (&ldquo;hollow metal doors&rdquo; &rarr; 08 13 13, not 08 00 00).</p>
             <p><strong className="text-[var(--fg)]">Page confidence:</strong> a code&apos;s best span score &times; a repetition factor &mdash; 0.88 for one occurrence, +0.03 per extra occurrence, up to 1.00 at five.</p>
             <p><strong className="text-[var(--fg)]">Always filtered, whatever the settings:</strong> codes whose best span scores under 0.80, phrases marked &ldquo;by others&rdquo; / N.I.C., one-word matches that are not curated abbreviations, Division 00/01 codes on drawings, and site/process divisions (33&ndash;35, 40&ndash;48) unless matched at least twice by their own phrases or the sheet is a civil (C-) sheet.</p>
           </div>
@@ -211,7 +211,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
           />
           <NumberField
             label="Max codes per page"
-            description={`Keep at most this many codes per page, highest confidence first (default ${DEFAULT_CSI_V2_CONFIG.maxCodesPerPage}). On the evaluation drawings a page lists 4 codes at the median and 15 at the 90th percentile, so the cap rarely applies.`}
+            description={`Keep at most this many codes per page, highest confidence first (default ${DEFAULT_CSI_V2_CONFIG.maxCodesPerPage}). On the evaluation drawings a page lists 4 codes at the median and 14 at the 90th percentile, so the cap rarely applies.`}
             value={config.maxCodesPerPage}
             onChange={(v) => updateConfig("maxCodesPerPage", Math.min(CSI_V2_MAX_CODES_MAX, Math.max(CSI_V2_MAX_CODES_MIN, v)))}
             min={CSI_V2_MAX_CODES_MIN} max={CSI_V2_MAX_CODES_MAX}

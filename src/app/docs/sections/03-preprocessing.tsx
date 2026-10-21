@@ -114,7 +114,7 @@ export function Section03Preprocessing() {
           </li>
           <li>
             <strong>Detect CSI codes</strong>{" "}
-            (<InlineCode>detectCsiCodes()</InlineCode>) &mdash; the 3-tier matcher.
+            (<InlineCode>detectCsiCodes()</InlineCode>) &mdash; the CSI tagger (phrase spans, most specific code wins).
             Output is written to <InlineCode>pages.csi_codes</InlineCode>. Section
             04 explains the algorithm.
           </li>

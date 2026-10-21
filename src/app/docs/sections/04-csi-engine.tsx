@@ -62,79 +62,161 @@ export function Section04CsiEngine() {
           calls. That pattern is what lets BP scale LLM chat to 200-page projects
           without ever exceeding a Sonnet-sized context budget.
         </p>
-        <Figure kind="live" caption="CSI chips — how detected codes show up across the UI." size="md">
+        <Figure kind="live" caption="CSI chips — how detected codes show up across the UI. The percentage is the page confidence (see below)." size="md">
           <div className="flex flex-wrap gap-2">
-            <CsiChip code="22 00 00" description="Plumbing" confidence={0.95} />
-            <CsiChip code="23 00 00" description="HVAC" confidence={0.88} />
-            <CsiChip code="26 00 00" description="Electrical" confidence={0.92} />
-            <CsiChip code="08 14 00" description="Wood Doors" confidence={0.78} />
-            <CsiChip code="03 30 00" description="Cast-in-Place Concrete" confidence={0.85} />
-            <CsiChip code="09 51 13" description="Acoustical Panel Ceilings" confidence={0.62} />
+            <CsiChip code="22 34 00" description="Fuel-Fired Domestic Water Heaters" confidence={0.88} />
+            <CsiChip code="23 00 00" description="Heating, Ventilating, and Air Conditioning" confidence={0.94} />
+            <CsiChip code="08 11 13" description="Hollow Metal Doors and Frames" confidence={1} />
+            <CsiChip code="03 30 00" description="Cast-in-Place Concrete" confidence={0.91} />
+            <CsiChip code="09 29 00" description="Gypsum Board" confidence={0.97} />
+            <CsiChip code="09 51 13" description="Acoustical Panel Ceilings" confidence={0.88} />
           </div>
         </Figure>
       </SubSection>
 
-      <SubSection title="Layer 1: per-page detection (3-tier algorithm)">
+      <SubSection title="Layer 1: per-page detection (the CSI tagger)">
         <p>
-          <InlineCode>src/lib/csi-detect.ts</InlineCode> implements a rule-based
-          matcher against a MasterFormat database. The matcher runs three tiers
-          in order of specificity; a code can be tagged by any tier it passes, and
-          the tier with the highest confidence wins. Defaults:
+          The tagger reads a page the way an estimator skims it: line by line, looking for phrases
+          that name a MasterFormat section. It is fully deterministic &mdash; no AI model runs at
+          detection time, so the same page always gets the same codes, and every code can point to
+          the exact words on the sheet that produced it.
+        </p>
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">1. The lookup table</h4>
+        <p>
+          Everything the tagger knows comes from one lookup table built once, offline, from the
+          MasterFormat 2018 PDF: <strong>8,935 codes</strong> and about <strong>20,300 phrases</strong>{" "}
+          that point at them &mdash; every section title (8,927), the phrases from the book&apos;s
+          index (10,165), alternate titles (962), the index&apos;s &quot;see&quot; cross-references
+          (206), and a short hand-curated list of drawing abbreviations (58 rows, e.g. GWB, ACT, HM,
+          CMU, VCT) so that <InlineCode>PTD GWB</InlineCode> finds Gypsum Board and Painting. The
+          table is checked when the server image is built, so a deployed server always has it.
+          Because the index text is MasterFormat&apos;s own wording, the table is rebuilt from the PDF
+          rather than published in the open-source repository.
+        </p>
+        <p>
+          MasterFormat is a nested menu (Division 08 &rarr; 08 10 00 Doors and Frames &rarr; 08 11 13
+          Hollow Metal Doors and Frames), and the table keeps that shape. For each phrase it records
+          which words it shares with its parent (the <em>family</em> words) and which words it adds
+          (its <em>distinguishing</em> words). A generic word on its own &mdash; &quot;concrete&quot;,
+          &quot;door&quot;, &quot;equipment&quot; &mdash; is evidence for a family, never a tag by itself.
+        </p>
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">2. Spans: which words name which code</h4>
+        <p>
+          Each OCR line, table cell or sentence is matched on its own; a phrase never reaches across
+          two lines or two cells. A phrase matches a stretch of text (a <em>span</em>) when:
+        </p>
+        <ul className="list-disc pl-5 space-y-1 text-[13px]">
+          <li>every one of its distinguishing words is present,</li>
+          <li>at least 80% of the phrase&apos;s weight is present (rare words weigh more than common ones),</li>
+          <li>the words sit close together and do not cross punctuation like a period, colon or bracket.</li>
+        </ul>
+        <p>
+          The span scores <strong>1.00</strong> when the words appear exactly as printed,{" "}
+          <strong>0.85</strong> when they are spread out or reordered, and <strong>0.70</strong> when
+          a phrase whose word order matters appears out of order (which keeps it from being listed).
+          A one-word match counts only for a curated abbreviation; any other single word just hints
+          at a division.
+        </p>
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">3. Ownership: the most specific code wins</h4>
+        <p>
+          When several phrases match the same words, the tagger keeps only the deepest one:{" "}
+          &quot;HOLLOW METAL FRAME&quot; gives 08 12 13 Hollow Metal Frames, not 08 10 00 or
+          Division 08. Then each stretch of words gets exactly one <em>owner</em>:
+        </p>
+        <ul className="list-disc pl-5 space-y-1 text-[13px]">
+          <li>one code matches &rarr; it owns the words;</li>
+          <li>
+            several sibling codes match equally well &rarr; their shared parent owns the words (its
+            score &times; 0.9) and the siblings are kept as alternatives;
+          </li>
+          <li>
+            codes from different divisions match &rarr; the sheet&apos;s discipline decides (A-, S-,
+            M-, P-, E-, FP- or C- drawing numbers each point at their own divisions); if that does not
+            settle it, nobody owns the words and they only hint at the divisions involved.
+          </li>
+        </ul>
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">4. Page rules</h4>
+        <ul className="list-disc pl-5 space-y-1 text-[13px]">
+          <li>
+            Text that ends in <strong>BY OTHERS</strong>, <strong>BY OWNER</strong>,{" "}
+            <strong>N.I.C.</strong> or <strong>NOT IN CONTRACT</strong> is recorded but never tags
+            the page.
+          </li>
+          <li>
+            <strong>Division 00 and 01</strong> (procurement, general requirements) only hint on
+            drawings &mdash; title blocks and general notes would otherwise tag every sheet. Typed
+            text such as a note or a spec page can still list them from a phrase of three or more
+            words.
+          </li>
+          <li>
+            <strong>Site and process divisions</strong> (33&ndash;35, 40&ndash;48) are listed only
+            when at least two different phrases belonging to that code match, or the sheet is a civil
+            (C-) sheet.
+          </li>
+        </ul>
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">5. Confidence and the threshold (tau)</h4>
+        <p>
+          A code&apos;s page confidence is its best span score times a repetition factor: 0.88 for
+          one occurrence, plus 0.03 for each further place it appears, up to 1.00 at five. A code is
+          listed when its confidence reaches <InlineCode>tau</InlineCode> (default{" "}
+          <strong>0.75</strong>) and its best span scores at least 0.80; at most{" "}
+          <InlineCode>maxCodesPerPage</InlineCode> codes (default 40) are kept, highest confidence
+          first. With the defaults, one exact phrase is enough (0.88), while one loose match (0.85
+          &times; 0.88 &asymp; 0.75) needs to repeat. Every listed code therefore scores at least 0.704,
+          so lowering tau below that changes nothing. The tier shown on a highlight is read from the
+          confidence: tier 1 at 0.80 and above, tier 2 from 0.60.
         </p>
         <TableEl
-          headers={["Tier", "What it matches", "Confidence", "Why it exists"]}
+          headers={["Stored per code", "What it is"]}
           rows={[
-            [
-              <strong key="1">Tier 1</strong>,
-              "Exact consecutive-word subphrase from the MasterFormat description (e.g. 'cast-in-place concrete' anywhere in the OCR).",
-              <span key="1c" className="font-mono">0.95 × tier1WeightByWordCount</span>,
-              "High-signal: the literal phrase is in the text, which essentially never happens by accident. The raw 0.95 is scaled by description word count, so a 3+ word description lands at 0.76 while a 1-word description lands at 0.0095 and is rejected by the 0.40 threshold.",
-            ],
-            [
-              <strong key="2">Tier 2</strong>,
-              <span key="2b">
-                Bag-of-words overlap &mdash; at least <InlineCode>tier2MinWords</InlineCode> significant
-                words from the description appear anywhere on the page (stop words excluded).
-              </span>,
-              <span key="2c" className="font-mono">≤ 0.75 (tier2Weight)</span>,
-              "Catches rephrased matches: 'acoustical ceiling panel' matches 'Acoustical Panel Ceilings' without insisting on word order.",
-            ],
-            [
-              <strong key="3">Tier 3</strong>,
-              <span key="3b">
-                Keyword-anchor &mdash; at least <InlineCode>tier3MinWords</InlineCode> high-signal
-                anchor words match a description.
-              </span>,
-              <span key="3c" className="font-mono">≤ 0.50 (tier3Weight)</span>,
-              "Fallback: rescues obvious trades (plumbing, electrical, HVAC) when neither subphrase nor bag-of-words hits.",
-            ],
+            [<InlineCode key="c">code</InlineCode>, "Spaced MasterFormat code, e.g. 09 29 00 (sub-levels like 08 11 13.13 keep their suffix)."],
+            [<InlineCode key="d">description</InlineCode>, "The MasterFormat 2018 title."],
+            [<InlineCode key="f">confidence</InlineCode>, "Page confidence, 0.704 to 1.00."],
+            [<InlineCode key="l">level</InlineCode>, "Depth in the MasterFormat tree: 2 for a division (08 00 00), up to 5 for a sub-level (08 11 13.13)."],
+            [<InlineCode key="t">triggers</InlineCode>, "One record per owned span: the matched words, a box around them and a box per word, so the viewer can highlight exactly what was read."],
           ]}
         />
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">Measured</h4>
         <p>
-          The matcher keeps only codes whose final score beats{" "}
-          <InlineCode>matchingConfidenceThreshold</InlineCode> (default 0.40). All
-          defaults are overridable per-company through{" "}
-          <InlineCode>companies.pipelineConfig.csi</InlineCode> and the{" "}
-          <InlineCode>Admin → CSI</InlineCode> tab, which also lets admins upload a
-          custom CSI database TSV (useful for trades like fire alarm that benefit
-          from an expanded vocabulary).
+          On the 471-page evaluation corpus the previous engine listed <strong>41.5 codes per page</strong>{" "}
+          on average; this tagger lists <strong>6.4</strong> (median 4, 90th percentile 14). On the
+          19 hand-labelled pilot pages, precision went from <strong>4% to 35%</strong> and recall from{" "}
+          <strong>21% to 37%</strong>. The pilot labels are not yet certified, so treat these numbers
+          as direction, not a guarantee; <InlineCode>eval/csi/run-eval.sh</InlineCode> re-measures
+          them after every change.
         </p>
-        <CodeBlock lang="ts" caption="DEFAULT_CSI_DETECT_CONFIG in src/lib/csi-detect-defs.ts (csi-detect.ts aliases it as DEFAULT_CONFIG)">
-{`export const DEFAULT_CSI_DETECT_CONFIG: CsiDetectConfig = {
-  matchingConfidenceThreshold: 0.4,
-  tier2MinWords: 3,
-  tier3MinWords: 5,
-  tier2Weight: 0.75,
-  tier3Weight: 0.50,
-  // Tier 1 multiplier by significant-word count. Index 0 unused; the last
-  // value is reused for longer descriptions. 1-word: 0.95 × 0.01 = 0.0095,
-  // which is below matchingConfidenceThreshold and is rejected.
-  tier1WeightByWordCount: [0, 0.01, 0.19, 0.80, 0.80, 0.80],
-};`}
+
+        <h4 className="text-[13px] font-semibold mt-4 mb-1">Settings</h4>
+        <p>
+          There are two, per company, in <InlineCode>Admin &rarr; CSI</InlineCode>:{" "}
+          <InlineCode>tau</InlineCode> and <InlineCode>maxCodesPerPage</InlineCode>. Everything else
+          above is fixed. The same tab accepts a custom CSI list (CSV, TSV or JSON with code and
+          description columns): it <em>adds</em> codes and phrases on top of the built-in table and
+          never changes what the built-in table already finds.
+        </p>
+        <CodeBlock lang="ts" caption="DEFAULT_CSI_V2_CONFIG in src/lib/csi-v2-config.ts">
+{`export const DEFAULT_CSI_V2_CONFIG: Readonly<CsiV2Config> = Object.freeze({
+  tau: 0.75,            // minimum page confidence to list a code
+  maxCodesPerPage: 40,  // highest confidence first
+});`}
         </CodeBlock>
+        <Callout variant="tip" title="Where the code lives">
+          <InlineCode>src/lib/csi-detect.ts</InlineCode> is the entry point every caller uses (
+          <InlineCode>detectCsiCodes</InlineCode>, <InlineCode>detectCsiFromGrid</InlineCode>). It
+          runs <InlineCode>detectCsiV2</InlineCode> in <InlineCode>src/lib/csi-page.ts</InlineCode>{" "}
+          (page rules), which uses <InlineCode>csi-span-match.ts</InlineCode> (spans) and{" "}
+          <InlineCode>csi-span-own.ts</InlineCode> (ownership). The previous engine is kept unchanged
+          in <InlineCode>csi-detect-legacy.ts</InlineCode> as the evaluation baseline only.
+        </Callout>
         <Figure
           kind="live"
-          caption="Try the live detector. The input hits /api/csi/detect with a debounce and renders the returned tier + confidence. Falls back to a static example when unauthenticated."
+          caption="Try the live tagger. The input hits /api/csi/detect with a debounce and renders the returned codes. Falls back to a recorded example if the backend is unavailable."
           size="lg"
         >
           <CsiTierExplainer />
@@ -222,8 +304,8 @@ export function Section04CsiEngine() {
             the O(1) &quot;give me every page tagged with Division 22&quot; query.
           </li>
           <li>
-            <InlineCode>detectCsiFromText(text)</InlineCode> lets the LLM run the 3-tier
-            matcher on arbitrary input strings (e.g. a user&apos;s question).
+            <InlineCode>detectCsiFromText(text)</InlineCode> lets the LLM run the same
+            tagger on arbitrary input strings (e.g. a user&apos;s question).
           </li>
         </ul>
         <Callout variant="tip" title="Why the CSI graph matters for chat">

@@ -51,7 +51,7 @@ export function Section01Overview() {
           <li>
             <strong>Preprocessing Engine</strong> (upload-time, always runs per page):
             rasterize at 300 DPI &rarr; Textract OCR (LAYOUT + TABLES) &rarr; drawing-number
-            extraction &rarr; CSI code detection (3-tier matching) &rarr; text annotations
+            extraction &rarr; CSI code detection (deterministic span tagger) &rarr; text annotations
             (phones, equipment tags, abbreviations, 37+ types) &rarr; shape parse (keynote
             symbols via Python/OpenCV) &rarr; page intelligence analyze (classification,
             cross-refs, noteBlocks) &rarr; text-region classify (6-stage composite: LINE
