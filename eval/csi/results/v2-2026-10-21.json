@@ -1,0 +1,3782 @@
+{
+  "schemaVersion": "csi-compare/1",
+  "generatedAt": "2026-10-21T05:02:49.910Z",
+  "inputs": {
+    "gold": {
+      "file": "gold-pilot.json",
+      "sha16": "202bf1a49f783ee9",
+      "pages": 20,
+      "distinct": 19,
+      "certified": false
+    },
+    "frame": {
+      "file": "gold-frame.json",
+      "sha16": "8456afc1ec0f55cc"
+    },
+    "corpus": {
+      "file": "corpus.ndjson",
+      "sha16": "5c3a9cdea5ff6837",
+      "rows": 471
+    },
+    "engines": [
+      {
+        "label": "old",
+        "file": "baseline-old-engine.json",
+        "sha16": "beb1a3d3ad55d874",
+        "engineSha": {
+          "src/lib/csi-detect.ts": "f1d68fd8b4133207d8307a39f460a3f48d0d2d8c79ab82d3d5cdfdd37e6aed91",
+          "src/lib/csi-detect-defs.ts": "2aa507cae04761c91cd8f518446488e1eaa8bd25be07d427090de7b1b62a6b44",
+          "src/lib/csi-database.ts": "d5f55e300b92c2f253f65872b5b498d4a315a493ba63306ee23cc48cfee80531",
+          "src/data/csi-masterformat.tsv": "8966fe2a28756aefe98d1658b0905db220215c9404704f6970243a9e7a38fd8b"
+        },
+        "kbSha": null
+      },
+      {
+        "label": "v2",
+        "file": "v2-engine.json",
+        "sha16": "d0b7ac268f7244fd",
+        "engineSha": {
+          "src/lib/csi-page.ts": "dceeba7a421657d4e12d706512963c0e17b130c8ebf3da93dd89255747970340",
+          "src/lib/csi-span-match.ts": "0af49711c96acc158e3bc42a0f6381515257e817c49643448acd3351c7786b83",
+          "src/lib/csi-span-own.ts": "c92b0a6474c5da5622bbac4ff92e43ac76855e0b8e35e1b358420a602156a145",
+          "src/lib/csi-kb.ts": "a4260eb290b96eff52ae782eadbafd883d227096802b2444984a9fe156a150dc",
+          "src/lib/csi-kb-types.ts": "04d4344543be9b0bc6b5b184e7592fd9f718c1e77d9d22e005883208716c5432",
+          "src/lib/csi-tokenize.ts": "758d525585d050f09d41cc0bbc7c9b1d8ac2002ffe7e7527da3267a188782d9a"
+        },
+        "kbSha": {
+          "file": "src/data/csi-kb.json",
+          "sha256": "5110a51547cdfed752316019c5cb43675501cf5c311e59773c9004213f36e970",
+          "builderVersion": "kb-v2.4"
+        }
+      },
+      {
+        "label": "v2-noctx",
+        "file": "v2-engine-noctx.json",
+        "sha16": "77be281840497360",
+        "engineSha": {
+          "src/lib/csi-page.ts": "dceeba7a421657d4e12d706512963c0e17b130c8ebf3da93dd89255747970340",
+          "src/lib/csi-span-match.ts": "0af49711c96acc158e3bc42a0f6381515257e817c49643448acd3351c7786b83",
+          "src/lib/csi-span-own.ts": "c92b0a6474c5da5622bbac4ff92e43ac76855e0b8e35e1b358420a602156a145",
+          "src/lib/csi-kb.ts": "a4260eb290b96eff52ae782eadbafd883d227096802b2444984a9fe156a150dc",
+          "src/lib/csi-kb-types.ts": "04d4344543be9b0bc6b5b184e7592fd9f718c1e77d9d22e005883208716c5432",
+          "src/lib/csi-tokenize.ts": "758d525585d050f09d41cc0bbc7c9b1d8ac2002ffe7e7527da3267a188782d9a"
+        },
+        "kbSha": {
+          "file": "src/data/csi-kb.json",
+          "sha256": "5110a51547cdfed752316019c5cb43675501cf5c311e59773c9004213f36e970",
+          "builderVersion": "kb-v2.4"
+        }
+      }
+    ]
+  },
+  "config": {
+    "dedupeKey": "rawTextSha(corpus)",
+    "hierarchyMinAncestorLevel": 2,
+    "fBeta": 0.5,
+    "variants": [
+      "strict",
+      "generous"
+    ]
+  },
+  "caveats": [
+    "Gold is UNCERTIFIED: quote strict/generous as a range; precision is a FLOOR (see precisionBracket).",
+    "1 gold page(s) duplicate another gold page's text and are scored once; flat cells therefore differ from score.ts (which scores all 20)."
+  ],
+  "results": {
+    "old": {
+      "strict": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.0393,
+          "recall": 0.2054,
+          "primaryRecall": 0.1913,
+          "f05": 0.0468,
+          "precisionBracket": {
+            "floor": 0.0393,
+            "ceiling": 0.3861,
+            "unadjudicatedShare": 0.3468
+          },
+          "truePositives": 43.4,
+          "falsePositives": {
+            "hard": 644.6,
+            "crossDivision": 33.6,
+            "unadjudicated": 383.2
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 38.7,
+          "hier": {
+            "precision": 0.0573,
+            "recall": 0.295,
+            "primaryRecall": 0.3049,
+            "f05": 0.0683,
+            "tpAncestor": 5.9,
+            "tpDescendant": 14,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 13.3,
+            "groupsHit": 55.6
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.0093,
+          "recall": 0.084,
+          "primaryRecall": 0.0858,
+          "f05": 0.0113,
+          "precisionBracket": {
+            "floor": 0.0093,
+            "ceiling": 0.4768,
+            "unadjudicatedShare": 0.4674
+          },
+          "truePositives": 17.8,
+          "falsePositives": {
+            "hard": 950.7,
+            "crossDivision": 49.6,
+            "unadjudicated": 893.5
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 15.8,
+          "hier": {
+            "precision": 0.0341,
+            "recall": 0.2741,
+            "primaryRecall": 0.2773,
+            "f05": 0.0414,
+            "tpAncestor": 9.8,
+            "tpDescendant": 37.6,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 44.6,
+            "groupsHit": 51.6
+          }
+        }
+      },
+      "generous": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.0475,
+          "recall": 0.2032,
+          "primaryRecall": 0.2055,
+          "f05": 0.0561,
+          "precisionBracket": {
+            "floor": 0.0475,
+            "ceiling": 0.3861,
+            "unadjudicatedShare": 0.3386
+          },
+          "truePositives": 52.5,
+          "falsePositives": {
+            "hard": 644.6,
+            "crossDivision": 33.6,
+            "unadjudicated": 374
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 61.4,
+          "hier": {
+            "precision": 0.0668,
+            "recall": 0.2845,
+            "primaryRecall": 0.3194,
+            "f05": 0.0789,
+            "tpAncestor": 4,
+            "tpDescendant": 17.4,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 19.1,
+            "groupsHit": 86
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.0114,
+          "recall": 0.0914,
+          "primaryRecall": 0.0772,
+          "f05": 0.0138,
+          "precisionBracket": {
+            "floor": 0.0114,
+            "ceiling": 0.4768,
+            "unadjudicatedShare": 0.4654
+          },
+          "truePositives": 21.8,
+          "falsePositives": {
+            "hard": 950.7,
+            "crossDivision": 49.6,
+            "unadjudicated": 889.6
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 27.6,
+          "hier": {
+            "precision": 0.0407,
+            "recall": 0.2651,
+            "primaryRecall": 0.2818,
+            "f05": 0.049,
+            "tpAncestor": 7.9,
+            "tpDescendant": 48.2,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 61.2,
+            "groupsHit": 80.1
+          }
+        }
+      },
+      "missingFromEngine": 0,
+      "unusableGold": 0
+    },
+    "v2": {
+      "strict": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.3548,
+          "recall": 0.3494,
+          "primaryRecall": 0.3837,
+          "f05": 0.3537,
+          "precisionBracket": {
+            "floor": 0.3548,
+            "ceiling": 0.8194,
+            "unadjudicatedShare": 0.4646
+          },
+          "truePositives": 72.4,
+          "falsePositives": {
+            "hard": 25.8,
+            "crossDivision": 11.1,
+            "unadjudicated": 94.8
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 65.8,
+          "hier": {
+            "precision": 0.4089,
+            "recall": 0.3969,
+            "primaryRecall": 0.4583,
+            "f05": 0.4064,
+            "tpAncestor": 6,
+            "tpDescendant": 5.1,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 3.9,
+            "groupsHit": 74.8
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.3029,
+          "recall": 0.3071,
+          "primaryRecall": 0.325,
+          "f05": 0.3037,
+          "precisionBracket": {
+            "floor": 0.3029,
+            "ceiling": 0.8486,
+            "unadjudicatedShare": 0.5458
+          },
+          "truePositives": 62.5,
+          "falsePositives": {
+            "hard": 20.2,
+            "crossDivision": 11.1,
+            "unadjudicated": 112.6
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 57.9,
+          "hier": {
+            "precision": 0.4047,
+            "recall": 0.3969,
+            "primaryRecall": 0.4583,
+            "f05": 0.4031,
+            "tpAncestor": 9.9,
+            "tpDescendant": 11.1,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 4,
+            "groupsHit": 74.8
+          }
+        }
+      },
+      "generous": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.4174,
+          "recall": 0.3444,
+          "primaryRecall": 0.375,
+          "f05": 0.4004,
+          "precisionBracket": {
+            "floor": 0.4174,
+            "ceiling": 0.8194,
+            "unadjudicatedShare": 0.402
+          },
+          "truePositives": 85.2,
+          "falsePositives": {
+            "hard": 25.8,
+            "crossDivision": 11.1,
+            "unadjudicated": 82.1
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 104.1,
+          "hier": {
+            "precision": 0.4787,
+            "recall": 0.3932,
+            "primaryRecall": 0.4448,
+            "f05": 0.4587,
+            "tpAncestor": 7.9,
+            "tpDescendant": 4.6,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 3.9,
+            "groupsHit": 118.9
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.3551,
+          "recall": 0.292,
+          "primaryRecall": 0.335,
+          "f05": 0.3404,
+          "precisionBracket": {
+            "floor": 0.3551,
+            "ceiling": 0.8486,
+            "unadjudicatedShare": 0.4935
+          },
+          "truePositives": 73.2,
+          "falsePositives": {
+            "hard": 20.2,
+            "crossDivision": 11.1,
+            "unadjudicated": 101.8
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 88.3,
+          "hier": {
+            "precision": 0.4738,
+            "recall": 0.3867,
+            "primaryRecall": 0.4448,
+            "f05": 0.4534,
+            "tpAncestor": 11.8,
+            "tpDescendant": 12.7,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 4,
+            "groupsHit": 116.9
+          }
+        }
+      },
+      "missingFromEngine": 0,
+      "unusableGold": 0
+    },
+    "v2-noctx": {
+      "strict": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.3548,
+          "recall": 0.3494,
+          "primaryRecall": 0.3837,
+          "f05": 0.3537,
+          "precisionBracket": {
+            "floor": 0.3548,
+            "ceiling": 0.8194,
+            "unadjudicatedShare": 0.4646
+          },
+          "truePositives": 72.4,
+          "falsePositives": {
+            "hard": 25.8,
+            "crossDivision": 11.1,
+            "unadjudicated": 94.8
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 65.8,
+          "hier": {
+            "precision": 0.4089,
+            "recall": 0.3969,
+            "primaryRecall": 0.4583,
+            "f05": 0.4064,
+            "tpAncestor": 6,
+            "tpDescendant": 5.1,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 3.9,
+            "groupsHit": 74.8
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.3029,
+          "recall": 0.3071,
+          "primaryRecall": 0.325,
+          "f05": 0.3037,
+          "precisionBracket": {
+            "floor": 0.3029,
+            "ceiling": 0.8486,
+            "unadjudicatedShare": 0.5458
+          },
+          "truePositives": 62.5,
+          "falsePositives": {
+            "hard": 20.2,
+            "crossDivision": 11.1,
+            "unadjudicated": 112.6
+          },
+          "groupsTotal": 188.4,
+          "groupsHit": 57.9,
+          "hier": {
+            "precision": 0.4047,
+            "recall": 0.3969,
+            "primaryRecall": 0.4583,
+            "f05": 0.4031,
+            "tpAncestor": 9.9,
+            "tpDescendant": 11.1,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 4,
+            "groupsHit": 74.8
+          }
+        }
+      },
+      "generous": {
+        "section": {
+          "pagesScored": 19,
+          "precision": 0.4174,
+          "recall": 0.3444,
+          "primaryRecall": 0.375,
+          "f05": 0.4004,
+          "precisionBracket": {
+            "floor": 0.4174,
+            "ceiling": 0.8194,
+            "unadjudicatedShare": 0.402
+          },
+          "truePositives": 85.2,
+          "falsePositives": {
+            "hard": 25.8,
+            "crossDivision": 11.1,
+            "unadjudicated": 82.1
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 104.1,
+          "hier": {
+            "precision": 0.4787,
+            "recall": 0.3932,
+            "primaryRecall": 0.4448,
+            "f05": 0.4587,
+            "tpAncestor": 7.9,
+            "tpDescendant": 4.6,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 3.9,
+            "groupsHit": 118.9
+          }
+        },
+        "exact": {
+          "pagesScored": 19,
+          "precision": 0.3551,
+          "recall": 0.292,
+          "primaryRecall": 0.335,
+          "f05": 0.3404,
+          "precisionBracket": {
+            "floor": 0.3551,
+            "ceiling": 0.8486,
+            "unadjudicatedShare": 0.4935
+          },
+          "truePositives": 73.2,
+          "falsePositives": {
+            "hard": 20.2,
+            "crossDivision": 11.1,
+            "unadjudicated": 101.8
+          },
+          "groupsTotal": 302.3,
+          "groupsHit": 88.3,
+          "hier": {
+            "precision": 0.4738,
+            "recall": 0.3867,
+            "primaryRecall": 0.4448,
+            "f05": 0.4534,
+            "tpAncestor": 11.8,
+            "tpDescendant": 12.7,
+            "tpChainEqual": 0,
+            "divisionOnChain": 0,
+            "onChainRedundant": 4,
+            "groupsHit": 116.9
+          }
+        }
+      },
+      "missingFromEngine": 0,
+      "unusableGold": 0
+    }
+  },
+  "corpus": {
+    "old": {
+      "pagesIn": 471,
+      "distinct": 378,
+      "pages": 377,
+      "pagesWithCodes": 293,
+      "mean": 41.528,
+      "median": 11,
+      "p90": 130,
+      "distinctCodes": 2277
+    },
+    "v2": {
+      "pagesIn": 471,
+      "distinct": 378,
+      "pages": 377,
+      "pagesWithCodes": 321,
+      "mean": 6.162,
+      "median": 4,
+      "p90": 15,
+      "distinctCodes": 374
+    },
+    "v2-noctx": {
+      "pagesIn": 471,
+      "distinct": 378,
+      "pages": 377,
+      "pagesWithCodes": 321,
+      "mean": 6.127,
+      "median": 4,
+      "p90": 15,
+      "distinctCodes": 372
+    }
+  },
+  "integrity": {
+    "old": {
+      "counters": {
+        "parentBesideDescendant": 4801,
+        "pagesWithParentBesideDescendant": 200,
+        "civilDivOnNonCivilSheet": 2817,
+        "civilDivOnUnknownDiscipline": 6,
+        "emitsWithoutOwnedSpan": null,
+        "parentBesideDescendantSameRange": null,
+        "childWithoutDiffToken": null,
+        "pagesEmitsGtOwnedSpans": null,
+        "emittedSpans": null,
+        "familyOwnerSpans": null,
+        "hintsPerPage": null,
+        "notesOnlySupportShare": null,
+        "legendPageCodesPerPageVsMedian": null,
+        "topPairsDistinct": null
+      },
+      "notAvailable": [
+        "emitsWithoutOwnedSpan/topPairs: capture has no codeDetails (OLD engine shape)",
+        "childWithoutDiffToken / pagesEmitsGtOwnedSpans: capture has no per-page checks (capture-v2 only)",
+        "notesOnlySupportShare / legendPageCodesPerPageVsMedian: need pageKind per page; the corpus carries none (P1 trigger)"
+      ]
+    },
+    "v2": {
+      "counters": {
+        "parentBesideDescendant": 251,
+        "pagesWithParentBesideDescendant": 99,
+        "civilDivOnNonCivilSheet": 29,
+        "civilDivOnUnknownDiscipline": 0,
+        "emitsWithoutOwnedSpan": 0,
+        "parentBesideDescendantSameRange": 0,
+        "childWithoutDiffToken": 0,
+        "pagesEmitsGtOwnedSpans": 0,
+        "emittedSpans": 6108,
+        "familyOwnerSpans": 29,
+        "hintsPerPage": 11.101,
+        "notesOnlySupportShare": null,
+        "legendPageCodesPerPageVsMedian": null,
+        "topPairsDistinct": 576
+      },
+      "notAvailable": [
+        "notesOnlySupportShare / legendPageCodesPerPageVsMedian: need pageKind per page; the corpus carries none (P1 trigger)"
+      ]
+    },
+    "v2-noctx": {
+      "counters": {
+        "parentBesideDescendant": 250,
+        "pagesWithParentBesideDescendant": 99,
+        "civilDivOnNonCivilSheet": 29,
+        "civilDivOnUnknownDiscipline": 0,
+        "emitsWithoutOwnedSpan": 0,
+        "parentBesideDescendantSameRange": 0,
+        "childWithoutDiffToken": 0,
+        "pagesEmitsGtOwnedSpans": 0,
+        "emittedSpans": 6081,
+        "familyOwnerSpans": 29,
+        "hintsPerPage": 11.13,
+        "notesOnlySupportShare": null,
+        "legendPageCodesPerPageVsMedian": null,
+        "topPairsDistinct": 570
+      },
+      "notAvailable": [
+        "notesOnlySupportShare / legendPageCodesPerPageVsMedian: need pageKind per page; the corpus carries none (P1 trigger)"
+      ]
+    }
+  },
+  "perTerm": {
+    "old": [
+      {
+        "term": "GWB/GYP BD",
+        "target": "0929",
+        "pagesWithTerm": 39,
+        "pagesHit": 13,
+        "recall": 0.3333
+      },
+      {
+        "term": "PTD/PAINT",
+        "target": "0991",
+        "pagesWithTerm": 136,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "HM",
+        "target": "081",
+        "pagesWithTerm": 14,
+        "pagesHit": 10,
+        "recall": 0.7143
+      },
+      {
+        "term": "ACT/lay-in",
+        "target": "095113",
+        "pagesWithTerm": 32,
+        "pagesHit": 4,
+        "recall": 0.125
+      },
+      {
+        "term": "CMU",
+        "target": "0422",
+        "pagesWithTerm": 7,
+        "pagesHit": 2,
+        "recall": 0.2857
+      },
+      {
+        "term": "VCT",
+        "target": "0965",
+        "pagesWithTerm": 8,
+        "pagesHit": 3,
+        "recall": 0.375
+      },
+      {
+        "term": "CARPET",
+        "target": "0968",
+        "pagesWithTerm": 21,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "SPRINKLER",
+        "target": "2113",
+        "pagesWithTerm": 36,
+        "pagesHit": 16,
+        "recall": 0.4444
+      },
+      {
+        "term": "INSULATION",
+        "target": "0721",
+        "pagesWithTerm": 96,
+        "pagesHit": 11,
+        "recall": 0.1146
+      },
+      {
+        "term": "VAPOR BARRIER",
+        "target": "0726",
+        "pagesWithTerm": 11,
+        "pagesHit": 2,
+        "recall": 0.1818
+      },
+      {
+        "term": "MTL STUD",
+        "target": "092216",
+        "pagesWithTerm": 16,
+        "pagesHit": 6,
+        "recall": 0.375
+      },
+      {
+        "term": "SEALANT",
+        "target": "0792",
+        "pagesWithTerm": 45,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "FRP",
+        "target": "0664",
+        "pagesWithTerm": 26,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "RB",
+        "target": "096513",
+        "pagesWithTerm": 2,
+        "pagesHit": 0,
+        "recall": 0
+      },
+      {
+        "term": "EIFS",
+        "target": "0724",
+        "pagesWithTerm": 18,
+        "pagesHit": 14,
+        "recall": 0.7778
+      },
+      {
+        "term": "STOREFRONT",
+        "target": "084",
+        "pagesWithTerm": 45,
+        "pagesHit": 6,
+        "recall": 0.1333
+      },
+      {
+        "term": "FLASHING",
+        "target": "076",
+        "pagesWithTerm": 45,
+        "pagesHit": 29,
+        "recall": 0.6444
+      },
+      {
+        "term": "WATERPROOF",
+        "target": "071",
+        "pagesWithTerm": 25,
+        "pagesHit": 6,
+        "recall": 0.24
+      }
+    ],
+    "v2": [
+      {
+        "term": "GWB/GYP BD",
+        "target": "0929",
+        "pagesWithTerm": 39,
+        "pagesHit": 37,
+        "recall": 0.9487
+      },
+      {
+        "term": "PTD/PAINT",
+        "target": "0991",
+        "pagesWithTerm": 136,
+        "pagesHit": 134,
+        "recall": 0.9853
+      },
+      {
+        "term": "HM",
+        "target": "081",
+        "pagesWithTerm": 14,
+        "pagesHit": 14,
+        "recall": 1
+      },
+      {
+        "term": "ACT/lay-in",
+        "target": "095113",
+        "pagesWithTerm": 32,
+        "pagesHit": 5,
+        "recall": 0.1563
+      },
+      {
+        "term": "CMU",
+        "target": "0422",
+        "pagesWithTerm": 7,
+        "pagesHit": 6,
+        "recall": 0.8571
+      },
+      {
+        "term": "VCT",
+        "target": "0965",
+        "pagesWithTerm": 8,
+        "pagesHit": 8,
+        "recall": 1
+      },
+      {
+        "term": "CARPET",
+        "target": "0968",
+        "pagesWithTerm": 21,
+        "pagesHit": 21,
+        "recall": 1
+      },
+      {
+        "term": "SPRINKLER",
+        "target": "2113",
+        "pagesWithTerm": 36,
+        "pagesHit": 34,
+        "recall": 0.9444
+      },
+      {
+        "term": "INSULATION",
+        "target": "0721",
+        "pagesWithTerm": 96,
+        "pagesHit": 24,
+        "recall": 0.25
+      },
+      {
+        "term": "VAPOR BARRIER",
+        "target": "0726",
+        "pagesWithTerm": 11,
+        "pagesHit": 10,
+        "recall": 0.9091
+      },
+      {
+        "term": "MTL STUD",
+        "target": "092216",
+        "pagesWithTerm": 16,
+        "pagesHit": 16,
+        "recall": 1
+      },
+      {
+        "term": "SEALANT",
+        "target": "0792",
+        "pagesWithTerm": 45,
+        "pagesHit": 45,
+        "recall": 1
+      },
+      {
+        "term": "FRP",
+        "target": "0664",
+        "pagesWithTerm": 26,
+        "pagesHit": 26,
+        "recall": 1
+      },
+      {
+        "term": "RB",
+        "target": "096513",
+        "pagesWithTerm": 2,
+        "pagesHit": 2,
+        "recall": 1
+      },
+      {
+        "term": "EIFS",
+        "target": "0724",
+        "pagesWithTerm": 18,
+        "pagesHit": 18,
+        "recall": 1
+      },
+      {
+        "term": "STOREFRONT",
+        "target": "084",
+        "pagesWithTerm": 45,
+        "pagesHit": 40,
+        "recall": 0.8889
+      },
+      {
+        "term": "FLASHING",
+        "target": "076",
+        "pagesWithTerm": 45,
+        "pagesHit": 19,
+        "recall": 0.4222
+      },
+      {
+        "term": "WATERPROOF",
+        "target": "071",
+        "pagesWithTerm": 25,
+        "pagesHit": 1,
+        "recall": 0.04
+      }
+    ],
+    "v2-noctx": [
+      {
+        "term": "GWB/GYP BD",
+        "target": "0929",
+        "pagesWithTerm": 39,
+        "pagesHit": 37,
+        "recall": 0.9487
+      },
+      {
+        "term": "PTD/PAINT",
+        "target": "0991",
+        "pagesWithTerm": 136,
+        "pagesHit": 134,
+        "recall": 0.9853
+      },
+      {
+        "term": "HM",
+        "target": "081",
+        "pagesWithTerm": 14,
+        "pagesHit": 14,
+        "recall": 1
+      },
+      {
+        "term": "ACT/lay-in",
+        "target": "095113",
+        "pagesWithTerm": 32,
+        "pagesHit": 5,
+        "recall": 0.1563
+      },
+      {
+        "term": "CMU",
+        "target": "0422",
+        "pagesWithTerm": 7,
+        "pagesHit": 6,
+        "recall": 0.8571
+      },
+      {
+        "term": "VCT",
+        "target": "0965",
+        "pagesWithTerm": 8,
+        "pagesHit": 8,
+        "recall": 1
+      },
+      {
+        "term": "CARPET",
+        "target": "0968",
+        "pagesWithTerm": 21,
+        "pagesHit": 21,
+        "recall": 1
+      },
+      {
+        "term": "SPRINKLER",
+        "target": "2113",
+        "pagesWithTerm": 36,
+        "pagesHit": 34,
+        "recall": 0.9444
+      },
+      {
+        "term": "INSULATION",
+        "target": "0721",
+        "pagesWithTerm": 96,
+        "pagesHit": 24,
+        "recall": 0.25
+      },
+      {
+        "term": "VAPOR BARRIER",
+        "target": "0726",
+        "pagesWithTerm": 11,
+        "pagesHit": 10,
+        "recall": 0.9091
+      },
+      {
+        "term": "MTL STUD",
+        "target": "092216",
+        "pagesWithTerm": 16,
+        "pagesHit": 16,
+        "recall": 1
+      },
+      {
+        "term": "SEALANT",
+        "target": "0792",
+        "pagesWithTerm": 45,
+        "pagesHit": 45,
+        "recall": 1
+      },
+      {
+        "term": "FRP",
+        "target": "0664",
+        "pagesWithTerm": 26,
+        "pagesHit": 26,
+        "recall": 1
+      },
+      {
+        "term": "RB",
+        "target": "096513",
+        "pagesWithTerm": 2,
+        "pagesHit": 2,
+        "recall": 1
+      },
+      {
+        "term": "EIFS",
+        "target": "0724",
+        "pagesWithTerm": 18,
+        "pagesHit": 18,
+        "recall": 1
+      },
+      {
+        "term": "STOREFRONT",
+        "target": "084",
+        "pagesWithTerm": 45,
+        "pagesHit": 40,
+        "recall": 0.8889
+      },
+      {
+        "term": "FLASHING",
+        "target": "076",
+        "pagesWithTerm": 45,
+        "pagesHit": 19,
+        "recall": 0.4222
+      },
+      {
+        "term": "WATERPROOF",
+        "target": "071",
+        "pagesWithTerm": 25,
+        "pagesHit": 1,
+        "recall": 0.04
+      }
+    ]
+  },
+  "sweep": {
+    "v2": {
+      "schemaVersion": "csi-sweep/1",
+      "generatedAt": "2026-10-21T05:02:51.155Z",
+      "cap": 40,
+      "oldRecall": 0.2054,
+      "oldPrecision": 0.0393,
+      "variants": [
+        "strict",
+        "generous"
+      ],
+      "rows": [
+        {
+          "tau": 0.5,
+          "codesPerPage": 6.92,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.55,
+          "codesPerPage": 6.92,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.6,
+          "codesPerPage": 6.92,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.65,
+          "codesPerPage": 6.92,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.7,
+          "codesPerPage": 6.92,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.75,
+          "codesPerPage": 6.162,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3548,
+                "recall": 0.3494,
+                "primaryRecall": 0.3837,
+                "f05": 0.3537,
+                "precisionBracket": {
+                  "floor": 0.3548,
+                  "ceiling": 0.8194,
+                  "unadjudicatedShare": 0.4646
+                },
+                "truePositives": 72.4,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 94.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 65.8,
+                "hier": {
+                  "precision": 0.4089,
+                  "recall": 0.3969,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4064,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 3.9,
+                  "groupsHit": 74.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3029,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.3037,
+                "precisionBracket": {
+                  "floor": 0.3029,
+                  "ceiling": 0.8486,
+                  "unadjudicatedShare": 0.5458
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 112.6
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.4047,
+                  "recall": 0.3969,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4031,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 11.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 74.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.4174,
+                "recall": 0.3444,
+                "primaryRecall": 0.375,
+                "f05": 0.4004,
+                "precisionBracket": {
+                  "floor": 0.4174,
+                  "ceiling": 0.8194,
+                  "unadjudicatedShare": 0.402
+                },
+                "truePositives": 85.2,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 82.1
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 104.1,
+                "hier": {
+                  "precision": 0.4787,
+                  "recall": 0.3932,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4587,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 3.9,
+                  "groupsHit": 118.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3551,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.3404,
+                "precisionBracket": {
+                  "floor": 0.3551,
+                  "ceiling": 0.8486,
+                  "unadjudicatedShare": 0.4935
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 101.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4738,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4534,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 12.7,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 116.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.8,
+          "codesPerPage": 5.947,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3618,
+                "recall": 0.3392,
+                "primaryRecall": 0.3837,
+                "f05": 0.3571,
+                "precisionBracket": {
+                  "floor": 0.3618,
+                  "ceiling": 0.8176,
+                  "unadjudicatedShare": 0.4558
+                },
+                "truePositives": 70.5,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 88.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 63.9,
+                "hier": {
+                  "precision": 0.4185,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4118,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 72.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3074,
+                "recall": 0.297,
+                "primaryRecall": 0.325,
+                "f05": 0.3052,
+                "precisionBracket": {
+                  "floor": 0.3074,
+                  "ceiling": 0.8483,
+                  "unadjudicatedShare": 0.5409
+                },
+                "truePositives": 60.5,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 106.5
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 55.9,
+                "hier": {
+                  "precision": 0.4039,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4003,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 11.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 72.9
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.4274,
+                "recall": 0.3381,
+                "primaryRecall": 0.375,
+                "f05": 0.406,
+                "precisionBracket": {
+                  "floor": 0.4274,
+                  "ceiling": 0.8176,
+                  "unadjudicatedShare": 0.3902
+                },
+                "truePositives": 83.3,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 76
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 102.2,
+                "hier": {
+                  "precision": 0.4916,
+                  "recall": 0.3869,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4664,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 117
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3621,
+                "recall": 0.2857,
+                "primaryRecall": 0.335,
+                "f05": 0.3437,
+                "precisionBracket": {
+                  "floor": 0.3621,
+                  "ceiling": 0.8483,
+                  "unadjudicatedShare": 0.4861
+                },
+                "truePositives": 71.3,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 95.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 86.4,
+                "hier": {
+                  "precision": 0.4762,
+                  "recall": 0.3804,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4534,
+                  "tpAncestor": 9.8,
+                  "tpDescendant": 12.7,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 115
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.85,
+          "codesPerPage": 5.857,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3656,
+                "recall": 0.3392,
+                "primaryRecall": 0.3837,
+                "f05": 0.36,
+                "precisionBracket": {
+                  "floor": 0.3656,
+                  "ceiling": 0.8157,
+                  "unadjudicatedShare": 0.4501
+                },
+                "truePositives": 70.5,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 86.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 63.9,
+                "hier": {
+                  "precision": 0.4229,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4151,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 72.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3105,
+                "recall": 0.297,
+                "primaryRecall": 0.325,
+                "f05": 0.3077,
+                "precisionBracket": {
+                  "floor": 0.3105,
+                  "ceiling": 0.8467,
+                  "unadjudicatedShare": 0.5362
+                },
+                "truePositives": 60.5,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 104.5
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 55.9,
+                "hier": {
+                  "precision": 0.4081,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4036,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 11.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 72.9
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.4319,
+                "recall": 0.3381,
+                "primaryRecall": 0.375,
+                "f05": 0.4092,
+                "precisionBracket": {
+                  "floor": 0.4319,
+                  "ceiling": 0.8157,
+                  "unadjudicatedShare": 0.3839
+                },
+                "truePositives": 83.3,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 74
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 102.2,
+                "hier": {
+                  "precision": 0.4967,
+                  "recall": 0.3869,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.47,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 117
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3658,
+                "recall": 0.2857,
+                "primaryRecall": 0.335,
+                "f05": 0.3464,
+                "precisionBracket": {
+                  "floor": 0.3658,
+                  "ceiling": 0.8467,
+                  "unadjudicatedShare": 0.4809
+                },
+                "truePositives": 71.3,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 93.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 86.4,
+                "hier": {
+                  "precision": 0.4811,
+                  "recall": 0.3804,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4569,
+                  "tpAncestor": 9.8,
+                  "tpDescendant": 12.7,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 115
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.9,
+          "codesPerPage": 2.244,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.5616,
+                "recall": 0.2163,
+                "primaryRecall": 0.3285,
+                "f05": 0.4256,
+                "precisionBracket": {
+                  "floor": 0.5616,
+                  "ceiling": 0.8912,
+                  "unadjudicatedShare": 0.3296
+                },
+                "truePositives": 44,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 25.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 40.7,
+                "hier": {
+                  "precision": 0.5616,
+                  "recall": 0.2163,
+                  "primaryRecall": 0.3285,
+                  "f05": 0.4256,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 40.7
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.4719,
+                "recall": 0.1842,
+                "primaryRecall": 0.2698,
+                "f05": 0.3596,
+                "precisionBracket": {
+                  "floor": 0.4719,
+                  "ceiling": 0.8941,
+                  "unadjudicatedShare": 0.4222
+                },
+                "truePositives": 38,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 34
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 34.7,
+                "hier": {
+                  "precision": 0.5469,
+                  "recall": 0.2163,
+                  "primaryRecall": 0.3285,
+                  "f05": 0.4188,
+                  "tpAncestor": 0,
+                  "tpDescendant": 6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 2.1,
+                  "groupsHit": 40.7
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.6286,
+                "recall": 0.205,
+                "primaryRecall": 0.3011,
+                "f05": 0.4448,
+                "precisionBracket": {
+                  "floor": 0.6286,
+                  "ceiling": 0.8912,
+                  "unadjudicatedShare": 0.2626
+                },
+                "truePositives": 49.3,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 20.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 62,
+                "hier": {
+                  "precision": 0.6286,
+                  "recall": 0.2114,
+                  "primaryRecall": 0.3011,
+                  "f05": 0.4507,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 63.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.5123,
+                "recall": 0.1718,
+                "primaryRecall": 0.2611,
+                "f05": 0.3669,
+                "precisionBracket": {
+                  "floor": 0.5123,
+                  "ceiling": 0.8941,
+                  "unadjudicatedShare": 0.3818
+                },
+                "truePositives": 41.2,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 30.7
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 52,
+                "hier": {
+                  "precision": 0.6122,
+                  "recall": 0.2114,
+                  "primaryRecall": 0.3011,
+                  "f05": 0.4439,
+                  "tpAncestor": 0,
+                  "tpDescendant": 8,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 2.1,
+                  "groupsHit": 63.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.95,
+          "codesPerPage": 0.756,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.8784,
+                "recall": 0.125,
+                "primaryRecall": 0.2232,
+                "f05": 0.3983,
+                "precisionBracket": {
+                  "floor": 0.8784,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.0719
+                },
+                "truePositives": 23.6,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 1.9
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 23.6,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.125,
+                  "primaryRecall": 0.2232,
+                  "f05": 0.3983,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 23.6
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.7279,
+                "recall": 0.1036,
+                "primaryRecall": 0.1931,
+                "f05": 0.3301,
+                "precisionBracket": {
+                  "floor": 0.7279,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.2223
+                },
+                "truePositives": 19.5,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 6
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 19.5,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.125,
+                  "primaryRecall": 0.2232,
+                  "f05": 0.3983,
+                  "tpAncestor": 0,
+                  "tpDescendant": 4,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 23.6
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.8784,
+                "recall": 0.1045,
+                "primaryRecall": 0.2107,
+                "f05": 0.3539,
+                "precisionBracket": {
+                  "floor": 0.8784,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.0719
+                },
+                "truePositives": 23.6,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 1.9
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 31.6,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.1108,
+                  "primaryRecall": 0.2294,
+                  "f05": 0.3683,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 33.5
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.7279,
+                "recall": 0.0911,
+                "primaryRecall": 0.1901,
+                "f05": 0.3036,
+                "precisionBracket": {
+                  "floor": 0.7279,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.2223
+                },
+                "truePositives": 19.5,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 27.5,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.1108,
+                  "primaryRecall": 0.2294,
+                  "f05": 0.3683,
+                  "tpAncestor": 0,
+                  "tpDescendant": 4,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 33.5
+                }
+              }
+            }
+          }
+        }
+      ],
+      "matchOld": {
+        "tau": 0.9,
+        "precision": 0.5616,
+        "recall": 0.2163,
+        "meets2xOld": true,
+        "target": 0.0786
+      }
+    },
+    "v2-noctx": {
+      "schemaVersion": "csi-sweep/1",
+      "generatedAt": "2026-10-21T05:02:52.117Z",
+      "cap": 40,
+      "oldRecall": 0.2054,
+      "oldPrecision": 0.0393,
+      "variants": [
+        "strict",
+        "generous"
+      ],
+      "rows": [
+        {
+          "tau": 0.5,
+          "codesPerPage": 6.873,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.55,
+          "codesPerPage": 6.873,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.6,
+          "codesPerPage": 6.873,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.65,
+          "codesPerPage": 6.873,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.7,
+          "codesPerPage": 6.873,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3115,
+                "recall": 0.3702,
+                "primaryRecall": 0.4123,
+                "f05": 0.3217,
+                "precisionBracket": {
+                  "floor": 0.3115,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4787
+                },
+                "truePositives": 76.4,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 117.3
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 69.8,
+                "hier": {
+                  "precision": 0.3566,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3657,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 76.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2485,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.2584,
+                "precisionBracket": {
+                  "floor": 0.2485,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5694
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 143.1
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.3478,
+                  "recall": 0.4075,
+                  "primaryRecall": 0.4869,
+                  "f05": 0.3583,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 15,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 76.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3637,
+                "recall": 0.3574,
+                "primaryRecall": 0.3945,
+                "f05": 0.3624,
+                "precisionBracket": {
+                  "floor": 0.3637,
+                  "ceiling": 0.7903,
+                  "unadjudicatedShare": 0.4266
+                },
+                "truePositives": 89.1,
+                "falsePositives": {
+                  "hard": 31.2,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 104.6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 108.1,
+                "hier": {
+                  "precision": 0.4147,
+                  "recall": 0.3998,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4116,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 7.8,
+                  "groupsHit": 120.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.2914,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.2916,
+                "precisionBracket": {
+                  "floor": 0.2914,
+                  "ceiling": 0.8179,
+                  "unadjudicatedShare": 0.5265
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 25.6,
+                  "crossDivision": 20.2,
+                  "unadjudicated": 132.3
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4045,
+                  "recall": 0.3934,
+                  "primaryRecall": 0.4643,
+                  "f05": 0.4022,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 16.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 9.9,
+                  "groupsHit": 118.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.75,
+          "codesPerPage": 6.127,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3548,
+                "recall": 0.3494,
+                "primaryRecall": 0.3837,
+                "f05": 0.3537,
+                "precisionBracket": {
+                  "floor": 0.3548,
+                  "ceiling": 0.8194,
+                  "unadjudicatedShare": 0.4646
+                },
+                "truePositives": 72.4,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 94.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 65.8,
+                "hier": {
+                  "precision": 0.4089,
+                  "recall": 0.3969,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4064,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 3.9,
+                  "groupsHit": 74.8
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3029,
+                "recall": 0.3071,
+                "primaryRecall": 0.325,
+                "f05": 0.3037,
+                "precisionBracket": {
+                  "floor": 0.3029,
+                  "ceiling": 0.8486,
+                  "unadjudicatedShare": 0.5458
+                },
+                "truePositives": 62.5,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 112.6
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 57.9,
+                "hier": {
+                  "precision": 0.4047,
+                  "recall": 0.3969,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4031,
+                  "tpAncestor": 9.9,
+                  "tpDescendant": 11.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 74.8
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.4174,
+                "recall": 0.3444,
+                "primaryRecall": 0.375,
+                "f05": 0.4004,
+                "precisionBracket": {
+                  "floor": 0.4174,
+                  "ceiling": 0.8194,
+                  "unadjudicatedShare": 0.402
+                },
+                "truePositives": 85.2,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 82.1
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 104.1,
+                "hier": {
+                  "precision": 0.4787,
+                  "recall": 0.3932,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4587,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 3.9,
+                  "groupsHit": 118.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3551,
+                "recall": 0.292,
+                "primaryRecall": 0.335,
+                "f05": 0.3404,
+                "precisionBracket": {
+                  "floor": 0.3551,
+                  "ceiling": 0.8486,
+                  "unadjudicatedShare": 0.4935
+                },
+                "truePositives": 73.2,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 11.1,
+                  "unadjudicated": 101.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 88.3,
+                "hier": {
+                  "precision": 0.4738,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4534,
+                  "tpAncestor": 11.8,
+                  "tpDescendant": 12.7,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 116.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.8,
+          "codesPerPage": 5.912,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3618,
+                "recall": 0.3392,
+                "primaryRecall": 0.3837,
+                "f05": 0.3571,
+                "precisionBracket": {
+                  "floor": 0.3618,
+                  "ceiling": 0.8176,
+                  "unadjudicatedShare": 0.4558
+                },
+                "truePositives": 70.5,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 88.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 63.9,
+                "hier": {
+                  "precision": 0.4185,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4118,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 72.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3074,
+                "recall": 0.297,
+                "primaryRecall": 0.325,
+                "f05": 0.3052,
+                "precisionBracket": {
+                  "floor": 0.3074,
+                  "ceiling": 0.8483,
+                  "unadjudicatedShare": 0.5409
+                },
+                "truePositives": 60.5,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 106.5
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 55.9,
+                "hier": {
+                  "precision": 0.4039,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4003,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 11.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 72.9
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.4274,
+                "recall": 0.3381,
+                "primaryRecall": 0.375,
+                "f05": 0.406,
+                "precisionBracket": {
+                  "floor": 0.4274,
+                  "ceiling": 0.8176,
+                  "unadjudicatedShare": 0.3902
+                },
+                "truePositives": 83.3,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 76
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 102.2,
+                "hier": {
+                  "precision": 0.4916,
+                  "recall": 0.3869,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4664,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 117
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3621,
+                "recall": 0.2857,
+                "primaryRecall": 0.335,
+                "f05": 0.3437,
+                "precisionBracket": {
+                  "floor": 0.3621,
+                  "ceiling": 0.8483,
+                  "unadjudicatedShare": 0.4861
+                },
+                "truePositives": 71.3,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 95.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 86.4,
+                "hier": {
+                  "precision": 0.4762,
+                  "recall": 0.3804,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4534,
+                  "tpAncestor": 9.8,
+                  "tpDescendant": 12.7,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 115
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.85,
+          "codesPerPage": 5.822,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.3656,
+                "recall": 0.3392,
+                "primaryRecall": 0.3837,
+                "f05": 0.36,
+                "precisionBracket": {
+                  "floor": 0.3656,
+                  "ceiling": 0.8157,
+                  "unadjudicatedShare": 0.4501
+                },
+                "truePositives": 70.5,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 86.8
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 63.9,
+                "hier": {
+                  "precision": 0.4229,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4151,
+                  "tpAncestor": 6,
+                  "tpDescendant": 5.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 72.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3105,
+                "recall": 0.297,
+                "primaryRecall": 0.325,
+                "f05": 0.3077,
+                "precisionBracket": {
+                  "floor": 0.3105,
+                  "ceiling": 0.8467,
+                  "unadjudicatedShare": 0.5362
+                },
+                "truePositives": 60.5,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 104.5
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 55.9,
+                "hier": {
+                  "precision": 0.4081,
+                  "recall": 0.3867,
+                  "primaryRecall": 0.4583,
+                  "f05": 0.4036,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 11.1,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 72.9
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.4319,
+                "recall": 0.3381,
+                "primaryRecall": 0.375,
+                "f05": 0.4092,
+                "precisionBracket": {
+                  "floor": 0.4319,
+                  "ceiling": 0.8157,
+                  "unadjudicatedShare": 0.3839
+                },
+                "truePositives": 83.3,
+                "falsePositives": {
+                  "hard": 25.8,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 74
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 102.2,
+                "hier": {
+                  "precision": 0.4967,
+                  "recall": 0.3869,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.47,
+                  "tpAncestor": 7.9,
+                  "tpDescendant": 4.6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 1.9,
+                  "groupsHit": 117
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.3658,
+                "recall": 0.2857,
+                "primaryRecall": 0.335,
+                "f05": 0.3464,
+                "precisionBracket": {
+                  "floor": 0.3658,
+                  "ceiling": 0.8467,
+                  "unadjudicatedShare": 0.4809
+                },
+                "truePositives": 71.3,
+                "falsePositives": {
+                  "hard": 20.2,
+                  "crossDivision": 9.7,
+                  "unadjudicated": 93.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 86.4,
+                "hier": {
+                  "precision": 0.4811,
+                  "recall": 0.3804,
+                  "primaryRecall": 0.4448,
+                  "f05": 0.4569,
+                  "tpAncestor": 9.8,
+                  "tpDescendant": 12.7,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 4,
+                  "groupsHit": 115
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.9,
+          "codesPerPage": 2.223,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.5643,
+                "recall": 0.2056,
+                "primaryRecall": 0.2999,
+                "f05": 0.4184,
+                "precisionBracket": {
+                  "floor": 0.5643,
+                  "ceiling": 0.8855,
+                  "unadjudicatedShare": 0.3211
+                },
+                "truePositives": 42,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 23.9
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 38.7,
+                "hier": {
+                  "precision": 0.5643,
+                  "recall": 0.2056,
+                  "primaryRecall": 0.2999,
+                  "f05": 0.4184,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 38.7
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.4961,
+                "recall": 0.1842,
+                "primaryRecall": 0.2698,
+                "f05": 0.3706,
+                "precisionBracket": {
+                  "floor": 0.4961,
+                  "ceiling": 0.8886,
+                  "unadjudicatedShare": 0.3925
+                },
+                "truePositives": 38,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 30
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 34.7,
+                "hier": {
+                  "precision": 0.5488,
+                  "recall": 0.2056,
+                  "primaryRecall": 0.2999,
+                  "f05": 0.4115,
+                  "tpAncestor": 0,
+                  "tpDescendant": 4,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 2.1,
+                  "groupsHit": 38.7
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.6349,
+                "recall": 0.1918,
+                "primaryRecall": 0.2816,
+                "f05": 0.4343,
+                "precisionBracket": {
+                  "floor": 0.6349,
+                  "ceiling": 0.8855,
+                  "unadjudicatedShare": 0.2506
+                },
+                "truePositives": 47.3,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 18.7
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 58,
+                "hier": {
+                  "precision": 0.6349,
+                  "recall": 0.1982,
+                  "primaryRecall": 0.2816,
+                  "f05": 0.4407,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 59.9
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.5386,
+                "recall": 0.1718,
+                "primaryRecall": 0.2611,
+                "f05": 0.3775,
+                "precisionBracket": {
+                  "floor": 0.5386,
+                  "ceiling": 0.8886,
+                  "unadjudicatedShare": 0.35
+                },
+                "truePositives": 41.2,
+                "falsePositives": {
+                  "hard": 3.9,
+                  "crossDivision": 4.6,
+                  "unadjudicated": 26.8
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 52,
+                "hier": {
+                  "precision": 0.6174,
+                  "recall": 0.1982,
+                  "primaryRecall": 0.2816,
+                  "f05": 0.4338,
+                  "tpAncestor": 0,
+                  "tpDescendant": 6,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 2.1,
+                  "groupsHit": 59.9
+                }
+              }
+            }
+          }
+        },
+        {
+          "tau": 0.95,
+          "codesPerPage": 0.748,
+          "cells": {
+            "strict": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.8784,
+                "recall": 0.125,
+                "primaryRecall": 0.2232,
+                "f05": 0.3983,
+                "precisionBracket": {
+                  "floor": 0.8784,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.0719
+                },
+                "truePositives": 23.6,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 1.9
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 23.6,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.125,
+                  "primaryRecall": 0.2232,
+                  "f05": 0.3983,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 23.6
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.7279,
+                "recall": 0.1036,
+                "primaryRecall": 0.1931,
+                "f05": 0.3301,
+                "precisionBracket": {
+                  "floor": 0.7279,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.2223
+                },
+                "truePositives": 19.5,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 6
+                },
+                "groupsTotal": 188.4,
+                "groupsHit": 19.5,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.125,
+                  "primaryRecall": 0.2232,
+                  "f05": 0.3983,
+                  "tpAncestor": 0,
+                  "tpDescendant": 4,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 23.6
+                }
+              }
+            },
+            "generous": {
+              "section": {
+                "pagesScored": 19,
+                "precision": 0.8784,
+                "recall": 0.1045,
+                "primaryRecall": 0.2107,
+                "f05": 0.3539,
+                "precisionBracket": {
+                  "floor": 0.8784,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.0719
+                },
+                "truePositives": 23.6,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 1.9
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 31.6,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.1108,
+                  "primaryRecall": 0.2294,
+                  "f05": 0.3683,
+                  "tpAncestor": 0,
+                  "tpDescendant": 0,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 33.5
+                }
+              },
+              "exact": {
+                "pagesScored": 19,
+                "precision": 0.7279,
+                "recall": 0.0911,
+                "primaryRecall": 0.1901,
+                "f05": 0.3036,
+                "precisionBracket": {
+                  "floor": 0.7279,
+                  "ceiling": 0.9503,
+                  "unadjudicatedShare": 0.2223
+                },
+                "truePositives": 19.5,
+                "falsePositives": {
+                  "hard": 0,
+                  "crossDivision": 1.3,
+                  "unadjudicated": 6
+                },
+                "groupsTotal": 302.3,
+                "groupsHit": 27.5,
+                "hier": {
+                  "precision": 0.8784,
+                  "recall": 0.1108,
+                  "primaryRecall": 0.2294,
+                  "f05": 0.3683,
+                  "tpAncestor": 0,
+                  "tpDescendant": 4,
+                  "tpChainEqual": 0,
+                  "divisionOnChain": 0,
+                  "onChainRedundant": 0,
+                  "groupsHit": 33.5
+                }
+              }
+            }
+          }
+        }
+      ],
+      "matchOld": {
+        "tau": 0.9,
+        "precision": 0.5643,
+        "recall": 0.2056,
+        "meets2xOld": true,
+        "target": 0.0786
+      }
+    }
+  }
+}
