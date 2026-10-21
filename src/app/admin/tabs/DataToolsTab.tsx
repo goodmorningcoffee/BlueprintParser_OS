@@ -8,12 +8,14 @@
 
 import DataToolsStuckJobs from "./DataToolsStuckJobs";
 import DataToolsDuplicates from "./DataToolsDuplicates";
+import DataToolsExport from "./DataToolsExport";
 
 export default function DataToolsTab({ isRootAdmin }: { isRootAdmin: boolean }) {
   return (
     <div className="space-y-10">
       <DataToolsStuckJobs isRootAdmin={isRootAdmin} />
       <DataToolsDuplicates isRootAdmin={isRootAdmin} />
+      <DataToolsExport isRootAdmin={isRootAdmin} />
     </div>
   );
 }
