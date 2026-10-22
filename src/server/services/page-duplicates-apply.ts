@@ -61,7 +61,7 @@ export interface ApplyDuplicatesBody {
   digests?: Record<string, string>;
 }
 
-interface PlannedHide {
+export interface PlannedHide {
   page: number;
   canonical: number;
   tier: DuplicateTier;
@@ -176,6 +176,20 @@ async function applyToProject(
   request: { tiers: DuplicateTier[]; blocks: string[]; keep?: DuplicateKeep },
   session: AuthSession,
 ): Promise<ProjectApplyResult> {
+  return applyPlannedHides(project, expectedDigest, (report) => planHides(report, request.tiers, request.blocks, request.keep), session);
+}
+
+/**
+ * The one hide path: `planner` maps the fresh (locked) report to the pages to hide. Every
+ * safety rule below (digest, busy, human work, already hidden, last copy) applies to every
+ * planner — apply (tiers / blocks) and apply-selection (page-duplicates-select.ts).
+ */
+export async function applyPlannedHides(
+  project: DuplicateScopeProject,
+  expectedDigest: string,
+  planner: (report: DuplicateReport) => PlannedHide[],
+  session: AuthSession,
+): Promise<ProjectApplyResult> {
   const skip = projectSkipReason(project);
   if (skip) throw new ApiError(project.isDemo ? "FORBIDDEN" : "CONFLICT", `Project skipped: ${skip}`);
   const capability = assertProjectWritable(project);
@@ -191,7 +205,7 @@ async function applyToProject(
     const stored = await loadDedupPages(project.id, tx);
     const { report, digest } = scanProjectPages(stored);
     if (digest !== expectedDigest) throw new ApiError("CONFLICT", "Duplicates changed since the scan; scan again");
-    const plan = planHides(report, request.tiers, request.blocks, request.keep);
+    const plan = planner(report);
     const work = await humanWorkPages(tx, project.id);
 
     const hiddenTo = new Map<number, number>();
