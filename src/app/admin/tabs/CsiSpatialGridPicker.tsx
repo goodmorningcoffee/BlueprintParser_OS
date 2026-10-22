@@ -1,23 +1,18 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { DEFAULT_GRID } from "@/lib/csi-spatial";
 import { CSI_GRID_MAX, CSI_GRID_MIN, CSI_GRID_PRESETS, isValidCsiGridDim } from "@/lib/csi-spatial-grid-limits";
 
 type Grid = { rows: number; cols: number };
 
-/** Preset square grids (3x3 … 27x27) or a custom rows × cols, each 1–27. */
+/** Preset square grids (3x3 … 27x27) or a custom rows × cols, each 1–27. Key it on the saved grid so inputs reset on change. */
 export default function CsiSpatialGridPicker({ value, onChange }: { value?: Grid; onChange: (grid: Grid) => void }) {
   const grid = value ?? DEFAULT_GRID;
   const isPreset = grid.rows === grid.cols && (CSI_GRID_PRESETS as readonly number[]).includes(grid.rows);
   const [custom, setCustom] = useState(!isPreset);
   const [rows, setRows] = useState(String(grid.rows));
   const [cols, setCols] = useState(String(grid.cols));
-
-  useEffect(() => {
-    setRows(String(grid.rows));
-    setCols(String(grid.cols));
-  }, [grid.rows, grid.cols]);
 
   const r = Number(rows);
   const c = Number(cols);

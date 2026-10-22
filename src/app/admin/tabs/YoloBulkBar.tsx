@@ -22,6 +22,8 @@ import {
   type YoloStartResult,
 } from "./yolo-batch";
 import { YoloBulkCost, yoloConfirmEstimate } from "./YoloCost";
+import { bulkConcurrency } from "./yolo-bulk-concurrency";
+import { readYoloOptions } from "./yolo-options-store";
 
 export { YoloRunCost } from "./YoloCost";
 
@@ -163,7 +165,7 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
       },
       sleep,
     };
-    const batch = new YoloBatch(mode, model, targets.map((p) => ({ projectId: p.id, projectName: p.name })), deps);
+    const batch = new YoloBatch(mode, model, targets.map((p) => ({ projectId: p.id, projectName: p.name })), deps, { concurrency: bulkConcurrency(readYoloOptions()) });
     activeBatch = batch;
     activeSnapshot = batch.snapshot();
     batch.subscribe((s) => {
