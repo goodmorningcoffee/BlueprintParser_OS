@@ -21,6 +21,9 @@ import {
   type YoloJobStatus,
   type YoloStartResult,
 } from "./yolo-batch";
+import { YoloBulkCost, yoloConfirmEstimate } from "./YoloCost";
+
+export { YoloRunCost } from "./YoloCost";
 
 export interface BulkModel {
   id: number;
@@ -138,9 +141,11 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
     if (mode === "run") {
       const pages = targets.reduce((sum, p) => sum + (p.numPages ?? 0), 0);
       const unknown = targets.filter((p) => !p.numPages).length;
+      const cost = yoloConfirmEstimate(model.id, targets.map((p) => p.numPages));
       const ok = window.confirm(
         `Run ${model.name} on ${targets.length} project${targets.length === 1 ? "" : "s"} — ${pages} pages total` +
           `${unknown ? ` (+${unknown} with an unknown page count, which will be refused)` : ""}.\n\n` +
+          (cost ? `${cost}\n\n` : "") +
           "SageMaker is billed per page. Up to 2 jobs run at a time; each result loads automatically when its job finishes.\n\n" +
           "Keep this browser tab open until the queue finishes: closing it stops new starts (jobs already started still finish on AWS and can be loaded later).",
       );
@@ -192,7 +197,9 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
       model,
       onPickModel: setPickedModelId,
       selectedCount: selected.size,
+      selectedPages: projects.filter((p) => selected.has(p.id)).map((p) => p.numPages),
       candidateCount: candidates.length,
+      candidatePages: candidates.map((p) => p.numPages),
       totalCount: projects.length,
       onlyMissing,
       onToggleOnlyMissing: () => setOnlyMissing((v) => !v),
@@ -267,6 +274,10 @@ export default function YoloBulkBar(props: YoloBulkBarProps) {
         <button type="button" className={`${btn} text-red-300`} onClick={props.onStop} disabled={!busy || !!snapshot?.stopped}>
           Stop queue
         </button>
+      </div>
+      <div className="text-xs space-y-0.5">
+        {selectedCount > 0 && <YoloBulkCost label={`Estimate, ${selectedCount} selected`} modelId={model.id} pages={props.selectedPages} />}
+        {props.candidateCount > 0 && <YoloBulkCost label={`Estimate, all ${props.candidateCount}`} modelId={model.id} pages={props.candidatePages} />}
       </div>
       {snapshot && (
         <div className="text-xs" data-testid="yolo-bulk-summary">

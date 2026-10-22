@@ -10,6 +10,8 @@ vi.mock("@/app/admin/sections/S3Browser", () => ({ default: () => null }));
 
 import AiModelsTab from "@/app/admin/tabs/AiModelsTab";
 import { resetYoloBulkStoreForTests } from "@/app/admin/tabs/YoloBulkBar";
+import { resetYoloOptionsForTests } from "@/app/admin/tabs/yolo-options-store";
+import { YOLO_INSTANCE_OPTIONS } from "@/lib/yolo-instances";
 
 const MODELS = [
   { id: 7, name: "doors", type: "yolo", config: {}, isDefault: false },
@@ -330,5 +332,110 @@ describe("YoloBulkBar against a page that owns the row state", () => {
     fireEvent.click(bulkBar().getByText("Run doors on 1 selected"));
     await flush();
     expect(startedProjects()).toEqual(["p1"]); // skipped: the job may still be live on AWS
+  });
+});
+
+// [2026-10-22] Stage 2 picker (quota > 0 only, live $/h), the timeout setting and the cost estimates
+// next to Run all / Run on selected / each per-project Run. Root only.
+describe("root: inference picker, timeout and cost estimates", () => {
+  const options = (quotas: Record<string, number> | null, maxRuntimeSeconds = 3600, runStats: unknown[] = []) => ({
+    instanceType: "ml.g4dn.xlarge",
+    valid: true,
+    defaultInstanceType: "ml.g4dn.xlarge",
+    maxRuntimeSeconds,
+    runtimeBounds: { min: 900, max: 86400, default: 3600 },
+    catalog: {
+      region: "us-east-1",
+      checkedAt: "2026-10-22T00:00:00.000Z",
+      quotaStatus: quotas ? "live" : "unavailable",
+      priceStatus: quotas ? "live" : "approximate",
+      priceTableAsOf: "2026-10-21",
+      options: YOLO_INSTANCE_OPTIONS.map((o) => ({
+        ...o,
+        usdPerHour: o.type === "ml.g4dn.xlarge" ? 3.6 : o.usdPerHour,
+        priceSource: quotas ? "live" : "table",
+        quota: quotas ? (quotas[o.type] ?? 0) : null,
+      })),
+    },
+    runStats,
+  });
+  const puts: Array<{ url: string; body: unknown }> = [];
+  const serve = (payload: unknown) => {
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+      if (url.startsWith("/api/admin/yolo-instance/options")) return { ok: true, json: async () => payload };
+      if (init?.method === "PUT") {
+        puts.push({ url, body: JSON.parse(init.body ?? "null") });
+        return { ok: true, status: 200, json: async () => ({ success: true }), text: async () => "{}" };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+  };
+  beforeEach(() => {
+    puts.length = 0;
+    resetYoloOptionsForTests();
+  });
+  afterEach(() => resetYoloOptionsForTests());
+
+  it("offers only instance types with processing quota > 0 (plus the saved one), each with its $/h", async () => {
+    serve(options({ "ml.g5.xlarge": 2, "ml.g6.xlarge": 1 }));
+    renderTab({ isRootAdmin: true });
+    await flush();
+    const select = screen.getByRole("combobox", { name: "Inference instance" }) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(["ml.g4dn.xlarge", "ml.g5.xlarge", "ml.g6.xlarge"]);
+    expect(select.options[1].textContent).toMatch(/\$1\.41\/h · quota 2/u);
+    expect(screen.getByText(/more compatible GPU types have no processing-job quota/u)).toBeTruthy();
+    expect(screen.queryByTestId("yolo-quota-warning")).toBeNull();
+  });
+
+  it("quotas unreachable → every compatible type and a 'could not be checked' warning", async () => {
+    serve(options(null));
+    renderTab({ isRootAdmin: true });
+    await flush();
+    const select = screen.getByRole("combobox", { name: "Inference instance" }) as HTMLSelectElement;
+    expect(select.options).toHaveLength(YOLO_INSTANCE_OPTIONS.length);
+    expect(screen.getByTestId("yolo-quota-warning").textContent).toMatch(/could not be checked/u);
+    expect(screen.getByText(/Prices are approximate, as of 2026-10-21/u)).toBeTruthy();
+  });
+
+  it("the timeout saves through /api/admin/yolo-runtime in seconds", async () => {
+    serve(options({ "ml.g4dn.xlarge": 1 }));
+    renderTab({ isRootAdmin: true });
+    await flush();
+    fireEvent.change(screen.getByLabelText("Job timeout (minutes)"), { target: { value: "120" } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save timeout"));
+    });
+    await flush();
+    expect(puts).toEqual([{ url: "/api/admin/yolo-runtime", body: { maxRuntimeSeconds: 7200 } }]);
+  });
+
+  it("shows ≈$ next to each per-project Run and the bulk estimates, from past runs when there are any", async () => {
+    serve(options({ "ml.g4dn.xlarge": 1 }, 3600, [{ modelId: 7, instanceType: "ml.g4dn.xlarge", startupSeconds: 100, secondsPerPage: 10, runs: 5 }]));
+    const { bar } = renderTab({ isRootAdmin: true, yoloStatus: {} });
+    await flush();
+    // Alpha: 100 + 10×10 = 200 s × $3.60/h = $0.20
+    const alphaRow = rowBox("Alpha").closest("div.flex.items-center.justify-between") as HTMLElement;
+    expect(within(alphaRow).getAllByTestId("yolo-run-cost")[0].textContent).toBe("≈$0.20");
+    // all 3: (200) + (100+50) + (100+200) = 650 s → $0.65
+    const all = bar.getAllByTestId("yolo-bulk-cost").map((n) => n.textContent ?? "");
+    expect(all.find((t) => t.startsWith("Estimate, all 3"))).toMatch(/≈ \$0\.65 · 35 pages · 3 jobs · ml\.g4dn\.xlarge @ \$3\.60\/h · based on 5 past runs/u);
+    fireEvent.click(rowBox("Charlie"));
+    expect(bar.getAllByTestId("yolo-bulk-cost").map((n) => n.textContent).find((t) => t?.startsWith("Estimate, 1 selected"))).toMatch(/≈ \$0\.30 · 20 pages · 1 job/u);
+  });
+
+  it("the Run confirmation carries the estimate", async () => {
+    serve(options({ "ml.g4dn.xlarge": 1 }));
+    const { bar } = renderTab({ isRootAdmin: true, yoloStatus: {} });
+    await flush();
+    fireEvent.click(bar.getByText("Run all (3)"));
+    expect(String(confirmMock.mock.calls[0][0])).toMatch(/Estimated cost: ≈ \$[0-9.]+ · 35 pages · 3 jobs/u);
+  });
+
+  it("non-root admins never load the options and see no estimate", async () => {
+    serve(options({ "ml.g4dn.xlarge": 1 }));
+    renderTab({ isRootAdmin: false });
+    await flush();
+    expect(screen.queryAllByTestId("yolo-run-cost")).toEqual([]);
+    expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/admin/yolo-instance/options"))).toBe(false);
   });
 });

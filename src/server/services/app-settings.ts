@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 import { QUOTA_OVERRIDES_KEY } from "@/lib/quota-overrides";
-import { YOLO_INSTANCE_SETTING_KEY } from "@/lib/yolo-instances";
+import { YOLO_INSTANCE_SETTING_KEY, YOLO_MAX_RUNTIME_SETTING_KEY } from "@/lib/yolo-instances";
 
 // [2026-10-21] The quota-overrides document lives in this table but is ROOT-ONLY to read and is
 // written only through /api/admin/quota-overrides (strict validation + one audit row per change).
@@ -49,6 +49,9 @@ export async function putAppSetting(rawBody: Record<string, unknown>, session: A
   // own root-only route; a generic write here would skip both.
   if (key === YOLO_INSTANCE_SETTING_KEY) {
     throw new ApiError("VALIDATION", "Use /api/admin/yolo-instance to change the YOLO inference instance");
+  }
+  if (key === YOLO_MAX_RUNTIME_SETTING_KEY) {
+    throw new ApiError("VALIDATION", "Use /api/admin/yolo-runtime to change the YOLO job timeout");
   }
 
   // Normalize URLs in header_links to always include protocol

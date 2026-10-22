@@ -244,6 +244,32 @@ resource "aws_iam_role_policy" "beaver_ecs_task_sagemaker" {
   })
 }
 
+# [2026-10-22] Admin › AI Models › Inference instance shows LIVE SageMaker processing-job quotas and
+# on-demand prices (src/server/services/yolo-instance-catalog.ts). Read-only; these actions support no
+# resource-level scoping, hence "*". Never on the YOLO run path: without this grant the picker falls
+# back to the code allowlist + approximate prices.
+resource "aws_iam_role_policy" "beaver_ecs_task_sagemaker_catalog" {
+  name = "beaver-ecs-task-sagemaker-catalog"
+  role = aws_iam_role.beaver_ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadSageMakerQuotasAndPrices"
+        Effect = "Allow"
+        Action = [
+          "servicequotas:ListServiceQuotas",
+          "servicequotas:ListAWSDefaultServiceQuotas",
+          "servicequotas:GetServiceQuota",
+          "pricing:GetProducts"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "beaver_ecs_task_lambda" {
   name = "beaver-ecs-task-lambda-invoke"
   role = aws_iam_role.beaver_ecs_task_role.id

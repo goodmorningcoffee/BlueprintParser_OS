@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   inputs: [] as Array<Record<string, unknown>>,
   send: vi.fn(),
   readYoloInstanceType: vi.fn(),
+  readYoloMaxRuntimeSeconds: vi.fn(),
 }));
 
 vi.mock("@aws-sdk/client-sagemaker", () => ({
@@ -23,7 +24,10 @@ vi.mock("@aws-sdk/client-sagemaker", () => ({
     constructor(public input: Record<string, unknown>) {}
   },
 }));
-vi.mock("@/server/services/yolo-instance", () => ({ readYoloInstanceType: h.readYoloInstanceType }));
+vi.mock("@/server/services/yolo-instance", () => ({
+  readYoloInstanceType: h.readYoloInstanceType,
+  readYoloMaxRuntimeSeconds: h.readYoloMaxRuntimeSeconds,
+}));
 
 const ACCOUNT = "123456789012";
 const REGION = "us-east-1";
@@ -45,6 +49,7 @@ beforeEach(() => {
   h.inputs.length = 0;
   h.send.mockReset().mockResolvedValue({});
   h.readYoloInstanceType.mockReset().mockResolvedValue("ml.g4dn.xlarge");
+  h.readYoloMaxRuntimeSeconds.mockReset().mockResolvedValue(3600);
 });
 
 describe("startYoloJob instance type", () => {
@@ -54,6 +59,15 @@ describe("startYoloJob instance type", () => {
     await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "bp-yolo-doors-x");
     expect(h.readYoloInstanceType).toHaveBeenCalledTimes(1);
     expect(clusterOf(h.inputs[0])).toEqual({ InstanceCount: 1, InstanceType: "ml.g5.2xlarge", VolumeSizeInGB: 30 });
+    expect(h.inputs[0].StoppingCondition).toEqual({ MaxRuntimeInSeconds: 3600 });
+  });
+
+  it("uses the root-set timeout as MaxRuntimeInSeconds", async () => {
+    h.readYoloMaxRuntimeSeconds.mockResolvedValue(7200);
+    const { startYoloJob } = await loadYolo();
+    await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "bp-yolo-doors-t");
+    expect(h.readYoloMaxRuntimeSeconds).toHaveBeenCalledTimes(1);
+    expect(h.inputs[0].StoppingCondition).toEqual({ MaxRuntimeInSeconds: 7200 });
   });
 
   it("maps ResourceLimitExceeded to a 429 YoloStartRefusedError naming the type; AWS-confirmed absent → confirmedAbsent", async () => {
@@ -72,13 +86,27 @@ describe("startYoloJob instance type", () => {
     expect(h.send.mock.calls[1][0]).toMatchObject({ input: { ProcessingJobName: "j1" } }); // the Describe
   });
 
-  it("a quota refusal whose Describe is inconclusive is NOT confirmed (the intent must stay a blocker)", async () => {
+  it("a quota refusal whose Describe stays inconclusive (3 tries) is NOT confirmed (the intent must stay a blocker)", async () => {
+    const { startYoloJob } = await loadYolo();
+    const throttle = () => Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" });
+    h.send
+      .mockRejectedValueOnce(Object.assign(new Error("limit"), { name: "ResourceLimitExceeded" }))
+      .mockRejectedValueOnce(throttle())
+      .mockRejectedValueOnce(throttle())
+      .mockRejectedValueOnce(throttle());
+    const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j3").catch((e: unknown) => e);
+    expect(refusal).toMatchObject({ code: "RATE_LIMITED", confirmedAbsent: false });
+    expect(h.send).toHaveBeenCalledTimes(4);
+  });
+
+  it("[DOUBLE_BACK quota burn] a throttled first Describe is retried, so a real absence is still confirmed", async () => {
     const { startYoloJob } = await loadYolo();
     h.send
       .mockRejectedValueOnce(Object.assign(new Error("limit"), { name: "ResourceLimitExceeded" }))
-      .mockRejectedValueOnce(Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" }));
-    const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j3").catch((e: unknown) => e);
-    expect(refusal).toMatchObject({ code: "RATE_LIMITED", confirmedAbsent: false });
+      .mockRejectedValueOnce(Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" }))
+      .mockRejectedValueOnce(Object.assign(new Error("Could not find requested job with name j5"), { name: "ValidationException" }));
+    const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j5").catch((e: unknown) => e);
+    expect(refusal).toMatchObject({ code: "RATE_LIMITED", confirmedAbsent: true });
   });
 
   it("a quota refusal on an SDK retry whose first attempt was accepted returns the job name (the job is real)", async () => {
@@ -111,6 +139,8 @@ describe("readYoloInstanceType (run path)", () => {
     vi.resetModules();
     const { readYoloInstanceType } = await import("@/server/services/yolo-instance");
     await expect(readYoloInstanceType()).resolves.toBe("ml.g4dn.xlarge");
+    const { readYoloMaxRuntimeSeconds } = await import("@/server/services/yolo-instance");
+    await expect(readYoloMaxRuntimeSeconds()).resolves.toBe(3600);
     vi.doUnmock("@/lib/db");
   });
 });

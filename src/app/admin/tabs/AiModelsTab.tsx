@@ -6,7 +6,7 @@ import LLMConfigSection from "../sections/LLMConfigSection";
 import S3Browser from "../sections/S3Browser";
 import type { ModelClassType } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
-import YoloBulkBar, { useYoloBulk, type LoadYoloFn, type RunYoloFn } from "./YoloBulkBar";
+import YoloBulkBar, { YoloRunCost, useYoloBulk, type LoadYoloFn, type RunYoloFn } from "./YoloBulkBar";
 import YoloInstancePicker from "./YoloInstancePicker";
 
 interface ModelItem {
@@ -683,6 +683,7 @@ export default function AiModelsTab({
                         >
                           Run {m.name}
                         </button>
+                        <YoloRunCost modelId={m.id} pages={p.numPages} />
                         <button
                           onClick={() => onLoadResults(p.id, m.id, m.name)}
                           disabled={!!mJob && /^(Loading|Waiting)/.test(mJob)}

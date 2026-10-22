@@ -53,6 +53,8 @@ case "$service $action" in
     if [ -n "$query" ]; then echo "1.0"; elif [ -n "\${MOCK_QUOTAS_APPLIED:-}" ]; then cat "\${MOCK_QUOTAS_APPLIED}"; else exit 254; fi ;;
   "service-quotas list-aws-default-service-quotas")
     if [ -n "\${MOCK_QUOTAS_DEFAULTS:-}" ]; then cat "\${MOCK_QUOTAS_DEFAULTS}"; else exit 254; fi ;;
+  "pricing get-products")
+    if [ -n "\${MOCK_PRICES:-}" ]; then cat "\${MOCK_PRICES}"; else exit 254; fi ;;
   "lambda get-account-settings") echo "1000" ;;
   "acm list-certificates") printf '{"CertificateSummaryList":[{"CertificateArn":"${CERT_ARN}","DomainName":"*.${DOMAIN}","Status":"%s"}]}\\n' "\${MOCK_CERT_STATUS:-ISSUED}" ;;
   "acm describe-certificate")
@@ -727,7 +729,7 @@ test("bootstrap --from re-runs every later phase, and infra-live rolls the servi
 
 // ── sagemaker-quotas (read-only) ─────────────────────────────────────────────
 const stripAnsi = (text) => text.replace(/\x1b\[[0-9;]*m/gu, "");
-async function runQuotas(applied, defaults) {
+async function runQuotas(applied, defaults, prices = null) {
   await resetState();
   await writeFile(tfvarsPath, tfvars("live"));
   const env = {};
@@ -738,6 +740,10 @@ async function runQuotas(applied, defaults) {
   if (defaults) {
     env.MOCK_QUOTAS_DEFAULTS = path.join(fixture, "quotas-defaults.json");
     await writeFile(env.MOCK_QUOTAS_DEFAULTS, JSON.stringify(defaults));
+  }
+  if (prices) {
+    env.MOCK_PRICES = path.join(fixture, "prices.json");
+    await writeFile(env.MOCK_PRICES, JSON.stringify(prices));
   }
   const result = runTool(["sagemaker-quotas"], env);
   const rows = new Map();
@@ -763,23 +769,40 @@ test("sagemaker-quotas lists only processing-job instance quotas, applied over d
         { QuotaName: "ml.g4dn.xlarge for processing job usage", QuotaCode: "L-G4DN", Value: 0 },
         { QuotaName: "ml.g5.xlarge for processing job usage", QuotaCode: "L-G5", Value: 0 },
         { QuotaName: "ml.m5.xlarge for processing job usage", QuotaCode: "L-M5", Value: 1 },
-        { QuotaName: "ml.g6e.48xlarge for processing job usage", QuotaCode: "L-G6E48", Value: 0 },
+        { QuotaName: "ml.p4d.24xlarge for processing job usage", QuotaCode: "L-P4D", Value: 0 },
+      ],
+    },
+    {
+      PriceList: [
+        // Price List entries are JSON strings; Processing only, the cheapest on-demand hourly rate wins.
+        JSON.stringify({
+          product: { attributes: { instanceName: "ml.g4dn.xlarge", component: "Processing", usagetype: "USE1-Processing:ml.g4dn.xlarge" } },
+          terms: { OnDemand: { a: { priceDimensions: { b: { unit: "Hrs", pricePerUnit: { USD: "0.7364000000" } } } } } },
+        }),
+        JSON.stringify({
+          product: { attributes: { instanceName: "ml.g5.xlarge", component: "Training", usagetype: "USE1-Train:ml.g5.xlarge" } },
+          terms: { OnDemand: { a: { priceDimensions: { b: { unit: "Hrs", pricePerUnit: { USD: "9.99" } } } } } },
+        }),
       ],
     },
   );
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  // INSTANCE → [QUOTA, SOURCE, YOLO, PICKER, QUOTA-CODE]
-  assert.deepEqual(rows.get("ml.g4dn.xlarge"), ["2", "applied", "gpu", "yes", "L-G4DN"]);
-  assert.deepEqual(rows.get("ml.g5.xlarge"), ["0", "default", "gpu", "yes", "L-G5"]);
-  assert.deepEqual(rows.get("ml.m5.xlarge"), ["1", "default", "cpu-slow", "yes", "L-M5"]);
-  assert.deepEqual(rows.get("ml.inf2.xlarge"), ["4", "applied", "no", "-", "L-INF2"]);
-  assert.deepEqual(rows.get("ml.g6e.48xlarge"), ["0", "default", "gpu", "-", "L-G6E48"], "a GPU type the picker does not offer");
+  // INSTANCE → [QUOTA, SOURCE, YOLO, PICKER, $/H, QUOTA-CODE]
+  assert.deepEqual(rows.get("ml.g4dn.xlarge"), ["2", "applied", "gpu", "yes", "0.736", "L-G4DN"]);
+  assert.deepEqual(rows.get("ml.g5.xlarge"), ["0", "default", "gpu", "yes", "-", "L-G5"], "a Training price is not a Processing price");
+  assert.deepEqual(rows.get("ml.m5.xlarge"), ["1", "default", "cpu-slow", "yes", "-", "L-M5"]);
+  assert.deepEqual(rows.get("ml.inf2.xlarge"), ["4", "applied", "no", "-", "-", "L-INF2"]);
+  assert.deepEqual(rows.get("ml.p4d.24xlarge"), ["0", "default", "gpu", "-", "-", "L-P4D"], "a GPU type the picker does not offer");
   assert.equal(rows.size, 5, "training-job and non-instance quotas are filtered out");
   assert.match(out, /2 YOLO-capable instance type\(s\) with a quota of at least 1/u, "inf2 has quota but cannot run the image");
   const awsCalls = lines.filter((l) => l.startsWith("aws "));
-  assert.ok(awsCalls.length >= 2, "both listings were read");
+  assert.ok(awsCalls.length >= 3, "both listings and the price list were read");
   for (const call of awsCalls) {
-    assert.match(call, /^aws service-quotas list-(aws-default-)?service-quotas --service-code sagemaker /u, `read-only: ${call}`);
+    assert.match(
+      call,
+      /^aws (service-quotas list-(aws-default-)?service-quotas --service-code sagemaker |pricing get-products --region us-east-1 --service-code AmazonSageMaker )/u,
+      `read-only: ${call}`,
+    );
   }
 });
 
@@ -795,7 +818,8 @@ test("sagemaker-quotas warns when no YOLO-capable type has quota, and fails when
     Quotas: [{ QuotaName: "ml.g5.xlarge for processing job usage", QuotaCode: "L-G5", Value: 1 }],
   });
   assert.equal(onlyDefaults.result.status, 0, onlyDefaults.result.stderr);
-  assert.deepEqual(onlyDefaults.rows.get("ml.g5.xlarge"), ["1", "default", "gpu", "yes", "L-G5"]);
+  assert.deepEqual(onlyDefaults.rows.get("ml.g5.xlarge"), ["1", "default", "gpu", "yes", "-", "L-G5"]);
+  assert.match(onlyDefaults.out + onlyDefaults.result.stderr, /on-demand prices unavailable/u);
 
   const broken = await runQuotas(null, null);
   assert.notEqual(broken.result.status, 0);

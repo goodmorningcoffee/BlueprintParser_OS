@@ -24,10 +24,15 @@ vi.mock("@/lib/auth", async () => {
 
 const h = vi.hoisted(() => ({
   getYoloJobStatus: vi.fn(),
+  describeYoloJobRun: vi.fn(),
+  yoloLoad: vi.fn(),
 }));
 vi.mock("@/lib/yolo", () => ({
   getYoloJobStatus: h.getYoloJobStatus,
+  describeYoloJobRun: h.describeYoloJobRun,
 }));
+// [2026-10-21] GET's server-side catch-up loads completed jobs through yoloLoad (S3 + DB); stubbed here.
+vi.mock("@/server/services/yolo", () => ({ yoloLoad: h.yoloLoad }));
 
 import { GET as rjGET, PUT as rjPUT } from "@/app/api/admin/running-jobs/route";
 import { db } from "@/lib/db";
@@ -89,6 +94,8 @@ async function jobByExec(executionId: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.getYoloJobStatus.mockResolvedValue({ status: "Completed" });
+  h.describeYoloJobRun.mockResolvedValue(null);
+  h.yoloLoad.mockResolvedValue({ success: true });
   signedOut();
 });
 
@@ -109,6 +116,7 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
   });
 
   it("RJ-2 GET: BARE ARRAY of own-company running jobs (companyId-scoped), shaped from model_config", async () => {
+    h.getYoloJobStatus.mockResolvedValue({ status: "InProgress" }); // still running at the provider
     const { company, admin } = await makeWorld();
     const author = await createUser(company.id);
     const proj = await createProject(company.id, author.id);
@@ -355,5 +363,35 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
       .soft((await jobByExec(foreignJob.executionId!)).status)
       .toBe("running");
     expect.soft((await jobByExec(demoJob.executionId!)).status).toBe("running");
+  });
+
+  it("[2026-10-21 catch-up] GET: a provider-Completed job nobody polled is marked completed, loaded once, and dropped from the list", async () => {
+    const { company, admin } = await makeWorld();
+    const proj = await createProject(company.id, (await createUser(company.id)).id);
+    const job = await seedJob(proj.id);
+    h.describeYoloJobRun.mockResolvedValue({ instanceType: "ml.g5.xlarge", runSeconds: 321 });
+    asUser(admin);
+    const r = await readJson(await rjGET(getReq()));
+    expect(r.status).toBe(200);
+    expect(r.body.some((j: { executionId: string }) => j.executionId === job.executionId)).toBe(false);
+    const row = await jobByExec(job.executionId!);
+    expect(row?.status).toBe("completed");
+    // the run's instance + provider seconds are kept for the cost estimate (services/yolo-run-stats)
+    expect(row?.modelConfig).toMatchObject({ modelId: 7, modelName: "yolo-x", instanceType: "ml.g5.xlarge", runSeconds: 321 });
+    expect(h.yoloLoad).toHaveBeenCalledTimes(1);
+    expect(h.yoloLoad.mock.calls[0][0]).toEqual({ projectId: proj.publicId, modelId: 7, modelName: "yolo-x" });
+    expect(h.yoloLoad.mock.calls[0][1]).toMatchObject({ user: { dbId: admin.id } });
+  });
+
+  it("[2026-10-21 catch-up] GET: an in-progress job is left running and is not loaded", async () => {
+    h.getYoloJobStatus.mockResolvedValue({ status: "InProgress" });
+    const { company, admin } = await makeWorld();
+    const proj = await createProject(company.id, (await createUser(company.id)).id);
+    const job = await seedJob(proj.id);
+    asUser(admin);
+    const r = await readJson(await rjGET(getReq()));
+    expect(r.body.some((j: { executionId: string }) => j.executionId === job.executionId)).toBe(true);
+    expect((await jobByExec(job.executionId!))?.status).toBe("running");
+    expect(h.yoloLoad).not.toHaveBeenCalled();
   });
 });

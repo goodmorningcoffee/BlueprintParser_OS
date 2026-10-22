@@ -84,6 +84,9 @@ export async function checkUploadQuota(
  *
  * Counting basis: ALWAYS the company's jobs. processing_jobs has no user column, so a per-user
  * override changes only the LIMIT that user is held to against the company-wide count.
+ * [2026-10-22] A job SageMaker provably never accepted (running-jobs marks it "SageMaker job never
+ * accepted" once Describe says not-found and the row is 30 min old) does not count: a refused start
+ * whose first answer was inconclusive used to burn one of the day's jobs for good.
  */
 export async function checkYoloQuota(
   companyId: number,
@@ -105,6 +108,7 @@ export async function checkYoloQuota(
     WHERE p.company_id = ${companyId}
       AND pj.model_config IS NOT NULL
       AND pj.started_at > NOW() - INTERVAL '1 day'
+      AND pj.error IS DISTINCT FROM 'SageMaker job never accepted'
   `);
   const current = countOf(result);
   if (current >= DAILY_LIMIT) {

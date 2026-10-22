@@ -23,7 +23,8 @@ import {
   resolveProjectOrThrow,
 } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
-import { getYoloJobStatus } from "@/lib/yolo";
+import { describeYoloJobRun, getYoloJobStatus } from "@/lib/yolo";
+import { catchUpYoloJobs } from "@/server/services/yolo-catch-up";
 
 export const YOLO_NEVER_STARTED_MIN_AGE_MS = 30 * 60_000;
 
@@ -64,7 +65,9 @@ export async function getRunningJobs(session: AuthSession): Promise<unknown> {
       startedAt: r.startedAt,
     }));
 
-    return jobs;
+    // [2026-10-21] Completed jobs nobody polled are loaded once server-side (services/yolo-catch-up).
+    const retired = await catchUpYoloJobs(session, jobs, { markTerminal: updateRunningJob });
+    return jobs.filter((j) => !retired.has(j.executionId));
   } catch {
     return [];
   }
@@ -146,6 +149,17 @@ export async function updateRunningJob(
     );
   }
 
+  // [2026-10-22] Instance + provider wall seconds feed the cost estimate (services/yolo-run-stats).
+  // Best-effort: a failed Describe only leaves the estimate on the DB timestamps.
+  let run: Awaited<ReturnType<typeof describeYoloJobRun>> = null;
+  if (dbStatus === "completed") {
+    try {
+      run = await describeYoloJobRun(job.executionId!);
+    } catch {
+      run = null;
+    }
+  }
+
   await withProjectWrite(writeCapability, project.id, async (tx) => {
     await tx
       .update(processingJobs)
@@ -153,6 +167,9 @@ export async function updateRunningJob(
         status: dbStatus,
         completedAt: new Date(),
         ...(neverStarted ? { error: "SageMaker job never accepted" } : {}),
+        ...(run
+          ? { modelConfig: sql`COALESCE(${processingJobs.modelConfig}, '{}'::jsonb) || ${JSON.stringify(run)}::jsonb` }
+          : {}),
       })
       .where(eq(processingJobs.id, job.id));
   });

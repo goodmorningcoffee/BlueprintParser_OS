@@ -11,7 +11,7 @@
 #   ./deploy-aws.sh restart              same-image restart after a config/secret change (deploy.sh activate)
 #   ./deploy-aws.sh logs                 tail the app log
 #   ./deploy-aws.sh unlock-login <email> clear a login lockout (the owner's own, typically)
-#   ./deploy-aws.sh sagemaker-quotas     read-only: SageMaker processing-job instance quotas, YOLO fit marked
+#   ./deploy-aws.sh sagemaker-quotas     read-only: SageMaker processing-job quotas + on-demand $/h, YOLO fit
 #
 # It ORCHESTRATES the tools that exist; it does not reimplement them. `./deploy.sh publish` remains
 # the build-and-push step and `./deploy.sh activate` the same-image restart. Terraform owns every
@@ -979,15 +979,33 @@ cmd_sagemaker_quotas() {
     return [...m].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([t, v]) => [t, v[0], v[1], v[2]].join("\t")).join("\n");
   })()')
   [ -n "${rows}" ] || { warn "no '<type> for processing job usage' quotas returned"; return 0; }
+  # Live on-demand $/h for SageMaker Processing in this region (the Price List API lives in us-east-1).
+  local prices price_rows
+  prices=$(aws_ro pricing get-products --region us-east-1 --service-code AmazonSageMaker --format-version aws_v1 \
+    --filters "Type=TERM_MATCH,Field=regionCode,Value=${AWS_REGION}" "Type=TERM_MATCH,Field=component,Value=Processing" \
+    --output json || true)
+  price_rows=$(printf '%s' "${prices:-null}" | json '(() => {
+    const m = new Map();
+    for (const e of (j && j.PriceList) || []) { let p; try { p = typeof e === "string" ? JSON.parse(e) : e; } catch { continue; }
+      const a = (p && p.product && p.product.attributes) || {}; const u = String(a.usagetype || "");
+      if (a.component ? String(a.component).toLowerCase() !== "processing" : !/(^|-)Processing:/.test(u)) continue;
+      const t = a.instanceName || (u.match(/:(ml\.[a-z0-9-]+\.[a-z0-9]+)$/) || [])[1]; if (!t) continue;
+      for (const term of Object.values((p.terms && p.terms.OnDemand) || {})) for (const d of Object.values(term.priceDimensions || {})) {
+        const usd = Number(d.pricePerUnit && d.pricePerUnit.USD);
+        if (/^h(ou)?rs?$/i.test(String(d.unit || "")) && usd > 0 && (!m.has(t) || usd < m.get(t))) m.set(t, usd); } }
+    return [...m].map(([t, v]) => t + "\t" + v.toFixed(3)).join("\n");
+  })()')
+  [ -n "${price_rows}" ] || warn "on-demand prices unavailable (aws pricing get-products) — the \$/H column shows -"
   picker=" $(grep -oE '"ml\.[a-z0-9]+\.[a-z0-9]+"' "${YOLO_INSTANCES_FILE}" 2>/dev/null | tr -d '"' | sort -u | tr '\n' ' ')"
-  printf '  %-20s %6s  %-8s %-9s %-7s %s\n' INSTANCE QUOTA SOURCE YOLO PICKER QUOTA-CODE
-  local type value src code fit inpick usable=0
+  printf '  %-20s %6s  %-8s %-9s %-7s %8s  %s\n' INSTANCE QUOTA SOURCE YOLO PICKER '$/H' QUOTA-CODE
+  local type value src code fit inpick price usable=0
   while IFS="$(printf '\t')" read -r type value src code; do
     [ -n "${type}" ] || continue
     fit=$(yolo_fit "${type}")
     case "${picker}" in *" ${type} "*) inpick=yes ;; *) inpick=- ;; esac
     if [ "${fit}" != no ] && [ "${value%%.*}" -ge 1 ] 2>/dev/null; then usable=$((usable+1)); fi
-    printf '  %-20s %6s  %-8s %-9s %-7s %s\n' "${type}" "${value%.0}" "${src}" "${fit}" "${inpick}" "${code}"
+    price=$(printf '%s\n' "${price_rows}" | awk -F '\t' -v t="${type}" '$1 == t { print $2; exit }')
+    printf '  %-20s %6s  %-8s %-9s %-7s %8s  %s\n' "${type}" "${value%.0}" "${src}" "${fit}" "${inpick}" "${price:--}" "${code}"
   done <<QUOTAS
 ${rows}
 QUOTAS

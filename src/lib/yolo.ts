@@ -8,6 +8,7 @@ import { S3_BUCKET } from "@/lib/s3";
 import { randomUUID } from "crypto";
 import { ApiError } from "@/server/api/envelope";
 import { readYoloInstanceType } from "@/server/services/yolo-instance";
+import { readYoloMaxRuntimeSeconds } from "@/server/services/yolo-instance";
 import { isSageMakerNotFoundError, isSageMakerQuotaError, yoloQuotaMessage } from "@/lib/yolo-instances";
 
 const sagemakerClient = new SageMakerClient({
@@ -84,8 +85,8 @@ export function createYoloJobName(
  * @param modelName - Human-readable model name for the job
  * @returns Job name for status polling
  *
- * The instance type is the root-chosen app_settings value (readYoloInstanceType never throws; it
- * falls back to ml.g4dn.xlarge). A ResourceLimitExceeded refusal becomes a YoloStartRefusedError
+ * The instance type and the timeout (MaxRuntimeInSeconds) are root-chosen app_settings values; both
+ * readers never throw and fall back to ml.g4dn.xlarge / 3600 s. A ResourceLimitExceeded refusal becomes a YoloStartRefusedError
  * (429) naming that type, which yoloRun passes through so the admin sees "No SageMaker quota for
  * <type>". An SDK retry can follow an accepted first attempt, so AWS is asked about the job name
  * first: present → the job is real and its name is returned; absent → confirmedAbsent; else not.
@@ -98,6 +99,7 @@ export async function startYoloJob(
 ): Promise<string> {
   assertYoloRuntimeAuthority();
   const instanceType = await readYoloInstanceType();
+  const maxRuntimeSeconds = await readYoloMaxRuntimeSeconds();
 
   const command = new CreateProcessingJobCommand({
     ProcessingJobName: jobName,
@@ -148,7 +150,7 @@ export async function startYoloJob(
       ],
     },
     StoppingCondition: {
-      MaxRuntimeInSeconds: 3600,
+      MaxRuntimeInSeconds: maxRuntimeSeconds,
     },
   });
 
@@ -163,13 +165,46 @@ export async function startYoloJob(
   return jobName;
 }
 
-/** Does SageMaker hold a processing job under this name? Never throws; "unknown" on any doubt. */
-export async function yoloJobPresence(jobName: string): Promise<"present" | "absent" | "unknown"> {
+/** Waits between Describe attempts when the answer is inconclusive (throttling, network). */
+export const YOLO_PRESENCE_RETRY_MS: readonly number[] = [500, 1500];
+
+/**
+ * Does SageMaker hold a processing job under this name? Never throws; "unknown" only when every
+ * attempt was inconclusive. [2026-10-22 DOUBLE_BACK] One throttled Describe used to leave a refused
+ * start's row + reservation live (quota burn); the retries make a confirmed answer the normal case.
+ */
+export async function yoloJobPresence(
+  jobName: string,
+  retryMs: readonly number[] = YOLO_PRESENCE_RETRY_MS,
+): Promise<"present" | "absent" | "unknown"> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await getYoloJobStatus(jobName);
+      return "present";
+    } catch (err) {
+      if (isSageMakerNotFoundError(err)) return "absent";
+      if (attempt >= retryMs.length) return "unknown";
+      await new Promise((resolve) => setTimeout(resolve, retryMs[attempt]));
+    }
+  }
+}
+
+/**
+ * The provider's record of a finished job, for the cost estimate's history (instance type and wall
+ * seconds from creation to end, i.e. including instance start-up). Never throws; null on any doubt.
+ */
+export async function describeYoloJobRun(
+  jobName: string,
+): Promise<{ instanceType: string; runSeconds: number } | null> {
   try {
-    await getYoloJobStatus(jobName);
-    return "present";
-  } catch (err) {
-    return isSageMakerNotFoundError(err) ? "absent" : "unknown";
+    const r = await sagemakerClient.send(new DescribeProcessingJobCommand({ ProcessingJobName: jobName }));
+    const instanceType = r.ProcessingResources?.ClusterConfig?.InstanceType;
+    const start = r.CreationTime?.getTime();
+    const end = r.ProcessingEndTime?.getTime();
+    if (!instanceType || start === undefined || end === undefined || end <= start) return null;
+    return { instanceType, runSeconds: Math.round((end - start) / 1000) };
+  } catch {
+    return null;
   }
 }
 

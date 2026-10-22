@@ -15,13 +15,21 @@ vi.mock("@/lib/auth", async () => {
   return { auth: async () => sessionState.current };
 });
 
+// The options route reads AWS (quotas/prices); tests use the code-table fallback instead.
+vi.mock("@/server/services/yolo-instance-catalog", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/server/services/yolo-instance-catalog")>();
+  return { ...real, getYoloInstanceCatalog: async () => real.buildYoloInstanceCatalog("us-east-1", null, null, new Date(0)) };
+});
+
 import { GET, PUT } from "@/app/api/admin/yolo-instance/route";
+import { GET as optionsGET } from "@/app/api/admin/yolo-instance/options/route";
+import { PUT as runtimePUT } from "@/app/api/admin/yolo-runtime/route";
 import { PUT as settingsPUT } from "@/app/api/admin/app-settings/route";
 import { db } from "@/lib/db";
 import { appSettings, auditLog } from "@/lib/db/schema";
 import { and, desc, eq } from "drizzle-orm";
-import { putYoloInstanceType, readYoloInstanceType } from "@/server/services/yolo-instance";
-import { YOLO_INSTANCE_SETTING_KEY, YOLO_INSTANCE_TYPES } from "@/lib/yolo-instances";
+import { putYoloInstanceType, readYoloInstanceType, readYoloMaxRuntimeSeconds } from "@/server/services/yolo-instance";
+import { YOLO_INSTANCE_SETTING_KEY, YOLO_INSTANCE_TYPES, YOLO_MAX_RUNTIME_SETTING_KEY } from "@/lib/yolo-instances";
 import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
@@ -29,6 +37,9 @@ const PATH = "/api/admin/yolo-instance";
 const get = () => GET(makeReq(PATH, { method: "GET" }));
 const put = (body: unknown) => PUT(makeReq(PATH, { method: "PUT", body }));
 const clearRow = () => db.delete(appSettings).where(eq(appSettings.key, YOLO_INSTANCE_SETTING_KEY));
+const clearRuntime = () => db.delete(appSettings).where(eq(appSettings.key, YOLO_MAX_RUNTIME_SETTING_KEY));
+const getOptions = () => optionsGET(makeReq("/api/admin/yolo-instance/options", { method: "GET" }));
+const putRuntime = (body: unknown) => runtimePUT(makeReq("/api/admin/yolo-runtime", { method: "PUT", body }));
 
 async function makeWorld() {
   const company = await createCompany();
@@ -46,6 +57,7 @@ beforeEach(() => {
 describe.skipIf(!dbUp)("/api/admin/yolo-instance", () => {
   afterAll(async () => {
     await clearRow();
+    await clearRuntime();
   });
 
   it("auth: signed-out 401; member and company admin 403 on read AND write; root 200", async () => {
@@ -149,5 +161,71 @@ describe.skipIf(!dbUp)("/api/admin/yolo-instance", () => {
     await db.insert(appSettings).values({ key: YOLO_INSTANCE_SETTING_KEY, value: { nonsense: 1 } });
     expect(await readYoloInstanceType()).toBe("ml.g4dn.xlarge");
     await clearRow();
+  });
+
+  it("[2026-10-22] options + timeout routes are root-only (signed-out 401, member/admin 403)", async () => {
+    const { admin, member, root } = await makeWorld();
+    expect((await getOptions()).status).toBe(401);
+    expect((await putRuntime({ maxRuntimeSeconds: 7200 })).status).toBe(401);
+    for (const actor of [member, admin]) {
+      asUser(actor);
+      expect((await getOptions()).status).toBe(403);
+      expect((await putRuntime({ maxRuntimeSeconds: 7200 })).status).toBe(403);
+    }
+    asUser(root);
+    expect((await getOptions()).status).toBe(200);
+  });
+
+  it("[2026-10-22] options: current type + timeout (default 3600), the annotated allowlist, run stats", async () => {
+    await clearRow();
+    await clearRuntime();
+    const { root } = await makeWorld();
+    asUser(root);
+    const r = await readJson(await getOptions());
+    expect(r.body).toMatchObject({
+      instanceType: "ml.g4dn.xlarge",
+      maxRuntimeSeconds: 3600,
+      runtimeBounds: { min: 900, max: 86400, default: 3600 },
+      catalog: { quotaStatus: "unavailable", priceStatus: "approximate" },
+    });
+    expect(r.body.catalog.options.map((o: { type: string }) => o.type)).toEqual([...YOLO_INSTANCE_TYPES]);
+    expect(Array.isArray(r.body.runStats)).toBe(true);
+  });
+
+  it("[2026-10-22] timeout PUT: bounded, strict, audited; the run-path reader and options see it", async () => {
+    await clearRuntime();
+    const { root } = await makeWorld();
+    asUser(root);
+    for (const body of [{ maxRuntimeSeconds: 899 }, { maxRuntimeSeconds: 86401 }, { maxRuntimeSeconds: 1000.5 }, { maxRuntimeSeconds: "7200" }, { maxRuntimeSeconds: 7200, x: 1 }, {}]) {
+      const bad = await readJson(await putRuntime(body));
+      expect(bad.status).toBe(400);
+      expect(bad.body.error.code).toBe("VALIDATION");
+    }
+    expect(await readYoloMaxRuntimeSeconds()).toBe(3600);
+    let r = await readJson(await putRuntime({ maxRuntimeSeconds: 7200 }));
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ success: true, maxRuntimeSeconds: 7200 });
+    r = await readJson(await putRuntime({ maxRuntimeSeconds: 900 }));
+    expect(r.status).toBe(200);
+    expect(await readYoloMaxRuntimeSeconds()).toBe(900);
+    expect((await readJson(await getOptions())).body.maxRuntimeSeconds).toBe(900);
+    const audits = await db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "yolo_max_runtime_changed"), eq(auditLog.userId, root.id)))
+      .orderBy(desc(auditLog.id));
+    expect(audits.map((a) => a.details)).toEqual([
+      { before: 7200, after: 900 },
+      { before: null, after: 7200 },
+    ]);
+    const generic = await readJson(
+      await settingsPUT(makeReq("/api/admin/app-settings", { method: "PUT", body: { key: YOLO_MAX_RUNTIME_SETTING_KEY, value: { seconds: 432000 } } })),
+    );
+    expect(generic.status).toBe(400);
+    expect(generic.body.error.message).toMatch(/\/api\/admin\/yolo-runtime/u);
+    await clearRuntime();
+    await db.insert(appSettings).values({ key: YOLO_MAX_RUNTIME_SETTING_KEY, value: { seconds: 432000 } });
+    expect(await readYoloMaxRuntimeSeconds()).toBe(3600); // hand-edited out-of-range → default
+    await clearRuntime();
   });
 });

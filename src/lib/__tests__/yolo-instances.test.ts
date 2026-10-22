@@ -8,11 +8,16 @@ import {
   DEFAULT_YOLO_INSTANCE_TYPE,
   YOLO_INSTANCE_OPTIONS,
   YOLO_INSTANCE_TYPES,
+  DEFAULT_YOLO_MAX_RUNTIME_SECONDS,
+  instanceTypeFromQuotaName,
   isSageMakerNotFoundError,
   isSageMakerQuotaError,
   isYoloInstanceType,
+  isYoloMaxRuntimeSeconds,
   resolveYoloInstanceSetting,
+  resolveYoloMaxRuntimeSetting,
   yoloInstanceLabel,
+  yoloProcessingQuotaName,
   yoloQuotaMessage,
 } from "@/lib/yolo-instances";
 
@@ -28,10 +33,34 @@ describe("YOLO instance allowlist", () => {
   it("offers only CUDA GPU families or plain CPU types — never Inferentia, Trainium or AMD GPUs", () => {
     for (const o of YOLO_INSTANCE_OPTIONS) {
       expect(o.type).not.toMatch(/^ml\.(inf|trn|g4ad)/u);
-      if (o.gpu) expect(o.type).toMatch(/^ml\.(g4dn|g5|g6|g6e|p3)\./u);
+      if (o.gpu) expect(o.type).toMatch(/^ml\.(g4dn|g5|g6|g6e|p3|p4d|p5)\./u);
       else expect(o.type).toMatch(/^ml\.(m5|c5)\./u);
       expect(yoloInstanceLabel(o)).toContain(o.type);
     }
+  });
+
+  it("stage 2: offers EVERY SDK processing size of the CUDA families (owner: any GPU we have quota for)", () => {
+    const sdkGpu = Object.values(ProcessingInstanceType).filter((t) => /^ml\.(g4dn|g5|g6|g6e|p3|p4d|p5)\./u.test(t));
+    expect(sdkGpu.length).toBeGreaterThan(20);
+    expect(sdkGpu.filter((t) => !YOLO_INSTANCE_TYPES.includes(t))).toEqual([]);
+  });
+
+  it("maps a type to its Service Quotas processing-job quota name and back", () => {
+    expect(yoloProcessingQuotaName("ml.g5.xlarge")).toBe("ml.g5.xlarge for processing job usage");
+    expect(instanceTypeFromQuotaName("ml.g6e.12xlarge for processing job usage")).toBe("ml.g6e.12xlarge");
+    expect(instanceTypeFromQuotaName("ml.g5.xlarge for training job usage")).toBeNull();
+    expect(instanceTypeFromQuotaName("Maximum number of processing jobs")).toBeNull();
+    expect(instanceTypeFromQuotaName(7)).toBeNull();
+  });
+
+  it("timeout setting: 900..86400 whole seconds; anything else resolves to the 3600 default", () => {
+    expect(DEFAULT_YOLO_MAX_RUNTIME_SECONDS).toBe(3600);
+    for (const ok of [900, 3600, 86400]) expect(isYoloMaxRuntimeSeconds(ok)).toBe(true);
+    for (const bad of [899, 86401, 1800.5, "3600", null, Number.NaN]) expect(isYoloMaxRuntimeSeconds(bad)).toBe(false);
+    expect(resolveYoloMaxRuntimeSetting({ seconds: 7200 })).toEqual({ seconds: 7200, valid: true, raw: 7200 });
+    expect(resolveYoloMaxRuntimeSetting({ seconds: 432000 })).toMatchObject({ seconds: 3600, valid: false });
+    expect(resolveYoloMaxRuntimeSetting(7200)).toMatchObject({ seconds: 3600, valid: false });
+    expect(resolveYoloMaxRuntimeSetting(undefined)).toEqual({ seconds: 3600, valid: false, raw: undefined });
   });
 
   it("isYoloInstanceType accepts allowlisted strings only", () => {

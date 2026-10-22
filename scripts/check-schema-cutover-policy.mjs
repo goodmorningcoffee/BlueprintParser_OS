@@ -2099,6 +2099,53 @@ if (!startYoloFunction?.body) {
       "readYoloInstanceType must be the services/yolo-instance reader, imported once and not redefined",
     );
   }
+  // [2026-10-22 owner: "ability to modify timeout time in the admin"] MaxRuntimeInSeconds is the
+  // root-set app_settings value, read third through readYoloMaxRuntimeSeconds (bounded 900..86400,
+  // default 3600 — frozen below), bound once and never reassigned.
+  requireTsCompactText(
+    "src/lib/yolo.ts",
+    startYoloFunction.body.statements[2],
+    yoloSource,
+    "constmaxRuntimeSeconds=awaitreadYoloMaxRuntimeSeconds();",
+    yoloRuntimeInvariant,
+    "the job timeout must be read once, right after the instance type, via readYoloMaxRuntimeSeconds()",
+  );
+  const runtimeBindings = descendants(
+    startYoloFunction,
+    (node) =>
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "maxRuntimeSeconds",
+  );
+  const runtimeWrites = descendants(
+    startYoloFunction.body,
+    (node) =>
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === "maxRuntimeSeconds",
+  );
+  if (runtimeBindings.length !== 1 || runtimeWrites.length !== 0) {
+    report(
+      "src/lib/yolo.ts",
+      yoloRuntimeInvariant,
+      "maxRuntimeSeconds must be bound exactly once in startYoloJob and never reassigned",
+    );
+  }
+  const runtimeReaderImports = yoloSource.statements.filter(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "@/server/services/yolo-instance" &&
+      compactTsText(statement.importClause, yoloSource) === "{readYoloMaxRuntimeSeconds}",
+  );
+  if (runtimeReaderImports.length !== 1 || yoloFunctions("readYoloMaxRuntimeSeconds").length !== 0) {
+    report(
+      "src/lib/yolo.ts",
+      yoloRuntimeInvariant,
+      "readYoloMaxRuntimeSeconds must be the services/yolo-instance reader, imported once and not redefined",
+    );
+  }
   const commandDeclarations = descendants(
     startYoloFunction.body,
     (node) =>
@@ -2195,8 +2242,8 @@ if (!startYoloFunction?.body) {
     [
       stoppingCondition,
       "MaxRuntimeInSeconds",
-      "3600",
-      "MaxRuntimeInSeconds must remain 3600",
+      "maxRuntimeSeconds",
+      "MaxRuntimeInSeconds must come from the bounded readYoloMaxRuntimeSeconds() setting",
     ],
     [
       commandConfig,
@@ -2319,9 +2366,11 @@ if (!startYoloFunction?.body) {
   );
 }
 
-// [2026-10-21] The YOLO instance allowlist bounds cost: one-GPU CUDA families (or plain CPU) up to
-// 12xlarge, default ml.g4dn.xlarge, and the run-path reader can only ever return an allowlisted
-// type or that default (MaxRuntimeInSeconds above still caps each job at one hour).
+// [2026-10-21; stage 2 2026-10-22, owner: "select any gpu that we have a quota for"] The YOLO instance
+// allowlist bounds the hardware by FAMILY, not size: NVIDIA CUDA families (g4dn/g5/g6/g6e/p3/p4d/p5)
+// for gpu() entries and plain m5/c5 for cpu() entries, any size; default ml.g4dn.xlarge. The run-path
+// reader can only ever return an allowlisted type or that default, and the root-set timeout below
+// (900..86400 s, default 3600) caps each job's billed time.
 const yoloInstanceInvariant =
   "the YOLO instance type must come from the bounded code allowlist, defaulting to ml.g4dn.xlarge";
 const yoloInstancesFile = "src/lib/yolo-instances.ts";
@@ -2332,8 +2381,8 @@ const yoloInstancesSource = ts.createSourceFile(
   true,
   ts.ScriptKind.TS,
 );
-const allowedYoloInstance =
-  /^ml\.(?:g4dn|g5|g6|g6e|p3|m5|c5)\.(?:xlarge|2xlarge|4xlarge|8xlarge|12xlarge)$/u;
+const allowedYoloGpuInstance = /^ml\.(?:g4dn|g5|g6|g6e|p3|p4d|p5)\.(?:[1-9][0-9]?)?xlarge$/u;
+const allowedYoloCpuInstance = /^ml\.(?:m5|c5)\.(?:[1-9][0-9]?)?xlarge$/u;
 requireTsCompactText(
   yoloInstancesFile,
   tsVariableInitializer(yoloInstancesSource, "DEFAULT_YOLO_INSTANCE_TYPE"),
@@ -2354,13 +2403,15 @@ if (
       !["gpu", "cpu"].includes(element.expression.text) ||
       !element.arguments[0] ||
       !ts.isStringLiteral(element.arguments[0]) ||
-      !allowedYoloInstance.test(element.arguments[0].text),
+      !(element.expression.text === "gpu" ? allowedYoloGpuInstance : allowedYoloCpuInstance).test(
+        element.arguments[0].text,
+      ),
   )
 ) {
   report(
     yoloInstancesFile,
     yoloInstanceInvariant,
-    "YOLO_INSTANCE_OPTIONS must be a literal list of gpu()/cpu() entries within g4dn/g5/g6/g6e/p3/m5/c5 up to 12xlarge",
+    "YOLO_INSTANCE_OPTIONS must be a literal list of gpu() entries in g4dn/g5/g6/g6e/p3/p4d/p5 and cpu() entries in m5/c5",
   );
 }
 for (const [name, expected, detail] of [
@@ -2433,6 +2484,71 @@ if (
     yoloInstanceServiceFile,
     yoloInstanceInvariant,
     "readYoloInstanceType must return only resolveYoloInstanceSetting(...).instanceType or DEFAULT_YOLO_INSTANCE_TYPE",
+  );
+}
+
+// [2026-10-22] The job timeout: bounds and default are literal, the predicate and lenient resolver can
+// only yield an in-bounds integer or the default, and the run-path reader returns nothing else.
+const yoloRuntimeSettingInvariant =
+  "the YOLO job timeout must be a bounded root setting (900..86400 s), defaulting to 3600";
+for (const [name, expected] of [
+  ["DEFAULT_YOLO_MAX_RUNTIME_SECONDS", "3600"],
+  ["MIN_YOLO_MAX_RUNTIME_SECONDS", "900"],
+  ["MAX_YOLO_MAX_RUNTIME_SECONDS", "86400"],
+]) {
+  requireTsCompactText(
+    yoloInstancesFile,
+    tsVariableInitializer(yoloInstancesSource, name),
+    yoloInstancesSource,
+    expected,
+    yoloRuntimeSettingInvariant,
+    `${name} must remain ${expected}`,
+  );
+}
+requireTsCompactText(
+  yoloInstancesFile,
+  yoloInstanceFunction(yoloInstancesSource, "isYoloMaxRuntimeSeconds")?.body,
+  yoloInstancesSource,
+  '{returntypeofvalue==="number"&&Number.isInteger(value)&&value>=MIN_YOLO_MAX_RUNTIME_SECONDS&&value<=MAX_YOLO_MAX_RUNTIME_SECONDS;}',
+  yoloRuntimeSettingInvariant,
+  "isYoloMaxRuntimeSeconds must accept exactly the in-bounds integers",
+);
+const resolveRuntimeBody = compactTsText(
+  yoloInstanceFunction(yoloInstancesSource, "resolveYoloMaxRuntimeSetting")?.body,
+  yoloInstancesSource,
+);
+if (
+  !resolveRuntimeBody.endsWith(
+    "returnisYoloMaxRuntimeSeconds(raw)?{seconds:raw,valid:true,raw}:{seconds:DEFAULT_YOLO_MAX_RUNTIME_SECONDS,valid:false,raw};}",
+  ) ||
+  (resolveRuntimeBody.match(/return/gu) ?? []).length !== 1
+) {
+  report(
+    yoloInstancesFile,
+    yoloRuntimeSettingInvariant,
+    "resolveYoloMaxRuntimeSetting may only return an in-bounds timeout or the default",
+  );
+}
+const runtimeReader = yoloInstanceFunction(yoloInstanceServiceSource, "readYoloMaxRuntimeSeconds");
+const runtimeReaderReturns = runtimeReader
+  ? descendants(runtimeReader, ts.isReturnStatement).map((node) =>
+      compactTsText(node, yoloInstanceServiceSource),
+    )
+  : [];
+if (
+  !runtimeReader ||
+  runtimeReaderReturns.length !== 2 ||
+  !runtimeReaderReturns.every((text) =>
+    ["returnresolved.seconds;", "returnDEFAULT_YOLO_MAX_RUNTIME_SECONDS;"].includes(text),
+  ) ||
+  !compactTsText(runtimeReader.body, yoloInstanceServiceSource).includes(
+    "constresolved=resolveYoloMaxRuntimeSetting(value);",
+  )
+) {
+  report(
+    yoloInstanceServiceFile,
+    yoloRuntimeSettingInvariant,
+    "readYoloMaxRuntimeSeconds must return only resolveYoloMaxRuntimeSetting(...).seconds or DEFAULT_YOLO_MAX_RUNTIME_SECONDS",
   );
 }
 

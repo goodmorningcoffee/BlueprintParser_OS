@@ -470,7 +470,7 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
 
 // ── POST /api/yolo/load ───────────────────────────────────────────────────────
 export async function yoloLoad(
-  rawBody: Record<string, unknown>,
+  rawBody: Record<string, unknown>, asSession?: AuthSession, // set ONLY by the running-jobs catch-up (admin-route session)
 ): Promise<unknown> {
   const { projectId, modelId, modelName } = rawBody as {
     projectId?: string;
@@ -482,7 +482,7 @@ export async function yoloLoad(
 
   // YQ-2: signed-out gets the SAME 403 as a non-admin (legacy quirk, S020 class) —
   // the service resolves auth itself; auth:"admin" in the shell would 401 first.
-  const session = (await auth()) as unknown as AuthSession | null;
+  const session = asSession ?? ((await auth()) as unknown as AuthSession | null);
   if (
     !session?.user ||
     (session.user.role !== "admin" && !session.user.isRootAdmin)
