@@ -247,6 +247,22 @@ describe.skipIf(!dbUp)("admin/pipeline (PIPE)", () => {
       expect(r.body).toEqual({ error: { code: "VALIDATION", message: "pipeline object required" } }); // [S037 fold: A applied]
     }
   });
+
+  it("PIPE-5 csiSpatialGrid: 27x27 and non-square custom accepted; out of 1–27 or non-integer refused, nothing written", async () => {
+    const { company, admin } = await makeWorld();
+    asUser(admin);
+    for (const grid of [{ rows: 27, cols: 27 }, { rows: 4, cols: 17 }, { rows: 1, cols: 1 }]) {
+      const r = await put(pipePUT, "/api/admin/pipeline", { pipeline: { csiSpatialGrid: grid } });
+      expect(r.status).toBe(200);
+      expect((await rowOf(company.id)).pc?.pipeline).toEqual({ csiSpatialGrid: grid });
+    }
+    for (const grid of [{ rows: 28, cols: 9 }, { rows: 9, cols: 0 }, { rows: 2.5, cols: 9 }, { rows: "9", cols: 9 }, { rows: 9 }, 9]) {
+      const r = await put(pipePUT, "/api/admin/pipeline", { pipeline: { csiSpatialGrid: grid } });
+      expect(r.status).toBe(400);
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "csiSpatialGrid rows and cols must be whole numbers from 1 to 27" } });
+    }
+    expect((await rowOf(company.id)).pc?.pipeline).toEqual({ csiSpatialGrid: { rows: 1, cols: 1 } });
+  });
 });
 
 // ── llm/config — key `llm` ───────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import CsiSpatialGridPicker from "./CsiSpatialGridPicker";
 
 interface PipelineTabProps {
   reprocessing: boolean;
@@ -170,21 +171,14 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
             <div className="text-xs font-medium text-[var(--fg)]">CSI Spatial Grid</div>
             <div className="text-[10px] text-[var(--muted)]">Resolution for CSI spatial heatmap. Higher = more precise LLM context. Requires reprocess.</div>
           </div>
-          <select
-            value={String(config.csiSpatialGrid?.rows ?? 3)}
-            onChange={(e) => {
-              const n = parseInt(e.target.value);
-              const updated = { ...config, csiSpatialGrid: { rows: n, cols: n } };
+          <CsiSpatialGridPicker
+            value={config.csiSpatialGrid}
+            onChange={(grid) => {
+              const updated = { ...config, csiSpatialGrid: grid };
               setConfig(updated);
               saveConfig(updated);
             }}
-            className="w-20 text-center text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)]"
-          >
-            <option value="3">3x3</option>
-            <option value="6">6x6</option>
-            <option value="9">9x9</option>
-            <option value="12">12x12</option>
-          </select>
+          />
         </div>
 
         {/* Always-on steps */}

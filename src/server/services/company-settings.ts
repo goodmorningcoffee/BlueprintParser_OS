@@ -46,6 +46,7 @@ import { getAllDetectorMeta } from "@/lib/detectors/registry";
 // [refactor jul23 P4.1 U11] the companies-row FOR-UPDATE write wrapper + its shared
 // PipelineConfig type (single source of truth; was a duplicate local alias here).
 import { updatePipelineConfig, type PipelineConfig } from "./company-config";
+import { csiGridError } from "@/lib/csi-spatial-grid-limits";
 
 /** The pipelineConfig top-level keys the six B1 routes own (typed union per DR003). */
 type ConfigKey = "csi" | "demo" | "pipeline" | "llm" | "textAnnotation" | "heuristics" | "pageNaming";
@@ -111,6 +112,8 @@ export async function putPipelineConfig(session: AuthSession, rawBody: Record<st
   if (!pipeline || typeof pipeline !== "object") {
     throw new ApiError("VALIDATION", "pipeline object required");
   }
+  const gridError = csiGridError((pipeline as { csiSpatialGrid?: unknown }).csiSpatialGrid);
+  if (gridError) throw new ApiError("VALIDATION", gridError);
   await writePipelineConfig(session.user.companyId, { pipeline });
   return { success: true };
 }
