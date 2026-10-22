@@ -208,7 +208,7 @@ describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-s
 });
 
 describe.skipIf(!dbUp)("admin reprocess — other scopes persist", () => {
-  it("full: CSI write keeps the page's YOLO-class codes and re-applies the loaded models' class config", async () => {
+  it("full: CSI write re-applies the loaded models' CURRENT class config and drops stale YOLO-class codes", async () => {
     const { company, project } = await createWorld();
     const admin = await createUser(company.id, { role: "admin" });
     const [model] = await db.insert(models).values({
@@ -234,7 +234,9 @@ describe.skipIf(!dbUp)("admin reprocess — other scopes persist", () => {
 
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     const codes = (row.csiCodes ?? []).map((c) => c.code).sort();
-    expect(codes).toEqual(["08 11 13", "08 71 00"]); // stale text code re-detected away; YOLO codes kept/applied
+    // [fix 2026-10-22 rerun-overwrite] "08 71 00" was stamped by a class config no loaded model
+    // has any more: a rerun REPLACES, so it goes (it used to be kept forever — the CSI ratchet).
+    expect(codes).toEqual(["08 11 13"]); // stale text code re-detected away; current YOLO codes applied
   }, 30000);
 
   it("page-names: a user-typed page name survives; the drawing number is still refreshed", async () => {

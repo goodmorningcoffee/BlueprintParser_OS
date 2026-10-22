@@ -4,9 +4,8 @@
 // pages.csiCodes as {description:"From YOLO class config"}. The full reprocess then rewrote
 // pages.csiCodes from text detection ALONE, silently dropping those codes, and no admin
 // reprocess path re-applied them (the "YOLO CSI Code Merge" pipeline step had no reprocess).
-// The full scope now keeps the page's previously merged YOLO codes AND re-applies the current
-// class config of every model whose detections are loaded in the project — the same "every
-// page of the project" semantics yoloLoad uses.
+// The full scope now re-applies the current class config of every model whose detections are
+// loaded in the project (previously merged codes are NOT kept — see withYoloCsiCodes).
 import { db } from "@/lib/db";
 import { annotations, models } from "@/lib/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -38,13 +37,23 @@ export async function loadProjectYoloCsiCodes(projectId: number): Promise<Projec
   return { codes: [...codes].map((code) => ({ code, description: YOLO_CSI_DESCRIPTION })), models: loaded.length };
 }
 
-/** Text-detected codes + the page's previously merged YOLO-class codes + the models' current ones. */
+/**
+ * Text-detected codes + the CURRENT class codes of every model whose detections are loaded.
+ *
+ * [fix 2026-10-22 rerun-overwrite] This used to also keep every code the page had ever been
+ * stamped with as {description:"From YOLO class config"}. That made pages.csiCodes a ratchet:
+ * a class→CSI mapping edited in the CSI tab, or a model whose detections were purged, left its
+ * old codes on every page through every later rerun, so CSI counts only ever grew (owner
+ * 2026-10-22: "re-running CSI codes on some projects makes them grow and grow"). The rerun is
+ * now an exact REPLACE. `previous` is accepted and ignored so the caller (reprocess.ts, zero
+ * line headroom) is unchanged. Test: admin-rerun-idempotence.route.test.ts.
+ */
 export function withYoloCsiCodes(
   detected: CsiCode[],
   previous: CsiCode[] | null | undefined,
   projectYolo: ProjectYoloCsi,
 ): CsiCode[] {
-  const kept = (previous ?? []).filter((c) => c.description === YOLO_CSI_DESCRIPTION);
-  if (kept.length === 0 && projectYolo.codes.length === 0) return detected;
-  return mergeCsiCodes(mergeCsiCodes(detected, kept), projectYolo.codes);
+  void previous;
+  if (projectYolo.codes.length === 0) return detected;
+  return mergeCsiCodes(detected, projectYolo.codes);
 }

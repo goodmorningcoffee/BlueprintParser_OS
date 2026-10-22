@@ -589,6 +589,13 @@ export const MUTATION_SURFACES = [
     [["src/server/services/page-duplicates-apply.ts", "applyDuplicates"]],
   ),
   mutation(
+    "admin-annotation-cleanup",
+    "/api/admin/annotation-cleanup",
+    "POST",
+    "batch-non-demo",
+    [["src/server/services/annotation-cleanup.ts", "runAnnotationCleanup"]],
+  ),
+  mutation(
     "admin-duplicates-restore",
     "/api/admin/duplicates/restore",
     "POST",
