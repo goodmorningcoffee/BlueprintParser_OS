@@ -589,6 +589,20 @@ export const MUTATION_SURFACES = [
     [["src/server/services/page-duplicates-apply.ts", "applyDuplicates"]],
   ),
   mutation(
+    "admin-duplicates-apply-selection",
+    "/api/admin/duplicates/apply-selection",
+    "POST",
+    "shared-guard",
+    [["src/server/services/page-duplicates-select.ts", "applyDuplicateSelection"]],
+  ),
+  mutation(
+    "admin-project-duplicates-delete",
+    "/api/admin/project-duplicates/delete",
+    "POST",
+    "batch-non-demo",
+    [["src/server/services/project-duplicates.ts", "deleteProjectDuplicates"]],
+  ),
+  mutation(
     "admin-annotation-cleanup",
     "/api/admin/annotation-cleanup",
     "POST",
@@ -640,6 +654,12 @@ export const MUTATION_SURFACES = [
 ];
 
 export const INTERNAL_MUTATION_SINKS = [
+  // The one duplicate-page hide path (apply + apply-selection): withProjectWrite per project.
+  [
+    "src/server/services/page-duplicates-apply.ts",
+    "applyPlannedHides",
+    "atomic-project-write",
+  ],
   [
     "src/lib/project-analysis.ts",
     "computeProjectSummaries",
