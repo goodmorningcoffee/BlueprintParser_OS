@@ -8,6 +8,7 @@ import type { ModelClassType } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 import YoloBulkBar, { YoloRunCost, useYoloBulk, type LoadYoloFn, type RunYoloFn } from "./YoloBulkBar";
 import YoloInstancePicker from "./YoloInstancePicker";
+import YoloDebugReport from "./YoloDebugReport";
 
 interface ModelItem {
   id: number;
@@ -647,6 +648,12 @@ export default function AiModelsTab({
           <h2 className="text-lg font-semibold mb-3">Run YOLO Inference</h2>
           {isRootAdmin && <YoloInstancePicker />}
           <YoloBulkBar {...bulk.bar} />
+          {isRootAdmin && bulk.bar.model && (
+            <YoloDebugReport
+              projects={completedProjects}
+              rowStatus={(pid) => bulk.rowStatus(pid, bulk.bar.model!.id, (yoloJobs[pid] || {})[String(bulk.bar.model!.id)] || "")}
+            />
+          )}
           <div className="space-y-2">
             {completedProjects
               .map((p) => (

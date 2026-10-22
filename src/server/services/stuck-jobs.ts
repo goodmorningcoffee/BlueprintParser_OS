@@ -155,6 +155,8 @@ export async function listStuckJobs(
   const nowMs = Date.now();
   const jobs = await runningJobRows(companyId, false);
   let providerCalls = 0;
+  // [2026-10-22] A batched YOLO job has one row per project under one name: ask SageMaker once per name.
+  const yoloAnswers = new Map<string, { providerStatus: string | null; verdict: string }>();
 
   const ingest = [];
   const yolo = [];
@@ -189,7 +191,9 @@ export async function listStuckJobs(
     } else {
       let providerStatus: string | null = null;
       let verdict = "AWS lookup budget for this request is used up";
-      if (job.executionId && providerCalls < MAX_PROVIDER_CALLS) {
+      const known = job.executionId ? yoloAnswers.get(job.executionId) : undefined;
+      if (known) ({ providerStatus, verdict } = known);
+      else if (job.executionId && providerCalls < MAX_PROVIDER_CALLS) {
         providerCalls++;
         try {
           providerStatus = (await getYoloJobStatus(job.executionId)).status;
@@ -203,6 +207,7 @@ export async function listStuckJobs(
             verdict = "SageMaker lookup failed";
           }
         }
+        yoloAnswers.set(job.executionId, { providerStatus, verdict });
       }
       const modelConfig = job.modelConfig as { modelName?: unknown } | null;
       yolo.push({

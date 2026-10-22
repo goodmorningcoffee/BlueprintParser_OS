@@ -14,7 +14,7 @@
 // jobs from company admins, preserves the root operations bypass, and rechecks provider terminality.
 
 import { db } from "@/lib/db";
-import { processingJobs } from "@/lib/db/schema";
+import { processingJobs, projects } from "@/lib/db/schema";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError, notFound } from "@/server/api/envelope";
@@ -24,7 +24,7 @@ import {
 } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
 import { describeYoloJobRun, getYoloJobStatus } from "@/lib/yolo";
-import { catchUpYoloJobs } from "@/server/services/yolo-catch-up";
+import { catchUpRowKey, catchUpYoloJobs } from "@/server/services/yolo-catch-up";
 
 export const YOLO_NEVER_STARTED_MIN_AGE_MS = 30 * 60_000;
 
@@ -67,7 +67,7 @@ export async function getRunningJobs(session: AuthSession): Promise<unknown> {
 
     // [2026-10-21] Completed jobs nobody polled are loaded once server-side (services/yolo-catch-up).
     const retired = await catchUpYoloJobs(session, jobs, { markTerminal: updateRunningJob });
-    return jobs.filter((j) => !retired.has(j.executionId));
+    return jobs.filter((j) => !retired.has(catchUpRowKey(j)));
   } catch {
     return [];
   }
@@ -77,9 +77,11 @@ export async function updateRunningJob(
   rawBody: Record<string, unknown>,
   session: AuthSession,
 ): Promise<unknown> {
-  const { executionId, status } = rawBody as {
+  const { executionId, status, projectId } = rawBody as {
     executionId?: string;
     status?: string;
+    /** [2026-10-22] Batched YOLO jobs share one executionId across projects; this picks the row. */
+    projectId?: unknown;
   };
   if (!executionId || !status) {
     throw new ApiError("VALIDATION", "executionId and status required");
@@ -101,12 +103,16 @@ export async function updateRunningJob(
       startedAt: processingJobs.startedAt,
     })
     .from(processingJobs)
+    .innerJoin(projects, eq(projects.id, processingJobs.projectId))
     .where(
       and(
         eq(processingJobs.executionId, executionId),
         isNotNull(processingJobs.modelConfig),
+        ...(typeof projectId === "string" && projectId ? [eq(projects.publicId, projectId)] : []),
       ),
     )
+    // Without a projectId (legacy callers) a batched job's still-running row is closed first.
+    .orderBy(sql`CASE WHEN ${processingJobs.status} = 'running' THEN 0 ELSE 1 END`, processingJobs.id)
     .limit(1);
   if (!job) throw notFound();
 

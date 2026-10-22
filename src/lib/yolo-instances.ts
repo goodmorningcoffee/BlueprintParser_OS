@@ -8,7 +8,8 @@
 // (p4d has no processing type in the SDK enum), plus the stage-1 CPU types (slow). The admin picker
 // narrows this to the types with a live processing-job quota > 0 (services/yolo-instance-catalog.ts).
 // Inferentia/Trainium/AMD are excluded. Every entry is a member of the SDK's ProcessingInstanceType
-// enum (test-pinned). The inference script uses ONE GPU, so a multi-GPU size only buys vCPU/RAM.
+// enum (test-pinned). [2026-10-22] The inference script runs one worker per GPU over a shared page queue,
+// so `gpus` divides a job's inference time (src/lib/yolo-cost.ts, src/lib/yolo-chunk-plan.ts).
 // usdPerHour is a rough on-demand us-east-1 rate, the fallback when the live Price List is unreachable.
 
 export const YOLO_INSTANCE_SETTING_KEY = "yolo_instance_type";

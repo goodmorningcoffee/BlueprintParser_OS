@@ -1,14 +1,24 @@
 // [2026-10-21/22 owner asks] Cost estimate for YOLO SageMaker runs, shown next to Run all / Run on
 // selected / each per-project Run (root only). Pure and client-safe.
 //
-//   ≈ $X · N pages · J jobs  =  Σ_jobs (startup_s + pages × s_per_page) × $/h ÷ 3600
+//   ≈ $X · N pages · J jobs  =  Σ_jobs (startup_s + pages × s_per_page ÷ GPUs) × $/h ÷ 3600
 //
 // startup_s and s_per_page are fitted from completed YOLO processing_jobs (per model × instance; see
 // services/yolo-run-stats.ts). With no history the stated defaults below are used and LABELLED as an
 // assumption. A job's estimated runtime above the root-set timeout (MaxRuntimeInSeconds) is flagged:
 // SageMaker stops it there, so its results would be incomplete.
+// [2026-10-22] s_per_page is per GPU: the inference script spreads a job's pages over every GPU of the
+// machine, so a job's inference time divides by the instance's GPU count. Bulk runs are planned as
+// batched jobs (src/lib/yolo-chunk-plan.ts) — see yoloBatchEstimateFor.
 
 import type { YoloInstanceOption } from "@/lib/yolo-instances";
+import {
+  estimateYoloBatchRun,
+  planYoloChunks,
+  type YoloBatchRunEstimate,
+  type YoloChunk,
+  type YoloChunkProject,
+} from "@/lib/yolo-chunk-plan";
 
 export const DEFAULT_YOLO_STARTUP_SECONDS = 240;
 export const DEFAULT_YOLO_SECONDS_PER_PAGE = 1.5;
@@ -104,7 +114,9 @@ export function estimateYoloCost(
   usdPerHour: number,
   timing: Pick<YoloRunTiming, "startupSeconds" | "secondsPerPage">,
   maxRuntimeSeconds: number,
+  gpus = 1,
 ): YoloCostEstimate {
+  const devices = Math.max(1, Math.floor(gpus) || 1);
   let seconds = 0;
   let pages = 0;
   let jobs = 0;
@@ -117,7 +129,7 @@ export function estimateYoloCost(
       continue;
     }
     // A job is billed until it ends or the timeout stops it.
-    const raw = timing.startupSeconds + p * timing.secondsPerPage;
+    const raw = timing.startupSeconds + (p * timing.secondsPerPage) / devices;
     if (raw > maxRuntimeSeconds) overTimeout += 1;
     const billed = Math.min(raw, maxRuntimeSeconds);
     seconds += billed;
@@ -206,7 +218,7 @@ export function yoloEstimateFor(
   if (!option) return null;
   const timing = pickYoloRunTiming(data.runStats, modelId, data.instanceType);
   return {
-    estimate: estimateYoloCost(pagesPerJob, option.usdPerHour, timing, data.maxRuntimeSeconds),
+    estimate: estimateYoloCost(pagesPerJob, option.usdPerHour, timing, data.maxRuntimeSeconds, option.gpus),
     timing,
     option,
     maxRuntimeSeconds: data.maxRuntimeSeconds,
@@ -221,5 +233,64 @@ export function yoloEstimateText(e: NonNullable<ReturnType<typeof yoloEstimateFo
     parts.push(`⚠ ${e.estimate.overTimeout} job${e.estimate.overTimeout === 1 ? "" : "s"} may hit the timeout (longest ≈ ${formatMinutes(e.estimate.longestJobSeconds)})`);
   }
   if (e.estimate.unknownPages > 0) parts.push(`${e.estimate.unknownPages} with unknown page count (refused, $0)`);
+  return parts.join(" · ");
+}
+
+/** GPUs a job gets on this instance type (a CPU type counts as one device). */
+export function gpusPerMachine(option: Pick<YoloInstanceOption, "gpus">): number {
+  return Math.max(1, Math.floor(option.gpus) || 1);
+}
+
+/** The batched-job plan + estimate for a bulk run with `machines` jobs at once on the CURRENT instance. */
+export function yoloBatchEstimateFor(
+  data: YoloInstanceOptionsResponse | null,
+  modelId: number,
+  projects: readonly YoloChunkProject[],
+  machines: number,
+): {
+  chunks: YoloChunk[];
+  estimate: YoloBatchRunEstimate;
+  timing: YoloRunTiming;
+  option: YoloCatalogOption;
+  machines: number;
+  maxRuntimeSeconds: number;
+  unknownPages: number;
+} | null {
+  if (!data) return null;
+  const option = data.catalog.options.find((o) => o.type === data.instanceType);
+  if (!option) return null;
+  const timing = pickYoloRunTiming(data.runStats, modelId, data.instanceType);
+  const chunks = planYoloChunks(projects, {
+    machines,
+    gpusPerMachine: gpusPerMachine(option),
+    timing,
+    maxRuntimeSeconds: data.maxRuntimeSeconds,
+  });
+  return {
+    chunks,
+    estimate: estimateYoloBatchRun(chunks, machines, option.usdPerHour, data.maxRuntimeSeconds),
+    timing,
+    option,
+    machines,
+    maxRuntimeSeconds: data.maxRuntimeSeconds,
+    unknownPages: projects.filter((p) => !(typeof p.pages === "number" && p.pages > 0)).length,
+  };
+}
+
+/** One-line text for the bulk bar / confirm dialog: total $, wall clock, jobs, machines. */
+export function yoloBatchEstimateText(e: NonNullable<ReturnType<typeof yoloBatchEstimateFor>>): string {
+  const x = e.estimate;
+  const price = `${e.option.type} @ ${formatUsd(e.option.usdPerHour)}/h${e.option.priceSource === "live" ? "" : " (approx.)"}`;
+  const parts = [
+    `≈ ${formatUsd(x.usd)} · ${x.pages} page${x.pages === 1 ? "" : "s"} · ${x.jobs} job${x.jobs === 1 ? "" : "s"}`,
+    `≈ ${formatMinutes(x.wallSeconds)} wall clock on ${e.machines} machine${e.machines === 1 ? "" : "s"}${x.waves > 1 ? ` (${x.waves} waves)` : ""}`,
+    price,
+    yoloTimingBasis(e.timing),
+    `timeout ${formatMinutes(e.maxRuntimeSeconds)}`,
+  ];
+  if (x.overTimeout > 0) {
+    parts.push(`⚠ ${x.overTimeout} job${x.overTimeout === 1 ? "" : "s"} may hit the timeout (longest ≈ ${formatMinutes(x.longestJobSeconds)})`);
+  }
+  if (e.unknownPages > 0) parts.push(`${e.unknownPages} with unknown page count (refused, $0)`);
   return parts.join(" · ");
 }

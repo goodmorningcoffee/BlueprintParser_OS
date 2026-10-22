@@ -8,9 +8,17 @@
 // unmounts AiModelsTab) does not orphan it; it still lives only in this browser tab. For the same
 // reason its busy check reads `latestYoloJobs` (module scope, refreshed by whichever hook instance
 // is mounted), never a ref of the instance that created the queue: that ref freezes on unmount.
+//
+// [2026-10-22] Root (the instance options are loaded): Run uses BATCHED jobs — the projects are planned
+// into SageMaker jobs of ≤ 9 (src/lib/yolo-chunk-plan.ts) and each job starts through the root-only
+// POST /api/yolo/run-batch. "Machines at once" (default = the chosen instance's quota) is how many jobs
+// run together; the estimate follows it. Every request/answer goes to the debug log (./yolo-debug-log).
+// Non-root admins keep the per-project queue over /api/yolo/run.
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { persistFetch } from "@/lib/client-persist";
+import { apiErrorMessage, persistFetch } from "@/lib/client-persist";
+import { gpusPerMachine, yoloBatchEstimateFor, yoloBatchEstimateText } from "@/lib/yolo-cost";
+import type { YoloChunk } from "@/lib/yolo-chunk-plan";
 import {
   BUSY_STATUS,
   YoloBatch,
@@ -18,12 +26,14 @@ import {
   type YoloBatchDeps,
   type YoloBatchMode,
   type YoloBatchSnapshot,
+  type YoloBatchStartResult,
   type YoloJobStatus,
   type YoloStartResult,
 } from "./yolo-batch";
-import { YoloBulkCost, yoloConfirmEstimate } from "./YoloCost";
-import { bulkConcurrency } from "./yolo-bulk-concurrency";
-import { readYoloOptions } from "./yolo-options-store";
+import { YoloBulkCost } from "./YoloCost";
+import { bulkConcurrency, bulkMachineBounds, clampMachines } from "./yolo-bulk-concurrency";
+import { readYoloOptions, useYoloOptions } from "./yolo-options-store";
+import { logYoloDebug, logYoloDebugError } from "./yolo-debug-log";
 
 export { YoloRunCost } from "./YoloCost";
 
@@ -62,6 +72,23 @@ const subscribeStore = (fn: () => void) => {
 };
 const readStore = () => activeSnapshot;
 
+/** What the last Run planned, for the debug report (./YoloDebugReport.tsx). */
+export interface YoloBulkRunPlan {
+  at: string;
+  modelId: number;
+  modelName: string;
+  instanceType: string | null;
+  machines: number;
+  gpusPerMachine: number | null;
+  chunks: YoloChunk[] | null;
+  estimate: string | null;
+}
+let lastRunPlan: YoloBulkRunPlan | null = null;
+
+export function readYoloBulkDebugState(): { snapshot: YoloBatchSnapshot | null; plan: YoloBulkRunPlan | null } {
+  return { snapshot: activeSnapshot, plan: lastRunPlan };
+}
+
 /** The admin page's row texts as last rendered by any mounted useYoloBulk. */
 let latestYoloJobs: Record<string, Record<string, string>> = {};
 /** jobName → terminal text for bulk jobs this tab saw end Failed/Stopped (the page string still says Running). */
@@ -82,6 +109,7 @@ export function resetYoloBulkStoreForTests(): void {
   activeBatch?.stop();
   activeBatch = null;
   activeSnapshot = null;
+  lastRunPlan = null;
   latestYoloJobs = {};
   endedBulkJobs.clear();
   notifyStore();
@@ -90,10 +118,40 @@ export function resetYoloBulkStoreForTests(): void {
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 async function fetchJobStatus(jobName: string): Promise<YoloJobStatus | null> {
-  const res = await fetch(`/api/yolo/status?jobName=${encodeURIComponent(jobName)}`);
-  if (!res.ok) return null;
-  const body = (await res.json()) as Partial<YoloJobStatus>;
-  return typeof body.status === "string" ? { status: body.status, failureReason: body.failureReason } : null;
+  const url = `/api/yolo/status?jobName=${encodeURIComponent(jobName)}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      logYoloDebug("http", `GET ${url} → ${res.status}`, await res.json().catch(() => null));
+      return null;
+    }
+    const body = (await res.json()) as Partial<YoloJobStatus>;
+    return typeof body.status === "string" ? { status: body.status, failureReason: body.failureReason } : null;
+  } catch (err) {
+    logYoloDebugError(`GET ${url} failed`, err);
+    return null;
+  }
+}
+
+/** POST /api/yolo/run-batch for one planned job; a refusal comes back as { error, httpStatus }. */
+async function postRunBatch(projectIds: string[], modelId: number): Promise<YoloBatchStartResult> {
+  try {
+    const res = await fetch("/api/yolo/run-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectIds, modelId }),
+    });
+    const body: unknown = await res.json().catch(() => null);
+    if (!res.ok) {
+      logYoloDebug("http", `POST /api/yolo/run-batch → ${res.status}`, body);
+      return { error: apiErrorMessage(body) || `HTTP ${res.status}`, httpStatus: res.status };
+    }
+    const ok = body as YoloBatchStartResult;
+    return { jobName: typeof ok?.jobName === "string" ? ok.jobName : undefined, projects: ok?.projects, error: ok?.jobName ? undefined : "No job name in the answer" };
+  } catch (err) {
+    logYoloDebugError("POST /api/yolo/run-batch failed", err);
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export interface UseYoloBulkArgs {
@@ -111,6 +169,14 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
   const [selectedByModel, setSelectedByModel] = useState<Record<number, string[]>>({});
   const [onlyMissing, setOnlyMissing] = useState(true);
   const snapshot = useSyncExternalStore(subscribeStore, readStore, readStore);
+  const { data: options } = useYoloOptions();
+  const bounds = bulkMachineBounds(options);
+  const instanceType = options?.instanceType ?? null;
+  // Keyed by the saved instance type: changing the instance re-defaults N to that instance's quota.
+  const [machinesChoice, setMachinesChoice] = useState<{ instanceType: string | null; value: number } | null>(null);
+  const machines =
+    machinesChoice && machinesChoice.instanceType === instanceType ? clampMachines(machinesChoice.value, bounds) : bounds.defaultValue;
+  const machineOption = options?.catalog.options.find((o) => o.type === instanceType) ?? null;
   useEffect(() => {
     latestYoloJobs = yoloJobs;
   }, [yoloJobs]);
@@ -140,24 +206,46 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
   const start = (mode: YoloBatchMode, ids: string[]) => {
     if (!model || ids.length === 0 || busy) return;
     const targets = projects.filter((p) => ids.includes(p.id));
+    const opts = readYoloOptions();
+    const plan = mode === "run" ? yoloBatchEstimateFor(opts, model.id, targets.map((p) => ({ id: p.id, pages: p.numPages })), machines) : null;
+    const concurrency = plan ? machines : bulkConcurrency(opts);
     if (mode === "run") {
       const pages = targets.reduce((sum, p) => sum + (p.numPages ?? 0), 0);
       const unknown = targets.filter((p) => !p.numPages).length;
-      const cost = yoloConfirmEstimate(model.id, targets.map((p) => p.numPages));
+      const how = plan
+        ? `${plan.chunks.length} SageMaker job${plan.chunks.length === 1 ? "" : "s"} of up to 9 projects, ${machines} machine${machines === 1 ? "" : "s"} at a time; every project loads automatically when its job finishes.`
+        : `Up to ${concurrency} jobs run at a time; each result loads automatically when its job finishes.`;
       const ok = window.confirm(
         `Run ${model.name} on ${targets.length} project${targets.length === 1 ? "" : "s"} — ${pages} pages total` +
           `${unknown ? ` (+${unknown} with an unknown page count, which will be refused)` : ""}.\n\n` +
-          (cost ? `${cost}\n\n` : "") +
-          "SageMaker is billed per page. Up to 2 jobs run at a time; each result loads automatically when its job finishes.\n\n" +
+          (plan && plan.estimate.jobs > 0 ? `Estimated cost: ${yoloBatchEstimateText(plan)}\n\n` : "") +
+          `SageMaker is billed per instance-second. ${how}\n\n` +
           "Keep this browser tab open until the queue finishes: closing it stops new starts (jobs already started still finish on AWS and can be loaded later).",
       );
       if (!ok) return;
+      lastRunPlan = {
+        at: new Date().toISOString(),
+        modelId: model.id,
+        modelName: model.name,
+        instanceType: opts?.instanceType ?? null,
+        machines: concurrency,
+        gpusPerMachine: plan ? gpusPerMachine(plan.option) : null,
+        chunks: plan?.chunks ?? null,
+        estimate: plan ? yoloBatchEstimateText(plan) : null,
+      };
+      logYoloDebug("plan", `run ${model.name}: ${targets.length} project(s)`, lastRunPlan);
     }
     const deps: YoloBatchDeps = {
       start: async (projectId, modelId) => (await onRunYolo(projectId, modelId, true)) || undefined,
       status: fetchJobStatus,
-      markTerminal: (jobName, status) =>
-        persistFetch("/api/admin/running-jobs", { executionId: jobName, status }, "PUT").then(() => undefined),
+      markTerminal: (jobName, status, projectId) =>
+        persistFetch("/api/admin/running-jobs", { executionId: jobName, status, ...(projectId ? { projectId } : {}) }, "PUT")
+          .then(() => undefined)
+          .catch((err: unknown) => {
+            logYoloDebugError(`PUT /api/admin/running-jobs ${jobName} ${status} failed`, err);
+          }),
+      ...(plan ? { startBatch: postRunBatch } : {}),
+      log: logYoloDebug,
       load: async (projectId, modelId, modelName) => (await onLoadResults(projectId, modelId, modelName)) || undefined,
       isBusy: rowIsBusy,
       jobEnded: (jobName, message) => {
@@ -165,7 +253,10 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
       },
       sleep,
     };
-    const batch = new YoloBatch(mode, model, targets.map((p) => ({ projectId: p.id, projectName: p.name })), deps, { concurrency: bulkConcurrency(readYoloOptions()) });
+    const batch = new YoloBatch(mode, model, targets.map((p) => ({ projectId: p.id, projectName: p.name })), deps, {
+      concurrency,
+      ...(plan ? { chunks: plan.chunks.map((c) => c.projectIds) } : {}),
+    });
     activeBatch = batch;
     activeSnapshot = batch.snapshot();
     batch.subscribe((s) => {
@@ -187,6 +278,8 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
       return item.message ? `Queued — ${item.message}` : "Queued (bulk)";
     }
     if (item.phase === "not-started" && (!pageStatus || pageStatus.startsWith("Error"))) return item.message ?? pageStatus;
+    // A batched job's projects never had a page-side "Running: …" text: show the queue's own.
+    if (!pageStatus && item.message && item.phase !== "queued") return item.message;
     return pageStatus;
   };
 
@@ -199,9 +292,13 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
       model,
       onPickModel: setPickedModelId,
       selectedCount: selected.size,
-      selectedPages: projects.filter((p) => selected.has(p.id)).map((p) => p.numPages),
+      selectedProjects: projects.filter((p) => selected.has(p.id)).map((p) => ({ id: p.id, pages: p.numPages })),
       candidateCount: candidates.length,
-      candidatePages: candidates.map((p) => p.numPages),
+      candidateProjects: candidates.map((p) => ({ id: p.id, pages: p.numPages })),
+      machines,
+      machineBounds: bounds,
+      machineInstance: machineOption ? { type: machineOption.type, gpus: gpusPerMachine(machineOption) } : null,
+      onMachines: (value: number) => setMachinesChoice({ instanceType, value }),
       totalCount: projects.length,
       onlyMissing,
       onToggleOnlyMissing: () => setOnlyMissing((v) => !v),
@@ -277,9 +374,38 @@ export default function YoloBulkBar(props: YoloBulkBarProps) {
           Stop queue
         </button>
       </div>
+      {props.machineInstance && (
+        <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="yolo-bulk-machines">
+          <label className="flex items-center gap-1">
+            Machines at once
+            <input
+              aria-label="Machines at once"
+              type="number"
+              min={props.machineBounds.min}
+              max={props.machineBounds.max}
+              step={1}
+              value={props.machines}
+              disabled={!idle}
+              onChange={(e) => props.onMachines(Number(e.target.value))}
+              className="w-16 px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded"
+            />
+          </label>
+          <span className="text-[var(--muted)]">
+            = {props.machines} × {props.machineInstance.type} · {props.machineInstance.gpus} GPU{props.machineInstance.gpus === 1 ? "" : "s"} each ={" "}
+            {props.machines * props.machineInstance.gpus} GPU{props.machines * props.machineInstance.gpus === 1 ? "" : "s"}
+            {props.machineBounds.quota === null
+              ? ` (quota unknown: 1–${props.machineBounds.max})`
+              : ` (quota ${props.machineBounds.quota}${props.machineBounds.quota > props.machineBounds.max ? `, capped at ${props.machineBounds.max}` : ""})`}
+          </span>
+        </div>
+      )}
       <div className="text-xs space-y-0.5">
-        {selectedCount > 0 && <YoloBulkCost label={`Estimate, ${selectedCount} selected`} modelId={model.id} pages={props.selectedPages} />}
-        {props.candidateCount > 0 && <YoloBulkCost label={`Estimate, all ${props.candidateCount}`} modelId={model.id} pages={props.candidatePages} />}
+        {selectedCount > 0 && (
+          <YoloBulkCost label={`Estimate, ${selectedCount} selected`} modelId={model.id} projects={props.selectedProjects} machines={props.machines} />
+        )}
+        {props.candidateCount > 0 && (
+          <YoloBulkCost label={`Estimate, all ${props.candidateCount}`} modelId={model.id} projects={props.candidateProjects} machines={props.machines} />
+        )}
       </div>
       {snapshot && (
         <div className="text-xs" data-testid="yolo-bulk-summary">

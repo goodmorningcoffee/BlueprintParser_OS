@@ -11,6 +11,11 @@
 //   • a daily/page "limit reached" refusal stops new starts at once (retrying cannot succeed);
 //   • each started job is polled through the existing status endpoint; on Completed its result is
 //     loaded automatically (autoLoad, default on); one failure never stops the rest.
+// [2026-10-22] Batched run mode (root; options.chunks + deps.startBatch) — the planner
+// (src/lib/yolo-chunk-plan.ts) groups the projects into SageMaker jobs of ≤ 9 and `concurrency` counts
+// JOBS, not projects. One status poll per job; on Completed every project of the job is loaded in
+// turn; a project the server refused is failed alone while the rest of its job runs. Capacity / limit
+// refusals behave as above, per job.
 // Load mode — sequential loads.
 // stop() ends NEW starts/loads only: jobs already running finish on AWS and are still loaded.
 // The queue lives in the browser tab: closing the tab stops new starts (see YoloBulkBar).
@@ -49,6 +54,14 @@ export interface YoloBatchItem extends YoloBatchTarget {
   message?: string;
 }
 
+/** POST /api/yolo/run-batch's answer (or the refusal of the whole job). */
+export interface YoloBatchStartResult {
+  jobName?: string;
+  projects?: Array<{ projectId: string; status: "running" | "refused"; error?: string; httpStatus?: number }>;
+  error?: string;
+  httpStatus?: number;
+}
+
 /** What the admin page's runYolo(projectId, modelId, bulk=true) resolves to. */
 export interface YoloStartResult {
   jobName?: string;
@@ -66,8 +79,12 @@ export interface YoloBatchDeps {
   start(projectId: string, modelId: number): Promise<YoloStartResult | undefined | void>;
   /** GET /api/yolo/status. null = transient failure (keep polling). */
   status(jobName: string): Promise<YoloJobStatus | null>;
-  /** PUT /api/admin/running-jobs with the terminal status (best-effort). */
-  markTerminal(jobName: string, status: string): Promise<void>;
+  /** PUT /api/admin/running-jobs with the terminal status (best-effort); projectId picks a batched job's row. */
+  markTerminal(jobName: string, status: string, projectId?: string): Promise<void>;
+  /** POST /api/yolo/run-batch for one planned chunk (batched run mode only). */
+  startBatch?(projectIds: string[], modelId: number): Promise<YoloBatchStartResult>;
+  /** Debug event sink (the AI Models debug report). */
+  log?(kind: string, msg: string, data?: unknown): void;
   /** POST /api/yolo/load via the page's loadYoloResults; resolves to the row's final status text. */
   load(projectId: string, modelId: number, modelName: string): Promise<string | void>;
   /** True while the row shows a busy status (Running, Loading, …). */
@@ -84,6 +101,8 @@ export interface YoloBatchDeps {
 
 export interface YoloBatchOptions {
   concurrency?: number;
+  /** Batched run mode: the planned jobs, as project ids (needs deps.startBatch). */
+  chunks?: readonly (readonly string[])[];
   autoLoad?: boolean;
   pollMs?: number;
   quotaRetryMs?: number;
@@ -127,7 +146,8 @@ export class YoloBatch {
   readonly modelId: number;
   readonly modelName: string;
   private readonly deps: YoloBatchDeps;
-  private readonly opts: Required<YoloBatchOptions>;
+  private readonly opts: Required<Omit<YoloBatchOptions, "chunks">>;
+  private readonly chunkQueue: string[][] | null;
   private items: YoloBatchItem[];
   private stopped = false;
   private finished = false;
@@ -168,6 +188,10 @@ export class YoloBatch {
       seen.add(t.projectId);
       this.items.push({ projectId: t.projectId, projectName: t.projectName, phase: "queued" });
     }
+    this.chunkQueue =
+      mode === "run" && options.chunks && deps.startBatch
+        ? options.chunks.map((c) => c.filter((id) => seen.has(id))).filter((c) => c.length > 0)
+        : null;
     this.current = this.buildSnapshot();
   }
 
@@ -191,7 +215,14 @@ export class YoloBatch {
   }
 
   async run(): Promise<YoloBatchSnapshot> {
-    if (this.mode === "run") {
+    this.debug("queue", `${this.mode} ${this.modelName}: ${this.items.length} project(s)`, {
+      concurrency: this.opts.concurrency,
+      chunks: this.chunkQueue,
+    });
+    if (this.mode === "run" && this.chunkQueue) {
+      const workers = Array.from({ length: this.opts.concurrency }, () => this.runChunkWorker());
+      await Promise.all(workers);
+    } else if (this.mode === "run") {
       const workers = Array.from({ length: this.opts.concurrency }, () => this.runWorker());
       await Promise.all(workers);
     } else {
@@ -206,11 +237,20 @@ export class YoloBatch {
       }
     }
     this.finished = true;
+    this.debug("queue", "finished", { summary: batchSummary(this.buildSnapshot()) });
     this.emit();
     return this.current;
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
+
+  private debug(kind: string, msg: string, data?: unknown): void {
+    try {
+      this.deps.log?.(kind, msg, data);
+    } catch {
+      /* never let debugging break the queue */
+    }
+  }
 
   private buildSnapshot(): YoloBatchSnapshot {
     return {
@@ -280,6 +320,149 @@ export class YoloBatch {
       this.emit();
     })();
     this.emit();
+  }
+
+  private byId(projectId: string): YoloBatchItem | undefined {
+    return this.items.find((i) => i.projectId === projectId);
+  }
+
+  private async runChunkWorker(): Promise<void> {
+    const queue = this.chunkQueue!;
+    for (;;) {
+      if (this.stopped || this.haltReason) return;
+      if (this.pauseGate) {
+        await this.pauseGate;
+        continue;
+      }
+      const chunk = queue.shift();
+      if (!chunk) return;
+      const items: YoloBatchItem[] = [];
+      for (const id of chunk) {
+        const item = this.byId(id);
+        if (!item || item.phase !== "queued") continue;
+        if (this.deps.isBusy(item.projectId, this.modelId)) {
+          this.patch(item, { phase: "skipped", message: "Skipped — already running or loading" });
+          continue;
+        }
+        items.push(item);
+      }
+      if (items.length === 0) continue;
+      for (const item of items) this.patch(item, { phase: "starting", message: undefined });
+      const ids = items.map((i) => i.projectId);
+      this.debug("start", `run-batch ${ids.length} project(s)`, { projectIds: ids });
+      let result: YoloBatchStartResult;
+      try {
+        result = (await this.deps.startBatch!(ids, this.modelId)) || { error: "Start failed" };
+      } catch (err) {
+        result = { error: errorText(err) };
+      }
+      this.debug("start", result.jobName ? `started ${result.jobName}` : `refused: ${result.error ?? "?"}`, result);
+      if (result.jobName) {
+        const running: YoloBatchItem[] = [];
+        for (const item of items) {
+          const outcome = result.projects?.find((p) => p.projectId === item.projectId);
+          if (outcome && outcome.status !== "running") {
+            this.patch(item, { phase: "failed", message: outcome.error || "Refused" });
+          } else {
+            running.push(item);
+          }
+        }
+        if (running.length > 0) await this.trackChunk(running, result.jobName);
+        continue;
+      }
+      const refusal = classifyStartRefusal(result);
+      const reason = result.error || "Start failed";
+      if (refusal === "error") {
+        for (const item of items) this.patch(item, { phase: "failed", message: reason });
+        continue;
+      }
+      // limit / capacity: the job keeps its place at the front of the queue.
+      queue.unshift(ids);
+      if (refusal === "limit") {
+        this.haltReason = reason;
+        for (const item of items) this.patch(item, { phase: "queued", message: reason });
+        return;
+      }
+      if (this.activeJobs === 0) this.idleQuotaStrikes += 1;
+      if (this.idleQuotaStrikes > this.opts.maxIdleQuotaRetries) {
+        this.haltReason = reason;
+        for (const item of items) this.patch(item, { phase: "queued", message: reason });
+        return;
+      }
+      for (const item of items) this.patch(item, { phase: "queued", message: `Waiting for SageMaker capacity — ${reason}` });
+      this.debug("pause", "capacity refusal; pausing new starts", { reason });
+      this.pauseForCapacity();
+    }
+  }
+
+  /** Poll one batched job; then mark and (auto)load each of its projects in turn. */
+  private async trackChunk(items: YoloBatchItem[], jobName: string): Promise<void> {
+    this.activeJobs += 1;
+    let slotOpen = true;
+    const release = () => {
+      if (!slotOpen) return;
+      slotOpen = false;
+      this.jobFinished();
+    };
+    for (const item of items) this.patch(item, { phase: "running", jobName, message: `Running: ${jobName}` });
+    try {
+      let statusFailures = 0;
+      let last = "";
+      for (;;) {
+        await this.deps.sleep(this.opts.pollMs);
+        let s: YoloJobStatus | null = null;
+        try {
+          s = await this.deps.status(jobName);
+        } catch {
+          s = null;
+        }
+        if (!s) {
+          statusFailures += 1;
+          this.debug("poll", `${jobName}: status unavailable (${statusFailures}/${this.opts.maxStatusFailures})`);
+          if (statusFailures >= this.opts.maxStatusFailures) {
+            release();
+            for (const item of items) {
+              this.patch(item, { phase: "failed", message: `Status unavailable for ${jobName} — check it after a page reload` });
+            }
+            return;
+          }
+          continue;
+        }
+        statusFailures = 0;
+        if (s.status !== last) {
+          last = s.status;
+          this.debug("poll", `${jobName}: ${s.status}`, s.failureReason ? { failureReason: s.failureReason } : undefined);
+        }
+        if (!TERMINAL.has(s.status)) continue;
+
+        release();
+        // A Completed project row is closed only after ITS load, so a tab closed mid-way leaves the
+        // unloaded rows running for the server catch-up (services/yolo-catch-up.ts) to load.
+        const mark = (item: YoloBatchItem) => this.deps.markTerminal(jobName, s.status, item.projectId).catch(() => {});
+        if (s.status !== "Completed" || !this.opts.autoLoad) for (const item of items) void mark(item);
+        if (s.status !== "Completed") {
+          const reason = s.failureReason ? `: ${s.failureReason}` : "";
+          const message = `${s.status}${reason}`;
+          this.deps.jobEnded?.(jobName, message);
+          for (const item of items) this.patch(item, { phase: "failed", message });
+          return;
+        }
+        if (!this.opts.autoLoad) {
+          this.deps.jobEnded?.(jobName, "Completed — not loaded");
+          for (const item of items) this.patch(item, { phase: "done", message: "Completed — not loaded" });
+          return;
+        }
+        for (const item of items) this.patch(item, { phase: "loading", message: "Loading results..." });
+        await this.deps.sleep(this.opts.loadDelayMs);
+        for (const item of items) {
+          await this.loadOne(item);
+          if (item.phase === "done") void mark(item); // a failed load stays running: a reload retries it
+        }
+        return;
+      }
+    } finally {
+      release();
+    }
   }
 
   private nextQueued(): YoloBatchItem | undefined {
@@ -396,6 +579,7 @@ export class YoloBatch {
     } catch (err) {
       message = `Load failed: ${errorText(err)}`;
     }
+    this.debug("load", `${item.projectName}: ${message}`, { projectId: item.projectId });
     this.patch(item, { phase: isLoadSuccess(message) ? "done" : "failed", message });
   }
 

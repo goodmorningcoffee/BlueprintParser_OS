@@ -416,9 +416,11 @@ describe("root: inference picker, timeout and cost estimates", () => {
     // Alpha: 100 + 10×10 = 200 s × $3.60/h = $0.20
     const alphaRow = rowBox("Alpha").closest("div.flex.items-center.justify-between") as HTMLElement;
     expect(within(alphaRow).getAllByTestId("yolo-run-cost")[0].textContent).toBe("≈$0.20");
-    // all 3: (200) + (100+50) + (100+200) = 650 s → $0.65
+    // [2026-10-22] all 3 in ONE batched job (quota 1 → 1 machine): 100 + 35×10 = 450 s → $0.45
     const all = bar.getAllByTestId("yolo-bulk-cost").map((n) => n.textContent ?? "");
-    expect(all.find((t) => t.startsWith("Estimate, all 3"))).toMatch(/≈ \$0\.65 · 35 pages · 3 jobs · ml\.g4dn\.xlarge @ \$3\.60\/h · based on 5 past runs/u);
+    expect(all.find((t) => t.startsWith("Estimate, all 3"))).toMatch(
+      /≈ \$0\.45 · 35 pages · 1 job · ≈ 8 min wall clock on 1 machine · ml\.g4dn\.xlarge @ \$3\.60\/h · based on 5 past runs/u,
+    );
     fireEvent.click(rowBox("Charlie"));
     expect(bar.getAllByTestId("yolo-bulk-cost").map((n) => n.textContent).find((t) => t?.startsWith("Estimate, 1 selected"))).toMatch(/≈ \$0\.30 · 20 pages · 1 job/u);
   });
@@ -428,7 +430,80 @@ describe("root: inference picker, timeout and cost estimates", () => {
     const { bar } = renderTab({ isRootAdmin: true, yoloStatus: {} });
     await flush();
     fireEvent.click(bar.getByText("Run all (3)"));
-    expect(String(confirmMock.mock.calls[0][0])).toMatch(/Estimated cost: ≈ \$[0-9.]+ · 35 pages · 3 jobs/u);
+    expect(String(confirmMock.mock.calls[0][0])).toMatch(/Estimated cost: ≈ \$[0-9.]+ · 35 pages · 1 job/u);
+    expect(String(confirmMock.mock.calls[0][0])).toMatch(/1 SageMaker job of up to 9 projects, 1 machine at a time/u);
+  });
+
+  // [2026-10-22 owner: "if there is a quota of ten, I should be able to say use 5 or all 10"]
+  it("Machines at once defaults to the instance quota, shows N × GPUs, and the estimate follows N", async () => {
+    serve(options({ "ml.g4dn.xlarge": 3 }, 3600, [{ modelId: 7, instanceType: "ml.g4dn.xlarge", startupSeconds: 100, secondsPerPage: 10, runs: 5 }]));
+    const { bar } = renderTab({ isRootAdmin: true, yoloStatus: {} });
+    await flush();
+    const input = bar.getByLabelText("Machines at once") as HTMLInputElement;
+    expect(input.value).toBe("3");
+    expect(input.max).toBe("3");
+    expect(bar.getByTestId("yolo-bulk-machines").textContent).toMatch(/= 3 × ml\.g4dn\.xlarge · 1 GPU each = 3 GPUs \(quota 3\)/u);
+    const allText = () => bar.getAllByTestId("yolo-bulk-cost").map((n) => n.textContent ?? "").find((t) => t.startsWith("Estimate, all 3"));
+    expect(allText()).toMatch(/3 jobs · ≈ 5 min wall clock on 3 machines/u); // heaviest: Charlie 100 + 200 = 300 s
+    fireEvent.change(input, { target: { value: "1" } });
+    expect(bar.getByTestId("yolo-bulk-machines").textContent).toMatch(/= 1 × ml\.g4dn\.xlarge/u);
+    expect(allText()).toMatch(/1 job · ≈ 8 min wall clock on 1 machine/u);
+    fireEvent.change(input, { target: { value: "50" } }); // clamped to the quota
+    expect(input.value).toBe("3");
+  });
+
+  it("changing the instance re-defaults Machines at once to that instance's quota and GPU count", async () => {
+    serve(options({ "ml.g4dn.xlarge": 3, "ml.g5.12xlarge": 10 }));
+    const { bar } = renderTab({ isRootAdmin: true, yoloStatus: {} });
+    await flush();
+    fireEvent.change(bar.getByLabelText("Machines at once"), { target: { value: "2" } });
+    expect((bar.getByLabelText("Machines at once") as HTMLInputElement).value).toBe("2");
+    fireEvent.change(screen.getByRole("combobox", { name: "Inference instance" }), { target: { value: "ml.g5.12xlarge" } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    await flush();
+    expect((bar.getByLabelText("Machines at once") as HTMLInputElement).value).toBe("10");
+    expect(bar.getByTestId("yolo-bulk-machines").textContent).toMatch(/= 10 × ml\.g5\.12xlarge · 4 GPUs each = 40 GPUs \(quota 10\)/u);
+  });
+
+  it("root Run all starts batched jobs through /api/yolo/run-batch, polls each job once, and loads every project", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const payload = options({ "ml.g4dn.xlarge": 2 });
+    const batches: string[][] = [];
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+      if (url.startsWith("/api/admin/yolo-instance/options")) return { ok: true, json: async () => payload };
+      if (url === "/api/yolo/run-batch") {
+        const body = JSON.parse(init?.body ?? "{}") as { projectIds: string[] };
+        batches.push(body.projectIds);
+        const jobName = `bp-yolo-doors-${batches.length}`;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ jobName, status: "running", projects: body.projectIds.map((projectId) => ({ projectId, status: "running" })) }),
+        };
+      }
+      if (url.startsWith("/api/yolo/status")) return { ok: true, json: async () => ({ status: "Completed" }) };
+      return { ok: true, status: 200, json: async () => ({ success: true }), text: async () => "{}" };
+    });
+    const { bar, onRunYolo, onLoadResults } = renderTab({ isRootAdmin: true, yoloStatus: {} });
+    await flush();
+    fireEvent.click(bar.getByText("Run all (3)"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(onRunYolo).not.toHaveBeenCalled();
+    expect(batches).toHaveLength(2); // 2 machines → 2 balanced jobs
+    expect(batches.flat().sort()).toEqual(["p1", "p2", "p3"]);
+    expect(rowBox("Alpha").closest("div.flex.items-center.justify-between")?.textContent).toMatch(/Running: bp-yolo-doors-/u);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    const polled = fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/api/yolo/status")).map(([u]) => String(u));
+    expect(new Set(polled)).toEqual(new Set(["/api/yolo/status?jobName=bp-yolo-doors-1", "/api/yolo/status?jobName=bp-yolo-doors-2"]));
+    expect((onLoadResults.mock.calls as unknown as string[][]).map((c) => c[0]).sort()).toEqual(["p1", "p2", "p3"]);
+    const marks = fetchMock.mock.calls
+      .filter(([u, init]) => u === "/api/admin/running-jobs" && init?.method === "PUT")
+      .map(([, init]) => JSON.parse(init.body));
+    expect(marks).toHaveLength(3);
+    expect(marks.every((m: { projectId?: string }) => typeof m.projectId === "string")).toBe(true);
+    expect(screen.getByTestId("yolo-bulk-summary").textContent).toMatch(/Finished — 3 started · 0 waiting · 3 loaded/u);
   });
 
   it("non-root admins never load the options and see no estimate", async () => {

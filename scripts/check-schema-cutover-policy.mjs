@@ -2366,6 +2366,124 @@ if (!startYoloFunction?.body) {
   );
 }
 
+// [2026-10-22 owner: "take full advantage of the larger GPU and its larger quota"] startYoloBatchJob
+// starts ONE job for up to 9 projects. It must hold every invariant of startYoloJob (authority first,
+// allowlisted instance, bounded timeout, one instance, 30 GB, the immutable image, network isolation,
+// the canonical role, its own sole send), each project's input must be its canonical pages prefix,
+// each output its canonical yolo-output prefix, and the model input the canonical model prefix. No
+// other function in src/lib/yolo.ts may build a CreateProcessingJobCommand.
+const batchYoloFunctions = yoloFunctions("startYoloBatchJob");
+const batchYoloFunction = batchYoloFunctions.length === 1 ? batchYoloFunctions[0] : null;
+if (!batchYoloFunction?.body) {
+  report("src/lib/yolo.ts", yoloRuntimeInvariant, "expected one startYoloBatchJob function");
+} else {
+  for (const [index, expected, detail] of [
+    [0, "assertYoloRuntimeAuthority();", "runtime authority must be the first statement of startYoloBatchJob"],
+    [1, "constinstanceType=awaitreadYoloInstanceType();", "startYoloBatchJob must read the instance type second"],
+    [2, "constmaxRuntimeSeconds=awaitreadYoloMaxRuntimeSeconds();", "startYoloBatchJob must read the timeout third"],
+  ]) {
+    requireTsCompactText("src/lib/yolo.ts", batchYoloFunction.body.statements[index], yoloSource, expected, yoloRuntimeInvariant, detail);
+  }
+  for (const name of ["instanceType", "maxRuntimeSeconds"]) {
+    const bindings = descendants(
+      batchYoloFunction,
+      (node) => (ts.isVariableDeclaration(node) || ts.isParameter(node)) && ts.isIdentifier(node.name) && node.name.text === name,
+    );
+    const writes = descendants(
+      batchYoloFunction.body,
+      (node) =>
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left) &&
+        node.left.text === name,
+    );
+    if (bindings.length !== 1 || writes.length !== 0) {
+      report("src/lib/yolo.ts", yoloRuntimeInvariant, `${name} must be bound exactly once in startYoloBatchJob and never reassigned`);
+    }
+  }
+  const batchCommands = descendants(
+    batchYoloFunction.body,
+    (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "command",
+  );
+  const batchExpression = batchCommands.length === 1 ? batchCommands[0].initializer : null;
+  const batchConfig =
+    batchExpression &&
+    ts.isNewExpression(batchExpression) &&
+    ts.isIdentifier(batchExpression.expression) &&
+    batchExpression.expression.text === "CreateProcessingJobCommand" &&
+    batchExpression.arguments?.length === 1 &&
+    ts.isObjectLiteralExpression(batchExpression.arguments[0])
+      ? batchExpression.arguments[0]
+      : null;
+  if (!batchConfig) {
+    report("src/lib/yolo.ts", yoloRuntimeInvariant, "startYoloBatchJob's command must be the sole structural CreateProcessingJobCommand object");
+  }
+  const batchSends = descendants(
+    batchYoloFunction.body,
+    (node) =>
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "sagemakerClient" &&
+      node.expression.name.text === "send",
+  );
+  if (batchSends.length !== 1 || compactTsText(batchSends[0], yoloSource) !== "sagemakerClient.send(command)") {
+    report("src/lib/yolo.ts", yoloRuntimeInvariant, "startYoloBatchJob's canonical command must be its only SageMaker send");
+  }
+  const prop = (parent, name) => requireTsProperty("src/lib/yolo.ts", parent, name, yoloRuntimeInvariant);
+  const cluster = prop(prop(batchConfig, "ProcessingResources"), "ClusterConfig");
+  for (const [parent, property, expected, detail] of [
+    [cluster, "InstanceCount", "1", "batch InstanceCount must remain 1"],
+    [cluster, "InstanceType", "instanceTypeasProcessingInstanceType", "batch InstanceType must come from readYoloInstanceType()"],
+    [cluster, "VolumeSizeInGB", "30", "batch VolumeSizeInGB must remain 30"],
+    [prop(batchConfig, "AppSpecification"), "ImageUri", "ECR_IMAGE", "batch ImageUri must use ECR_IMAGE"],
+    [prop(batchConfig, "NetworkConfig"), "EnableNetworkIsolation", "true", "batch EnableNetworkIsolation must be true"],
+    [prop(batchConfig, "StoppingCondition"), "MaxRuntimeInSeconds", "maxRuntimeSeconds", "batch MaxRuntimeInSeconds must come from readYoloMaxRuntimeSeconds()"],
+    [batchConfig, "RoleArn", "SAGEMAKER_ROLE", "batch RoleArn must use SAGEMAKER_ROLE"],
+  ]) {
+    requireTsCompactText("src/lib/yolo.ts", prop(parent, property), yoloSource, expected, yoloRuntimeInvariant, detail);
+  }
+  const batchInputs = prop(batchConfig, "ProcessingInputs");
+  const inputElements = batchInputs && ts.isArrayLiteralExpression(batchInputs) ? batchInputs.elements : [];
+  const spreadInputs = inputElements.length === 2 && ts.isSpreadElement(inputElements[0]) ? inputElements[0].expression : null;
+  const modelInput = inputElements.length === 2 ? inputElements[1] : null;
+  if (!spreadInputs || !modelInput) {
+    report("src/lib/yolo.ts", yoloRuntimeInvariant, "batch ProcessingInputs must be the mapped project pages inputs followed by the model input");
+  }
+  const mapBody = (expr) =>
+    expr &&
+    ts.isCallExpression(expr) &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    compactTsText(expr.expression, yoloSource) === "projectDataUrls.map" &&
+    expr.arguments.length === 1 &&
+    ts.isArrowFunction(expr.arguments[0]) &&
+    ts.isParenthesizedExpression(expr.arguments[0].body) &&
+    ts.isObjectLiteralExpression(expr.arguments[0].body.expression)
+      ? expr.arguments[0].body.expression
+      : null;
+  const pagesInput = mapBody(spreadInputs);
+  requireTsCompactText("src/lib/yolo.ts", prop(prop(pagesInput, "S3Input"), "S3Uri"), yoloSource,
+    "`s3://${S3_BUCKET}/${dataUrl}/pages/`", yoloRuntimeInvariant, "each batch project input must be its canonical pages prefix");
+  requireTsCompactText("src/lib/yolo.ts", prop(prop(modelInput, "S3Input"), "S3Uri"), yoloSource,
+    "`s3://${S3_BUCKET}/${modelS3Path}/`", yoloRuntimeInvariant, "the batch model input must be the canonical model prefix");
+  const batchOutput = mapBody(prop(prop(batchConfig, "ProcessingOutputConfig"), "Outputs"));
+  requireTsCompactText("src/lib/yolo.ts", prop(prop(batchOutput, "S3Output"), "S3Uri"), yoloSource,
+    "`s3://${S3_BUCKET}/${dataUrl}/yolo-output/${modelName}/`", yoloRuntimeInvariant,
+    "each batch project output must remain under its canonical yolo-output prefix");
+}
+const processingJobCommands = descendants(
+  yoloSource,
+  (node) => ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "CreateProcessingJobCommand",
+);
+const commandOwners = processingJobCommands.map((node) => {
+  let cursor = node.parent;
+  while (cursor && !ts.isFunctionDeclaration(cursor)) cursor = cursor.parent;
+  return cursor?.name?.text ?? "<module>";
+});
+if (commandOwners.some((owner) => owner !== "startYoloJob" && owner !== "startYoloBatchJob")) {
+  report("src/lib/yolo.ts", yoloRuntimeInvariant, "only startYoloJob and startYoloBatchJob may build a CreateProcessingJobCommand");
+}
+
 // [2026-10-21; stage 2 2026-10-22, owner: "select any gpu that we have a quota for"] The YOLO instance
 // allowlist bounds the hardware by FAMILY, not size: NVIDIA CUDA families (g4dn/g5/g6/g6e/p3/p4d/p5)
 // for gpu() entries and plain m5/c5 for cpu() entries, any size; default ml.g4dn.xlarge. The run-path

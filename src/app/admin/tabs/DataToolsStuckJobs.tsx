@@ -153,7 +153,7 @@ export default function DataToolsStuckJobs({ isRootAdmin }: { isRootAdmin: boole
   const fixYolo = (row: YoloRow) =>
     run(`yolo-${row.jobId}`, async () => {
       // The server re-reads SageMaker; the status sent here is not trusted.
-      await call("/api/admin/running-jobs", "PUT", { executionId: row.executionId, status: "Failed" });
+      await call("/api/admin/running-jobs", "PUT", { executionId: row.executionId, status: "Failed", projectId: row.projectPublicId });
       return [`Closed YOLO job on ${row.projectName}`];
     });
 

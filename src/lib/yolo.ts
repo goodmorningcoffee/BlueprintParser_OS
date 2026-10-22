@@ -165,6 +165,93 @@ export async function startYoloJob(
   return jobName;
 }
 
+/** SageMaker allows 10 ProcessingInputs and 10 ProcessingOutputs: 9 projects + the model input. */
+export const MAX_YOLO_BATCH_PROJECTS = 9;
+
+/** Slot names of a batched job, in project order: p0, p1, … (scripts/yolo_inference.py BP_YOLO_SLOTS). */
+export function yoloBatchSlots(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `p${i}`);
+}
+
+/**
+ * [2026-10-22] ONE processing job for up to 9 projects (owner: "take full advantage of the larger GPU
+ * and its larger quota"). Each project keeps its own S3 input ({dataUrl}/pages/) and output
+ * ({dataUrl}/yolo-output/{modelName}/), mounted at /opt/ml/processing/input/projects/pK and
+ * /opt/ml/processing/output/pK; BP_YOLO_SLOTS tells the script the layout. Same instance, timeout,
+ * isolation and quota-refusal semantics as startYoloJob. Needs the YOLO image built from this
+ * commit's scripts/yolo_inference.py — an older image finds no /input/images and fails the job.
+ */
+export async function startYoloBatchJob(
+  projectDataUrls: readonly string[],
+  modelS3Path: string,
+  modelName: string,
+  jobName: string,
+): Promise<string> {
+  assertYoloRuntimeAuthority();
+  const instanceType = await readYoloInstanceType();
+  const maxRuntimeSeconds = await readYoloMaxRuntimeSeconds();
+  if (projectDataUrls.length < 1 || projectDataUrls.length > MAX_YOLO_BATCH_PROJECTS) {
+    throw new Error(`A batched YOLO job serves 1–${MAX_YOLO_BATCH_PROJECTS} projects`);
+  }
+  const slots = yoloBatchSlots(projectDataUrls.length);
+
+  const command = new CreateProcessingJobCommand({
+    ProcessingJobName: jobName,
+    ProcessingResources: {
+      ClusterConfig: {
+        InstanceCount: 1,
+        InstanceType: instanceType as ProcessingInstanceType,
+        VolumeSizeInGB: 30,
+      },
+    },
+    AppSpecification: { ImageUri: ECR_IMAGE },
+    RoleArn: SAGEMAKER_ROLE,
+    NetworkConfig: { EnableNetworkIsolation: true },
+    Environment: { BP_YOLO_SLOTS: slots.join(",") },
+    ProcessingInputs: [
+      ...projectDataUrls.map((dataUrl, i) => ({
+        InputName: `images-${slots[i]}`,
+        S3Input: {
+          S3Uri: `s3://${S3_BUCKET}/${dataUrl}/pages/`,
+          LocalPath: `/opt/ml/processing/input/projects/${slots[i]}`,
+          S3DataType: "S3Prefix" as const,
+          S3InputMode: "File" as const,
+        },
+      })),
+      {
+        InputName: "models",
+        S3Input: {
+          S3Uri: `s3://${S3_BUCKET}/${modelS3Path}/`,
+          LocalPath: "/opt/ml/processing/input/models",
+          S3DataType: "S3Prefix",
+          S3InputMode: "File",
+        },
+      },
+    ],
+    ProcessingOutputConfig: {
+      Outputs: projectDataUrls.map((dataUrl, i) => ({
+        OutputName: `results-${slots[i]}`,
+        S3Output: {
+          S3Uri: `s3://${S3_BUCKET}/${dataUrl}/yolo-output/${modelName}/`,
+          LocalPath: `/opt/ml/processing/output/${slots[i]}`,
+          S3UploadMode: "EndOfJob" as const,
+        },
+      })),
+    },
+    StoppingCondition: { MaxRuntimeInSeconds: maxRuntimeSeconds },
+  });
+
+  try {
+    await sagemakerClient.send(command);
+  } catch (err) {
+    if (!isSageMakerQuotaError(err)) throw err;
+    const presence = await yoloJobPresence(jobName);
+    if (presence === "present") return jobName;
+    throw new YoloStartRefusedError(yoloQuotaMessage(instanceType), presence === "absent");
+  }
+  return jobName;
+}
+
 /** Waits between Describe attempts when the answer is inconclusive (throttling, network). */
 export const YOLO_PRESENCE_RETRY_MS: readonly number[] = [500, 1500];
 

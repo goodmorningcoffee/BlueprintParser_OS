@@ -206,7 +206,7 @@ export default function AdminPage() {
 
           // Update DB status. NOT awaited — an awaited rejection would be swallowed by this tick's
           // outer catch AND would skip loadYoloResults below; persistFetch rejects on !ok.
-          persistFetch("/api/admin/running-jobs", { executionId: jobName, status: jobStatus }, "PUT")
+          persistFetch("/api/admin/running-jobs", { executionId: jobName, status: jobStatus, projectId }, "PUT")
             .catch((err) => {
               console.error("[yolo] Job status write failed:", err);
               setMessage(`Job ${jobName} finished (${jobStatus}) but its status could not be saved: ${err instanceof Error ? err.message : String(err)} — it stays marked running and will be retried on the next page load.`);
@@ -456,7 +456,7 @@ export default function AdminPage() {
 
           // Update DB status. NOT awaited — an awaited rejection would be swallowed by this tick's
           // outer catch AND would skip loadYoloResults below; persistFetch rejects on !ok.
-          persistFetch("/api/admin/running-jobs", { executionId: jobName, status: jobStatus }, "PUT")
+          persistFetch("/api/admin/running-jobs", { executionId: jobName, status: jobStatus, projectId }, "PUT")
             .catch((err) => {
               console.error("[yolo] Job status write failed:", err);
               setMessage(`Job ${jobName} finished (${jobStatus}) but its status could not be saved: ${err instanceof Error ? err.message : String(err)} — it stays marked running and will be retried on the next page load.`);

@@ -38,6 +38,7 @@ import {
 import { eq, and, or, isNull, isNotNull, sql } from "drizzle-orm";
 import { createYoloJobName, startYoloJob, getYoloJobStatus, YoloStartRefusedError } from "@/lib/yolo";
 import { isCanonicalModelStoragePath } from "@/lib/model-storage-authority";
+import { yoloRunConfigYaml } from "@/lib/yolo-config-yaml";
 import { s3Client, S3_BUCKET, uploadToS3 } from "@/lib/s3";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { checkYoloQuota } from "@/lib/quotas";
@@ -260,23 +261,8 @@ export async function yoloRun(
         );
       }
 
-      // Regenerate config.yaml from DB config so admin changes take effect. TWIN template in models.ts registerModel.
-      const conf = model.config?.confidence ?? 0.1;
-      const iouVal = model.config?.iou ?? 0.6;
-      const imgSize = model.config?.imageSize ?? 1280;
-      const classList = model.config?.classes ?? [];
-
-      const configYaml = `model_file: model.pt
-confidence_threshold: ${conf}
-iou_threshold: ${iouVal}
-image_size: ${imgSize}
-device: auto
-half_precision: true
-max_detections: ${model.config?.maxDetections ?? 2000}
-save_annotated: false
-classes:
-${classList.map((c: string) => `  - ${c}`).join("\n")}
-`;
+      // Regenerate config.yaml from DB config so admin changes take effect (lib/yolo-config-yaml; TWIN in models.ts).
+      const configYaml = yoloRunConfigYaml(model.config);
       await uploadToS3(
         `${model.s3Path}/config.yaml`,
         Buffer.from(configYaml),

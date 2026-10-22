@@ -395,3 +395,154 @@ describe("YoloBatch load mode", () => {
     expect(batchSummary(final)).toContain("2 not started (queue stopped)");
   });
 });
+
+// [2026-10-22] Batched run mode: chunks of projects start as ONE job each (POST /api/yolo/run-batch);
+// concurrency counts jobs; one status poll per job; per-project rows, loads and terminal marks.
+describe("YoloBatch batched run mode", () => {
+  function batchWorld(opts: { refuse?: Record<string, string>; startAnswers?: Array<{ error: string; httpStatus?: number }> } = {}) {
+    const batches: string[][] = [];
+    const polls: string[] = [];
+    const loads: string[] = [];
+    const marks: Array<[string, string, string | undefined]> = [];
+    const done = new Set<string>();
+    let active = 0;
+    let maxActive = 0;
+    const deps: YoloBatchDeps = {
+      start: async () => ({ error: "per-project start must not be used" }),
+      async startBatch(projectIds) {
+        const answer = opts.startAnswers?.shift();
+        if (answer) return answer;
+        batches.push(projectIds);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        const jobName = `job-${batches.length}`;
+        return {
+          jobName,
+          projects: projectIds.map((projectId) =>
+            opts.refuse?.[projectId]
+              ? { projectId, status: "refused" as const, error: opts.refuse[projectId], httpStatus: 400 }
+              : { projectId, status: "running" as const },
+          ),
+        };
+      },
+      async status(jobName) {
+        polls.push(jobName);
+        if (!done.has(jobName)) return { status: "InProgress" };
+        return jobName === "job-fail" ? { status: "Failed", failureReason: "AlgorithmError: OOM" } : { status: "Completed" };
+      },
+      async markTerminal(jobName, status, projectId) {
+        marks.push([jobName, status, projectId]);
+      },
+      async load(projectId) {
+        loads.push(projectId);
+        return projectId === "bad" ? "Load failed: No results found" : "Completed — 3 detections loaded";
+      },
+      isBusy: () => false,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    };
+    return {
+      deps,
+      batches,
+      polls,
+      loads,
+      marks,
+      finish: (job: string) => {
+        if (done.has(job)) return;
+        done.add(job);
+        active -= 1;
+      },
+      get maxActive() {
+        return maxActive;
+      },
+    };
+  }
+
+  it("concurrency counts JOBS: 3 chunks, 2 machines → 2 jobs at once, 1 poll per job per tick", async () => {
+    const w = batchWorld();
+    const chunks = [["a", "b", "c"], ["d", "e"], ["f"]];
+    const b = new YoloBatch("run", MODEL, targets("a", "b", "c", "d", "e", "f"), w.deps, { ...FAST, concurrency: 2, chunks });
+    const run = b.run();
+    await tick(10);
+    expect(w.batches).toEqual([["a", "b", "c"], ["d", "e"]]);
+    expect(phases(b)).toMatchObject({ a: "running", b: "running", c: "running", d: "running", e: "running", f: "queued" });
+    expect(b.snapshot().items.find((i) => i.projectId === "a")?.jobName).toBe("job-1");
+    await tick(1_000);
+    expect(w.polls.filter((p) => p === "job-1")).toHaveLength(1); // one Describe for three projects
+    w.finish("job-1");
+    await tick(3_000);
+    expect(w.batches).toEqual([["a", "b", "c"], ["d", "e"], ["f"]]);
+    w.finish("job-2");
+    w.finish("job-3");
+    await tick(10_000);
+    const final = await run;
+    expect(w.maxActive).toBe(2);
+    expect([...w.loads].sort()).toEqual(["a", "b", "c", "d", "e", "f"]);
+    expect(final.items.every((i) => i.phase === "done")).toBe(true);
+    // each project's row is closed by (job, project), after its own load
+    expect(w.marks).toContainEqual(["job-1", "Completed", "b"]);
+    expect(w.marks).toHaveLength(6);
+  });
+
+  it("a project the server refused fails alone; the rest of its job runs and loads", async () => {
+    const w = batchWorld({ refuse: { b: "Project page count is unknown." } });
+    const b = new YoloBatch("run", MODEL, targets("a", "b", "c"), w.deps, { ...FAST, chunks: [["a", "b", "c"]] });
+    const run = b.run();
+    await tick(10);
+    expect(phases(b)).toMatchObject({ a: "running", b: "failed", c: "running" });
+    w.finish("job-1");
+    await tick(5_000);
+    const final = await run;
+    expect(w.loads).toEqual(["a", "c"]);
+    expect(final.items.find((i) => i.projectId === "b")?.message).toBe("Project page count is unknown.");
+  });
+
+  it("a failed load leaves that project's row running (not marked) for a later retry", async () => {
+    const w = batchWorld();
+    const b = new YoloBatch("run", MODEL, targets("a", "bad"), w.deps, { ...FAST, chunks: [["a", "bad"]] });
+    const run = b.run();
+    await tick(10);
+    w.finish("job-1");
+    await tick(5_000);
+    await run;
+    expect(w.marks.map(([, , p]) => p)).toEqual(["a"]);
+  });
+
+  it("a Failed job fails every project with the FailureReason and marks each row", async () => {
+    const w = batchWorld();
+    w.deps.startBatch = async (ids) => ({ jobName: "job-fail", projects: ids.map((projectId) => ({ projectId, status: "running" as const })) });
+    const b = new YoloBatch("run", MODEL, targets("a", "b"), w.deps, { ...FAST, chunks: [["a", "b"]] });
+    const run = b.run();
+    await tick(10);
+    w.finish("job-fail");
+    await tick(2_000);
+    const final = await run;
+    expect(final.items.map((i) => i.message)).toEqual(["Failed: AlgorithmError: OOM", "Failed: AlgorithmError: OOM"]);
+    expect(w.marks.map(([, s, p]) => [s, p])).toEqual([["Failed", "a"], ["Failed", "b"]]);
+    expect(w.loads).toEqual([]);
+  });
+
+  it("a capacity refusal puts the whole job back at the front and retries it; a limit halts", async () => {
+    const w = batchWorld({ startAnswers: [{ error: "No SageMaker quota for ml.g5.12xlarge processing jobs", httpStatus: 429 }] });
+    const b = new YoloBatch("run", MODEL, targets("a", "b", "c"), w.deps, { ...FAST, concurrency: 1, quotaRetryMs: 60_000, chunks: [["a", "b"], ["c"]] });
+    const run = b.run();
+    await tick(10);
+    expect(b.snapshot().pausedForQuota).toBe(true);
+    expect(phases(b)).toMatchObject({ a: "queued", b: "queued", c: "queued" });
+    await tick(60_000);
+    expect(w.batches[0]).toEqual(["a", "b"]);
+    b.stop();
+    w.finish("job-1");
+    await tick(5_000);
+    await run;
+
+    const limited = batchWorld({ startAnswers: [{ error: "Daily YOLO job limit reached (10/day): this batch needs 3, 2 left", httpStatus: 429 }] });
+    const lb = new YoloBatch("run", MODEL, targets("a", "b", "c"), limited.deps, { ...FAST, chunks: [["a", "b", "c"]] });
+    const final = await (async () => {
+      const r = lb.run();
+      await tick(10);
+      return r;
+    })();
+    expect(final.items.every((i) => i.phase === "not-started")).toBe(true);
+    expect(limited.batches).toEqual([]);
+  });
+});

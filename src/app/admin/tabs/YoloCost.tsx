@@ -6,7 +6,8 @@
 // the data comes from the root-only options endpoint (./yolo-options-store); without it these
 // render nothing.
 
-import { formatUsd, yoloEstimateFor, yoloEstimateText } from "@/lib/yolo-cost";
+import { formatUsd, yoloBatchEstimateFor, yoloBatchEstimateText, yoloEstimateFor, yoloEstimateText } from "@/lib/yolo-cost";
+import type { YoloChunkProject } from "@/lib/yolo-chunk-plan";
 import { readYoloOptions, useYoloOptions } from "./yolo-options-store";
 
 /** Plain-text estimate for the Run confirmation (no hook; null when unavailable). */
@@ -28,14 +29,27 @@ export function YoloRunCost({ modelId, pages }: { modelId: number; pages: number
   );
 }
 
-/** "Selected: ≈ $X · N pages · J jobs · <instance @ $/h> · <basis> · timeout" for the bulk bar. */
-export function YoloBulkCost({ label, modelId, pages }: { label: string; modelId: number; pages: readonly (number | null)[] }) {
+/**
+ * "Selected: ≈ $X · N pages · J jobs · ≈ T wall clock on M machines · <instance @ $/h> · <basis> · timeout"
+ * for the bulk bar — the batched-job plan (≤ 9 projects per job) for `machines` jobs at once.
+ */
+export function YoloBulkCost({
+  label,
+  modelId,
+  projects,
+  machines,
+}: {
+  label: string;
+  modelId: number;
+  projects: readonly YoloChunkProject[];
+  machines: number;
+}) {
   const { data } = useYoloOptions();
-  const e = yoloEstimateFor(data, modelId, pages);
-  if (!e || pages.length === 0) return null;
+  const e = yoloBatchEstimateFor(data, modelId, projects, machines);
+  if (!e || projects.length === 0) return null;
   return (
     <div className="text-[var(--muted)]" data-testid="yolo-bulk-cost">
-      <span className="text-[var(--fg)]">{label}:</span> {yoloEstimateText(e)}
+      <span className="text-[var(--fg)]">{label}:</span> {yoloBatchEstimateText(e)}
     </div>
   );
 }

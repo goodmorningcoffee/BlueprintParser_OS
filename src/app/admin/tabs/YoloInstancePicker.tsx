@@ -154,7 +154,8 @@ export default function YoloInstancePicker() {
         </details>
       )}
       <div className="text-[var(--muted)]">
-        GPU types are fast; CPU types work but are slow. A job uses one GPU, so a multi-GPU size only adds vCPU/RAM.
+        GPU types are fast; CPU types work but are slow. A job runs one worker per GPU and shares every page across them,
+        so a 4-GPU size finishes a job about 4× faster; bulk runs pack up to 9 projects into each job.
       </div>
       {(message || error) && (
         <div className={message.startsWith("Saved") ? "text-green-400" : "text-red-400"}>{message || error}</div>

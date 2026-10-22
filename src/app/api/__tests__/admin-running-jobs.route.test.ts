@@ -394,4 +394,41 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
     expect((await jobByExec(job.executionId!))?.status).toBe("running");
     expect(h.yoloLoad).not.toHaveBeenCalled();
   });
+
+  // [2026-10-22] Batched YOLO jobs: one SageMaker job name, one row per project.
+  it("[batch] PUT with projectId closes exactly that project's row of a shared job name", async () => {
+    const { company, admin } = await makeWorld();
+    const author = await createUser(company.id);
+    const a = await createProject(company.id, author.id);
+    const b = await createProject(company.id, author.id);
+    const name = `batch-${tag()}`;
+    await seedJob(a.id, { executionId: name });
+    await seedJob(b.id, { executionId: name });
+    asUser(admin);
+    const r = await readJson(await rjPUT(putReq({ executionId: name, status: "Completed", projectId: b.publicId })));
+    expect(r.status).toBe(200);
+    const rows = await db.select().from(processingJobs).where(eq(processingJobs.executionId, name));
+    expect(rows.find((x) => x.projectId === b.id)?.status).toBe("completed");
+    expect(rows.find((x) => x.projectId === a.id)?.status).toBe("running");
+    // without a projectId (legacy caller) the still-running row is the one closed
+    await rjPUT(putReq({ executionId: name, status: "Completed" }));
+    const after = await db.select().from(processingJobs).where(eq(processingJobs.executionId, name));
+    expect(after.every((x) => x.status === "completed")).toBe(true);
+  });
+
+  it("[batch] GET catch-up loads every project of a completed batched job and drops each row", async () => {
+    const { company, admin } = await makeWorld();
+    const author = await createUser(company.id);
+    const projects = [];
+    for (let i = 0; i < 3; i += 1) projects.push(await createProject(company.id, author.id));
+    const name = `batch-${tag()}`;
+    for (const p of projects) await seedJob(p.id, { executionId: name });
+    asUser(admin);
+    const r = await readJson(await rjGET(getReq()));
+    expect(r.status).toBe(200);
+    expect(r.body.some((j: { executionId: string }) => j.executionId === name)).toBe(false);
+    expect(h.yoloLoad.mock.calls.map((c) => c[0].projectId).sort()).toEqual(projects.map((p) => p.publicId).sort());
+    const rows = await db.select().from(processingJobs).where(eq(processingJobs.executionId, name));
+    expect(rows.map((x) => x.status)).toEqual(["completed", "completed", "completed"]);
+  });
 });

@@ -5345,9 +5345,57 @@ async function validateModelStorageAuthority(files) {
     );
   }
 
+  // [2026-10-22] The root-only batched run (one SageMaker job for up to 9 projects) is the second
+  // reviewed YOLO model sink and must hold the same guard-before-side-effect order as yoloRun.
+  const batchFileName = "src/server/services/yolo-batch-run.ts";
+  const batch = await parsed(batchFileName);
+  const yoloRunBatch = functionFor(batch, "yoloRunBatch");
+  const batchUploads = yoloRunBatch
+    ? descendants(yoloRunBatch, ts.isCallExpression).filter(
+        (call) =>
+          callName(call) === "uploadToS3" &&
+          call.arguments[0] &&
+          templateStartsWithPropertyPath(call.arguments[0], ["model", "s3Path"]),
+      )
+    : [];
+  const startsBatch = yoloRunBatch
+    ? descendants(yoloRunBatch, ts.isCallExpression).find(
+        (call) =>
+          callName(call) === "startYoloBatchJob" &&
+          call.arguments[1] &&
+          exactPropertyPath(call.arguments[1], ["model", "s3Path"]),
+      )
+    : null;
+  const batchBoundary = Math.min(
+    batchUploads[0]?.getStart() ?? Number.POSITIVE_INFINITY,
+    startsBatch?.getStart() ?? Number.POSITIVE_INFINITY,
+  );
+  if (
+    batchUploads.length !== 1 ||
+    !startsBatch ||
+    !modelStorageGuardBefore(
+      batch,
+      yoloRunBatch,
+      [
+        ["model", "name"],
+        ["model", "s3Path"],
+      ],
+      "Model storage path requires reconciliation",
+      batchBoundary,
+    )
+  ) {
+    report(
+      "YOLO_MODEL_STORAGE_UNSAFE",
+      "yoloRunBatch must reject noncanonical stored model paths before S3/SageMaker side effects",
+      batchFileName,
+      yoloRunBatch ?? batch.source,
+    );
+  }
+
   const classifiedModelSinks = new Set([
     `${modelsFileName}:registerModel`,
     `${yoloFileName}:yoloRun`,
+    `${batchFileName}:yoloRunBatch`,
   ]);
   for (const file of files) {
     const parsedFile = await parsed(file);

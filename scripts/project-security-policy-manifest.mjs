@@ -346,6 +346,14 @@ export const DURABLE_MUTATION_DOMAINS = [
     "yolo-run",
     { requireIdempotencyKey: true },
   ),
+  // [2026-10-22] Root-only batched run: the same yolo-run lease (project:model) held per project.
+  durableMutation(
+    "yolo-run-batch",
+    "src/server/services/yolo-batch-run.ts",
+    "withRunLeases",
+    "yolo-run",
+    { requireIdempotencyKey: true },
+  ),
 ];
 
 const mutation = (id, route, method, policy, checks) => ({
@@ -535,6 +543,9 @@ export const MUTATION_SURFACES = [
 
   mutation("yolo-run", "/api/yolo/run", "POST", "shared-guard", [
     ["src/server/services/yolo.ts", "yoloRun"],
+  ]),
+  mutation("yolo-run-batch", "/api/yolo/run-batch", "POST", "shared-guard", [
+    ["src/server/services/yolo-batch-run.ts", "yoloRunBatch"],
   ]),
   mutation("yolo-load", "/api/yolo/load", "POST", "shared-guard", [
     ["src/server/services/yolo.ts", "yoloLoad"],
