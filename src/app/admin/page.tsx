@@ -25,6 +25,8 @@ import LogsTab from "./tabs/LogsTab";
 import PipelineTab from "./tabs/PipelineTab";
 import LlmContextTab from "./tabs/LlmContextTab";
 import DataToolsTab from "./tabs/DataToolsTab";
+import ReprocessDebugToggle from "./ReprocessDebugToggle";
+import { runReprocess } from "./reprocess-client";
 
 interface ProjectItem {
   id: string;
@@ -82,6 +84,7 @@ export default function AdminPage() {
   const [togglePassword, setTogglePassword] = useState("");
   const [reprocessing, setReprocessing] = useState(false);
   const [reprocessLog, setReprocessLog] = useState<string[]>([]);
+  const [reprocessDebug, setReprocessDebug] = useState(false);
   const [toggleError, setToggleError] = useState("");
   const [newTogglePass, setNewTogglePass] = useState("");
   const [currentTogglePass, setCurrentTogglePass] = useState("");
@@ -519,46 +522,26 @@ export default function AdminPage() {
     }
   }
 
-  async function reprocessAll(scope?: string, projectIds?: string[]) {
+  // [fix 2026-10-21] Every event type is rendered now (reprocess-client.ts); `keepLog` lets a
+  // chained run (full → intelligence) append to the same console. Log capped at 5000 lines.
+  async function reprocessAll(scope?: string, projectIds?: string[], keepLog = false) {
     setReprocessing(true);
-    setReprocessLog(["Starting reprocess..."]);
+    if (!keepLog) setReprocessLog([`Starting reprocess...${reprocessDebug ? " (debug on)" : ""}`]);
     try {
-      const url = scope ? `/api/admin/reprocess?scope=${scope}` : "/api/admin/reprocess";
-      const res = await fetch(url, {
-        method: "POST",
-        ...(projectIds ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectIds }) } : {}),
-      });
-      if (!res.ok || !res.body) {
-        setReprocessLog((prev) => [...prev, `Error: ${res.status}`]);
-        setReprocessing(false);
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const data = JSON.parse(line);
-            if (data.type === "start") setReprocessLog((prev) => [...prev, `Found ${data.projects} projects`]);
-            else if (data.type === "project") setReprocessLog((prev) => [...prev, `Processing: ${data.name} (${data.pages} pages)`]);
-            else if (data.type === "progress") setReprocessLog((prev) => [...prev, `  ${data.updated} pages updated...`]);
-            else if (data.type === "done") setReprocessLog((prev) => [...prev, `Done! ${data.updated} pages updated, ${data.skipped} skipped.`]);
-          } catch { /* ignore parse errors */ }
-        }
-      }
+      await runReprocess({ scope, projectIds, debug: reprocessDebug }, (line) =>
+        setReprocessLog((prev) => [...prev, line].slice(-5000)));
     } catch (err) {
       setReprocessLog((prev) => [...prev, `Failed: ${err instanceof Error ? err.message : "unknown"}`]);
     } finally {
       setReprocessing(false);
     }
   }
+  // CSI + text annotations rewrite pages.csiCodes, which page intelligence is derived from —
+  // so the "full" buttons chain the intelligence pass instead of leaving it stale.
+  const reprocessFullThenIntelligence = async () => {
+    await reprocessAll();
+    await reprocessAll("intelligence", undefined, true);
+  };
 
   async function changePassword() {
     setMessage("");
@@ -661,6 +644,10 @@ export default function AdminPage() {
           isRootAdmin={session?.user?.isRootAdmin}
         />
 
+        {["projects", "pipeline", "text-annotations", "csi", "heuristics", "page-intelligence"].includes(activeTab) && (
+          <ReprocessDebugToggle checked={reprocessDebug} onChange={setReprocessDebug} />
+        )}
+
         {activeTab === "overview" && (
           <OverviewTab
             invites={invites}
@@ -678,7 +665,7 @@ export default function AdminPage() {
             onRefreshDemo={handleRefreshDemo}
             reprocessing={reprocessing}
             reprocessLog={reprocessLog}
-            onReprocess={reprocessAll}
+            onReprocess={() => reprocessAll()}
             setMessage={setMessage}
           />
         )}
@@ -727,7 +714,7 @@ export default function AdminPage() {
           <TextAnnotationsTab
             reprocessing={reprocessing}
             reprocessLog={reprocessLog}
-            onReprocess={reprocessAll}
+            onReprocess={reprocessFullThenIntelligence}
           />
         )}
 
@@ -735,7 +722,7 @@ export default function AdminPage() {
           <CsiTab
             reprocessing={reprocessing}
             reprocessLog={reprocessLog}
-            onReprocess={reprocessAll}
+            onReprocess={reprocessFullThenIntelligence}
           />
         )}
 
@@ -743,7 +730,7 @@ export default function AdminPage() {
           <HeuristicsTab
             reprocessing={reprocessing}
             reprocessLog={reprocessLog}
-            onReprocess={reprocessAll}
+            onReprocess={() => reprocessAll("intelligence")}
           />
         )}
 
@@ -751,7 +738,7 @@ export default function AdminPage() {
           <PageIntelligenceTab
             reprocessing={reprocessing}
             reprocessLog={reprocessLog}
-            onReprocess={reprocessAll}
+            onReprocess={reprocessFullThenIntelligence}
           />
         )}
 

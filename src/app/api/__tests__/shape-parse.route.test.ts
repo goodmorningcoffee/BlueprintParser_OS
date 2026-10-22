@@ -194,10 +194,14 @@ describe.skipIf(!dbUp)("single-page mode (SQ-4/5/6)", () => {
       [{ pageNumber: 3, bbox: KEYNOTE.bbox, shapeType: "circle", confidence: 0.9, method: "shape-parse" }],
       { 3: TEXTRACT },
     );
-    expect(body).toEqual({
+    // owner 2026-10-21: reprocess must persist — a non-demo run is now stored, and the response
+    // carries what was stored (`persisted`, pinned in shape-parse-persistence.route.test.ts).
+    const { persisted, ...rest } = body as { persisted: { pages: Record<string, unknown> } };
+    expect(rest).toEqual({
       keynotes: [{ ...KEYNOTE, boundText: "A1 bound" }],
       warnings: [],
     });
+    expect(persisted.pages).toEqual({ 3: [KEYNOTE] });
     expect(h.sharpExtract).not.toHaveBeenCalled(); // no regionBbox → no crop
   });
 

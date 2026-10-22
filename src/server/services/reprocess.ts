@@ -52,8 +52,10 @@ import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis"
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
 import { assertProjectWritable } from "@/server/api/access";
-// [refactor jul23 P4.1 U7] log-mode shape observation at both reprocess shape-parse sinks.
-import { observeAnnotationDataBatch } from "./annotation-data-observe";
+// [fix 2026-10-21] shape-parse (compute-then-swap + Lambda fan-out) and the shared NDJSON/debug stream.
+import { reprocessProjectShapeParse } from "./reprocess-shape-parse";
+import { createReprocessStream } from "./reprocess-stream";
+import { loadProjectYoloCsiCodes, withYoloCsiCodes } from "./reprocess-yolo-csi";
 import {
   type ProjectWriteCapability,
   withProjectMutationLease,
@@ -73,6 +75,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope"); // "intelligence" or null (full)
   const debugClassifier = url.searchParams.get("debug") === "1"; // emit Stage 1 classifier trace
+  const trace = url.searchParams.get("trace") === "1"; // admin Debug toggle → {type:"debug"} lines
 
   // Read optional projectIds filter from request body
   // [refactor P1 reprocess-fold] §E-a: this swallow stays IN-SERVICE (shell rawBody:true).
@@ -145,12 +148,10 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
     );
   };
 
-  const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      function send(data: Record<string, unknown>) {
-        controller.enqueue(encoder.encode(JSON.stringify(data) + "\n"));
-      }
+      const out = createReprocessStream(controller, { scope: scope ?? "full", debug: trace });
+      const { send, debug } = out;
 
       let totalPages = 0;
       let updatedPages = 0;
@@ -169,6 +170,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       const ensembleConfig = company?.pipelineConfig?.ensemble?.config;
 
       send({ type: "start", projects: allProjects.length });
+      debug("run.start", { projects: allProjects.length, selected: selectedProjectIds?.length ?? null, disabledSteps: [...disabledSteps] });
 
       if (scope === "page-names") {
         // Page-names reprocess: re-extract drawing numbers using improved strategies + YOLO title_block
@@ -289,7 +291,9 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             try {
               const yoloTitleBlock = titleBlockByPage.get(page.pageNumber) || null;
               const newDrawingNumber = extractDrawingNumber(textractData, yoloTitleBlock);
-              const newName = newDrawingNumber || `Page ${page.pageNumber}`;
+              // [fix 2026-10-21] Auto names are `drawingNumber || "Page N"`; anything else was typed by a user (page rename) — keep it.
+              const manualName = page.name !== null && page.name !== page.drawingNumber && page.name !== `Page ${page.pageNumber}`;
+              const newName = manualName ? page.name! : newDrawingNumber || `Page ${page.pageNumber}`;
 
               // Only update if the name actually changed
               if (newDrawingNumber !== page.drawingNumber || newName !== page.name) {
@@ -300,11 +304,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                   }).where(eq(pages.id, page.id));
                 });
                 updatedPages++;
+                debug("page.written", { project: project.name, page: page.pageNumber, drawingNumber: newDrawingNumber, manualNameKept: manualName });
               } else {
                 skippedPages++;
               }
             } catch (err) {
               logger.error(`[reprocess-page-names] Page ${page.pageNumber} failed:`, err);
+              debug("page.failed", { project: project.name, page: page.pageNumber, reason: err instanceof Error ? err.message : String(err) });
             }
 
             if ((updatedPages + skippedPages) % 10 === 0) {
@@ -323,7 +329,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
-        controller.close();
+        out.close();
         return;
       }
 
@@ -365,9 +371,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                     "public, max-age=31536000, immutable",
                   );
                   updatedPages++;
+                  debug("page.uploaded", { project: project.name, page: pg, thumbBytes: thumbBuffer.length, pageBytes: pageBuffer.length });
                 } catch (err) {
                   logger.error(`[reprocess-thumbnails] Page ${pg} failed for ${project.name}:`, err);
                   skippedPages++;
+                  debug("page.failed", { project: project.name, page: pg, reason: err instanceof Error ? err.message : String(err) });
                 }
                 totalPages++;
                 if (totalPages % 3 === 0) {
@@ -388,139 +396,32 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
-        controller.close();
+        out.close();
         return;
       }
 
       if (scope === "shape-parse") {
-        const { isLambdaCvEnabled, fanOutShapeParse } = await import("@/lib/lambda-cv");
-        const { extractKeynotes } = await import("@/lib/keynotes");
+        const { isLambdaCvEnabled } = await import("@/lib/lambda-cv");
         const useLambda = isLambdaCvEnabled();
         send({ type: "config", useLambda });
-
+        debug("lambda.config", { useLambda, flag: process.env.LAMBDA_CV_ENABLED ?? null, functionName: process.env.LAMBDA_CV_FUNCTION_NAME ?? null, bucketConfigured: !!process.env.S3_BUCKET });
+        // skipped = empty + failed (the old single counter); empty = scanned, no shapes; failed = not scanned, rows kept.
+        const sp = { empty: 0, failed: 0 };
+        const counts = (c = { updated: 0, empty: 0, failed: 0 }) => ({ updated: updatedPages + c.updated, skipped: sp.empty + sp.failed + c.empty + c.failed, empty: sp.empty + c.empty, failed: sp.failed + c.failed, total: totalPages });
         for (const project of allProjects) {
           try {
-          const projectPages = await db
-            .select({ id: pages.id, pageNumber: pages.pageNumber })
-            .from(pages)
-            .where(eq(pages.projectId, project.id))
-            .orderBy(pages.pageNumber);
-
+          const projectPages = await db.select({ pageNumber: pages.pageNumber }).from(pages)
+            .where(eq(pages.projectId, project.id)).orderBy(pages.pageNumber);
           if (projectPages.length === 0) continue;
           await withReprocessLease(project.id, async (writeCapability) => {
-          send({ type: "project", name: project.name, pages: projectPages.length });
-          totalPages += projectPages.length;
-
-          // Delete existing shape-parse annotations for this project
-          await withProjectWrite(writeCapability, project.id, async (tx) => {
-            await tx.delete(annotations).where(
-              and(eq(annotations.projectId, project.id), eq(annotations.source, "shape-parse")),
-            );
-          });
-
-          let lambdaSucceeded = false;
-          if (useLambda) {
-            try {
-              const pageS3Keys = projectPages.map(
-                (p) => `${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`
-              );
-              const pageKeyToNum: Record<string, number> = {};
-              for (const p of projectPages) {
-                pageKeyToNum[`${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`] = p.pageNumber;
-              }
-
-              const { results } = await fanOutShapeParse({ pageS3Keys });
-
-              const byPage: Record<number, typeof results> = {};
-              for (const r of results) {
-                const pn = pageKeyToNum[r.pageS3Key] ?? 0;
-                if (!byPage[pn]) byPage[pn] = [];
-                byPage[pn].push(r);
-              }
-
-              for (const [pnStr, shapes] of Object.entries(byPage)) {
-                const pn = Number(pnStr);
-                // [refactor jul23 P4.1 U7] Hoist the shape-parse rows (pure .map — the same
-                // array the tx inlined) so the blobs can be observed before the per-page
-                // write. gate:false PERMANENTLY (RD-U7a): a throw here is caught → sequential
-                // fallback; fixed-key blobs never stamp v, so the gate is moot (log+skip).
-                const fanoutRows = shapes.map((k) => ({
-                  name: k.shape,
-                  minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
-                  pageNumber: pn,
-                  threshold: 0.9,
-                  source: "shape-parse" as const,
-                  data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
-                  projectId: project.id,
-                }));
-                observeAnnotationDataBatch(
-                  fanoutRows.map((r) => r.data),
-                  "reprocess.shapeParse.fanout",
-                  { gate: false },
-                );
-                await withProjectWrite(writeCapability, project.id, async (tx) => {
-                  await tx.update(pages).set({ keynotes: shapes }).where(
-                    and(eq(pages.projectId, project.id), eq(pages.pageNumber, pn)),
-                  );
-                  if (shapes.length > 0) {
-                    await tx.insert(annotations).values(fanoutRows);
-                  }
-                });
-                updatedPages++;
-              }
-              lambdaSucceeded = true;
-              send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
-            } catch (err) {
-              logger.error(`[reprocess-shape-parse] Lambda failed for ${project.name}, falling back to sequential:`, err);
-              send({ type: "warning", project: project.name, message: "Lambda failed, using sequential fallback" });
-            }
-          }
-          if (!lambdaSucceeded) {
-            // Sequential fallback
-            for (const page of projectPages) {
-              try {
-                const s3Key = `${project.dataUrl}/pages/page_${String(page.pageNumber).padStart(4, "0")}.png`;
-                const pngBuffer = await downloadFromS3(s3Key);
-                const result = await extractKeynotes(pngBuffer);
-
-                // [refactor jul23 P4.1 U7] Hoist the shape-parse rows (pure .map — the same
-                // array the tx inlined) so the blobs can be observed before the per-page
-                // write. gate:false PERMANENTLY (RD-U7a): a throw is caught per-page
-                // (skippedPages++); fixed-key blobs never stamp v → gate moot (log+skip).
-                const seqRows = result.keynotes.map((k) => ({
-                  name: k.shape,
-                  minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
-                  pageNumber: page.pageNumber,
-                  threshold: 0.9,
-                  source: "shape-parse" as const,
-                  data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
-                  projectId: project.id,
-                }));
-                observeAnnotationDataBatch(
-                  seqRows.map((r) => r.data),
-                  "reprocess.shapeParse.sequential",
-                  { gate: false },
-                );
-                await withProjectWrite(writeCapability, project.id, async (tx) => {
-                  await tx.update(pages).set({
-                    keynotes: result.keynotes.length > 0 ? result.keynotes : null,
-                  }).where(eq(pages.id, page.id));
-
-                  if (result.keynotes.length > 0) {
-                    await tx.insert(annotations).values(seqRows);
-                  }
-                });
-                if (result.keynotes.length > 0) updatedPages++;
-                else skippedPages++;
-              } catch (err) {
-                logger.error(`[reprocess-shape-parse] Page ${page.pageNumber} failed for ${project.name}:`, err);
-                skippedPages++;
-              }
-              if ((updatedPages + skippedPages) % 5 === 0) {
-                send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
-              }
-            }
-          }
+            send({ type: "project", name: project.name, pages: projectPages.length });
+            totalPages += projectPages.length;
+            const c = await reprocessProjectShapeParse({
+              project, pages: projectPages, writeCapability, useLambda, stream: out,
+              onPage: (run) => { if ((run.updated + run.empty + run.failed) % 5 === 0) send({ type: "progress", ...counts(run), project: project.name }); },
+            });
+            updatedPages += c.updated; sp.empty += c.empty; sp.failed += c.failed; skippedPages = sp.empty + sp.failed;
+            send({ type: "progress", ...counts(), project: project.name });
           });
           } catch (err) {
             // Per-project guard — see the page-names scope for why (S8 / TILE_015 C1).
@@ -529,8 +430,8 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
           }
         }
 
-        send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
-        controller.close();
+        send({ type: "done", ...counts() });
+        out.close();
         return;
       }
 
@@ -747,8 +648,10 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               // aborting the loop.
               if (debugWrites.length > 0) await Promise.allSettled(debugWrites);
               updatedPages++;
+              debug("page.written", { project: project.name, page: page.pageNumber, keys: Object.keys(pageIntelligence), yolo: pageYolo?.length ?? 0 });
             } catch (err) {
               logger.error(`[reprocess-intel] Page ${page.pageNumber} failed:`, err);
+              debug("page.failed", { project: project.name, page: page.pageNumber, reason: err instanceof Error ? err.message : String(err) });
             }
 
             if (updatedPages % 5 === 0) send({ type: "progress", updated: updatedPages, total: totalPages, project: project.name });
@@ -804,7 +707,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
-        controller.close();
+        out.close();
         return;
       }
 
@@ -819,12 +722,15 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             pageNumber: pages.pageNumber,
             textractData: pages.textractData,
             rawText: pages.rawText, drawingNumber: pages.drawingNumber, // [csi-v2 S6] CSI context
+            csiCodes: pages.csiCodes, // [fix 2026-10-21] previous YOLO-class codes survive (reprocess-yolo-csi.ts)
           })
           .from(pages)
           .where(eq(pages.projectId, project.id))
           .orderBy(pages.pageNumber);
 
         send({ type: "project", name: project.name, pages: projectPages.length });
+        const projectYoloCsi = await loadProjectYoloCsiCodes(project.id);
+        debug("project.yolo-csi", { project: project.name, models: projectYoloCsi.models, codes: projectYoloCsi.codes.length });
 
         for (const page of projectPages) {
           totalPages++;
@@ -868,6 +774,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               if (existingNotes[key]) ann.note = existingNotes[key];
             }
 
+            const storedCsi = withYoloCsiCodes(csiCodes, page.csiCodes, projectYoloCsi);
             // Update page — legacy two-step write; see the fallback in the catch below.
             try {
               await withProjectWrite(writeCapability, project.id, async (tx) => {
@@ -875,24 +782,28 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                   .update(pages)
                   .set({
                     textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
-                    csiCodes: csiCodes.length > 0 ? csiCodes : null,
+                    csiCodes: storedCsi.length > 0 ? storedCsi : null,
                   })
                   .where(eq(pages.id, page.id));
               });
-            } catch {
-              // Legacy migration-safety fallback (column now exists) — retry csiCodes only.
+            } catch (err) {
+              // Legacy migration-safety fallback (column now exists) — retry csiCodes only. Logged: it used to hide real write errors.
+              logger.warn(`[reprocess] textAnnotations write failed for page ${page.pageNumber} of ${project.name}; retrying csiCodes only:`, err);
               await withProjectWrite(writeCapability, project.id, async (tx) => {
                 await tx
                   .update(pages)
-                  .set({ csiCodes: csiCodes.length > 0 ? csiCodes : null })
+                  .set({ csiCodes: storedCsi.length > 0 ? storedCsi : null })
                   .where(eq(pages.id, page.id));
               });
+              send({ type: "warning", project: project.name, message: `Page ${page.pageNumber}: text annotations not saved (${err instanceof Error ? err.message : "write failed"}); CSI codes saved` });
             }
 
             updatedPages++;
+            debug("page.written", { project: project.name, page: page.pageNumber, csiCodes: storedCsi.length, yoloCsiKept: storedCsi.length - csiCodes.length, textAnnotations: textAnnotationResult.annotations.length });
           } catch (err) {
             logger.error(`[reprocess] Page ${page.pageNumber} failed:`, err);
             skippedPages++;
+            debug("page.failed", { project: project.name, page: page.pageNumber, reason: err instanceof Error ? err.message : String(err) });
           }
 
           if (updatedPages % 5 === 0) {
@@ -916,7 +827,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       }
 
       send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
-      controller.close();
+      out.close();
     },
   });
 

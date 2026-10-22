@@ -59,6 +59,11 @@ const POST_YOLO_STEPS = [
   { id: "auto-table-detect", name: "Auto-Table Detect (Stage 2c)", description: "Emit AutoTableProposal[] from ensembleRegions for downstream auto-parse. Opt-in — disabled by default.", configTab: null, alwaysOn: false },
 ];
 
+// [fix 2026-10-21] Only these disabledSteps ids have a reader (processing.ts shape-parse;
+// reprocess.ts + yolo.ts heatmap/ensemble). The other step toggles used to save a setting
+// nothing reads, so switching them OFF changed nothing. They render as not-a-toggle now.
+const WIRED_STEP_IDS = new Set(["shape-parse", "yolo-heatmap", "ensemble"]);
+
 const ALWAYS_ON_STEPS = [
   "PDF Rasterization + OCR",
   "Drawing Number Extraction",
@@ -66,7 +71,7 @@ const ALWAYS_ON_STEPS = [
 ];
 
 const REPROCESS_SCOPES = [
-  { id: "full", label: "Full (CSI + Text Annotations)", description: "Re-detect CSI codes and text annotations on all pages" },
+  { id: "full", label: "Full (CSI + Text Annotations)", description: "Re-detect CSI codes and text annotations on all pages (YOLO-class CSI codes are kept). Run Intelligence afterwards to refresh page intelligence." },
   { id: "intelligence", label: "Intelligence (Heuristics + Tables)", description: "Re-run page analysis, heuristics, table classification, summaries" },
   { id: "page-names", label: "Page Names", description: "Re-extract drawing numbers (optionally using YOLO title blocks)" },
   { id: "thumbnails", label: "Regenerate Thumbnails", description: "Re-rasterize 72 DPI thumbnails for all pages and upload them to private S3" },
@@ -196,7 +201,8 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
         {/* Toggleable steps */}
         <div className="space-y-1">
           {UPLOAD_STEPS.map((step) => {
-            const enabled = !disabledSteps.has(step.id);
+            const wired = WIRED_STEP_IDS.has(step.id);
+            const enabled = !wired || !disabledSteps.has(step.id);
             return (
               <div
                 key={step.id}
@@ -207,16 +213,21 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
                 }`}
               >
                 <button
-                  onClick={() => toggleStep(step.id)}
+                  onClick={() => wired && toggleStep(step.id)}
+                  disabled={!wired}
+                  title={wired ? undefined : "This toggle is not wired: no pipeline code reads it"}
                   className={`w-8 text-center text-[10px] font-medium rounded py-0.5 ${
                     enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--border)] text-[var(--muted)]"
-                  }`}
+                  } ${wired ? "" : "cursor-not-allowed opacity-60"}`}
                 >
-                  {enabled ? "ON" : "OFF"}
+                  {wired ? (enabled ? "ON" : "OFF") : "—"}
                 </button>
                 <div className="flex-1">
                   <div className="text-xs font-medium text-[var(--fg)]">{step.name}</div>
-                  <div className="text-[10px] text-[var(--muted)]">{step.description}</div>
+                  <div className="text-[10px] text-[var(--muted)]">
+                    {step.description}
+                    {!wired && " · not switchable: no pipeline code reads this toggle"}
+                  </div>
                 </div>
                 {step.configTab && (
                   <span className="text-[9px] text-[var(--accent)] cursor-default">
@@ -236,7 +247,8 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
 
         <div className="space-y-1">
           {POST_YOLO_STEPS.map((step) => {
-            const enabled = !disabledSteps.has(step.id);
+            const wired = WIRED_STEP_IDS.has(step.id);
+            const enabled = !wired || !disabledSteps.has(step.id);
             return (
               <div
                 key={step.id}
@@ -247,16 +259,21 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
                 }`}
               >
                 <button
-                  onClick={() => toggleStep(step.id)}
+                  onClick={() => wired && toggleStep(step.id)}
+                  disabled={!wired}
+                  title={wired ? undefined : "This toggle is not wired: no pipeline code reads it"}
                   className={`w-8 text-center text-[10px] font-medium rounded py-0.5 ${
                     enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--border)] text-[var(--muted)]"
-                  }`}
+                  } ${wired ? "" : "cursor-not-allowed opacity-60"}`}
                 >
-                  {enabled ? "ON" : "OFF"}
+                  {wired ? (enabled ? "ON" : "OFF") : "—"}
                 </button>
                 <div className="flex-1">
                   <div className="text-xs font-medium text-[var(--fg)]">{step.name}</div>
-                  <div className="text-[10px] text-[var(--muted)]">{step.description}</div>
+                  <div className="text-[10px] text-[var(--muted)]">
+                    {step.description}
+                    {!wired && " · not switchable: no pipeline code reads this toggle"}
+                  </div>
                 </div>
                 {step.configTab && (
                   <span className="text-[9px] text-[var(--accent)] cursor-default">

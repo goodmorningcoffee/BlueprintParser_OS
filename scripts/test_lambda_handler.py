@@ -81,3 +81,23 @@ def test_no_failures_is_success_and_warnings_flow(monkeypatch):
     assert out["status"] == "success"
     assert out["warnings_count"] == 2  # one per page
     assert uploaded["warnings"] == ["0 keynotes after tiled sweep"] * 2
+
+
+def test_per_page_status_lists_ok_and_failed_pages(monkeypatch):
+    # [fix 2026-10-21] The TS fan-out writes "no shapes" only for pages in pages_ok; a page in
+    # page_errors keeps its previous results. Both lists must be in the uploaded JSON.
+    uploaded = {}
+    _quiet_io(monkeypatch, uploaded)
+    calls = {"n": 0}
+
+    def first_breaks(_path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ValueError("cv2 could not decode page image")
+        return [], []
+
+    out = lambda_handler.process_pages(_event(), first_breaks)
+    assert uploaded["pages_ok"] == ["pages/p2.png"]
+    assert list(uploaded["page_errors"]) == ["pages/p1.png"]
+    assert "could not decode" in uploaded["page_errors"]["pages/p1.png"]
+    assert out["pages_ok"] == ["pages/p2.png"]

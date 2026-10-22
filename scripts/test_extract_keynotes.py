@@ -40,6 +40,16 @@ def test_returns_tuple(small_blank_png):
     assert isinstance(diag_warnings, list)
 
 
+def test_undecodable_image_raises_instead_of_returning_empty(tmp_path):
+    """[fix 2026-10-21] An image cv2 cannot decode used to return ([], []) — the Lambda then
+    reported the page as scanned-with-no-keynotes and callers cleared it. It must raise so the
+    page is reported failed (lambda_handler page_errors / CLI "Extraction failed")."""
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"not a png")
+    with pytest.raises(ValueError, match="could not decode"):
+        main(str(bad))
+
+
 def test_small_image_produces_one_tile(small_blank_png):
     """Post-refactor: small images flow through the same tile loop as
     large images. generate_tiles(800, 800) yields exactly one tile of

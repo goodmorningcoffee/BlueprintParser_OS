@@ -26,6 +26,13 @@
 //     leak) → unexpected throws propagate to the shell's generic INTERNAL 500. Diff E:
 //     body-parse moved to the shell (legacy req.json was pre-try → raw rejections).
 //     DECLINED: integer guard on dbId (negative → 404 pinned).
+//   • [fix 2026-10-21 reprocess-persistence] PERSISTS on non-demo projects (owner: viewer shape
+//     parse "doesnt always appear to save" — it never did; only the client cache changed). Every
+//     page that was ACTUALLY scanned is swapped into pages.keynotes + shape-parse annotations
+//     via shape-parse-persist.ts (single page → whole page; region → only shapes inside the
+//     region; scanAll → each scanned page). A page whose scan failed is never written. The
+//     response then carries `persisted` (the stored keynotes per page + the annotation rows)
+//     so the viewer cache mirrors the DB. Demo projects stay compute-only (demo never writes).
 
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
@@ -36,11 +43,39 @@ import { extractKeynotes } from "@/lib/keynotes";
 import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import { isLambdaCvEnabled, fanOutShapeParse } from "@/lib/lambda-cv";
 import { logger } from "@/lib/logger";
-import type { TextractPageData } from "@/types";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
 import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
+import { assertProjectWritable } from "@/server/api/project-write-capability";
+import type { ClientAnnotation, KeynoteShapeData, TextractPageData } from "@/types";
+import { swapShapeParsePage, type ShapeParseRegion } from "./shape-parse-persist";
+
+/** What a persisting run stored — the viewer replaces its cache with exactly this. */
+interface ShapeParsePersisted {
+  /** pages.keynotes after the swap, per scanned page (null = page now has none). */
+  pages: Record<number, KeynoteShapeData[] | null>;
+  annotations: ClientAnnotation[];
+  removedAnnotationIds: number[];
+}
+
+async function persistScannedPages(
+  project: { id: number; publicId: string; companyId: number; isDemo: boolean; lifecycleEpoch: number },
+  creatorId: number | null,
+  swaps: { pageNumber: number; keynotes: KeynoteShapeData[]; region?: ShapeParseRegion }[],
+): Promise<ShapeParsePersisted | undefined> {
+  if (project.isDemo || swaps.length === 0) return undefined;
+  const writeCapability = assertProjectWritable(project);
+  const persisted: ShapeParsePersisted = { pages: {}, annotations: [], removedAnnotationIds: [] };
+  for (const swap of swaps) {
+    const r = await swapShapeParsePage(writeCapability, project.id, { ...swap, creatorId }, "shapeParse.viewer");
+    if (r.pageMissing) continue;
+    persisted.pages[r.pageNumber] = r.keynotes;
+    persisted.annotations.push(...r.annotations);
+    persisted.removedAnnotationIds.push(...r.removedAnnotationIds);
+  }
+  return Object.keys(persisted.pages).length > 0 ? persisted : undefined;
+}
 
 export async function shapeParse(rawBody: Record<string, unknown>): Promise<unknown> {
   const { projectId, pageNumber, regionBbox, scanAll } = rawBody as {
@@ -58,7 +93,8 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
   }
   if (!scanAll) assertPageNumber(pageNumber);
 
-  const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
+  const { project, session } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
+  const creatorId = session?.user?.dbId ?? null;
 
   if (project.isDemo) {
     const gate = await assertDemoFeatureEnabled(project.companyId, "keynoteParse");
@@ -90,7 +126,7 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
     }
 
     if (isLambdaCvEnabled()) {
-      const { results, failedPages, warnings } = await fanOutShapeParse({ pageS3Keys });
+      const { results, failedPages, warnings, okPages } = await fanOutShapeParse({ pageS3Keys });
 
       const byPage: Record<number, typeof results> = {};
       const allKeynotes = results.map((r) => {
@@ -100,6 +136,10 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
         byPage[pn].push(r);
         return { ...keynote, pageNumber: pn };
       });
+      // Only pages the fan-out CONFIRMED it scanned are written; a failed page keeps its rows.
+      const scanned = (okPages ?? []).map((k) => pageKeyToNumber[k]).filter((pn) => pn !== undefined);
+      const persisted = await persistScannedPages(project, creatorId,
+        scanned.map((pn) => ({ pageNumber: pn, keynotes: (byPage[pn] ?? []).map(({ shape, text, bbox, contour }) => ({ shape, text, bbox, contour })) })));
 
       return {
         keynotes: allKeynotes,
@@ -107,6 +147,7 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
         totalPages: allPages.length,
         ...(failedPages.length > 0 && { failedPages }),
         ...(warnings.length > 0 && { warnings }),
+        ...(persisted && { persisted }),
       };
     }
 
@@ -114,6 +155,7 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
     const byPage: Record<number, any[]> = {};
     const allKeynotes: any[] = [];
     const warnings: string[] = [];
+    const scanned: { pageNumber: number; keynotes: KeynoteShapeData[] }[] = [];
 
     for (const p of allPages) {
       try {
@@ -125,17 +167,20 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
           allKeynotes.push({ ...k, pageNumber: p.pageNumber });
         }
         if (result.warnings.length) warnings.push(...result.warnings);
+        if (!result.failed) scanned.push({ pageNumber: p.pageNumber, keynotes: result.keynotes });
       } catch (err) {
         logger.warn(`[SHAPE_PARSE] Page ${p.pageNumber} failed:`, err);
         warnings.push(`Page ${p.pageNumber} failed`);
       }
     }
+    const persisted = await persistScannedPages(project, creatorId, scanned);
 
     return {
       keynotes: allKeynotes,
       byPage,
       totalPages: allPages.length,
       warnings: warnings.length > 0 ? warnings : undefined,
+      ...(persisted && { persisted }),
     };
   }
 
@@ -165,6 +210,7 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
   let offsetY = 0;
   let regionW = 1;
   let regionH = 1;
+  let croppedRegion: ShapeParseRegion | undefined; // set only when the scan really was cropped
 
   if (regionBbox && regionBbox.length === 4) {
     const [minX, minY, maxX, maxY] = regionBbox;
@@ -186,13 +232,14 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
         offsetY = minY;
         regionW = maxX - minX;
         regionH = maxY - minY;
+        croppedRegion = [minX, minY, maxX, maxY];
       }
     } catch (err) {
       logger.warn("[SHAPE_PARSE] Region crop failed, using full page:", err);
     }
   }
 
-  const { keynotes, warnings } = await extractKeynotes(inputBuffer);
+  const { keynotes, warnings, failed } = await extractKeynotes(inputBuffer);
 
   const remapped = keynotes.map((k) => ({
     ...k,
@@ -236,5 +283,9 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
     logger.warn("[SHAPE_PARSE] OCR binding failed, returning shapes without text:", err);
   }
 
-  return { keynotes: enriched, warnings };
+  // A failed scan is never written (it would wipe the page's previous shapes).
+  const persisted = failed
+    ? undefined
+    : await persistScannedPages(project, creatorId, [{ pageNumber: pageNumber!, keynotes: remapped, region: croppedRegion }]);
+  return { keynotes: enriched, warnings, ...(persisted && { persisted }) };
 }
