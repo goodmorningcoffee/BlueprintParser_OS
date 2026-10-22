@@ -3,7 +3,9 @@
 // Admin › Data tools › Stuck jobs. Lists running processing records and work-in-progress locks,
 // with what AWS says about each; "Fix" closes only what AWS attests is finished. Root also gets
 // Stop (hung execution), Force release (web-held locks, typed confirmation) and the list of
-// unlinked YOLO billing reservations (listed only, never changed here).
+// unlinked YOLO billing reservations (listed only, never changed here). [2026-10-22] Root: YOLO rows
+// get Stop (StopProcessingJob), "Stop all running YOLO" (typed STOP ALL), and Fix all also closes
+// YOLO rows SageMaker attests Failed/Stopped or confirms absent (services/stuck-jobs-yolo).
 
 import { useCallback, useEffect, useState } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -61,6 +63,11 @@ interface StuckJobsResponse {
   leases: LeaseRow[];
   unlinkedReservations: ReservationRow[] | null;
 }
+interface YoloStuckResponse {
+  outcomes: { executionId: string; projects: number; action: string; message: string }[];
+  remaining: number;
+}
+const STOP_ALL_PHRASE = "STOP ALL";
 interface ReconcileResponse {
   outcomes: { projectPublicId: string; changed: boolean; message: string }[];
   skipped: { projectPublicId: string; reason: string }[];
@@ -96,6 +103,7 @@ export default function DataToolsStuckJobs({ isRootAdmin }: { isRootAdmin: boole
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
+  const [stopAllText, setStopAllText] = useState("");
 
   const companyQuery = isRootAdmin && /^\d+$/.test(companyId) ? Number(companyId) : undefined;
 
@@ -140,15 +148,31 @@ export default function DataToolsStuckJobs({ isRootAdmin }: { isRootAdmin: boole
       reconcileLines(await call<ReconcileResponse>("/api/admin/stuck-jobs/reconcile", "POST", { projectPublicId: row.projectPublicId })),
     );
 
+  const scopeBody = companyQuery ? { companyId: companyQuery } : {};
+  const yoloLines = (r: YoloStuckResponse) => [
+    ...r.outcomes.map((o) => `YOLO ${o.executionId} (${o.projects} project(s)): ${o.message}`),
+    ...(r.remaining > 0 ? [`${r.remaining} more YOLO job(s): run again`] : []),
+  ];
+
   const fixAll = () =>
-    run("all", async () =>
-      reconcileLines(
-        await call<ReconcileResponse>("/api/admin/stuck-jobs/reconcile", "POST", {
-          all: true,
-          ...(companyQuery ? { companyId: companyQuery } : {}),
-        }),
-      ),
+    run("all", async () => [
+      ...reconcileLines(await call<ReconcileResponse>("/api/admin/stuck-jobs/reconcile", "POST", { all: true, ...scopeBody })),
+      ...(isRootAdmin ? yoloLines(await call<YoloStuckResponse>("/api/admin/stuck-jobs/yolo-fix", "POST", { all: true, ...scopeBody })) : []),
+    ]);
+
+  const stopYolo = (row: YoloRow) => {
+    if (!window.confirm(`Stop SageMaker job ${row.executionId}? Every project in that job stops.`)) return;
+    run(`yolo-stop-${row.jobId}`, async () =>
+      yoloLines(await call<YoloStuckResponse>("/api/admin/stuck-jobs/yolo-stop", "POST", { executionId: row.executionId })),
     );
+  };
+
+  const stopAllYolo = () =>
+    run("yolo-stop-all", async () => {
+      const r = await call<YoloStuckResponse>("/api/admin/stuck-jobs/yolo-stop", "POST", { all: true, confirm: stopAllText, ...scopeBody });
+      setStopAllText("");
+      return yoloLines(r);
+    });
 
   const fixYolo = (row: YoloRow) =>
     run(`yolo-${row.jobId}`, async () => {
@@ -183,7 +207,8 @@ export default function DataToolsStuckJobs({ isRootAdmin }: { isRootAdmin: boole
     });
   };
 
-  const fixableCount = data?.ingest.filter((r) => r.fixable).length ?? 0;
+  const yoloFixable = (r: YoloRow) => r.fixable && r.providerStatus !== "Completed";
+  const fixableCount = (data?.ingest.filter((r) => r.fixable).length ?? 0) + (isRootAdmin ? (data?.yolo.filter(yoloFixable).length ?? 0) : 0);
   const empty = data && data.ingest.length === 0 && data.yolo.length === 0 && data.leases.length === 0;
 
   return (
@@ -253,6 +278,20 @@ export default function DataToolsStuckJobs({ isRootAdmin }: { isRootAdmin: boole
         </table>
       )}
 
+      {isRootAdmin && data && data.yolo.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
+          <span>Stop all running YOLO ({new Set(data.yolo.map((r) => r.executionId)).size} job(s)) — type {STOP_ALL_PHRASE} to confirm:</span>
+          <input value={stopAllText} onChange={(e) => setStopAllText(e.target.value)} className="bg-[var(--bg)] border border-[var(--border)] rounded px-1 w-24" />
+          <button
+            onClick={stopAllYolo}
+            disabled={busy !== null || stopAllText !== STOP_ALL_PHRASE}
+            className="px-2 py-1 rounded bg-red-600 text-white disabled:opacity-40"
+          >
+            {busy === "yolo-stop-all" ? "Stopping…" : "Stop all running YOLO"}
+          </button>
+        </div>
+      )}
+
       {data && data.yolo.length > 0 && (
         <table className="w-full text-xs mb-5">
           <thead>
@@ -271,10 +310,15 @@ export default function DataToolsStuckJobs({ isRootAdmin }: { isRootAdmin: boole
                 <td className={cell}>{row.modelName ?? "—"}</td>
                 <td className={cell}>{when(row.startedAt)}</td>
                 <td className={cell}>{row.verdict}</td>
-                <td className={cell}>
+                <td className={`${cell} whitespace-nowrap space-x-1`}>
                   <button onClick={() => fixYolo(row)} disabled={!row.fixable || busy !== null} className={btn}>
                     Fix
                   </button>
+                  {isRootAdmin && row.providerStatus === "InProgress" && (
+                    <button onClick={() => stopYolo(row)} disabled={busy !== null} className={btn}>
+                      Stop
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

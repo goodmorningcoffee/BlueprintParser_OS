@@ -6,9 +6,12 @@ import {
   YoloBatch,
   batchSummary,
   classifyStartRefusal,
+  isCapacityFailure,
   isLoadSuccess,
   type YoloBatchDeps,
   type YoloBatchOptions,
+  type YoloBatchStartResult,
+  type YoloJobStatus,
   type YoloStartResult,
 } from "../yolo-batch";
 
@@ -83,7 +86,8 @@ function fakeWorld(opts: FakeOpts = {}) {
   };
 }
 
-const FAST: YoloBatchOptions = { pollMs: 1_000, loadDelayMs: 500 };
+// startSpacingMs 0: these cases predate the 3 s start spacing (covered in its own block below).
+const FAST: YoloBatchOptions = { pollMs: 1_000, loadDelayMs: 500, startSpacingMs: 0 };
 const tick = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 const phases = (b: YoloBatch) => Object.fromEntries(b.snapshot().items.map((i) => [i.projectId, i.phase]));
 
@@ -167,7 +171,7 @@ describe("YoloBatch run mode", () => {
     expect(final.items.map((i) => i.phase)).toEqual(["done", "done", "done"]);
   });
 
-  it("with nothing of ours running, retries every 60 s and stops new starts after maxIdleQuotaRetries", async () => {
+  it("with nothing of ours running, retries after 60 s then 120 s (backoff) and stops new starts after maxIdleQuotaRetries", async () => {
     const w = fakeWorld({ refusals: { a: [QUOTA_429, QUOTA_429, QUOTA_429, QUOTA_429] } });
     const b = new YoloBatch("run", MODEL, targets("a", "b"), w.deps, { ...FAST, concurrency: 1, maxIdleQuotaRetries: 2 });
     const done = b.run();
@@ -177,6 +181,8 @@ describe("YoloBatch run mode", () => {
     expect(w.starts).toEqual(["a"]); // still inside the 60 s pause
     await tick(1_100);
     expect(w.starts).toEqual(["a", "a"]);
+    await tick(60_100);
+    expect(w.starts).toEqual(["a", "a"]); // [2026-10-22] the 2nd consecutive refusal backs off 120 s
     await tick(60_100);
     const final = await done;
     expect(w.starts).toEqual(["a", "a", "a"]); // 3rd idle refusal > 2 → halt, b never tried
@@ -544,5 +550,144 @@ describe("YoloBatch batched run mode", () => {
     })();
     expect(final.items.every((i) => i.phase === "not-started")).toBe(true);
     expect(limited.batches).toEqual([]);
+  });
+});
+
+// [2026-10-22 incident: 15 chunk starts within 3 s, 9 throttled → phantom rows, "99 failed"]
+describe("YoloBatch start spacing, backoff and adaptive concurrency", () => {
+  const BUSY = { error: "SageMaker is busy (ThrottlingException): Rate exceeded — retry shortly", httpStatus: 429, code: "RETRYABLE" };
+  const CAPACITY = "CapacityError: Unable to provision requested ML compute capacity. Please retry using a different ML instance type.";
+
+  /** startBatch answers from `answers` in order (undefined → started); jobs stay InProgress until finished. */
+  function world(answers: Array<YoloBatchStartResult | undefined> = [], finalStatus = () => ({ status: "Completed" }) as YoloJobStatus) {
+    const batches: string[][] = [];
+    const calls: string[][] = [];
+    const marks: string[] = [];
+    const ended: string[] = [];
+    const done = new Set<string>();
+    const deps: YoloBatchDeps = {
+      start: async () => ({ error: "unused" }),
+      async startBatch(ids) {
+        calls.push(ids);
+        const answer = answers.shift();
+        if (answer) return answer;
+        batches.push(ids);
+        const jobName = `job-${batches.length}`;
+        return { jobName, projects: ids.map((projectId) => ({ projectId, status: "running" as const })) };
+      },
+      status: async (jobName) => (done.has(jobName) ? finalStatus() : { status: "InProgress" }),
+      async markTerminal(jobName) {
+        marks.push(jobName);
+      },
+      load: async () => "Completed — 1 detections loaded",
+      isBusy: () => false,
+      jobEnded: (jobName) => {
+        ended.push(jobName);
+      },
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    };
+    return { deps, batches, calls, marks, ended, finish: (...jobs: string[]) => jobs.forEach((j) => done.add(j)) };
+  }
+
+  it("starts at most one job per startSpacingMs (default 3 s), even with free machines", async () => {
+    const w = world();
+    const b = new YoloBatch("run", MODEL, targets("a", "b", "c"), w.deps, { pollMs: 1_000, loadDelayMs: 500, concurrency: 3, chunks: [["a"], ["b"], ["c"]] });
+    const run = b.run();
+    await tick(10);
+    expect(w.batches).toEqual([["a"]]);
+    await tick(2_900);
+    expect(w.batches).toEqual([["a"]]);
+    await tick(200);
+    expect(w.batches).toEqual([["a"], ["b"]]);
+    await tick(3_000);
+    expect(w.batches).toEqual([["a"], ["b"], ["c"]]);
+    w.finish("job-1", "job-2", "job-3");
+    await tick(5_000);
+    expect((await run).items.every((i) => i.phase === "done")).toBe(true);
+  });
+
+  it("a 429 RETRYABLE requeues the job (never fails it), backs off 5 s → 10 s, lowers effective concurrency and raises it per start", async () => {
+    const w = world([BUSY, BUSY]);
+    const b = new YoloBatch("run", MODEL, targets("a", "b", "c"), w.deps, { ...FAST, concurrency: 3, chunks: [["a"], ["b"], ["c"]] });
+    const run = b.run();
+    await tick(10);
+    let snap = b.snapshot();
+    expect(phases(b)).toEqual({ a: "queued", b: "queued", c: "queued" });
+    expect(snap).toMatchObject({ retries: 1, effectiveConcurrency: 2, maxConcurrency: 3, retryInMs: 5_000, pausedForQuota: true });
+    expect(batchSummary(snap)).toBe("0 started · 3 waiting · 1 retry · 2/3 machines at once · paused: SageMaker capacity — retrying in 5 s");
+    await tick(5_000); // 2nd refusal of the same job
+    snap = b.snapshot();
+    expect(w.calls).toEqual([["a"], ["a"]]);
+    expect(snap).toMatchObject({ retries: 2, effectiveConcurrency: 1, retryInMs: 10_000 });
+    await tick(9_900);
+    expect(w.batches).toEqual([]);
+    await tick(200);
+    expect(w.batches).toEqual([["a"], ["b"], ["c"]]); // a first (kept its place); each start raised the limit by 1
+    expect(b.snapshot().effectiveConcurrency).toBe(3);
+    w.finish("job-1", "job-2", "job-3");
+    await tick(5_000);
+    const final = await run;
+    expect(final.items.every((i) => i.phase === "done")).toBe(true);
+    expect(batchSummary(final)).toBe("Finished — 3 started · 0 waiting · 3 loaded · 2 retries");
+  });
+
+  it("the lowered limit holds new starts until one of our jobs ends", async () => {
+    const w = world([undefined, BUSY]);
+    const b = new YoloBatch("run", MODEL, targets("a", "b", "c"), w.deps, { ...FAST, concurrency: 2, chunks: [["a"], ["b"], ["c"]] });
+    const run = b.run();
+    await tick(10);
+    expect(w.batches).toEqual([["a"]]);
+    expect(b.snapshot().effectiveConcurrency).toBe(1);
+    await tick(30_000); // backoff long over, but 1 running = the lowered limit
+    expect(w.batches).toEqual([["a"]]);
+    w.finish("job-1");
+    await tick(3_000);
+    expect(w.batches).toEqual([["a"], ["b"], ["c"]]);
+    w.finish("job-2", "job-3");
+    await tick(5_000);
+    await run;
+  });
+
+  it("a job that ends Failed with a CapacityError is requeued up to 3 times with backoff, then failed", async () => {
+    const w = world([], () => ({ status: "Failed", failureReason: CAPACITY }));
+    const b = new YoloBatch("run", MODEL, targets("a", "b"), w.deps, { ...FAST, concurrency: 1, chunks: [["a", "b"]] });
+    const run = b.run();
+    w.finish("job-1", "job-2", "job-3", "job-4");
+    await tick(1_100);
+    expect(w.batches).toHaveLength(1);
+    expect(phases(b)).toEqual({ a: "queued", b: "queued" });
+    expect(b.snapshot().items[0].message).toBe(`Retry 1/3 — ${CAPACITY}`);
+    expect(b.snapshot().retryInMs).toBe(60_000);
+    await tick(60_000);
+    expect(w.batches).toHaveLength(2);
+    await tick(1_100 + 120_000);
+    expect(w.batches).toHaveLength(3);
+    await tick(1_100 + 120_000);
+    expect(w.batches).toHaveLength(4);
+    await tick(1_100);
+    const final = await run;
+    expect(w.batches).toEqual([["a", "b"], ["a", "b"], ["a", "b"], ["a", "b"]]);
+    expect(final.items.map((i) => [i.phase, i.message])).toEqual([
+      ["failed", `Failed: ${CAPACITY}`],
+      ["failed", `Failed: ${CAPACITY}`],
+    ]);
+    expect(final.retries).toBe(3);
+    expect(w.ended).toEqual(["job-1", "job-2", "job-3", "job-4"]); // each row made retryable on the page
+    expect(w.marks).toEqual(["job-1", "job-1", "job-2", "job-2", "job-3", "job-3", "job-4", "job-4"]); // server rows closed per project
+  });
+
+  it("a Failed job for any other reason is not requeued", async () => {
+    const w = world([], () => ({ status: "Failed", failureReason: "AlgorithmError: OOM" }));
+    const b = new YoloBatch("run", MODEL, targets("a"), w.deps, { ...FAST, chunks: [["a"]] });
+    const run = b.run();
+    w.finish("job-1");
+    await tick(2_000);
+    const final = await run;
+    expect(w.batches).toHaveLength(1);
+    expect(final.items[0]).toMatchObject({ phase: "failed", message: "Failed: AlgorithmError: OOM" });
+    expect(isCapacityFailure(CAPACITY)).toBe(true);
+    expect(isCapacityFailure("InsufficientCapacity: none")).toBe(true);
+    expect(classifyStartRefusal(BUSY)).toBe("capacity");
+    expect(classifyStartRefusal({ error: "x", code: "RETRYABLE" })).toBe("capacity");
   });
 });

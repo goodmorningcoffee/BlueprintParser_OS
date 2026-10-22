@@ -675,12 +675,13 @@ describe.skipIf(!dbUp)(
       expect(r.status).toBe(200); // post-start ledger failure swallowed (job already started)
     });
 
-    it("an AWS-confirmed quota refusal surfaces as a 429 and retires the intent row + page reservation", async () => {
+    it("an AWS-confirmed quota refusal surfaces as a 429 RETRYABLE, closes the intent row as failed and releases the page reservation", async () => {
       // [2026-10-21 bulk YOLO] lib/yolo maps ResourceLimitExceeded → YoloStartRefusedError (429) naming
       // the instance type; confirmedAbsent means a Describe found no job under that name. yoloRun then
-      // deletes the job intent (so it never counts toward the daily job limit, blocks project delete or
-      // demo publish, or lingers as "running") and releases the reservation, and passes the 429 through
-      // so the admin sees "No SageMaker quota for <type>" and the bulk queue pauses + retries.
+      // closes the job intent as failed with "SageMaker job never accepted: <reason>" (2026-10-22: was a
+      // delete; the prefix keeps it out of the daily job count, and it no longer blocks delete/publish or
+      // lingers as "running"), releases the reservation, and passes the 429 RETRYABLE through so the
+      // admin sees "No SageMaker quota for <type>" and the bulk queue pauses + retries.
       const w = await runWorld();
       asUser(w.user);
       const message = "No SageMaker quota for ml.g5.xlarge processing jobs (ResourceLimitExceeded): …";
@@ -689,25 +690,26 @@ describe.skipIf(!dbUp)(
         await call({ projectId: w.project.publicId, modelId: w.model.id }),
       );
       expect(r.status).toBe(429);
-      expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message } });
+      expect(r.body).toEqual({ error: { code: "RETRYABLE", message } });
       expect(h.releaseReservation).toHaveBeenCalledExactlyOnceWith(77);
       const jobs = await db
         .select()
         .from(processingJobs)
         .where(eq(processingJobs.projectId, w.project.id));
-      expect(jobs).toEqual([]);
+      expect(jobs).toEqual([expect.objectContaining({ status: "failed", error: `SageMaker job never accepted: ${message}` })]);
     });
 
-    it("an unconfirmed quota refusal still surfaces as a 429 but keeps the intent + reservation as a named blocker", async () => {
+    it("an unconfirmed start outcome surfaces as a 500 naming the AWS error and keeps the intent + reservation as a named blocker", async () => {
       const w = await runWorld();
       asUser(w.user);
-      const message = "No SageMaker quota for ml.g5.xlarge processing jobs (ResourceLimitExceeded): …";
-      h.startYoloJob.mockRejectedValue(new YoloStartRefusedError(message, false));
+      // lib/yolo-start-errors: an outcome Describe could not settle is INTERNAL (never retryable).
+      const message = "SageMaker start outcome unknown (TimeoutError) — check Stuck jobs before retrying";
+      h.startYoloJob.mockRejectedValue(new YoloStartRefusedError(message, false, "INTERNAL", "TimeoutError"));
       const r = await readJson(
         await call({ projectId: w.project.publicId, modelId: w.model.id }),
       );
-      expect(r.status).toBe(429);
-      expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message } });
+      expect(r.status).toBe(500);
+      expect(r.body).toEqual({ error: { code: "INTERNAL", message } });
       expect(h.releaseReservation).not.toHaveBeenCalled();
       const [job] = await db
         .select()
@@ -716,7 +718,7 @@ describe.skipIf(!dbUp)(
       expect(job).toMatchObject({ status: "running", error: "SageMaker start outcome unknown" });
     });
 
-    it("a root admin's confirmed quota refusal retires the intent row (root holds no reservation)", async () => {
+    it("a root admin's confirmed quota refusal closes the intent row as failed (root holds no reservation)", async () => {
       const w = await runWorld({ isRootAdmin: true });
       asUser(w.user);
       h.startYoloJob.mockRejectedValue(new YoloStartRefusedError("No SageMaker quota for ml.g4dn.xlarge …", true));
@@ -730,7 +732,7 @@ describe.skipIf(!dbUp)(
         .select()
         .from(processingJobs)
         .where(eq(processingJobs.projectId, w.project.id));
-      expect(jobs).toEqual([]);
+      expect(jobs).toEqual([expect.objectContaining({ status: "failed" })]);
     });
   },
 );

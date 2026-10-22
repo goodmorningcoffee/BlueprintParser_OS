@@ -10,6 +10,7 @@ vi.mock("@/app/admin/sections/S3Browser", () => ({ default: () => null }));
 
 import AiModelsTab from "@/app/admin/tabs/AiModelsTab";
 import { resetYoloBulkStoreForTests } from "@/app/admin/tabs/YoloBulkBar";
+import { START_SPACING_MS } from "@/app/admin/tabs/yolo-batch";
 import { resetYoloOptionsForTests } from "@/app/admin/tabs/yolo-options-store";
 import { YOLO_INSTANCE_OPTIONS } from "@/lib/yolo-instances";
 
@@ -83,6 +84,8 @@ function renderTab(overrides: Partial<{ yoloStatus: Record<string, Record<string
 
 const rowBox = (name: string) => screen.getByRole("checkbox", { name: `Select ${name} for bulk` }) as HTMLInputElement;
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+/** [2026-10-22] The queue spaces job starts START_SPACING_MS apart (SageMaker throttles bursts). */
+const spaced = () => act(async () => { await vi.advanceTimersByTimeAsync(START_SPACING_MS); });
 
 describe("YoloBulkBar in AiModelsTab", () => {
   it("Select all honours the default-on 'without results' filter; Deselect all clears; counts follow", () => {
@@ -129,6 +132,7 @@ describe("YoloBulkBar in AiModelsTab", () => {
     expect(String(confirmMock.mock.calls[0][0])).toMatch(/Run doors on 3 projects — 35 pages total/u);
     expect(String(confirmMock.mock.calls[0][0])).toMatch(/Keep this browser tab open/u);
     await flush();
+    await spaced(); // [2026-10-22] starts are ≥ 3 s apart
     expect(onRunYolo.mock.calls).toEqual([["p1", 7, true], ["p2", 7, true]]);
     expect(screen.getByTestId("yolo-bulk-summary").textContent).toMatch(/2 started · 1 waiting · 2 running/u);
     expect(screen.getByTestId("yolo-bulk-summary").textContent).toMatch(/Keep this tab open/u);
@@ -171,6 +175,7 @@ describe("YoloBulkBar in AiModelsTab", () => {
     const { bar, onRunYolo } = renderTab({ yoloStatus: {} });
     fireEvent.click(bar.getByText("Run all (3)"));
     await flush();
+    await spaced();
     fireEvent.click(bar.getByText("Stop queue"));
     expect(screen.getByTestId("yolo-bulk-summary").textContent).toMatch(/stopping: running jobs will finish and load/u);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
@@ -274,6 +279,7 @@ describe("YoloBulkBar against a page that owns the row state", () => {
     render(<FakeAdminPage />);
     fireEvent.click(bulkBar().getByText("Run all (3)"));
     await flush();
+    await spaced();
     expect(startedProjects()).toEqual(["p1", "p2"]);
     act(() => pageCtl.setJobs?.((prev) => ({ ...prev, p3: { "7": "Running: manual-p3" } })));
     statusByJob.set("job-p1-1", { status: "Completed" });
@@ -288,6 +294,7 @@ describe("YoloBulkBar against a page that owns the row state", () => {
     render(<FakeAdminPage />);
     fireEvent.click(bulkBar().getByText("Run all (3)"));
     await flush();
+    await spaced();
     expect(startedProjects()).toEqual(["p1", "p2"]);
     act(() => pageCtl.setTabShown?.(false)); // switch away: AiModelsTab unmounts, the page and queue live on
     act(() => pageCtl.setTabShown?.(true)); // and back
@@ -490,6 +497,7 @@ describe("root: inference picker, timeout and cost estimates", () => {
     await flush();
     fireEvent.click(bar.getByText("Run all (3)"));
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await spaced();
     expect(onRunYolo).not.toHaveBeenCalled();
     expect(batches).toHaveLength(2); // 2 machines → 2 balanced jobs
     expect(batches.flat().sort()).toEqual(["p1", "p2", "p3"]);

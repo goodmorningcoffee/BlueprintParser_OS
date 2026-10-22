@@ -8,7 +8,7 @@ vi.mock("@/lib/auth", async () => {
   return { auth: async () => sessionState.current };
 });
 
-const h = vi.hoisted(() => ({ send: vi.fn(), getYoloJobStatus: vi.fn() }));
+const h = vi.hoisted(() => ({ send: vi.fn(), getYoloJobStatus: vi.fn(), stopYoloJob: vi.fn() }));
 vi.mock("@aws-sdk/client-sfn", () => ({
   SFNClient: class {
     send = h.send;
@@ -22,12 +22,14 @@ vi.mock("@aws-sdk/client-sfn", () => ({
     constructor(readonly input: { executionArn: string }) {}
   },
 }));
-vi.mock("@/lib/yolo", () => ({ getYoloJobStatus: h.getYoloJobStatus }));
+vi.mock("@/lib/yolo", () => ({ getYoloJobStatus: h.getYoloJobStatus, stopYoloJob: h.stopYoloJob }));
 
 import { GET as listGET } from "@/app/api/admin/stuck-jobs/route";
 import { POST as reconcilePOST } from "@/app/api/admin/stuck-jobs/reconcile/route";
 import { POST as stopPOST } from "@/app/api/admin/stuck-jobs/stop/route";
 import { POST as forcePOST } from "@/app/api/admin/stuck-jobs/force-release/route";
+import { POST as yoloStopPOST } from "@/app/api/admin/stuck-jobs/yolo-stop/route";
+import { POST as yoloFixPOST } from "@/app/api/admin/stuck-jobs/yolo-fix/route";
 import { PUT as runningPUT } from "@/app/api/admin/running-jobs/route";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -125,6 +127,7 @@ const force = (body: unknown) => forcePOST(makeReq("/api/admin/stuck-jobs/force-
 beforeEach(() => {
   h.send.mockReset();
   h.getYoloJobStatus.mockReset();
+  h.stopYoloJob.mockReset();
   signedOut();
 });
 afterEach(() => vi.restoreAllMocks());
@@ -364,7 +367,7 @@ describe.skipIf(!dbUp)("PUT /api/admin/running-jobs — SageMaker never accepted
     expect(await db.select().from(computeUsage).where(eq(computeUsage.companyId, company.id))).toEqual(before);
   });
 
-  it("young row → 409, still running", async () => {
+  it("young row (< 3 min) → 409, still running", async () => {
     const { admin, project } = await world();
     const [job] = await db
       .insert(processingJobs)
@@ -373,7 +376,7 @@ describe.skipIf(!dbUp)("PUT /api/admin/running-jobs — SageMaker never accepted
         executionId: `yolo-young-${project.id}`,
         status: "running",
         modelConfig: { modelId: 1, modelName: "synthetic" },
-        startedAt: new Date(Date.now() - 5 * MIN),
+        startedAt: new Date(Date.now() - 2 * MIN),
       })
       .returning();
     h.getYoloJobStatus.mockRejectedValue(notFound());
@@ -384,5 +387,93 @@ describe.skipIf(!dbUp)("PUT /api/admin/running-jobs — SageMaker never accepted
     expect(r.status).toBe(409);
     const [row] = await db.select().from(processingJobs).where(eq(processingJobs.id, job.id));
     expect(row.status).toBe("running");
+  });
+});
+
+// [2026-10-22 bulk YOLO incident] Root's YOLO Stop / Stop all / Fix all (services/stuck-jobs-yolo).
+describe.skipIf(!dbUp)("POST /api/admin/stuck-jobs/yolo-stop + yolo-fix", () => {
+  const notFound = () => Object.assign(new Error("Could not find requested job with name x"), { name: "ValidationException" });
+  const yoloStop = (body: unknown) => yoloStopPOST(makeReq("/api/admin/stuck-jobs/yolo-stop", { body }));
+  const yoloFix = (body: unknown) => yoloFixPOST(makeReq("/api/admin/stuck-jobs/yolo-fix", { body }));
+
+  async function yoloRow(project: typeof projects.$inferSelect, executionId: string, agoMs: number) {
+    const [job] = await db
+      .insert(processingJobs)
+      .values({
+        projectId: project.id,
+        executionId,
+        status: "running",
+        modelConfig: { modelId: 1, modelName: "synthetic" },
+        startedAt: new Date(Date.now() - agoMs),
+      })
+      .returning();
+    return job;
+  }
+  const rowOf = async (id: number) => (await db.select().from(processingJobs).where(eq(processingJobs.id, id)))[0];
+
+  it("Stop: InProgress → StopProcessingJob, rows stay running; company admin → 403", async () => {
+    const { admin, root, project } = await world();
+    const name = `yolo-live-${project.id}`;
+    const job = await yoloRow(project, name, 10 * MIN);
+    h.getYoloJobStatus.mockResolvedValue({ status: "InProgress" });
+    asUser(admin);
+    expect((await yoloStop({ executionId: name })).status).toBe(403);
+    asUser(root);
+    const r = await readJson(await yoloStop({ executionId: name }));
+    expect(r.status).toBe(200);
+    expect(h.stopYoloJob).toHaveBeenCalledWith(name);
+    expect(r.body.outcomes).toEqual([expect.objectContaining({ executionId: name, action: "stop-requested", projects: 1 })]);
+    expect((await rowOf(job.id)).status).toBe("running");
+  });
+
+  it("Stop all needs the typed phrase; stops InProgress jobs and closes confirmed-absent rows ≥ 3 min old", async () => {
+    const { root, company, project } = await world();
+    const other = await createProject(company.id, root.id, { status: "processing" });
+    const live = await yoloRow(project, `yolo-a-${project.id}`, 10 * MIN);
+    const phantomA = await yoloRow(project, `yolo-p-${project.id}`, 4 * MIN);
+    const phantomB = await yoloRow(other, `yolo-p-${project.id}`, 4 * MIN); // same batched job, 2nd project
+    h.getYoloJobStatus.mockImplementation(async (n: string) => {
+      if (n === live.executionId) return { status: "InProgress" };
+      throw notFound();
+    });
+    asUser(root);
+    expect((await yoloStop({ all: true, companyId: company.id })).status).toBe(400);
+    expect((await yoloStop({ all: true, confirm: "stop all", companyId: company.id })).status).toBe(400);
+    const r = await readJson(await yoloStop({ all: true, confirm: "STOP ALL", companyId: company.id }));
+    expect(r.status).toBe(200);
+    expect(h.stopYoloJob).toHaveBeenCalledTimes(1);
+    expect(h.stopYoloJob).toHaveBeenCalledWith(live.executionId);
+    expect(r.body.outcomes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ executionId: phantomA.executionId, action: "closed", projects: 2 })]),
+    );
+    for (const id of [phantomA.id, phantomB.id]) {
+      expect(await rowOf(id)).toMatchObject({ status: "failed", error: "SageMaker job never accepted" });
+    }
+    expect((await rowOf(live.id)).status).toBe("running");
+  });
+
+  it("Fix all closes confirmed-absent rows ≥ 3 min and Failed/Stopped jobs; leaves young, Completed and InProgress", async () => {
+    const { root, company, project } = await world();
+    const absent = await yoloRow(project, `yolo-gone-${project.id}`, 3 * MIN + 5_000);
+    const young = await yoloRow(project, `yolo-young-${project.id}`, 1 * MIN);
+    const failed = await yoloRow(project, `yolo-failed-${project.id}`, 30 * MIN);
+    const done = await yoloRow(project, `yolo-done-${project.id}`, 30 * MIN);
+    const running = await yoloRow(project, `yolo-run-${project.id}`, 30 * MIN);
+    const answer: Record<string, string> = {
+      [failed.executionId!]: "Failed",
+      [done.executionId!]: "Completed",
+      [running.executionId!]: "InProgress",
+    };
+    h.getYoloJobStatus.mockImplementation(async (n: string) => {
+      if (answer[n]) return { status: answer[n] };
+      throw notFound();
+    });
+    asUser(root);
+    const r = await readJson(await yoloFix({ all: true, companyId: company.id }));
+    expect(r.status).toBe(200);
+    expect(await rowOf(absent.id)).toMatchObject({ status: "failed", error: "SageMaker job never accepted" });
+    expect((await rowOf(failed.id)).status).toBe("failed");
+    for (const id of [young.id, done.id, running.id]) expect((await rowOf(id)).status).toBe("running");
+    expect(h.stopYoloJob).not.toHaveBeenCalled();
   });
 });

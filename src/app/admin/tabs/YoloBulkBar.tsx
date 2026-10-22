@@ -133,7 +133,7 @@ async function fetchJobStatus(jobName: string): Promise<YoloJobStatus | null> {
   }
 }
 
-/** POST /api/yolo/run-batch for one planned job; a refusal comes back as { error, httpStatus }. */
+/** POST /api/yolo/run-batch for one planned job; a refusal comes back as { error, httpStatus, code }. */
 async function postRunBatch(projectIds: string[], modelId: number): Promise<YoloBatchStartResult> {
   try {
     const res = await fetch("/api/yolo/run-batch", {
@@ -144,7 +144,8 @@ async function postRunBatch(projectIds: string[], modelId: number): Promise<Yolo
     const body: unknown = await res.json().catch(() => null);
     if (!res.ok) {
       logYoloDebug("http", `POST /api/yolo/run-batch → ${res.status}`, body);
-      return { error: apiErrorMessage(body) || `HTTP ${res.status}`, httpStatus: res.status };
+      const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+      return { error: apiErrorMessage(body) || `HTTP ${res.status}`, httpStatus: res.status, ...(typeof code === "string" ? { code } : {}) };
     }
     const ok = body as YoloBatchStartResult;
     return { jobName: typeof ok?.jobName === "string" ? ok.jobName : undefined, projects: ok?.projects, error: ok?.jobName ? undefined : "No job name in the answer" };

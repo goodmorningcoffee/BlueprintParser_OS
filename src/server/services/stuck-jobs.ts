@@ -59,7 +59,7 @@ export const zStuckForceReleaseBody = z
   .strict();
 
 /** Company scope: company admins are pinned to their own company; root may pick one or all. */
-function scopeCompanyId(session: AuthSession, requested?: number): number | null {
+export function scopeCompanyId(session: AuthSession, requested?: number): number | null {
   if (session.user.isRootAdmin) return requested ?? null;
   if (requested !== undefined && requested !== session.user.companyId) {
     throw new ApiError("FORBIDDEN", "Company admins can only use their own company");
@@ -121,7 +121,7 @@ function outcomeJson(outcome: IngestReconcileOutcome) {
   };
 }
 
-async function runningJobRows(companyId: number | null, ingestOnly: boolean, projectId?: number) {
+export async function runningJobRows(companyId: number | null, ingestOnly: boolean, projectId?: number) {
   const filters: SQL[] = [eq(processingJobs.status, "running"), projectScope(companyId)];
   if (ingestOnly) filters.push(isNull(processingJobs.modelConfig));
   if (projectId !== undefined) filters.push(eq(processingJobs.projectId, projectId));

@@ -433,6 +433,31 @@ resource "aws_iam_role_policy" "beaver_sagemaker_ecr" {
   })
 }
 
+# [2026-10-22 bulk YOLO incident] Without this the processing container cannot write its logs, so a
+# failed job (e.g. CapacityError, AlgorithmError) leaves nothing in CloudWatch to diagnose it with.
+# Scoped to SageMaker's processing-job log group (and its streams) in this account and region only.
+resource "aws_iam_role_policy" "beaver_sagemaker_logs" {
+  name = "beaver-sagemaker-logs"
+  role = aws_iam_role.beaver_sagemaker_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "WriteProcessingJobLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:DescribeLogStreams",
+          "logs:PutLogEvents",
+        ]
+        Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/sagemaker/ProcessingJobs*"
+      }
+    ]
+  })
+}
+
 ###############################################################################
 # Step Functions Role
 ###############################################################################

@@ -26,7 +26,9 @@ import { withProjectWrite } from "@/server/api/project-write-capability";
 import { describeYoloJobRun, getYoloJobStatus } from "@/lib/yolo";
 import { catchUpRowKey, catchUpYoloJobs } from "@/server/services/yolo-catch-up";
 
-export const YOLO_NEVER_STARTED_MIN_AGE_MS = 30 * 60_000;
+// [2026-10-22] 3 min (was 30): a start now settles in seconds (Describe retries ≤ 2 s), so a
+// confirmed not-found older than this cannot still be created by an in-flight start.
+export const YOLO_NEVER_STARTED_MIN_AGE_MS = 3 * 60_000;
 
 /** DescribeProcessingJob's answer for an unknown job name (no typed exception exists for it). */
 export function isSagemakerJobNotFound(error: unknown): boolean {
@@ -137,7 +139,7 @@ export async function updateRunningJob(
     if (!isSagemakerJobNotFound(error)) throw error;
     const ageMs = job.startedAt ? Date.now() - job.startedAt.getTime() : Infinity;
     if (ageMs < YOLO_NEVER_STARTED_MIN_AGE_MS) {
-      throw new ApiError("CONFLICT", "SageMaker has no such job yet; retry after 30 minutes");
+      throw new ApiError("CONFLICT", "SageMaker has no such job yet; retry in 3 minutes");
     }
     neverStarted = true;
     return { status: "Failed" };

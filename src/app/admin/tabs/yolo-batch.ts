@@ -16,9 +16,19 @@
 // JOBS, not projects. One status poll per job; on Completed every project of the job is loaded in
 // turn; a project the server refused is failed alone while the rest of its job runs. Capacity / limit
 // refusals behave as above, per job.
+// [2026-10-22 incident: 15 chunk starts within 3 s, 9 throttled into phantom rows] Starts are spaced
+// (at most one per `startSpacingMs`, default 3 s). A 429 / RETRYABLE refusal requeues the job, backs
+// off exponentially (throttling from 5 s, quota / capacity from 60 s, capped at 2 min) and lowers the
+// effective concurrency by 1 (min 1); each successful start raises it by 1 again, up to "Machines at
+// once". A job that ends Failed with a CapacityError / InsufficientCapacity reason is requeued up to
+// `maxCapacityRetries` (3) times with backoff before its projects are marked failed.
 // Load mode — sequential loads.
 // stop() ends NEW starts/loads only: jobs already running finish on AWS and are still loaded.
 // The queue lives in the browser tab: closing the tab stops new starts (see YoloBulkBar).
+
+import { batchSummary } from "./yolo-batch-summary";
+
+export { batchCounts, batchSummary, type YoloBatchCounts } from "./yolo-batch-summary";
 
 /** The same status prefixes that disable a row's Run button in AiModelsTab. */
 export const BUSY_STATUS = /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/;
@@ -29,6 +39,13 @@ export const POLL_MS = 10_000;
 export const LOAD_DELAY_MS = 3_000;
 export const MAX_IDLE_QUOTA_RETRIES = 5;
 export const MAX_STATUS_FAILURES = 30;
+/** Minimum gap between two job starts (SageMaker throttles CreateProcessingJob bursts). */
+export const START_SPACING_MS = 3_000;
+/** First backoff after a throttling refusal; doubles per consecutive refusal up to MAX_BACKOFF_MS. */
+export const THROTTLE_RETRY_MS = 5_000;
+export const MAX_BACKOFF_MS = 120_000;
+/** Requeues of a job that ended Failed for lack of provider capacity, before it is failed. */
+export const MAX_CAPACITY_RETRIES = 3;
 
 const TERMINAL = new Set(["Completed", "Failed", "Stopped"]);
 
@@ -60,6 +77,8 @@ export interface YoloBatchStartResult {
   projects?: Array<{ projectId: string; status: "running" | "refused"; error?: string; httpStatus?: number }>;
   error?: string;
   httpStatus?: number;
+  /** The envelope's error code (RETRYABLE = throttling / capacity: requeue). */
+  code?: string;
 }
 
 /** What the admin page's runYolo(projectId, modelId, bulk=true) resolves to. */
@@ -67,6 +86,7 @@ export interface YoloStartResult {
   jobName?: string;
   error?: string;
   httpStatus?: number;
+  code?: string;
 }
 
 export interface YoloJobStatus {
@@ -109,6 +129,10 @@ export interface YoloBatchOptions {
   loadDelayMs?: number;
   maxIdleQuotaRetries?: number;
   maxStatusFailures?: number;
+  startSpacingMs?: number;
+  throttleRetryMs?: number;
+  maxBackoffMs?: number;
+  maxCapacityRetries?: number;
 }
 
 export interface YoloBatchSnapshot {
@@ -120,6 +144,14 @@ export interface YoloBatchSnapshot {
   stopped: boolean;
   finished: boolean;
   haltReason?: string;
+  /** Jobs allowed at once right now (lowered by refusals, ≤ maxConcurrency). */
+  effectiveConcurrency?: number;
+  /** The admin's "Machines at once". */
+  maxConcurrency?: number;
+  /** Refused starts + capacity-failed jobs put back in the queue. */
+  retries?: number;
+  /** Current backoff before the next start, while paused. */
+  retryInMs?: number | null;
 }
 
 export type StartRefusal = "capacity" | "limit" | "error";
@@ -127,10 +159,18 @@ export type StartRefusal = "capacity" | "limit" | "error";
 /** capacity → pause and retry; limit → stop new starts; error → this row failed, carry on. */
 export function classifyStartRefusal(r: YoloStartResult): StartRefusal {
   const msg = r.error ?? "";
+  if (r.code === "RETRYABLE") return "capacity";
   if (/ResourceLimitExceeded|No SageMaker quota/iu.test(msg)) return "capacity";
   if (r.httpStatus === 429) return /limit reached/iu.test(msg) ? "limit" : "capacity";
   return "error";
 }
+
+/** A job SageMaker ended Failed because no instance could be provisioned (worth a requeue). */
+export function isCapacityFailure(failureReason: string | undefined): boolean {
+  return /^\s*(CapacityError|InsufficientCapacity)/iu.test(failureReason ?? "");
+}
+
+const isQuotaText = (msg: string) => /ResourceLimitExceeded|No SageMaker quota/iu.test(msg);
 
 /** The page's load status strings: "Completed — N detections loaded" / "Loaded N (errors: …)". */
 export function isLoadSuccess(message: string): boolean {
@@ -158,6 +198,12 @@ export class YoloBatch {
   private idleQuotaStrikes = 0;
   private readonly stopWaiters: Array<() => void> = [];
   private slotWaiters: Array<() => void> = [];
+  private effLimit: number;
+  private retries = 0;
+  private refusalStreak = 0;
+  private retryInMs: number | null = null;
+  private readonly failRetries = new Map<string, number>();
+  private turnTail: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(s: YoloBatchSnapshot) => void>();
   private current: YoloBatchSnapshot;
 
@@ -180,7 +226,12 @@ export class YoloBatch {
       loadDelayMs: options.loadDelayMs ?? LOAD_DELAY_MS,
       maxIdleQuotaRetries: options.maxIdleQuotaRetries ?? MAX_IDLE_QUOTA_RETRIES,
       maxStatusFailures: options.maxStatusFailures ?? MAX_STATUS_FAILURES,
+      startSpacingMs: options.startSpacingMs ?? START_SPACING_MS,
+      throttleRetryMs: options.throttleRetryMs ?? THROTTLE_RETRY_MS,
+      maxBackoffMs: options.maxBackoffMs ?? MAX_BACKOFF_MS,
+      maxCapacityRetries: options.maxCapacityRetries ?? MAX_CAPACITY_RETRIES,
     };
+    this.effLimit = this.opts.concurrency;
     const seen = new Set<string>();
     this.items = [];
     for (const t of targets) {
@@ -262,6 +313,10 @@ export class YoloBatch {
       stopped: this.stopped,
       finished: this.finished,
       ...(this.haltReason ? { haltReason: this.haltReason } : {}),
+      effectiveConcurrency: this.effLimit,
+      maxConcurrency: this.opts.concurrency,
+      retries: this.retries,
+      retryInMs: this.pauseGate !== null && !this.stopped ? this.retryInMs : null,
     };
   }
 
@@ -307,16 +362,66 @@ export class YoloBatch {
     for (const wake of waiters) wake();
   }
 
-  private pauseForCapacity(): void {
+  /**
+   * One start turn at a time; the turn reopens `startSpacingMs` after a start was attempted
+   * (at once when none was). Resolves to the release function.
+   */
+  private startTurn(): Promise<(attempted: boolean) => void> {
+    const prev = this.turnTail;
+    let open!: () => void;
+    this.turnTail = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return prev.then(() => (attempted: boolean) => {
+      if (attempted && this.opts.startSpacingMs > 0) void this.wait(this.opts.startSpacingMs).then(open);
+      else open();
+    });
+  }
+
+  /** True when a worker may not start now (it re-checks after the pause / a slot / the turn). */
+  private mustWait(): boolean {
+    return this.pauseGate !== null || this.activeJobs >= this.effLimit;
+  }
+
+  private startSucceeded(): void {
+    this.refusalStreak = 0;
+    if (this.effLimit < this.opts.concurrency) {
+      this.effLimit += 1;
+      this.debug("concurrency", `effective concurrency ${this.effLimit}/${this.opts.concurrency}`);
+    }
+  }
+
+  /**
+   * A retryable refusal or a capacity-failed job: count it, lower the effective concurrency, back off.
+   * `waitForOwnJob`: instance quota — retrying before one of our jobs ends would only be refused.
+   */
+  private backOff(reason: string, waitForOwnJob: boolean): void {
+    this.retries += 1;
+    this.refusalStreak += 1;
+    this.effLimit = Math.max(1, this.effLimit - 1);
+    // Instance quota / provisioning capacity frees up in minutes; throttling in seconds.
+    const base = isQuotaText(reason) || isCapacityFailure(reason) ? this.opts.quotaRetryMs : this.opts.throttleRetryMs;
+    const delay = Math.min(this.opts.maxBackoffMs, base * 2 ** (this.refusalStreak - 1));
+    this.debug("pause", `retry in ${Math.round(delay / 1000)} s; effective concurrency ${this.effLimit}/${this.opts.concurrency}`, {
+      reason,
+      retries: this.retries,
+      waiting: this.items.filter((i) => i.phase === "queued").length,
+    });
+    this.pauseForCapacity(delay, waitForOwnJob);
+  }
+
+  private pauseForCapacity(delayMs: number, waitForOwnJob: boolean): void {
     if (this.pauseGate) return;
     const completionsAtRefusal = this.completions;
+    this.retryInMs = delayMs;
     this.pauseGate = (async () => {
-      await this.wait(this.opts.quotaRetryMs);
+      await this.wait(delayMs);
       // Our own running jobs hold the capacity: retrying before one ends would only be refused.
-      while (!this.stopped && this.activeJobs > 0 && this.completions === completionsAtRefusal) {
+      while (waitForOwnJob && !this.stopped && this.activeJobs > 0 && this.completions === completionsAtRefusal) {
         await this.waitForSlot();
       }
       this.pauseGate = null;
+      this.retryInMs = null;
       this.emit();
     })();
     this.emit();
@@ -334,8 +439,21 @@ export class YoloBatch {
         await this.pauseGate;
         continue;
       }
+      if (this.activeJobs >= this.effLimit) {
+        if (queue.length === 0) return;
+        await this.waitForSlot();
+        continue;
+      }
+      const release = await this.startTurn();
+      if (this.stopped || this.haltReason || this.mustWait()) {
+        release(false);
+        continue;
+      }
       const chunk = queue.shift();
-      if (!chunk) return;
+      if (!chunk) {
+        release(false);
+        return;
+      }
       const items: YoloBatchItem[] = [];
       for (const id of chunk) {
         const item = this.byId(id);
@@ -346,7 +464,10 @@ export class YoloBatch {
         }
         items.push(item);
       }
-      if (items.length === 0) continue;
+      if (items.length === 0) {
+        release(false);
+        continue;
+      }
       for (const item of items) this.patch(item, { phase: "starting", message: undefined });
       const ids = items.map((i) => i.projectId);
       this.debug("start", `run-batch ${ids.length} project(s)`, { projectIds: ids });
@@ -356,8 +477,10 @@ export class YoloBatch {
       } catch (err) {
         result = { error: errorText(err) };
       }
+      release(true);
       this.debug("start", result.jobName ? `started ${result.jobName}` : `refused: ${result.error ?? "?"}`, result);
       if (result.jobName) {
+        this.startSucceeded();
         const running: YoloBatchItem[] = [];
         for (const item of items) {
           const outcome = result.projects?.find((p) => p.projectId === item.projectId);
@@ -390,9 +513,26 @@ export class YoloBatch {
         return;
       }
       for (const item of items) this.patch(item, { phase: "queued", message: `Waiting for SageMaker capacity — ${reason}` });
-      this.debug("pause", "capacity refusal; pausing new starts", { reason });
-      this.pauseForCapacity();
+      this.backOff(reason, isQuotaText(reason));
     }
+  }
+
+  /**
+   * A job ended Failed for lack of provider capacity: put its projects back (front of the queue)
+   * up to maxCapacityRetries times, with backoff. False → the caller fails them as usual.
+   */
+  private requeueCapacityFailure(items: YoloBatchItem[], failureReason: string | undefined): boolean {
+    if (!isCapacityFailure(failureReason) || this.stopped || this.haltReason) return false;
+    const key = items.map((i) => i.projectId).join(",");
+    const n = (this.failRetries.get(key) ?? 0) + 1;
+    if (n > this.opts.maxCapacityRetries) return false;
+    this.failRetries.set(key, n);
+    const message = `Retry ${n}/${this.opts.maxCapacityRetries} — ${failureReason}`;
+    for (const item of items) this.patch(item, { phase: "queued", message });
+    if (this.chunkQueue) this.chunkQueue.unshift(items.map((i) => i.projectId));
+    this.refusalStreak = Math.max(this.refusalStreak, n - 1); // the started job reset it: back off per attempt
+    this.backOff(failureReason ?? "CapacityError", false);
+    return true;
   }
 
   /** Poll one batched job; then mark and (auto)load each of its projects in turn. */
@@ -444,6 +584,7 @@ export class YoloBatch {
           const reason = s.failureReason ? `: ${s.failureReason}` : "";
           const message = `${s.status}${reason}`;
           this.deps.jobEnded?.(jobName, message);
+          if (s.status === "Failed" && this.requeueCapacityFailure(items, s.failureReason)) return;
           for (const item of items) this.patch(item, { phase: "failed", message });
           return;
         }
@@ -476,9 +617,23 @@ export class YoloBatch {
         await this.pauseGate;
         continue;
       }
+      if (this.activeJobs >= this.effLimit) {
+        if (!this.nextQueued()) return;
+        await this.waitForSlot();
+        continue;
+      }
+      const release = await this.startTurn();
+      if (this.stopped || this.haltReason || this.mustWait()) {
+        release(false);
+        continue;
+      }
       const item = this.nextQueued();
-      if (!item) return;
+      if (!item) {
+        release(false);
+        return;
+      }
       if (this.deps.isBusy(item.projectId, this.modelId)) {
+        release(false);
         this.patch(item, { phase: "skipped", message: "Skipped — already running or loading" });
         continue;
       }
@@ -489,7 +644,9 @@ export class YoloBatch {
       } catch (err) {
         result = { error: errorText(err) };
       }
+      release(true);
       if (result.jobName) {
+        this.startSucceeded();
         await this.track(item, result.jobName);
         continue;
       }
@@ -512,7 +669,7 @@ export class YoloBatch {
         return;
       }
       this.patch(item, { phase: "queued", message: `Waiting for SageMaker capacity — ${reason}` });
-      this.pauseForCapacity();
+      this.backOff(reason, isQuotaText(reason));
     }
   }
 
@@ -554,6 +711,7 @@ export class YoloBatch {
           const reason = s.failureReason ? `: ${s.failureReason}` : "";
           const message = `${s.status}${reason}`;
           this.deps.jobEnded?.(jobName, message);
+          if (s.status === "Failed" && this.requeueCapacityFailure([item], s.failureReason)) return;
           this.patch(item, { phase: "failed", message });
           return;
         }
@@ -595,55 +753,4 @@ export class YoloBatch {
       await this.loadOne(item);
     }
   }
-}
-
-export interface YoloBatchCounts {
-  total: number;
-  started: number;
-  running: number;
-  waiting: number;
-  done: number;
-  failed: number;
-  skipped: number;
-  notStarted: number;
-}
-
-export function batchCounts(s: YoloBatchSnapshot): YoloBatchCounts {
-  const c: YoloBatchCounts = { total: s.items.length, started: 0, running: 0, waiting: 0, done: 0, failed: 0, skipped: 0, notStarted: 0 };
-  for (const i of s.items) {
-    if (i.jobName) c.started += 1;
-    if (i.phase === "queued" || i.phase === "starting") c.waiting += 1;
-    else if (i.phase === "running" || i.phase === "loading") c.running += 1;
-    else if (i.phase === "done") c.done += 1;
-    else if (i.phase === "failed") c.failed += 1;
-    else if (i.phase === "skipped") c.skipped += 1;
-    else c.notStarted += 1;
-  }
-  return c;
-}
-
-const clip = (text: string, max = 90) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
-
-/** e.g. "12 started · 3 waiting · 4 loaded · 1 failed (Failed: OOM)". */
-export function batchSummary(s: YoloBatchSnapshot): string {
-  const c = batchCounts(s);
-  const parts: string[] = [];
-  if (s.mode === "run") parts.push(`${c.started} started`);
-  parts.push(`${c.waiting} waiting`);
-  if (s.mode === "run" && c.running > 0) parts.push(`${c.running} running`);
-  if (s.mode === "load" && c.running > 0) parts.push(`${c.running} loading`);
-  if (c.done > 0) parts.push(s.items.some((i) => i.message === "Completed — not loaded") ? `${c.done} done` : `${c.done} loaded`);
-  if (c.failed > 0) {
-    const first = s.items.find((i) => i.phase === "failed")?.message;
-    parts.push(first ? `${c.failed} failed (${clip(first)})` : `${c.failed} failed`);
-  }
-  if (c.skipped > 0) parts.push(`${c.skipped} skipped (already running)`);
-  if (c.notStarted > 0) {
-    parts.push(`${c.notStarted} not started (${clip(s.haltReason ?? "queue stopped")})`);
-  }
-  let line = parts.join(" · ");
-  if (s.pausedForQuota) line += " · paused: SageMaker capacity — retrying in 60 s";
-  else if (s.haltReason && !s.finished) line += ` · stopped new starts: ${clip(s.haltReason)}`;
-  else if (s.stopped && !s.finished) line += " · stopping: running jobs will finish and load";
-  return s.finished ? `Finished — ${line}` : line;
 }

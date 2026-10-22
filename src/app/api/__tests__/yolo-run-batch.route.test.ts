@@ -237,13 +237,17 @@ describe.skipIf(!dbUp)("POST /api/yolo/run-batch", () => {
     expect(h.recordComputeUsage).not.toHaveBeenCalled();
   });
 
-  it("a provider-confirmed refusal retires every row and reservation; an unknown outcome keeps them", async () => {
+  it("a provider-confirmed refusal closes every row as failed at once (429 RETRYABLE); an unknown outcome keeps them", async () => {
     const w = await world(2);
     asUser(w.root);
     h.startYoloBatchJob.mockRejectedValueOnce(new YoloStartRefusedError("No SageMaker quota for ml.g5.12xlarge", true));
     let r = await readJson(await post({ modelId: w.model.id, projectIds: w.projects.map((p) => p.publicId) }));
     expect(r.status).toBe(429);
-    expect(await rowsFor(JOB)).toHaveLength(0);
+    expect(r.body).toEqual({ error: { code: "RETRYABLE", message: "No SageMaker quota for ml.g5.12xlarge" } });
+    const closed = await rowsFor(JOB);
+    expect(closed).toHaveLength(2); // [2026-10-22] closed, not deleted: the history keeps the AWS reason
+    expect(closed.every((x) => x.status === "failed" && x.completedAt !== null &&
+      x.error === "SageMaker job never accepted: No SageMaker quota for ml.g5.12xlarge")).toBe(true);
 
     h.createYoloJobName.mockReturnValue(JOB2);
     h.startYoloBatchJob.mockRejectedValueOnce(new Error("socket hang up"));
@@ -252,6 +256,44 @@ describe.skipIf(!dbUp)("POST /api/yolo/run-batch", () => {
     const rows = await rowsFor(JOB2);
     expect(rows).toHaveLength(2);
     expect(rows.every((x) => x.status === "running" && x.error === "SageMaker start outcome unknown")).toBe(true);
+  });
+
+  it("[2026-10-22] refusal classes: validation → 400 with the AWS message; other → 500 naming the error; both close the rows", async () => {
+    const w = await world(1);
+    asUser(w.root);
+    const ids = [w.projects[0].publicId];
+    h.startYoloBatchJob.mockRejectedValueOnce(
+      new YoloStartRefusedError("SageMaker rejected the job (ValidationException): bad input", true, "VALIDATION", "ValidationException"));
+    let r = await readJson(await post({ modelId: w.model.id, projectIds: ids }));
+    expect(r.status).toBe(400);
+    expect(r.body.error.message).toBe("SageMaker rejected the job (ValidationException): bad input");
+    expect((await rowsFor(JOB))[0].status).toBe("failed");
+
+    h.createYoloJobName.mockReturnValue(JOB2);
+    h.startYoloBatchJob.mockRejectedValueOnce(
+      new YoloStartRefusedError("Failed to start SageMaker job (AccessDeniedException)", true, "INTERNAL", "AccessDeniedException"));
+    r = await readJson(await post({ modelId: w.model.id, projectIds: ids }));
+    expect(r.status).toBe(500);
+    expect(r.body.error.message).toBe("Failed to start SageMaker job (AccessDeniedException)");
+    expect((await rowsFor(JOB2))[0].status).toBe("failed");
+  });
+
+  it("[2026-10-22] a non-root refused batch releases every page reservation and frees the run leases", async () => {
+    const w = await world(2);
+    h.reserveSagemakerPages
+      .mockResolvedValueOnce({ allowed: true, reservationId: 21 })
+      .mockResolvedValueOnce({ allowed: true, reservationId: 22 });
+    h.startYoloBatchJob.mockRejectedValueOnce(new YoloStartRefusedError("SageMaker is busy (ThrottlingException): Rate exceeded — retry shortly", true));
+    const session = { user: { companyId: w.company.id, dbId: w.admin.id, role: "admin", isRootAdmin: false, canRunModels: true } };
+    const ids = w.projects.map((p) => p.publicId);
+    await expect(yoloRunBatch({ modelId: w.model.id, projectIds: ids }, session as never)).rejects.toMatchObject({ code: "RETRYABLE", status: 429 });
+    expect(h.releaseReservation.mock.calls.map((c) => c[0]).sort()).toEqual([21, 22]);
+    expect(h.stampReservationJob).not.toHaveBeenCalled();
+    // leases released: the same projects can start again at once
+    h.createYoloJobName.mockReturnValue(JOB2);
+    h.reserveSagemakerPages.mockResolvedValue({ allowed: true, reservationId: 23 });
+    const again = await yoloRunBatch({ modelId: w.model.id, projectIds: ids }, session as never);
+    expect(again.projects.every((p) => p.status === "running")).toBe(true);
   });
 
   it("rejects a non-canonical model path before writing config.yaml or starting", async () => {

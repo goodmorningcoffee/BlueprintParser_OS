@@ -150,7 +150,7 @@ describe("overrides", () => {
   it("[2026-10-22 DOUBLE_BACK quota burn] a YOLO job SageMaker never accepted does not count toward the day", async () => {
     h.count = 3;
     await checkYoloQuota(1, false, 5);
-    expect(countQueries()[0].text).toMatch(/pj\.error IS DISTINCT FROM 'SageMaker job never accepted'/u);
+    expect(countQueries()[0].text).toMatch(/pj\.error IS NULL OR pj\.error NOT LIKE 'SageMaker job never accepted%'/u);
   });
 
   it("chat user override counts that user's own messages (chat_messages.user_id)", async () => {

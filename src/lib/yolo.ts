@@ -2,14 +2,15 @@ import {
   SageMakerClient,
   CreateProcessingJobCommand,
   DescribeProcessingJobCommand,
+  StopProcessingJobCommand,
   type ProcessingInstanceType,
 } from "@aws-sdk/client-sagemaker";
 import { S3_BUCKET } from "@/lib/s3";
 import { randomUUID } from "crypto";
-import { ApiError } from "@/server/api/envelope";
 import { readYoloInstanceType } from "@/server/services/yolo-instance";
 import { readYoloMaxRuntimeSeconds } from "@/server/services/yolo-instance";
-import { isSageMakerNotFoundError, isSageMakerQuotaError, yoloQuotaMessage } from "@/lib/yolo-instances";
+import { isSageMakerNotFoundError } from "@/lib/yolo-instances";
+import { settleCreateFailure } from "@/lib/yolo-start-errors";
 
 const sagemakerClient = new SageMakerClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -21,18 +22,8 @@ const sagemakerClient = new SageMakerClient({
   }),
 });
 
-/**
- * SageMaker refused CreateProcessingJob for lack of instance quota (HTTP 429 to the admin).
- * `confirmedAbsent`: a follow-up Describe reported no job under this name, so the refusal is
- * provider-confirmed and the caller may retire its job intent and page reservation.
- */
-export class YoloStartRefusedError extends ApiError {
-  readonly confirmedAbsent: boolean;
-  constructor(message: string, confirmedAbsent: boolean) {
-    super("RATE_LIMITED", message);
-    this.confirmedAbsent = confirmedAbsent;
-  }
-}
+// The refusal class + AWS-name classification live in lib/yolo-start-errors (2026-10-22 incident).
+export { YoloStartRefusedError } from "@/lib/yolo-start-errors";
 
 const ECR_IMAGE = process.env.YOLO_ECR_IMAGE;
 const SAGEMAKER_ROLE = process.env.SAGEMAKER_ROLE_ARN;
@@ -86,10 +77,10 @@ export function createYoloJobName(
  * @returns Job name for status polling
  *
  * The instance type and the timeout (MaxRuntimeInSeconds) are root-chosen app_settings values; both
- * readers never throw and fall back to ml.g4dn.xlarge / 3600 s. A ResourceLimitExceeded refusal becomes a YoloStartRefusedError
- * (429) naming that type, which yoloRun passes through so the admin sees "No SageMaker quota for
- * <type>". An SDK retry can follow an accepted first attempt, so AWS is asked about the job name
- * first: present → the job is real and its name is returned; absent → confirmedAbsent; else not.
+ * readers never throw and fall back to ml.g4dn.xlarge / 3600 s. Any create failure becomes a
+ * YoloStartRefusedError classified by AWS error name (429 RETRYABLE / 400 / 500, lib/yolo-start-errors).
+ * An SDK retry can follow an accepted first attempt, so AWS is asked about the job name first:
+ * present → the job is real and its name is returned; absent (or a definitive 4xx) → confirmedAbsent.
  */
 export async function startYoloJob(
   projectDataUrl: string,
@@ -157,10 +148,7 @@ export async function startYoloJob(
   try {
     await sagemakerClient.send(command);
   } catch (err) {
-    if (!isSageMakerQuotaError(err)) throw err;
-    const presence = await yoloJobPresence(jobName);
-    if (presence === "present") return jobName;
-    throw new YoloStartRefusedError(yoloQuotaMessage(instanceType), presence === "absent");
+    return settleCreateFailure(err, jobName, instanceType, (name) => yoloJobPresence(name));
   }
   return jobName;
 }
@@ -244,10 +232,7 @@ export async function startYoloBatchJob(
   try {
     await sagemakerClient.send(command);
   } catch (err) {
-    if (!isSageMakerQuotaError(err)) throw err;
-    const presence = await yoloJobPresence(jobName);
-    if (presence === "present") return jobName;
-    throw new YoloStartRefusedError(yoloQuotaMessage(instanceType), presence === "absent");
+    return settleCreateFailure(err, jobName, instanceType, (name) => yoloJobPresence(name));
   }
   return jobName;
 }
@@ -312,4 +297,9 @@ export async function getYoloJobStatus(jobName: string): Promise<{
     status: response.ProcessingJobStatus || "Unknown",
     failureReason: response.FailureReason,
   };
+}
+
+/** [2026-10-22] Root's Stuck jobs › Stop: ask SageMaker to stop a processing job (it goes Stopping → Stopped). */
+export async function stopYoloJob(jobName: string): Promise<void> {
+  await sagemakerClient.send(new StopProcessingJobCommand({ ProcessingJobName: jobName }));
 }

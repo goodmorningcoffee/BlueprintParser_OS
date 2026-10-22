@@ -16,6 +16,7 @@ export const ErrorCode = {
   NOT_FOUND: "NOT_FOUND", // missing OR cross-tenant (deliberately indistinguishable — no existence leak)
   CONFLICT: "CONFLICT",
   RATE_LIMITED: "RATE_LIMITED",
+  RETRYABLE: "RETRYABLE", // a provider refused for now (throttling / capacity): the same request may succeed later
   INTERNAL: "INTERNAL", // unexpected — message is ALWAYS generic; real cause logged server-side
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -29,6 +30,7 @@ export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
   CONFLICT: 409,
   RATE_LIMITED: 429,
+  RETRYABLE: 429,
   INTERNAL: 500,
 };
 

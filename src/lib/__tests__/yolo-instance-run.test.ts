@@ -1,7 +1,8 @@
 // @vitest-environment node
 // [2026-10-21] startYoloJob launches on the root-chosen instance type and turns a SageMaker
 // ResourceLimitExceeded into a 429 YoloStartRefusedError naming that type (confirmedAbsent only when a
-// Describe says no such job exists); the run-path reader never throws.
+// Describe says no such job exists); the run-path reader never throws. [2026-10-22] Every create failure
+// is classified by AWS name (lib/yolo-start-errors): 429 RETRYABLE / 400 VALIDATION / 500 naming it.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -80,13 +81,13 @@ describe("startYoloJob instance type", () => {
     const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j1").catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(YoloStartRefusedError);
     expect(refusal).toBeInstanceOf(ApiError);
-    expect(refusal).toMatchObject({ code: "RATE_LIMITED", status: 429, confirmedAbsent: true });
+    expect(refusal).toMatchObject({ code: "RETRYABLE", status: 429, confirmedAbsent: true });
     expect((refusal as Error).message).toMatch(/^No SageMaker quota for ml\.g6\.xlarge processing jobs/u);
     expect(h.send).toHaveBeenCalledTimes(2);
     expect(h.send.mock.calls[1][0]).toMatchObject({ input: { ProcessingJobName: "j1" } }); // the Describe
   });
 
-  it("a quota refusal whose Describe stays inconclusive (3 tries) is NOT confirmed (the intent must stay a blocker)", async () => {
+  it("a refusal with no AWS status whose Describe stays inconclusive (3 tries) is NOT confirmed: 500, never retryable", async () => {
     const { startYoloJob } = await loadYolo();
     const throttle = () => Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" });
     h.send
@@ -95,7 +96,8 @@ describe("startYoloJob instance type", () => {
       .mockRejectedValueOnce(throttle())
       .mockRejectedValueOnce(throttle());
     const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j3").catch((e: unknown) => e);
-    expect(refusal).toMatchObject({ code: "RATE_LIMITED", confirmedAbsent: false });
+    expect(refusal).toMatchObject({ code: "INTERNAL", status: 500, confirmedAbsent: false, awsName: "ResourceLimitExceeded" });
+    expect((refusal as Error).message).toBe("SageMaker start outcome unknown (ResourceLimitExceeded) — check Stuck jobs before retrying");
     expect(h.send).toHaveBeenCalledTimes(4);
   });
 
@@ -106,7 +108,7 @@ describe("startYoloJob instance type", () => {
       .mockRejectedValueOnce(Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" }))
       .mockRejectedValueOnce(Object.assign(new Error("Could not find requested job with name j5"), { name: "ValidationException" }));
     const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j5").catch((e: unknown) => e);
-    expect(refusal).toMatchObject({ code: "RATE_LIMITED", confirmedAbsent: true });
+    expect(refusal).toMatchObject({ code: "RETRYABLE", confirmedAbsent: true });
   });
 
   it("a quota refusal on an SDK retry whose first attempt was accepted returns the job name (the job is real)", async () => {
@@ -117,12 +119,28 @@ describe("startYoloJob instance type", () => {
     await expect(startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j4")).resolves.toBe("j4");
   });
 
-  it("other SDK errors pass through unchanged, with no Describe", async () => {
+  it("[2026-10-22 incident] a throttled create (AWS 400) whose Describe is also throttled is still a confirmed 429 RETRYABLE", async () => {
     const { startYoloJob } = await loadYolo();
-    const boom = Object.assign(new Error("socket hang up"), { name: "TimeoutError" });
-    h.send.mockRejectedValueOnce(boom);
-    await expect(startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j2")).rejects.toBe(boom);
-    expect(h.send).toHaveBeenCalledTimes(1);
+    const throttle = () =>
+      Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException", $metadata: { httpStatusCode: 400 } });
+    h.send.mockRejectedValueOnce(throttle()).mockRejectedValueOnce(throttle()).mockRejectedValueOnce(throttle()).mockRejectedValueOnce(throttle());
+    const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j6").catch((e: unknown) => e);
+    expect(refusal).toMatchObject({ code: "RETRYABLE", status: 429, confirmedAbsent: true, awsName: "ThrottlingException" });
+    expect((refusal as Error).message).toBe("SageMaker is busy (ThrottlingException): Rate exceeded — retry shortly");
+  });
+
+  it("a network error with no AWS answer is settled by Describe: absent → confirmed 500 naming it; present → the job runs", async () => {
+    const { startYoloJob } = await loadYolo();
+    const boom = () => Object.assign(new Error("socket hang up"), { name: "TimeoutError" });
+    h.send
+      .mockRejectedValueOnce(boom())
+      .mockRejectedValueOnce(Object.assign(new Error("Could not find requested job with name j2"), { name: "ValidationException" }));
+    const refusal = await startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j2").catch((e: unknown) => e);
+    expect(refusal).toMatchObject({ code: "INTERNAL", status: 500, confirmedAbsent: true, message: "Failed to start SageMaker job (TimeoutError)" });
+    expect(h.send).toHaveBeenCalledTimes(2);
+
+    h.send.mockRejectedValueOnce(boom()).mockResolvedValueOnce({ ProcessingJobStatus: "InProgress" });
+    await expect(startYoloJob("co/0123456789abcdefabcd", "models/doors", "doors", "j7")).resolves.toBe("j7");
   });
 });
 

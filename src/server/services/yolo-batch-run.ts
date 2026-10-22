@@ -13,8 +13,9 @@
 //   • SageMaker page-cap reservation for non-root callers (root: usage recorded after the start)
 // Batch-wide: canRunModels, the SageMaker toggle (read fresh), the daily YOLO job quota counted as N
 // project-runs (root exempt, as in checkYoloQuota), model access + canonical storage path.
-// Start-failure semantics match yoloRun: rows + reservations are retired only when SageMaker confirms
-// no job exists; otherwise the rows stay as fail-closed "outcome unknown" intents.
+// Start-failure semantics match yoloRun (services/yolo-start-failure): an AWS-confirmed refusal closes
+// every row of the chunk as failed and releases the reservations; otherwise the rows stay as
+// fail-closed "outcome unknown" intents. The refusal's HTTP status follows the AWS error name.
 
 import { z } from "zod";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
@@ -31,7 +32,6 @@ import { isCanonicalModelStoragePath } from "@/lib/model-storage-authority";
 import { yoloRunConfigYaml } from "@/lib/yolo-config-yaml";
 import {
   MAX_YOLO_BATCH_PROJECTS,
-  YoloStartRefusedError,
   createYoloJobName,
   startYoloBatchJob,
 } from "@/lib/yolo";
@@ -42,6 +42,7 @@ import {
   stampReservationJob,
 } from "@/lib/compute-usage";
 import { ApiError } from "@/server/api/envelope";
+import { startFailureAnswer, startFailureRowPatch } from "@/server/services/yolo-start-failure";
 import { zPublicId } from "@/server/api/schemas";
 import {
   assertProjectWritable,
@@ -276,18 +277,17 @@ export async function yoloRunBatch(body: YoloRunBatchBody, session: AuthSession)
       // Slot order = `running` order; each project's S3 input/output is its own.
       await startYoloBatchJob(running.map((c) => c.project.dataUrl), model.s3Path, model.name, name);
     } catch (err) {
-      const refused = err instanceof YoloStartRefusedError && err.confirmedAbsent;
+      // Refused (AWS-confirmed) → every row of the chunk closed as failed + reservations released.
+      const { refused, set } = startFailureRowPatch(err);
       const retired = await withProjectWrites(running.map((c) => c.capability), async (tx) => {
-        if (refused) await tx.delete(processingJobs).where(inArray(processingJobs.id, rowIds));
-        else await tx.update(processingJobs).set({ error: "SageMaker start outcome unknown" }).where(inArray(processingJobs.id, rowIds));
+        await tx.update(processingJobs).set(set).where(inArray(processingJobs.id, rowIds));
         return refused;
       }).catch((jobError) => {
-        logger.error("YOLO batch job intent uncertainty update failed:", jobError);
+        logger.error("YOLO batch job intent update failed:", jobError);
         return false;
       });
       if (retired) await releaseAll();
-      logger.error("YOLO batch job start failed:", err);
-      throw err instanceof ApiError ? err : new ApiError("INTERNAL", "Failed to start SageMaker job");
+      throw startFailureAnswer(err, "YOLO batch");
     }
 
     for (const c of running) {
