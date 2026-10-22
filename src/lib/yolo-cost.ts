@@ -25,6 +25,8 @@ export const DEFAULT_YOLO_SECONDS_PER_PAGE = 1.5;
 /** Fewer distinct page counts than this → no slope fit; the startup default is used instead. */
 const MIN_RUNS_FOR_FIT = 3;
 const MAX_STARTUP_SECONDS = 1800;
+// [2026-10-22] A fit implying < 30 s boot or > 10 s/page per GPU is an outlier artefact (seen: 0 s + 64.68 s/page).
+const MIN_FIT_STARTUP_SECONDS = 30, MAX_SECONDS_PER_PAGE = 10;
 
 export interface YoloRunSample {
   pages: number;
@@ -65,14 +67,14 @@ export function fitYoloRunTiming(samples: readonly YoloRunSample[]): Omit<YoloRu
   const varP = ok.reduce((a, s) => a + (s.pages - meanP) ** 2, 0);
   if (n >= MIN_RUNS_FOR_FIT && varP > 0) {
     const slope = ok.reduce((a, s) => a + (s.pages - meanP) * (s.seconds - meanS), 0) / varP;
-    if (slope >= 0) {
+    if (slope >= 0 && slope <= MAX_SECONDS_PER_PAGE && meanS - slope * meanP >= MIN_FIT_STARTUP_SECONDS) {
       const startup = clamp(meanS - slope * meanP, 0, MAX_STARTUP_SECONDS);
       return { startupSeconds: Math.round(startup), secondsPerPage: round2(slope), runs: n };
     }
   }
   const startup = Math.min(DEFAULT_YOLO_STARTUP_SECONDS, ...ok.map((s) => s.seconds));
   const perPage = ok.reduce((a, s) => a + Math.max(0, s.seconds - startup) / s.pages, 0) / n;
-  return { startupSeconds: Math.round(startup), secondsPerPage: round2(perPage), runs: n };
+  return { startupSeconds: Math.round(startup), secondsPerPage: round2(Math.min(perPage, MAX_SECONDS_PER_PAGE)), runs: n };
 }
 
 function round2(v: number): number {

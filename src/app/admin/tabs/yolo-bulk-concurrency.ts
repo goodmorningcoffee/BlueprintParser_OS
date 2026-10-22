@@ -7,7 +7,7 @@ import type { YoloInstanceOptionsResponse } from "@/lib/yolo-cost";
 import { DEFAULT_CONCURRENCY } from "./yolo-batch";
 
 /** Upper bound on concurrent jobs one browser tab polls. */
-export const MAX_BULK_CONCURRENCY = 20;
+export const MAX_BULK_CONCURRENCY = 50;
 
 export function bulkConcurrency(options: YoloInstanceOptionsResponse | null): number {
   const quota = options?.catalog.options.find((o) => o.type === options.instanceType)?.quota;
