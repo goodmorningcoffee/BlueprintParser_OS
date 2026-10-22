@@ -29,7 +29,8 @@ vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
   return { auth: async () => sessionState.current };
 });
-vi.mock("@/lib/yolo", () => ({
+vi.mock("@/lib/yolo", async (importOriginal) => ({
+  YoloStartRefusedError: (await importOriginal<typeof import("@/lib/yolo")>()).YoloStartRefusedError,
   createYoloJobName: (modelName: string) => `security-job-${modelName}`,
   getYoloJobStatus: mockGetYoloJobStatus,
   startYoloJob: mockStartYoloJob,

@@ -6,6 +6,8 @@ import LLMConfigSection from "../sections/LLMConfigSection";
 import S3Browser from "../sections/S3Browser";
 import type { ModelClassType } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
+import YoloBulkBar, { useYoloBulk, type LoadYoloFn, type RunYoloFn } from "./YoloBulkBar";
+import YoloInstancePicker from "./YoloInstancePicker";
 
 interface ModelItem {
   id: number;
@@ -36,8 +38,8 @@ interface AiModelsTabProps {
   uploadProgress: number;
   onUploadModel: (e: React.FormEvent<HTMLFormElement>) => void;
   onDeleteModel: (id: number) => void;
-  onRunYolo: (projectId: string, modelId: number) => void;
-  onLoadResults: (projectId: string, modelId: number, modelName: string) => void;
+  onRunYolo: RunYoloFn;
+  onLoadResults: LoadYoloFn;
   // Safety toggles (SageMaker/Quota)
   toggles: { sagemakerEnabled: boolean; quotaEnabled: boolean; hasPassword: boolean };
   togglePassword: string;
@@ -231,6 +233,8 @@ export default function AiModelsTab({
 
   // Models eligible for YOLO run (own + enabled shared)
   const enabledModels = yoloModels.filter((m) => m.enabled !== false);
+  const completedProjects = projects.filter((p) => p.status === "completed");
+  const bulk = useYoloBulk({ models: enabledModels, projects: completedProjects, yoloJobs, yoloStatus, onRunYolo, onLoadResults });
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -641,15 +645,18 @@ export default function AiModelsTab({
       {enabledModels.length > 0 && (
         <section className="lg:col-span-2">
           <h2 className="text-lg font-semibold mb-3">Run YOLO Inference</h2>
+          {isRootAdmin && <YoloInstancePicker />}
+          <YoloBulkBar {...bulk.bar} />
           <div className="space-y-2">
-            {projects
-              .filter((p) => p.status === "completed")
+            {completedProjects
               .map((p) => (
                 <div
                   key={p.id}
                   className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
                 >
                   <div>
+                    <input type="checkbox" className="mr-2 align-middle" aria-label={`Select ${p.name} for bulk`}
+                      checked={bulk.isSelected(p.id)} onChange={() => bulk.toggle(p.id)} />
                     <span className="font-medium">{p.name}</span>
                     {yoloStatus[p.id] && Object.values(yoloStatus[p.id]).some(c => c > 0) && !(yoloJobs[p.id] && Object.values(yoloJobs[p.id]).some(Boolean)) && (
                       <span className="text-xs ml-2 text-emerald-400/70">
@@ -661,7 +668,7 @@ export default function AiModelsTab({
                     {enabledModels.map((m) => {
                       const mk = String(m.id);
                       const mStatus = (yoloStatus[p.id] || {})[mk] || 0;
-                      const mJob = (yoloJobs[p.id] || {})[mk] || "";
+                      const mJob = bulk.rowStatus(p.id, m.id, (yoloJobs[p.id] || {})[mk] || "");
                       return (
                       <div key={m.id}>
                       <div className="flex gap-1 items-center">

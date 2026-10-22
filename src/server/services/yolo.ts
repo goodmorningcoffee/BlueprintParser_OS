@@ -36,7 +36,7 @@ import {
   companies,
 } from "@/lib/db/schema";
 import { eq, and, or, isNull, isNotNull, sql } from "drizzle-orm";
-import { createYoloJobName, startYoloJob, getYoloJobStatus } from "@/lib/yolo";
+import { createYoloJobName, startYoloJob, getYoloJobStatus, YoloStartRefusedError } from "@/lib/yolo";
 import { isCanonicalModelStoragePath } from "@/lib/model-storage-authority";
 import { s3Client, S3_BUCKET, uploadToS3 } from "@/lib/s3";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -414,23 +414,23 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
       try {
         await startYoloJob(project.dataUrl, model.s3Path, model.name, jobName);
       } catch (err) {
-        // A rejected SDK promise is not proof that AWS rejected the request: a timeout or broken
-        // response can follow provider acceptance. Keep both the job intent and usage reservation
-        // live until a provider-confirmed terminal state retires them.
-        await withProjectWrite(writeCapability, project.id, async (tx) => {
-          await tx
-            .update(processingJobs)
-            .set({
-              error: "SageMaker start outcome unknown",
-            })
+        // A rejected SDK promise is not proof AWS rejected the request (a timeout can follow acceptance):
+        // keep intent + reservation live unless AWS confirmed no job exists (quota refusal, lib/yolo).
+        const refused = err instanceof YoloStartRefusedError && err.confirmedAbsent;
+        const retired = await withProjectWrite(writeCapability, project.id, async (tx) => {
+          if (refused) await tx.delete(processingJobs).where(eq(processingJobs.id, pendingJobId));
+          else await tx.update(processingJobs).set({ error: "SageMaker start outcome unknown" })
             .where(eq(processingJobs.id, pendingJobId));
+          return refused;
         }).catch((jobError) => {
           logger.error("YOLO job intent uncertainty update failed:", jobError);
+          return false;
         });
+        if (retired && reservationId !== undefined) await releaseReservation(reservationId).catch((e) => logger.error("compute_usage reservation rollback failed:", e));
         logger.error("YOLO job start failed:", err);
         // [S031 sanction] legacy leaked `Failed to start SageMaker job: ${msg}` — suffix
         // dropped; the surviving message SURFACES at 500 (S024 pin class).
-        throw new ApiError("INTERNAL", "Failed to start SageMaker job");
+        throw err instanceof ApiError ? err : new ApiError("INTERNAL", "Failed to start SageMaker job"); // quota 429 passes
       }
 
       // Persist metered usage — source of truth for the page caps + Usage

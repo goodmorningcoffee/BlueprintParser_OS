@@ -36,6 +36,7 @@
 //     survive — the G3-correct writer) · csiCodes merged from model classCsiCodes.
 // Assertions tagged [S031 fold] flip in the fold commit (sanctioned A/B/E only).
 import { describe, expect, inject, it, vi, beforeEach, afterEach } from "vitest";
+import { YoloStartRefusedError } from "@/lib/yolo";
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -69,7 +70,9 @@ const h = vi.hoisted(() => ({
   computeProjectSummaries: vi.fn(),
 }));
 
-vi.mock("@/lib/yolo", () => ({
+vi.mock("@/lib/yolo", async (importOriginal) => ({
+  // the real refusal class: yoloRun's catch tells a provider-confirmed refusal apart by instanceof
+  YoloStartRefusedError: (await importOriginal<typeof import("@/lib/yolo")>()).YoloStartRefusedError,
   getYoloJobStatus: h.getYoloJobStatus,
   createYoloJobName: h.createYoloJobName,
   startYoloJob: h.startYoloJob,
@@ -670,6 +673,64 @@ describe.skipIf(!dbUp)(
         await call({ projectId: w.project.publicId, modelId: w.model.id }),
       );
       expect(r.status).toBe(200); // post-start ledger failure swallowed (job already started)
+    });
+
+    it("an AWS-confirmed quota refusal surfaces as a 429 and retires the intent row + page reservation", async () => {
+      // [2026-10-21 bulk YOLO] lib/yolo maps ResourceLimitExceeded → YoloStartRefusedError (429) naming
+      // the instance type; confirmedAbsent means a Describe found no job under that name. yoloRun then
+      // deletes the job intent (so it never counts toward the daily job limit, blocks project delete or
+      // demo publish, or lingers as "running") and releases the reservation, and passes the 429 through
+      // so the admin sees "No SageMaker quota for <type>" and the bulk queue pauses + retries.
+      const w = await runWorld();
+      asUser(w.user);
+      const message = "No SageMaker quota for ml.g5.xlarge processing jobs (ResourceLimitExceeded): …";
+      h.startYoloJob.mockRejectedValue(new YoloStartRefusedError(message, true));
+      const r = await readJson(
+        await call({ projectId: w.project.publicId, modelId: w.model.id }),
+      );
+      expect(r.status).toBe(429);
+      expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message } });
+      expect(h.releaseReservation).toHaveBeenCalledExactlyOnceWith(77);
+      const jobs = await db
+        .select()
+        .from(processingJobs)
+        .where(eq(processingJobs.projectId, w.project.id));
+      expect(jobs).toEqual([]);
+    });
+
+    it("an unconfirmed quota refusal still surfaces as a 429 but keeps the intent + reservation as a named blocker", async () => {
+      const w = await runWorld();
+      asUser(w.user);
+      const message = "No SageMaker quota for ml.g5.xlarge processing jobs (ResourceLimitExceeded): …";
+      h.startYoloJob.mockRejectedValue(new YoloStartRefusedError(message, false));
+      const r = await readJson(
+        await call({ projectId: w.project.publicId, modelId: w.model.id }),
+      );
+      expect(r.status).toBe(429);
+      expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message } });
+      expect(h.releaseReservation).not.toHaveBeenCalled();
+      const [job] = await db
+        .select()
+        .from(processingJobs)
+        .where(eq(processingJobs.projectId, w.project.id));
+      expect(job).toMatchObject({ status: "running", error: "SageMaker start outcome unknown" });
+    });
+
+    it("a root admin's confirmed quota refusal retires the intent row (root holds no reservation)", async () => {
+      const w = await runWorld({ isRootAdmin: true });
+      asUser(w.user);
+      h.startYoloJob.mockRejectedValue(new YoloStartRefusedError("No SageMaker quota for ml.g4dn.xlarge …", true));
+      const r = await readJson(
+        await call({ projectId: w.project.publicId, modelId: w.model.id }),
+      );
+      expect(r.status).toBe(429);
+      expect(h.releaseReservation).not.toHaveBeenCalled();
+      expect(h.recordComputeUsage).not.toHaveBeenCalled();
+      const jobs = await db
+        .select()
+        .from(processingJobs)
+        .where(eq(processingJobs.projectId, w.project.id));
+      expect(jobs).toEqual([]);
     });
   },
 );

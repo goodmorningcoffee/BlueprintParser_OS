@@ -362,7 +362,7 @@ export default function AdminPage() {
     }
   }
 
-  async function loadYoloResults(projectId: string, modelId: number, modelName: string, retryCount = 0): Promise<void> {
+  async function loadYoloResults(projectId: string, modelId: number, modelName: string, retryCount = 0): Promise<string> {
     const mk = String(modelId);
     setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Loading results..." } }));
     try {
@@ -386,6 +386,7 @@ export default function AdminPage() {
             },
           }));
         }
+        return msg;
       } else {
         const err = await loadRes.json().catch(() => ({ error: "Unknown error" }));
         const errMsg = apiErrorMessage(err) || "Unknown error";
@@ -395,18 +396,17 @@ export default function AdminPage() {
           return loadYoloResults(projectId, modelId, modelName, retryCount + 1);
         }
         setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Load failed: ${errMsg}` } }));
+        return `Load failed: ${errMsg}`;
       }
     } catch {
       setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Load failed: network error" } }));
+      return "Load failed: network error";
     }
   }
 
-  async function runYolo(projectId: string, modelId: number) {
+  async function runYolo(projectId: string, modelId: number, bulk = false) { // bulk: the YoloBulkBar queue polls + loads
     const model = yoloModels.find((m) => m.id === modelId);
-    if (!model) {
-      setMessage("Model not found");
-      return;
-    }
+    if (!model) { setMessage("Model not found"); return { error: "Model not found" }; }
 
     const mk = String(modelId);
     setMessage("");
@@ -419,13 +419,14 @@ export default function AdminPage() {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: "Unknown error" }));
-      setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Error: ${apiErrorMessage(err) || "Unknown error"}` } }));
-      return;
+      const error = apiErrorMessage(await res.json().catch(() => ({ error: "Unknown error" }))) || "Unknown error";
+      setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Error: ${error}` } }));
+      return { error, httpStatus: res.status };
     }
 
     const { jobName } = await res.json();
     setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Running: ${jobName}` } }));
+    if (bulk) return { jobName: String(jobName) };
 
     // Clear any existing poll for this project+model
     const pk = pollKey(projectId, modelId);

@@ -64,6 +64,8 @@ const SCHEMA_POLICY_INPUTS = [
   "scripts/setup.sh",
   "src/lib/db/index.ts",
   "src/lib/yolo.ts",
+  "src/lib/yolo-instances.ts",
+  "src/server/services/yolo-instance.ts",
   "drizzle/0033_project_lifecycle_epoch_and_leases.sql",
 ];
 
@@ -970,20 +972,74 @@ test("schema cutover policy freezes digest-pinned isolated YOLO execution and na
   );
 
   await t.test(
-    "rejects a changed processing instance hidden by a comment",
+    "rejects a literal processing instance hidden by a comment",
     async (t) => {
       const root = await schemaPolicyFixture(t);
       await mutateSchemaPolicyFile(root, "src/lib/yolo.ts", (source) =>
         source.replace(
-          '        InstanceType: "ml.g4dn.xlarge",',
-          '        InstanceType: "ml.p3.2xlarge", // InstanceType: "ml.g4dn.xlarge"',
+          "        InstanceType: instanceType as ProcessingInstanceType,",
+          '        InstanceType: "ml.p3.8xlarge", // InstanceType: instanceType as ProcessingInstanceType,',
         ),
       );
       const result = runSchemaPolicy(root);
       assert.equal(result.status, 1);
-      assert.match(result.stderr, /InstanceType must remain ml\.g4dn\.xlarge/u);
+      assert.match(result.stderr, /InstanceType must come from the allowlisted readYoloInstanceType/u);
     },
   );
+
+  // [2026-10-21] The instance is root-selectable, but only within the bounded code allowlist.
+  for (const [name, file, from, to, message] of [
+    [
+      "rejects an instance type that bypasses the setting reader",
+      "src/lib/yolo.ts",
+      "  const instanceType = await readYoloInstanceType();",
+      '  const instanceType = process.env.YOLO_INSTANCE_TYPE || "ml.g4dn.xlarge";',
+      /must be read once, right after the authority check/u,
+    ],
+    [
+      "rejects a reassigned instance type",
+      "src/lib/yolo.ts",
+      "  const instanceType = await readYoloInstanceType();",
+      "  let instanceType = await readYoloInstanceType();\n  instanceType = \"ml.p3.16xlarge\";",
+      /must be read once|bound exactly once/u,
+    ],
+    [
+      "rejects an allowlist entry outside the bounded families",
+      "src/lib/yolo-instances.ts",
+      '  gpu("ml.p3.2xlarge", "V100 16 GB", 1, 8, 61, 3.83),',
+      '  gpu("ml.p3.2xlarge", "V100 16 GB", 1, 8, 61, 3.83),\n  gpu("ml.p4d.24xlarge", "8x A100", 8, 96, 1152, 37.69),',
+      /YOLO_INSTANCE_OPTIONS must be a literal list/u,
+    ],
+    [
+      "rejects a changed default instance",
+      "src/lib/yolo-instances.ts",
+      'export const DEFAULT_YOLO_INSTANCE_TYPE = "ml.g4dn.xlarge";',
+      'export const DEFAULT_YOLO_INSTANCE_TYPE = "ml.g5.12xlarge";',
+      /DEFAULT_YOLO_INSTANCE_TYPE must remain ml\.g4dn\.xlarge/u,
+    ],
+    [
+      "rejects a resolver that returns an unvalidated stored value",
+      "src/lib/yolo-instances.ts",
+      "  return isYoloInstanceType(raw)",
+      "  if (typeof raw === \"string\") return { instanceType: raw, valid: true, raw };\n  return isYoloInstanceType(raw)",
+      /resolveYoloInstanceSetting may only return/u,
+    ],
+    [
+      "rejects a run-path reader that returns the raw stored value",
+      "src/server/services/yolo-instance.ts",
+      "    return resolved.instanceType;",
+      "    return String((value as { instanceType?: unknown })?.instanceType ?? resolved.instanceType);",
+      /readYoloInstanceType must return only/u,
+    ],
+  ]) {
+    await t.test(name, async (t) => {
+      const root = await schemaPolicyFixture(t);
+      await mutateSchemaPolicyFile(root, file, (source) => source.replace(from, to));
+      const result = runSchemaPolicy(root);
+      assert.equal(result.status, 1, result.stdout);
+      assert.match(result.stderr, message);
+    });
+  }
 
   await t.test(
     "rejects SageMaker FullAccess in a real attachment",

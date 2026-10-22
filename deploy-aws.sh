@@ -11,6 +11,7 @@
 #   ./deploy-aws.sh restart              same-image restart after a config/secret change (deploy.sh activate)
 #   ./deploy-aws.sh logs                 tail the app log
 #   ./deploy-aws.sh unlock-login <email> clear a login lockout (the owner's own, typically)
+#   ./deploy-aws.sh sagemaker-quotas     read-only: SageMaker processing-job instance quotas, YOLO fit marked
 #
 # It ORCHESTRATES the tools that exist; it does not reimplement them. `./deploy.sh publish` remains
 # the build-and-push step and `./deploy.sh activate` the same-image restart. Terraform owns every
@@ -39,6 +40,7 @@ DEPLOY_ENV_FILE="${BP_DEPLOY_ENV_FILE:-${PROJECT_DIR}/.deploy.env}"
 TFVARS_FILE="${BP_TFVARS_FILE:-${TF_DIR}/terraform.tfvars}"
 DEPLOY_SH="${BP_DEPLOY_SH:-${PROJECT_DIR}/deploy.sh}"
 DEPLOY_YOLO_SH="${BP_DEPLOY_YOLO_SH:-${PROJECT_DIR}/deploy-yolo.sh}"
+YOLO_INSTANCES_FILE="${PROJECT_DIR}/src/lib/yolo-instances.ts"   # the web picker's allowlist
 AWS_BIN="${AWS_BIN:-aws}"
 TERRAFORM_BIN="${TERRAFORM_BIN:-terraform}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
@@ -948,6 +950,53 @@ cmd_unlock_login() {
   ok "lockouts cleared for $1"
 }
 
+# ── SageMaker quotas (read-only) ─────────────────────────────────────────────
+# The YOLO image is torch+cu118: NVIDIA GPU families accelerate it, CPU families run it slowly,
+# AMD/Inferentia/Trainium cannot run it. PICKER = offered by Admin › AI Models › Inference instance.
+yolo_fit() { # yolo_fit <ml.type> → gpu | cpu-slow | no
+  case "$1" in
+    ml.g4dn.*|ml.g5.*|ml.g6.*|ml.g6e.*|ml.p3.*|ml.p3dn.*|ml.p4d.*|ml.p4de.*|ml.p5.*|ml.p5e.*|ml.p5en.*) printf 'gpu' ;;
+    ml.inf*|ml.trn*|ml.g4ad.*) printf 'no' ;;
+    ml.m*|ml.c*|ml.r*|ml.t*) printf 'cpu-slow' ;;
+    *) printf 'no' ;;
+  esac
+}
+cmd_sagemaker_quotas() {
+  load_config
+  section "SageMaker processing-job instance quotas (${AWS_REGION})"
+  local applied defaults rows picker
+  applied=$(aws_ro service-quotas list-service-quotas --service-code sagemaker --region "${AWS_REGION}" --output json || true)
+  defaults=$(aws_ro service-quotas list-aws-default-service-quotas --service-code sagemaker --region "${AWS_REGION}" --output json || true)
+  [ -n "${applied}${defaults}" ] || die "could not list SageMaker service quotas (aws credentials? region ${AWS_REGION})"
+  # Applied values win over defaults; a quota with no applied value is reported at its default.
+  rows=$(printf '{"applied":%s,"defaults":%s}' "${applied:-null}" "${defaults:-null}" | json '(() => {
+    const suffix = " for processing job usage"; const m = new Map();
+    const add = (src, q) => { for (const x of (q && q.Quotas) || []) {
+      const n = String(x.QuotaName || "");
+      if (n.length <= suffix.length || n.slice(-suffix.length) !== suffix) continue;
+      const t = n.slice(0, -suffix.length); if (src === "applied" || !m.has(t)) m.set(t, [x.Value, src, x.QuotaCode || "?"]); } };
+    add("default", j && j.defaults); add("applied", j && j.applied);
+    return [...m].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([t, v]) => [t, v[0], v[1], v[2]].join("\t")).join("\n");
+  })()')
+  [ -n "${rows}" ] || { warn "no '<type> for processing job usage' quotas returned"; return 0; }
+  picker=" $(grep -oE '"ml\.[a-z0-9]+\.[a-z0-9]+"' "${YOLO_INSTANCES_FILE}" 2>/dev/null | tr -d '"' | sort -u | tr '\n' ' ')"
+  printf '  %-20s %6s  %-8s %-9s %-7s %s\n' INSTANCE QUOTA SOURCE YOLO PICKER QUOTA-CODE
+  local type value src code fit inpick usable=0
+  while IFS="$(printf '\t')" read -r type value src code; do
+    [ -n "${type}" ] || continue
+    fit=$(yolo_fit "${type}")
+    case "${picker}" in *" ${type} "*) inpick=yes ;; *) inpick=- ;; esac
+    if [ "${fit}" != no ] && [ "${value%%.*}" -ge 1 ] 2>/dev/null; then usable=$((usable+1)); fi
+    printf '  %-20s %6s  %-8s %-9s %-7s %s\n' "${type}" "${value%.0}" "${src}" "${fit}" "${inpick}" "${code}"
+  done <<QUOTAS
+${rows}
+QUOTAS
+  if [ "${usable}" -gt 0 ]; then ok "${usable} YOLO-capable instance type(s) with a quota of at least 1"
+  else warn "no YOLO-capable instance type has a processing-job quota of at least 1 — YOLO runs will be refused"; fi
+  info "raise one: aws service-quotas request-service-quota-increase --service-code sagemaker --quota-code <QUOTA-CODE> --desired-value 2 --region ${AWS_REGION}"
+  info "the web app runs YOLO on the type chosen in Admin › AI Models › Inference instance (default ml.g4dn.xlarge)"
+}
+
 # ── TUI ──────────────────────────────────────────────────────────────────────
 tui() {
   load_config
@@ -978,7 +1027,7 @@ tui() {
   done
 }
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 64; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 64; }
 
 # ── main ─────────────────────────────────────────────────────────────────────
 cmd="${1:-}"; [ $# -gt 0 ] && shift
@@ -1005,6 +1054,7 @@ case "${cmd}" in
   restart) cmd_restart ;;
   logs) cmd_logs ;;
   unlock-login) cmd_unlock_login "${POSITIONAL}" ;;
+  sagemaker-quotas) cmd_sagemaker_quotas ;;
   help|-h|--help) usage ;;
   *) usage ;;
 esac

@@ -48,7 +48,11 @@ case "$service $action" in
   "dynamodb create-table") touch "$STATE/table" ;;
   "dynamodb wait") : ;;
   "service-quotas get-service-quota") echo "16.0" ;;
-  "service-quotas list-service-quotas") echo "1.0" ;;
+  "service-quotas list-service-quotas")
+    # doctor asks one value through --query; sagemaker-quotas reads the whole JSON listing.
+    if [ -n "$query" ]; then echo "1.0"; elif [ -n "\${MOCK_QUOTAS_APPLIED:-}" ]; then cat "\${MOCK_QUOTAS_APPLIED}"; else exit 254; fi ;;
+  "service-quotas list-aws-default-service-quotas")
+    if [ -n "\${MOCK_QUOTAS_DEFAULTS:-}" ]; then cat "\${MOCK_QUOTAS_DEFAULTS}"; else exit 254; fi ;;
   "lambda get-account-settings") echo "1000" ;;
   "acm list-certificates") printf '{"CertificateSummaryList":[{"CertificateArn":"${CERT_ARN}","DomainName":"*.${DOMAIN}","Status":"%s"}]}\\n' "\${MOCK_CERT_STATUS:-ISSUED}" ;;
   "acm describe-certificate")
@@ -719,4 +723,81 @@ test("bootstrap --from re-runs every later phase, and infra-live rolls the servi
   assert.ok(lines.some((l) => l.startsWith("RUNTASK bp-bootstrap-company")), "first-user ran again (later phases were re-opened)");
   const after = JSON.parse(await readFile(path.join(home, ".blueprintparser-deploy", "bootstrap.json"), "utf8"));
   assert.equal(after["phase:verify"], "done");
+});
+
+// ── sagemaker-quotas (read-only) ─────────────────────────────────────────────
+const stripAnsi = (text) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+async function runQuotas(applied, defaults) {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const env = {};
+  if (applied) {
+    env.MOCK_QUOTAS_APPLIED = path.join(fixture, "quotas-applied.json");
+    await writeFile(env.MOCK_QUOTAS_APPLIED, JSON.stringify(applied));
+  }
+  if (defaults) {
+    env.MOCK_QUOTAS_DEFAULTS = path.join(fixture, "quotas-defaults.json");
+    await writeFile(env.MOCK_QUOTAS_DEFAULTS, JSON.stringify(defaults));
+  }
+  const result = runTool(["sagemaker-quotas"], env);
+  const rows = new Map();
+  for (const line of stripAnsi(result.stdout).split("\n")) {
+    const cols = line.trim().split(/\s+/u);
+    if (/^ml\./u.test(cols[0] ?? "")) rows.set(cols[0], cols.slice(1));
+  }
+  return { result, rows, out: stripAnsi(result.stdout), lines: await logLines() };
+}
+
+test("sagemaker-quotas lists only processing-job instance quotas, applied over default, marks YOLO fit + picker, and is read-only", async () => {
+  const { result, rows, out, lines } = await runQuotas(
+    {
+      Quotas: [
+        { QuotaName: "ml.g4dn.xlarge for processing job usage", QuotaCode: "L-G4DN", Value: 2 },
+        { QuotaName: "ml.inf2.xlarge for processing job usage", QuotaCode: "L-INF2", Value: 4 },
+        { QuotaName: "ml.g4dn.xlarge for training job usage", QuotaCode: "L-TRAIN", Value: 9 },
+        { QuotaName: "Maximum number of processing jobs", QuotaCode: "L-MAX", Value: 100 },
+      ],
+    },
+    {
+      Quotas: [
+        { QuotaName: "ml.g4dn.xlarge for processing job usage", QuotaCode: "L-G4DN", Value: 0 },
+        { QuotaName: "ml.g5.xlarge for processing job usage", QuotaCode: "L-G5", Value: 0 },
+        { QuotaName: "ml.m5.xlarge for processing job usage", QuotaCode: "L-M5", Value: 1 },
+        { QuotaName: "ml.g6e.48xlarge for processing job usage", QuotaCode: "L-G6E48", Value: 0 },
+      ],
+    },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  // INSTANCE → [QUOTA, SOURCE, YOLO, PICKER, QUOTA-CODE]
+  assert.deepEqual(rows.get("ml.g4dn.xlarge"), ["2", "applied", "gpu", "yes", "L-G4DN"]);
+  assert.deepEqual(rows.get("ml.g5.xlarge"), ["0", "default", "gpu", "yes", "L-G5"]);
+  assert.deepEqual(rows.get("ml.m5.xlarge"), ["1", "default", "cpu-slow", "yes", "L-M5"]);
+  assert.deepEqual(rows.get("ml.inf2.xlarge"), ["4", "applied", "no", "-", "L-INF2"]);
+  assert.deepEqual(rows.get("ml.g6e.48xlarge"), ["0", "default", "gpu", "-", "L-G6E48"], "a GPU type the picker does not offer");
+  assert.equal(rows.size, 5, "training-job and non-instance quotas are filtered out");
+  assert.match(out, /2 YOLO-capable instance type\(s\) with a quota of at least 1/u, "inf2 has quota but cannot run the image");
+  const awsCalls = lines.filter((l) => l.startsWith("aws "));
+  assert.ok(awsCalls.length >= 2, "both listings were read");
+  for (const call of awsCalls) {
+    assert.match(call, /^aws service-quotas list-(aws-default-)?service-quotas --service-code sagemaker /u, `read-only: ${call}`);
+  }
+});
+
+test("sagemaker-quotas warns when no YOLO-capable type has quota, and fails when neither listing can be read", async () => {
+  const none = await runQuotas(
+    { Quotas: [{ QuotaName: "ml.trn1.2xlarge for processing job usage", QuotaCode: "L-T", Value: 3 }] },
+    { Quotas: [{ QuotaName: "ml.g4dn.xlarge for processing job usage", QuotaCode: "L-G4DN", Value: 0 }] },
+  );
+  assert.equal(none.result.status, 0, none.result.stderr);
+  assert.match(none.out, /no YOLO-capable instance type has a processing-job quota of at least 1/u);
+
+  const onlyDefaults = await runQuotas(null, {
+    Quotas: [{ QuotaName: "ml.g5.xlarge for processing job usage", QuotaCode: "L-G5", Value: 1 }],
+  });
+  assert.equal(onlyDefaults.result.status, 0, onlyDefaults.result.stderr);
+  assert.deepEqual(onlyDefaults.rows.get("ml.g5.xlarge"), ["1", "default", "gpu", "yes", "L-G5"]);
+
+  const broken = await runQuotas(null, null);
+  assert.notEqual(broken.result.status, 0);
+  assert.match(broken.result.stderr, /could not list SageMaker service quotas/u);
 });

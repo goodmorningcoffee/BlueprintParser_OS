@@ -2,9 +2,13 @@ import {
   SageMakerClient,
   CreateProcessingJobCommand,
   DescribeProcessingJobCommand,
+  type ProcessingInstanceType,
 } from "@aws-sdk/client-sagemaker";
 import { S3_BUCKET } from "@/lib/s3";
 import { randomUUID } from "crypto";
+import { ApiError } from "@/server/api/envelope";
+import { readYoloInstanceType } from "@/server/services/yolo-instance";
+import { isSageMakerNotFoundError, isSageMakerQuotaError, yoloQuotaMessage } from "@/lib/yolo-instances";
 
 const sagemakerClient = new SageMakerClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -15,6 +19,19 @@ const sagemakerClient = new SageMakerClient({
     },
   }),
 });
+
+/**
+ * SageMaker refused CreateProcessingJob for lack of instance quota (HTTP 429 to the admin).
+ * `confirmedAbsent`: a follow-up Describe reported no job under this name, so the refusal is
+ * provider-confirmed and the caller may retire its job intent and page reservation.
+ */
+export class YoloStartRefusedError extends ApiError {
+  readonly confirmedAbsent: boolean;
+  constructor(message: string, confirmedAbsent: boolean) {
+    super("RATE_LIMITED", message);
+    this.confirmedAbsent = confirmedAbsent;
+  }
+}
 
 const ECR_IMAGE = process.env.YOLO_ECR_IMAGE;
 const SAGEMAKER_ROLE = process.env.SAGEMAKER_ROLE_ARN;
@@ -66,6 +83,12 @@ export function createYoloJobName(
  * @param modelS3Path - S3 prefix for the model (e.g., "models/my-model")
  * @param modelName - Human-readable model name for the job
  * @returns Job name for status polling
+ *
+ * The instance type is the root-chosen app_settings value (readYoloInstanceType never throws; it
+ * falls back to ml.g4dn.xlarge). A ResourceLimitExceeded refusal becomes a YoloStartRefusedError
+ * (429) naming that type, which yoloRun passes through so the admin sees "No SageMaker quota for
+ * <type>". An SDK retry can follow an accepted first attempt, so AWS is asked about the job name
+ * first: present → the job is real and its name is returned; absent → confirmedAbsent; else not.
  */
 export async function startYoloJob(
   projectDataUrl: string,
@@ -74,13 +97,14 @@ export async function startYoloJob(
   jobName = createYoloJobName(modelName),
 ): Promise<string> {
   assertYoloRuntimeAuthority();
+  const instanceType = await readYoloInstanceType();
 
   const command = new CreateProcessingJobCommand({
     ProcessingJobName: jobName,
     ProcessingResources: {
       ClusterConfig: {
         InstanceCount: 1,
-        InstanceType: "ml.g4dn.xlarge",
+        InstanceType: instanceType as ProcessingInstanceType,
         VolumeSizeInGB: 30,
       },
     },
@@ -128,8 +152,25 @@ export async function startYoloJob(
     },
   });
 
-  await sagemakerClient.send(command);
+  try {
+    await sagemakerClient.send(command);
+  } catch (err) {
+    if (!isSageMakerQuotaError(err)) throw err;
+    const presence = await yoloJobPresence(jobName);
+    if (presence === "present") return jobName;
+    throw new YoloStartRefusedError(yoloQuotaMessage(instanceType), presence === "absent");
+  }
   return jobName;
+}
+
+/** Does SageMaker hold a processing job under this name? Never throws; "unknown" on any doubt. */
+export async function yoloJobPresence(jobName: string): Promise<"present" | "absent" | "unknown"> {
+  try {
+    await getYoloJobStatus(jobName);
+    return "present";
+  } catch (err) {
+    return isSageMakerNotFoundError(err) ? "absent" : "unknown";
+  }
 }
 
 /**

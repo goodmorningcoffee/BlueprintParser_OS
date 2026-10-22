@@ -42,6 +42,8 @@ const files = Object.fromEntries(
       "scripts/setup.sh",
       "src/lib/db/index.ts",
       "src/lib/yolo.ts",
+      "src/lib/yolo-instances.ts",
+      "src/server/services/yolo-instance.ts",
       "drizzle/0033_project_lifecycle_epoch_and_leases.sql",
     ].map(async (file) => [file, await readFile(file, "utf8")]),
   ),
@@ -2050,6 +2052,53 @@ if (!startYoloFunction?.body) {
     yoloRuntimeInvariant,
     "runtime authority must be the first executable job-start statement",
   );
+  // [2026-10-21 owner ask] The instance type is root-selectable, but ONLY from the code allowlist:
+  // the second statement reads it through readYoloInstanceType (lenient, default ml.g4dn.xlarge),
+  // `instanceType` is bound nowhere else, and the allowlist/reader are frozen below.
+  requireTsCompactText(
+    "src/lib/yolo.ts",
+    startYoloFunction.body.statements[1],
+    yoloSource,
+    "constinstanceType=awaitreadYoloInstanceType();",
+    yoloRuntimeInvariant,
+    "the instance type must be read once, right after the authority check, via readYoloInstanceType()",
+  );
+  const instanceTypeBindings = descendants(
+    startYoloFunction,
+    (node) =>
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "instanceType",
+  );
+  const instanceTypeWrites = descendants(
+    startYoloFunction.body,
+    (node) =>
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === "instanceType",
+  );
+  if (instanceTypeBindings.length !== 1 || instanceTypeWrites.length !== 0) {
+    report(
+      "src/lib/yolo.ts",
+      yoloRuntimeInvariant,
+      "instanceType must be bound exactly once in startYoloJob and never reassigned",
+    );
+  }
+  const readerImports = yoloSource.statements.filter(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "@/server/services/yolo-instance" &&
+      compactTsText(statement.importClause, yoloSource) === "{readYoloInstanceType}",
+  );
+  if (readerImports.length !== 1 || yoloFunctions("readYoloInstanceType").length !== 0) {
+    report(
+      "src/lib/yolo.ts",
+      yoloRuntimeInvariant,
+      "readYoloInstanceType must be the services/yolo-instance reader, imported once and not redefined",
+    );
+  }
   const commandDeclarations = descendants(
     startYoloFunction.body,
     (node) =>
@@ -2132,8 +2181,8 @@ if (!startYoloFunction?.body) {
     [
       clusterConfig,
       "InstanceType",
-      '"ml.g4dn.xlarge"',
-      "InstanceType must remain ml.g4dn.xlarge",
+      "instanceTypeasProcessingInstanceType",
+      "InstanceType must come from the allowlisted readYoloInstanceType() setting",
     ],
     [clusterConfig, "VolumeSizeInGB", "30", "VolumeSizeInGB must remain 30"],
     [appSpecification, "ImageUri", "ECR_IMAGE", "ImageUri must use ECR_IMAGE"],
@@ -2269,6 +2318,124 @@ if (!startYoloFunction?.body) {
     "the processing output must remain under the canonical project yolo-output prefix",
   );
 }
+
+// [2026-10-21] The YOLO instance allowlist bounds cost: one-GPU CUDA families (or plain CPU) up to
+// 12xlarge, default ml.g4dn.xlarge, and the run-path reader can only ever return an allowlisted
+// type or that default (MaxRuntimeInSeconds above still caps each job at one hour).
+const yoloInstanceInvariant =
+  "the YOLO instance type must come from the bounded code allowlist, defaulting to ml.g4dn.xlarge";
+const yoloInstancesFile = "src/lib/yolo-instances.ts";
+const yoloInstancesSource = ts.createSourceFile(
+  yoloInstancesFile,
+  files[yoloInstancesFile],
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const allowedYoloInstance =
+  /^ml\.(?:g4dn|g5|g6|g6e|p3|m5|c5)\.(?:xlarge|2xlarge|4xlarge|8xlarge|12xlarge)$/u;
+requireTsCompactText(
+  yoloInstancesFile,
+  tsVariableInitializer(yoloInstancesSource, "DEFAULT_YOLO_INSTANCE_TYPE"),
+  yoloInstancesSource,
+  '"ml.g4dn.xlarge"',
+  yoloInstanceInvariant,
+  "DEFAULT_YOLO_INSTANCE_TYPE must remain ml.g4dn.xlarge",
+);
+const yoloInstanceOptions = tsVariableInitializer(yoloInstancesSource, "YOLO_INSTANCE_OPTIONS");
+if (
+  !yoloInstanceOptions ||
+  !ts.isArrayLiteralExpression(yoloInstanceOptions) ||
+  yoloInstanceOptions.elements.length === 0 ||
+  yoloInstanceOptions.elements.some(
+    (element) =>
+      !ts.isCallExpression(element) ||
+      !ts.isIdentifier(element.expression) ||
+      !["gpu", "cpu"].includes(element.expression.text) ||
+      !element.arguments[0] ||
+      !ts.isStringLiteral(element.arguments[0]) ||
+      !allowedYoloInstance.test(element.arguments[0].text),
+  )
+) {
+  report(
+    yoloInstancesFile,
+    yoloInstanceInvariant,
+    "YOLO_INSTANCE_OPTIONS must be a literal list of gpu()/cpu() entries within g4dn/g5/g6/g6e/p3/m5/c5 up to 12xlarge",
+  );
+}
+for (const [name, expected, detail] of [
+  ["YOLO_INSTANCE_TYPES", "YOLO_INSTANCE_OPTIONS.map((o)=>o.type)", "YOLO_INSTANCE_TYPES must be derived from YOLO_INSTANCE_OPTIONS"],
+]) {
+  requireTsCompactText(
+    yoloInstancesFile,
+    tsVariableInitializer(yoloInstancesSource, name),
+    yoloInstancesSource,
+    expected,
+    yoloInstanceInvariant,
+    detail,
+  );
+}
+const yoloInstanceFunction = (sourceFile, name) => {
+  const found = sourceFile.statements.filter(
+    (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+  );
+  return found.length === 1 ? found[0] : null;
+};
+requireTsCompactText(
+  yoloInstancesFile,
+  yoloInstanceFunction(yoloInstancesSource, "isYoloInstanceType")?.body,
+  yoloInstancesSource,
+  '{returntypeofvalue==="string"&&YOLO_INSTANCE_TYPES.includes(value);}',
+  yoloInstanceInvariant,
+  "isYoloInstanceType must accept exactly the allowlisted strings",
+);
+const resolveBody = compactTsText(
+  yoloInstanceFunction(yoloInstancesSource, "resolveYoloInstanceSetting")?.body,
+  yoloInstancesSource,
+);
+if (
+  !resolveBody.endsWith(
+    "returnisYoloInstanceType(raw)?{instanceType:raw,valid:true,raw}:{instanceType:DEFAULT_YOLO_INSTANCE_TYPE,valid:false,raw};}",
+  ) ||
+  (resolveBody.match(/return/gu) ?? []).length !== 1
+) {
+  report(
+    yoloInstancesFile,
+    yoloInstanceInvariant,
+    "resolveYoloInstanceSetting may only return an allowlisted type or the default",
+  );
+}
+const yoloInstanceServiceFile = "src/server/services/yolo-instance.ts";
+const yoloInstanceServiceSource = ts.createSourceFile(
+  yoloInstanceServiceFile,
+  files[yoloInstanceServiceFile],
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const readerFunction = yoloInstanceFunction(yoloInstanceServiceSource, "readYoloInstanceType");
+const readerReturns = readerFunction
+  ? descendants(readerFunction, ts.isReturnStatement).map((node) =>
+      compactTsText(node, yoloInstanceServiceSource),
+    )
+  : [];
+if (
+  !readerFunction ||
+  readerReturns.length !== 2 ||
+  !readerReturns.every((text) =>
+    ["returnresolved.instanceType;", "returnDEFAULT_YOLO_INSTANCE_TYPE;"].includes(text),
+  ) ||
+  !compactTsText(readerFunction.body, yoloInstanceServiceSource).includes(
+    "constresolved=resolveYoloInstanceSetting(value);",
+  )
+) {
+  report(
+    yoloInstanceServiceFile,
+    yoloInstanceInvariant,
+    "readYoloInstanceType must return only resolveYoloInstanceSetting(...).instanceType or DEFAULT_YOLO_INSTANCE_TYPE",
+  );
+}
+
 requireAll(
   "infrastructure/terraform/ecs.tf",
   [
