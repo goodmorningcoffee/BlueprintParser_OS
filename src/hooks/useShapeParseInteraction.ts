@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
@@ -14,6 +14,8 @@ import {
   appendKeynotesForPage,
   mergeKeynotesByPage,
 } from "@/queries/usePageWindow";
+import { writeAnns } from "@/queries/useAnnotations";
+import type { ClientAnnotation, KeynoteShapeData } from "@/types";
 // [refactor jul5 S028] apiErrorMessage: shape-parse now serves {error:{code,message}} for
 // cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both shapes).
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -21,6 +23,34 @@ import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 export interface UseShapeParseInteractionOpts {
   detectionTab: "models" | "tags" | "shape";
+}
+
+/** [fix 2026-10-21] What /api/shape-parse stored (non-demo projects): mirror it exactly. */
+interface ShapeParsePersisted {
+  pages: Record<number, KeynoteShapeData[] | null>;
+  annotations: ClientAnnotation[];
+  removedAnnotationIds: number[];
+}
+
+/**
+ * The server already swapped these pages in the DB, so the cache takes the stored state
+ * verbatim — page keynotes REPLACED (not appended: a repeat run must not double them) and the
+ * page's swapped shape-parse annotations replaced by the inserted rows.
+ */
+function adoptPersisted(qc: QueryClient, publicId: string, persisted: ShapeParsePersisted): void {
+  const byPage: Record<number, KeynoteShapeData[]> = {};
+  for (const [pn, keynotes] of Object.entries(persisted.pages)) byPage[Number(pn)] = keynotes ?? [];
+  mergeKeynotesByPage(qc, publicId, byPage);
+  const removed = new Set(persisted.removedAnnotationIds);
+  writeAnns(qc, publicId, (current) => [
+    ...current.filter((a) => !removed.has(a.id)),
+    ...persisted.annotations,
+  ]);
+}
+
+function pageFailureWarning(data: { failedPages?: unknown[] }): string[] {
+  const n = Array.isArray(data.failedPages) ? data.failedPages.length : 0;
+  return n > 0 ? [`${n} page(s) could not be scanned — their previous shapes were kept`] : [];
 }
 
 export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteractionOpts) {
@@ -132,7 +162,8 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       // [refactor jul11 P2.2⑦] Append against the response-time value under the request's captured
       // project identity. This preserves the old live post-await append without allowing a late A
       // response to write into whichever project happens to be globally open at settlement.
-      appendKeynotesForPage(queryClient, publicId, pageNumber, data.keynotes || []);
+      if (data.persisted) adoptPersisted(queryClient, publicId, data.persisted);
+      else appendKeynotesForPage(queryClient, publicId, pageNumber, data.keynotes || []);
       if (!canAdoptLifecycle()) return;
       if (data.warnings?.length) setWarnings(data.warnings);
       if (!canAdoptLifecycle()) return;
@@ -177,9 +208,11 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       }
       const data = await res.json();
       if (!canAdoptLifecycle()) return;
-      if (data.byPage) mergeKeynotesByPage(queryClient, publicId, data.byPage);
+      if (data.persisted) adoptPersisted(queryClient, publicId, data.persisted);
+      else if (data.byPage) mergeKeynotesByPage(queryClient, publicId, data.byPage);
       if (!canAdoptLifecycle()) return;
-      if (data.warnings?.length) setWarnings(data.warnings);
+      const allWarnings = [...pageFailureWarning(data), ...(data.warnings ?? [])];
+      if (allWarnings.length) setWarnings(allWarnings);
       if (!canAdoptLifecycle()) return;
       if (!showKeynotes) toggleKeynotes();
     } catch (err) {

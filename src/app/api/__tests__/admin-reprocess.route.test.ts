@@ -409,9 +409,11 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
   it("scope=page-names: W1 fires only on change; config/project line shapes pinned", async () => {
     const { company, project } = await createWorld();
     const admin = await createUser(company.id, { role: "admin" });
-    // page 1: stale name+drawingNumber → extractDrawingNumber(empty)=null → rename to "Page 1"
+    // page 1: stale AUTO name+drawingNumber → extractDrawingNumber(empty)=null → rename to "Page 1"
+    // (owner 2026-10-21: reprocess must persist — was name "OLD-NAME", which is a user-typed
+    // name and is now kept; see the manual-name case below.)
     const p1 = await createPage(project.id, 1, {
-      name: "OLD-NAME",
+      name: "X-9",
       drawingNumber: "X-9",
       textractData: emptyTextract,
     });
@@ -565,7 +567,8 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     expect(res.headers.get("content-type")).toBe("application/x-ndjson");
     const lines = await drain(res);
     expect(lines.find((l) => l.type === "config")).toEqual({ type: "config", useLambda: false });
-    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 1, skipped: 0, total: 1 });
+    // owner 2026-10-21: reprocess must persist — done now splits skipped into empty/failed.
+    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 1, skipped: 0, empty: 0, failed: 0, total: 1 });
 
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.keynotes).toEqual([{ shape: "hexagon", bbox: [1, 2, 3, 4], text: "K1", contour: [[0, 0]] }]);
@@ -584,8 +587,10 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const admin = await createUser(company.id, { role: "admin" });
     const page = await createPage(project.id, 1, {});
     lambdaMocks.isLambdaCvEnabled.mockReturnValueOnce(true);
+    const key = `${project.dataUrl}/pages/page_0001.png`;
     lambdaMocks.fanOutShapeParse.mockResolvedValueOnce({
-      results: [{ pageS3Key: `${project.dataUrl}/pages/page_0001.png`, shape: "cloud", bbox: [5, 6, 7, 8], text: "L1", contour: [[1, 1]] }],
+      results: [{ pageS3Key: key, shape: "cloud", bbox: [5, 6, 7, 8], text: "L1", contour: [[1, 1]] }],
+      okPages: [key], failedPages: [], pageErrors: {}, warnings: [],
     });
 
     asUser(admin);
@@ -593,13 +598,16 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const lines = await drain(res);
     expect(lines.find((l) => l.type === "config")).toEqual({ type: "config", useLambda: true });
     // unconditional post-lambda progress line carries `skipped` (case 15 pin)
+    // owner 2026-10-21: reprocess must persist — progress/done also carry empty + failed.
     const prog = lines.filter((l) => l.type === "progress");
     expect(prog.length).toBeGreaterThan(0);
-    expect(Object.keys(prog[0]).sort()).toEqual(["project", "skipped", "total", "type", "updated"]);
-    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 1, skipped: 0, total: 1 });
+    expect(Object.keys(prog[0]).sort()).toEqual(["empty", "failed", "project", "skipped", "total", "type", "updated"]);
+    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 1, skipped: 0, empty: 0, failed: 0, total: 1 });
+    expect(keynotesMocks.extractKeynotes).not.toHaveBeenCalled(); // Lambda scanned it — no local run
 
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
-    expect((row.keynotes as any[])[0]).toMatchObject({ shape: "cloud", text: "L1" });
+    // stored without the fan-out's transport field
+    expect(row.keynotes).toEqual([{ shape: "cloud", text: "L1", bbox: [5, 6, 7, 8], contour: [[1, 1]] }]);
     const anns = await annotationsFor(project.id);
     expect(anns.find((a) => a.source === "shape-parse")).toMatchObject({ name: "cloud", minX: 5, minY: 6, maxX: 7, maxY: 8 });
   }, 30000);
@@ -615,13 +623,15 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     asUser(admin);
     const res = await POST(makeReq("/api/admin/reprocess?scope=shape-parse", { method: "POST" }));
     const lines = await drain(res);
+    // owner 2026-10-21: reprocess must persist — the warning names the reason now.
     expect(lines).toContainEqual({
       type: "warning",
       project: project.name,
-      message: "Lambda failed, using sequential fallback",
+      message: "Lambda fan-out failed (lambda-down) — scanning every page locally",
     });
     expect(keynotesMocks.extractKeynotes).toHaveBeenCalled(); // fallback actually ran
-    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 0, skipped: 1, total: 1 });
+    // the local scan succeeded and found nothing → a confirmed EMPTY page, not a failure
+    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 0, skipped: 1, empty: 1, failed: 0, total: 1 });
   }, 30000);
 
   // ── shape-parse observe warn-net (rides commit U7-B) [refactor jul23 P4.1 U7] ──

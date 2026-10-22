@@ -631,7 +631,7 @@ export async function yoloLoad(
               and(
                 eq(annotations.projectId, project.id),
                 eq(annotations.source, "yolo"),
-                sql`${annotations.data}->>'modelId' = ${String(modelId)}`,
+                sql`(${annotations.data}->>'modelId' = ${String(modelId)} OR ${annotations.data}->>'modelName' = ${String(modelName)})`, // [fix 2026-10-22] S3 is read by NAME: a re-registered model (new id) replaces, not doubles
               ),
             )
             .returning({ id: annotations.id });

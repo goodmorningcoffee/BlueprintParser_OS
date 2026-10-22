@@ -75,6 +75,12 @@ def process_pages(event, worker_fn):
     pages_processed = 0
     pages_failed = 0
     errors = []
+    # [fix 2026-10-21] Per-page status for the TS fan-out (src/lib/lambda-cv.ts): a page in
+    # pages_ok was scanned, so zero hits for it are real; a page in page_errors was NOT scanned
+    # and must not be written as "no shapes". Without these lists the caller could not tell the
+    # two apart inside a multi-page batch.
+    pages_ok = []
+    page_errors = {}
 
     for i, page_key in enumerate(page_keys):
         page_path = os.path.join(TMP, f"page_{i:04d}.png")
@@ -89,9 +95,11 @@ def process_pages(event, worker_fn):
             if page_warnings:
                 all_warnings.extend(page_warnings)
             pages_processed += 1
+            pages_ok.append(page_key)
         except Exception as e:
             pages_failed += 1
             errors.append(f"Page {page_key}: {e}")
+            page_errors[page_key] = f"{type(e).__name__}: {e}"
             print(f"[lambda] {action} failed for {page_key}: {e}", file=sys.stderr)
         finally:
             try:
@@ -106,6 +114,8 @@ def process_pages(event, worker_fn):
         "pages_processed": pages_processed,
         "pages_failed": pages_failed,
         "errors": errors[:50],
+        "pages_ok": pages_ok,
+        "page_errors": page_errors,
     })
 
     # [refactor jun13 P0.5-G10] every-page-failed is a hard failure, not
@@ -125,6 +135,7 @@ def process_pages(event, worker_fn):
         "pages_processed": pages_processed,
         "pages_failed": pages_failed,
         "result_s3_key": result_key,
+        "pages_ok": pages_ok,
     }
     if status == "error":
         ret["error"] = (

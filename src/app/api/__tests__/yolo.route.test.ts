@@ -1085,6 +1085,34 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
     );
   });
 
+  it("[fix 2026-10-22] a re-registered model (new id, same name) REPLACES its old rows; other models and other projects survive", async () => {
+    const w = await loadWorld();
+    const other = await createProject(w.company.id, w.admin.id);
+    const row = (projectId: number, data: Record<string, unknown>) => ({
+      name: "door", minX: 0.1, minY: 0.2, maxX: 0.3, maxY: 0.4, pageNumber: 1, threshold: 0.9,
+      data, source: "yolo", projectId,
+    });
+    await db.insert(annotationsTable).values([
+      row(w.project.id, { modelId: w.model.id + 100000, modelName: "m" }), // old id, same S3 name
+      row(w.project.id, { modelId: w.model.id + 100001, modelName: "other" }), // a different model
+      row(other.id, { modelId: w.model.id + 100000, modelName: "m" }), // another project
+    ] as never);
+    seedS3Results([detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET])]);
+    asUser(w.admin);
+    const { status, body } = await readJson(
+      await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }),
+    );
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ success: true, detectionsLoaded: 1, deletedPrevious: 1 });
+    const left = await db
+      .select({ projectId: annotationsTable.projectId, data: annotationsTable.data })
+      .from(annotationsTable)
+      .where(eq(annotationsTable.source, "yolo"));
+    const mine = left.filter((r) => r.projectId === w.project.id).map((r) => (r.data as Record<string, unknown>).modelName);
+    expect(mine.sort()).toEqual(["m", "other"]);
+    expect(left.filter((r) => r.projectId === other.id)).toHaveLength(1);
+  });
+
   // ── yolo.load observe warn-net (rides commit U7-B) [refactor jul23 P4.1 U7] ──
   // Log-mode contract (spec Verdict 2 / RD-U7d): valid detections → zero [shape-registry]
   // warns; a malformed detection STILL persists (log+skip, gate:false — a throw would

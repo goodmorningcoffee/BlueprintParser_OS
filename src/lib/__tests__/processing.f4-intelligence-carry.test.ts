@@ -297,3 +297,32 @@ describe.skipIf(!dbUp)("processProject — U7 shape-parse observe warn-net [P4.1
     expect(ctx.kind).toBe("shape-parse");
   }, 30000);
 });
+
+// [fix 2026-10-22] Upload shape parse REPLACES the page's shape-parse rows (a retry/rerun of a
+// page used to append a second copy); other sources and other pages are untouched.
+describe.skipIf(!dbUp)("processProject — shape-parse rerun replaces, never appends", () => {
+  it("a re-processed page ends with exactly the new shape-parse rows", async () => {
+    const { project } = await createWorld();
+    await createPage(project.id, 1, { error: "first run died after shape parse" });
+    const stale = (pageNumber: number, source: string) => ({
+      name: "circle", minX: 0.1, minY: 0.1, maxX: 0.2, maxY: 0.2, pageNumber, threshold: 0.9,
+      source, data: { modelName: "shape-parse", shapeType: "circle", text: "OLD" }, projectId: project.id,
+    });
+    await db.insert(annotations).values([
+      stale(1, "shape-parse"), stale(1, "shape-parse"), stale(1, "user"), stale(2, "shape-parse"),
+    ] as never);
+    rasterMocks.getPdfPageCount.mockResolvedValue(1);
+    keynotesMocks.extractKeynotes.mockResolvedValueOnce({
+      keynotes: [{ shape: "circle", text: "NEW", bbox: [0.3, 0.3, 0.4, 0.4], contour: [[0.3, 0.3]] }],
+      warnings: [],
+    });
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    const rows = await db.select().from(annotations).where(eq(annotations.projectId, project.id));
+    const page1Shapes = rows.filter((r) => r.pageNumber === 1 && r.source === "shape-parse");
+    expect(page1Shapes.map((r) => (r.data as Record<string, unknown>).text)).toEqual(["NEW"]);
+    expect(rows.filter((r) => r.source === "user")).toHaveLength(1);
+    expect(rows.filter((r) => r.pageNumber === 2 && r.source === "shape-parse")).toHaveLength(1);
+  }, 30000);
+});

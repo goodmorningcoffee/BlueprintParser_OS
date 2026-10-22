@@ -9,6 +9,7 @@ Supports tiling for large images (>1200px) to prevent Tesseract OOM crashes.
 Usage: python3 extract_keynotes.py <image_path>
 Output: JSON array to stdout
 """
+import os
 import sys
 import json
 import string
@@ -439,8 +440,11 @@ def main(img_path):
     Callers:
       - `__main__` CLI block below (ECS subprocess path) — unpacks
          both elements and merges diag_warnings into the stdout JSON.
-      - `scripts/lambda_handler.py` `parse_worker` — unpacks and
-         discards diag_warnings (Lambda path has no warnings plumbing).
+      - `scripts/lambda_handler.py` `process_pages` — passes it as the
+         worker_fn; warnings flow into the result JSON.
+
+    Raises ValueError when the image cannot be decoded (never returns an
+    empty result for a page it did not actually scan).
 
     Both callers depend on this being a 2-tuple. If you change the
     shape, update both call sites OR this becomes a silent Lambda
@@ -450,7 +454,11 @@ def main(img_path):
 
     img = cv2.imread(img_path, 0)
     if img is None:
-        return [], []
+        # [fix 2026-10-21] An undecodable page used to return ([], []) — indistinguishable from
+        # a clean page with no keynotes, so the Lambda reported success and callers wrote the
+        # page as empty. Raise instead: the Lambda marks the page failed (page_errors) and the
+        # CLI prints "Extraction failed: ..." which src/lib/keynotes.ts reports as failed.
+        raise ValueError(f"cv2 could not decode page image {os.path.basename(img_path)}")
 
     h, w = img.shape
     print(f"[keynote] Image: {w}x{h}", file=sys.stderr)

@@ -67,6 +67,38 @@ function s3Bucket(): string {
 // ═══════════════════════════════════════════════════════════════════
 // Generic fan-out core
 // ═══════════════════════════════════════════════════════════════════
+//
+// [fix 2026-10-21 reprocess-persistence] Owner: "we want the fan out to work thats the point of
+// having lambda". The old core could not tell "this page was scanned and has no shapes" from
+// "this page was never scanned": a result file it could not read became zero rows, a retry
+// failure was swallowed by a bare `catch {}`, and callers only ever looked at `results`. Every
+// page now lands in exactly one of `okPages` (scanned, results — possibly none — are real) or
+// `failedPages` (with a reason in `pageErrors`), and every invocation is reported through
+// `onInvocation` so the admin debug stream can print what actually happened.
+
+/** One Lambda invocation, as the admin debug stream prints it. No signed URLs, no credentials. */
+export interface LambdaInvocationDiag {
+  action: string;
+  functionName: string;
+  batchIdx: number;
+  attempt: "batch" | "retry";
+  /** Page FILE names only (page_0001.png) — the storage prefix is not printed. */
+  pages: string[];
+  ok: boolean;
+  durationMs: number;
+  /** The handler's own `status` ("success" | "partial" | "error"), when it returned one. */
+  lambdaStatus?: string;
+  /** AWS FunctionError ("Unhandled" = crash/timeout/OOM), when the runtime reported one. */
+  functionError?: string;
+  resultKey: string;
+  resultFound: boolean;
+  resultCount: number;
+  /** match_count the handler reported; a mismatch with resultCount is a contract break. */
+  reportedCount?: number;
+  okPages: number;
+  failedPages: number;
+  error?: string;
+}
 
 interface FanOutOpts<T> {
   action: string;
@@ -77,17 +109,138 @@ interface FanOutOpts<T> {
   config?: Record<string, unknown>;
   resultMapper: (r: any) => T;
   onBatchComplete?: (batchIdx: number, count: number) => void;
+  onInvocation?: (diag: LambdaInvocationDiag) => void;
 }
 
-interface FanOutResult<T> {
+export interface FanOutResult<T> {
   results: (T & { pageS3Key: string })[];
   failedPages: string[];
   warnings: string[];
+  /** Pages the Lambda confirmed it scanned. A page here with no results genuinely has none. */
+  okPages: string[];
+  /** Why each failed page failed (last error seen for it). */
+  pageErrors: Record<string, string>;
 }
 
 function assertLambdaOk(resp: any): void {
   if (resp?.status === "error") {
     throw new Error(resp.error || "Lambda returned error status");
+  }
+}
+
+/** Thrown by invokeLambda when the runtime reports FunctionError (crash, timeout, OOM, import error). */
+class LambdaFunctionError extends Error {
+  constructor(readonly functionError: string, message: string) {
+    super(message);
+  }
+}
+
+function pageFileName(key: string): string {
+  return key.slice(key.lastIndexOf("/") + 1);
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+interface InvocationOutcome<T> {
+  mapped: (T & { pageS3Key: string })[];
+  warnings: string[];
+  okPages: string[];
+  failed: Record<string, string>;
+}
+
+/** Max invocations in flight at once (the SDK's default socket pool is 50 per host). */
+function maxConcurrency(): number {
+  const n = parseInt(process.env.LAMBDA_CV_MAX_CONCURRENCY || "50", 10);
+  return Number.isFinite(n) && n > 0 ? n : 50;
+}
+
+/**
+ * One invocation: invoke → check status → read the result file → split the pages into ok / failed.
+ * Throws when the invocation as a whole produced nothing usable, so the caller can retry per page.
+ */
+async function invokeOnce<T>(
+  opts: FanOutOpts<T>,
+  bucket: string,
+  jobId: string,
+  pageKeys: string[],
+  resultKey: string,
+  batchIdx: number,
+  attempt: "batch" | "retry",
+): Promise<InvocationOutcome<T>> {
+  const started = Date.now();
+  const diag: LambdaInvocationDiag = {
+    action: opts.action, functionName: functionName(), batchIdx, attempt,
+    pages: pageKeys.map(pageFileName), ok: false, durationMs: 0,
+    resultKey, resultFound: false, resultCount: 0, okPages: 0, failedPages: pageKeys.length,
+  };
+  try {
+    const resp = await invokeLambda({
+      action: opts.action,
+      job_id: jobId,
+      s3_bucket: bucket,
+      page_s3_keys: pageKeys,
+      result_s3_key: resultKey,
+      config: opts.config || {},
+      ...opts.extraPayload,
+    });
+    diag.lambdaStatus = typeof resp?.status === "string" ? resp.status : undefined;
+    if (typeof resp?.match_count === "number") diag.reportedCount = resp.match_count;
+    assertLambdaOk(resp);
+    let parsed: any;
+    try {
+      parsed = JSON.parse((await downloadFromS3(resultKey)).toString("utf-8"));
+    } catch (err) {
+      throw new Error(`Result file s3://${bucket}/${resultKey} unreadable after a successful invoke: ${errMessage(err)}`);
+    }
+    diag.resultFound = true;
+    const rows: any[] = Array.isArray(parsed?.results) ? parsed.results : [];
+    const mapped: (T & { pageS3Key: string })[] = [];
+    for (const r of rows) {
+      if (typeof r?.page_s3_key !== "string" || !pageKeys.includes(r.page_s3_key)) continue;
+      mapped.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
+    }
+    diag.resultCount = mapped.length;
+    const warnings: string[] = Array.isArray(parsed?.warnings) ? [...parsed.warnings] : [];
+    if (diag.reportedCount !== undefined && diag.reportedCount !== mapped.length) {
+      warnings.push(
+        `Lambda reported ${diag.reportedCount} results but ${mapped.length} were read back from ${resultKey}`,
+      );
+    }
+    // Per-page status: the handler lists the pages it scanned (pages_ok) and why the others
+    // failed (page_errors). An older handler without those lists is only trusted when it
+    // reports full success; on "partial" its unlisted pages are retried individually.
+    const listed: unknown = parsed?.pages_ok ?? resp?.pages_ok;
+    const pageErrors: Record<string, string> =
+      parsed?.page_errors && typeof parsed.page_errors === "object" ? parsed.page_errors : {};
+    const okSet = new Set<string>(
+      Array.isArray(listed)
+        ? listed.filter((k): k is string => typeof k === "string" && pageKeys.includes(k))
+        : resp?.status === "success" || resp?.status === undefined
+          ? pageKeys
+          : mapped.map((m) => m.pageS3Key),
+    );
+    const failed: Record<string, string> = {};
+    for (const key of pageKeys) {
+      if (!okSet.has(key)) failed[key] = String(pageErrors[key] ?? "Lambda did not report this page as scanned");
+    }
+    diag.ok = true;
+    diag.okPages = okSet.size;
+    diag.failedPages = Object.keys(failed).length;
+    return { mapped: mapped.filter((m) => okSet.has(m.pageS3Key)), warnings, okPages: [...okSet], failed };
+  } catch (err) {
+    // Debug lines carry page basenames only, never the project storage prefix.
+    diag.error = pageKeys.reduce((m, k) => m.split(k).join(k.slice(k.lastIndexOf("/") + 1)), errMessage(err));
+    if (err instanceof LambdaFunctionError) diag.functionError = err.functionError;
+    throw err;
+  } finally {
+    diag.durationMs = Date.now() - started;
+    try {
+      opts.onInvocation?.(diag);
+    } catch {
+      /* a diagnostics sink (e.g. a closed client stream) must never fail the fan-out */
+    }
   }
 }
 
@@ -99,93 +252,77 @@ async function fanOut<T>(opts: FanOutOpts<T>): Promise<FanOutResult<T>> {
   try {
     const batches = partition(opts.pageS3Keys, opts.batchSize);
 
-    // Each batch runs in its own async function so onBatchComplete fires as
-    // that batch settles, not after all batches finish. The caller's
-    // ReadableStream can then flush progress chunks to the client in real
-    // time instead of going silent until the slowest Lambda returns.
-    const batchPromises = batches.map(async (batch, idx) => {
+    // Each batch settles on its own so onBatchComplete fires as that batch settles, not after
+    // all batches finish — the caller's stream flushes progress in real time. A small pool caps
+    // invocations in flight so a 300-page project does not throttle itself into retries.
+    const runBatch = async (batch: string[], idx: number): Promise<InvocationOutcome<T>> => {
       const primaryResultKey = `tmp/cv-jobs/${jobId}/results/batch_${idx}.json`;
+      let outcome: InvocationOutcome<T>;
+      let retryKeys: string[];
       try {
-        const resp = await invokeLambda({
-          action: opts.action,
-          job_id: jobId,
-          s3_bucket: bucket,
-          page_s3_keys: batch,
-          result_s3_key: primaryResultKey,
-          config: opts.config || {},
-          ...opts.extraPayload,
-        });
-        assertLambdaOk(resp);
-        const parsed = await readResultsFromS3(bucket, primaryResultKey);
-        const mapped: (T & { pageS3Key: string })[] = [];
-        if (parsed?.results) {
-          for (const r of parsed.results) {
-            mapped.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
-          }
-        }
-        const warnings: string[] = Array.isArray(parsed?.warnings) ? parsed.warnings : [];
-        opts.onBatchComplete?.(idx, mapped.length);
-        return { kind: "success" as const, mapped, warnings };
+        outcome = await invokeOnce(opts, bucket, jobId, batch, primaryResultKey, idx, "batch");
+        retryKeys = batch.length > 1 ? Object.keys(outcome.failed) : [];
       } catch (err) {
-        // This catch fires on three distinct conditions:
-        //   (a) AWS SDK threw (FunctionError, network, throttle) — invokeLambda throws.
-        //   (b) Lambda returned {status: "error"} — assertLambdaOk threw above.
-        //   (c) `opts.onBatchComplete` itself threw — e.g. if the caller's
-        //       ReadableStream controller was closed because the client disconnected.
-        //       In (c) we'll retry N pages even though the client is gone. Waste, not
-        //       catastrophe — the fetch is already aborted upstream. Not worth guarding.
-        logger.warn(`[LAMBDA_CV] ${opts.action} batch ${idx} failed: ${err}`);
-        const retryResults: (T & { pageS3Key: string })[] = [];
-        const retryWarnings: string[] = [];
-        const retryFailed: string[] = [];
-        for (const pageKey of batch) {
-          try {
-            const retryKey = `tmp/cv-jobs/${jobId}/results/retry_${pageKey.replace(/\//g, "_")}.json`;
-            const retryResp = await invokeLambda({
-              action: opts.action,
-              job_id: jobId,
-              s3_bucket: bucket,
-              page_s3_keys: [pageKey],
-              result_s3_key: retryKey,
-              config: opts.config || {},
-              ...opts.extraPayload,
-            });
-            assertLambdaOk(retryResp);
-            const parsed = await readResultsFromS3(bucket, retryKey);
-            if (parsed?.results) {
-              for (const r of parsed.results) {
-                retryResults.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
-              }
-            }
-            if (Array.isArray(parsed?.warnings)) {
-              retryWarnings.push(...parsed.warnings);
-            }
-          } catch {
-            retryFailed.push(pageKey);
-          }
-        }
-        opts.onBatchComplete?.(idx, retryResults.length);
-        return { kind: "retry" as const, retryResults, retryWarnings, retryFailed };
+        // SDK threw (network, throttle, AccessDenied, missing function), the runtime reported
+        // FunctionError (timeout, OOM, import error), the handler returned {status:"error"}, or
+        // the result file could not be read. Retry each page alone.
+        logger.warn(`[LAMBDA_CV] ${opts.action} batch ${idx} failed: ${errMessage(err)}`);
+        outcome = { mapped: [], warnings: [], okPages: [], failed: {} };
+        for (const key of batch) outcome.failed[key] = errMessage(err);
+        retryKeys = batch;
       }
-    });
+      for (const pageKey of retryKeys) {
+        const retryKey = `tmp/cv-jobs/${jobId}/results/retry_${pageKey.replace(/\//g, "_")}.json`;
+        try {
+          const retry = await invokeOnce(opts, bucket, jobId, [pageKey], retryKey, idx, "retry");
+          outcome.mapped.push(...retry.mapped);
+          outcome.warnings.push(...retry.warnings);
+          if (retry.okPages.includes(pageKey)) {
+            outcome.okPages.push(pageKey);
+            delete outcome.failed[pageKey];
+          } else {
+            outcome.failed[pageKey] = retry.failed[pageKey] ?? outcome.failed[pageKey];
+          }
+        } catch (err) {
+          outcome.failed[pageKey] = errMessage(err);
+          logger.warn(`[LAMBDA_CV] ${opts.action} retry failed for ${pageFileName(pageKey)}: ${errMessage(err)}`);
+        }
+      }
+      // A closed client stream (caller's controller) must not turn into a retry storm.
+      try {
+        opts.onBatchComplete?.(idx, outcome.mapped.length);
+      } catch {
+        /* diagnostics sink */
+      }
+      return outcome;
+    };
 
-    const outcomes = await Promise.all(batchPromises);
+    const outcomes: InvocationOutcome<T>[] = new Array(batches.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < batches.length) {
+        const idx = next++;
+        outcomes[idx] = await runBatch(batches[idx], idx);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(maxConcurrency(), batches.length) }, worker));
 
     const allResults: (T & { pageS3Key: string })[] = [];
     const failedPages: string[] = [];
+    const okPages: string[] = [];
     const allWarnings: string[] = [];
+    const pageErrors: Record<string, string> = {};
     for (const outcome of outcomes) {
-      if (outcome.kind === "success") {
-        allResults.push(...outcome.mapped);
-        allWarnings.push(...outcome.warnings);
-      } else {
-        allResults.push(...outcome.retryResults);
-        allWarnings.push(...outcome.retryWarnings);
-        failedPages.push(...outcome.retryFailed);
+      allResults.push(...outcome.mapped);
+      allWarnings.push(...outcome.warnings);
+      okPages.push(...outcome.okPages);
+      for (const [key, reason] of Object.entries(outcome.failed)) {
+        failedPages.push(key);
+        pageErrors[key] = reason;
       }
     }
 
-    return { results: allResults, failedPages, warnings: allWarnings };
+    return { results: allResults, failedPages, warnings: allWarnings, okPages, pageErrors };
   } finally {
     cleanupJob(jobId).catch(() => {});
   }
@@ -233,15 +370,13 @@ interface ShapeParseFanOutOpts {
   pageS3Keys: string[];
   config?: Record<string, unknown>;
   onBatchComplete?: (batchIdx: number, shapeCount: number) => void;
+  onInvocation?: (diag: LambdaInvocationDiag) => void;
 }
 
-// NOTE: unlike `fanOutTemplateMatch`, neither current caller of `fanOutShapeParse` passes
-// `onBatchComplete` — Shape Parse scanAll has no progress stream today. The UI just spins
-// during a multi-minute scan. The two callers are `server/services/shape-parse.ts` and
-// `server/services/reprocess.ts`; the `/api/shape-parse` route is a 22-line shell and holds
-// none of this. To add progress, the SERVICE would switch to a ReadableStream response and
-// thread `onBatchComplete` through — the pattern to copy is in
-// `server/services/symbol-search.ts`, not in that route, which is likewise now a shell.
+// Callers: `server/services/reprocess-shape-parse.ts` (admin reprocess — streams onInvocation into
+// the NDJSON debug lines, which also keeps the ALB idle timer fed) and
+// `server/services/shape-parse.ts` (viewer scanAll, kind:json — no progress stream). Both treat
+// `failedPages` as NOT scanned: an empty `results` is only "no shapes" for pages in `okPages`.
 export async function fanOutShapeParse(
   opts: ShapeParseFanOutOpts
 ): Promise<FanOutResult<KeynoteShapeData>> {
@@ -257,6 +392,7 @@ export async function fanOutShapeParse(
       contour: r.contour || [],
     }),
     onBatchComplete: opts.onBatchComplete,
+    onInvocation: opts.onInvocation,
   });
 }
 
@@ -283,26 +419,23 @@ async function invokeLambda(payload: Record<string, unknown>): Promise<any> {
   const resp = await client.send(cmd);
 
   if (resp.FunctionError) {
-    const errPayload = resp.Payload
-      ? JSON.parse(Buffer.from(resp.Payload).toString())
-      : { errorMessage: resp.FunctionError };
-    throw new Error(`Lambda error: ${errPayload.errorMessage || resp.FunctionError}`);
+    let errPayload: { errorMessage?: string; errorType?: string } = {};
+    try {
+      errPayload = resp.Payload ? JSON.parse(Buffer.from(resp.Payload).toString()) : {};
+    } catch {
+      /* non-JSON error payload: fall back to the FunctionError label */
+    }
+    const kind = errPayload.errorType ? ` (${errPayload.errorType})` : "";
+    throw new LambdaFunctionError(
+      resp.FunctionError,
+      `Lambda error: ${errPayload.errorMessage || resp.FunctionError}${kind}`,
+    );
   }
 
   if (resp.Payload) {
     return JSON.parse(Buffer.from(resp.Payload).toString());
   }
   return { status: "success" };
-}
-
-async function readResultsFromS3(bucket: string, key: string): Promise<any> {
-  try {
-    const buf = await downloadFromS3(key);
-    return JSON.parse(buf.toString("utf-8"));
-  } catch (err) {
-    logger.warn(`[LAMBDA_CV] Failed to read results from s3://${bucket}/${key}:`, err);
-    return null;
-  }
 }
 
 async function cleanupJob(jobId: string): Promise<void> {

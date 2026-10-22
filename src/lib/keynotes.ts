@@ -18,6 +18,10 @@ const execFileAsync = promisify(execFile);
 export interface KeynoteExtractionResult {
   keynotes: KeynoteShapeData[];
   warnings: string[];
+  /** [fix 2026-10-21] Set when the page was NOT scanned (python crashed, timed out, or could
+   *  not decode the image). `keynotes` is then [] by necessity, not because the page has none —
+   *  persisting callers must leave the page's previous results alone. Absent on success. */
+  failed?: true;
 }
 
 export async function extractKeynotes(
@@ -52,6 +56,11 @@ export async function extractKeynotes(
       contour: r.contour || [],
     }));
 
+    // The CLI catches its own fatal errors and still exits 0 with {"results": [], "warnings":
+    // ["Extraction failed: ..."]} — that is a failed scan, not an empty page.
+    if (rawResults.length === 0 && warnings.some((w) => w.startsWith("Extraction failed"))) {
+      return { keynotes, warnings, failed: true };
+    }
     return { keynotes, warnings };
   } catch (err: any) {
     const stderr = err?.stderr || "";
@@ -59,7 +68,7 @@ export async function extractKeynotes(
     logger.error(
       `[KEYNOTE] Extraction failed:\n  Error: ${message}\n  Stderr: ${stderr}\n  Exit code: ${err?.code || "unknown"}`
     );
-    return { keynotes: [], warnings: [`Extraction failed: ${message}`] };
+    return { keynotes: [], warnings: [`Extraction failed: ${message}`], failed: true };
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

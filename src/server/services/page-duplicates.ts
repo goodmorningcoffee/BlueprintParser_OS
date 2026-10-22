@@ -6,7 +6,7 @@
 // override). Root: one company via ?companyId, or every company. An unknown or foreign project
 // id fails the WHOLE request with 404 (fail closed).
 
-import { and, asc, eq, gt, inArray, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages, projects } from "@/lib/db/schema";
@@ -174,6 +174,32 @@ function projectLine(project: DuplicateScopeProject, stored: readonly StoredDedu
   };
 }
 
+/**
+ * [fix 2026-10-22] Read-only: surplus `pages` rows sharing (project_id, page_number) — rows
+ * beyond the first per page number (no unique index guards the pair). Counts every project in
+ * scope, skipped ones included (an unfinished/retried upload is where they come from).
+ */
+export async function countDuplicatePageRows(
+  projectsInScope: readonly DuplicateScopeProject[],
+): Promise<{ total: number; projects: { publicId: string; name: string; rows: number }[] }> {
+  if (projectsInScope.length === 0) return { total: 0, projects: [] };
+  const surplus = sql<number>`(count(*) - count(distinct ${pages.pageNumber}))::int`;
+  const rows = await db
+    .select({ projectId: pages.projectId, rows: surplus })
+    .from(pages)
+    .where(inArray(pages.projectId, projectsInScope.map((p) => p.id)))
+    .groupBy(pages.projectId)
+    .having(sql`count(*) > count(distinct ${pages.pageNumber})`);
+  const byId = new Map(projectsInScope.map((p) => [p.id, p]));
+  const list = rows
+    .flatMap((r) => {
+      const p = byId.get(r.projectId);
+      return p ? [{ publicId: p.publicId, name: p.name, rows: Number(r.rows) }] : [];
+    })
+    .sort((a, b) => b.rows - a.rows);
+  return { total: list.reduce((n, p) => n + p.rows, 0), projects: list };
+}
+
 async function* scanLines(projectsInScope: DuplicateScopeProject[], signal: AbortSignal) {
   const started = Date.now();
   const scannedAt = new Date().toISOString();
@@ -212,6 +238,7 @@ async function* scanLines(projectsInScope: DuplicateScopeProject[], signal: Abor
     if (list.length < 2) continue;
     yield { t: "crossProject", companyId, pairs: crossProjectReport(list) };
   }
+  yield { t: "duplicatePageRows", ...(await countDuplicatePageRows(projectsInScope)) };
   yield { t: "done", scanned, durationMs: Date.now() - started };
 }
 

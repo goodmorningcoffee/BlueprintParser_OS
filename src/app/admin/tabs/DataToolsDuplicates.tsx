@@ -30,10 +30,11 @@ interface ScanState {
   reports: ProjectReport[];
   skipped: { name: string; reason: string }[];
   cross: CrossPair[];
+  dupRows: { total: number; projects: { publicId: string; name: string; rows: number }[] } | null;
   done: boolean;
 }
 
-const EMPTY: ScanState = { reports: [], skipped: [], cross: [], done: false };
+const EMPTY: ScanState = { reports: [], skipped: [], cross: [], dupRows: null, done: false };
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const pad4 = (n: number) => String(n).padStart(4, "0");
 
@@ -196,7 +197,7 @@ export default function DataToolsDuplicates({ isRootAdmin }: { isRootAdmin: bool
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      const next: ScanState = { reports: [], skipped: [], cross: [], done: false };
+      const next: ScanState = { reports: [], skipped: [], cross: [], dupRows: null, done: false };
       for (;;) {
         const { value, done } = await reader.read();
         if (value) buffer += decoder.decode(value, { stream: true });
@@ -210,6 +211,7 @@ export default function DataToolsDuplicates({ isRootAdmin }: { isRootAdmin: bool
             const p = msg.project as { name?: string } | undefined;
             next.skipped.push({ name: p?.name ?? "scan", reason: String(msg.reason ?? msg.message ?? "") });
           } else if (msg.t === "crossProject") next.cross.push(...(msg.pairs as CrossPair[]));
+          else if (msg.t === "duplicatePageRows") next.dupRows = msg as unknown as NonNullable<ScanState["dupRows"]>;
           else if (msg.t === "done") next.done = true;
         }
         setScan({ ...next, reports: [...next.reports] });
@@ -280,6 +282,12 @@ export default function DataToolsDuplicates({ isRootAdmin }: { isRootAdmin: bool
               {nameOf(c.b)} shares {c.shared} of its {c.bPages} pages with {nameOf(c.a)}{c.copy ? " — page-for-page copy" : ""}
             </div>
           ))}
+        </div>
+      )}
+      {scan.dupRows && (
+        <div className="text-xs">
+          {scan.dupRows.total} duplicate page rows {target === "all" ? "company-wide" : "in this project"} (same page number stored twice; read-only)
+          {target === "all" && scan.dupRows.projects.length > 0 && `: ${scan.dupRows.projects.map((p) => `${p.name} ${p.rows}`).join("; ")}`}
         </div>
       )}
       {scan.skipped.length > 0 && (
