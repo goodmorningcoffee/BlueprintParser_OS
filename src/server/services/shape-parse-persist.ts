@@ -160,3 +160,33 @@ export async function swapShapeParsePage(
     };
   });
 }
+
+/**
+ * [fix 2026-10-22] Upload pipeline (lib/processing.ts): replace one page's shape-parse
+ * ANNOTATION rows in one transaction — delete the page's source='shape-parse' rows, insert
+ * the new ones. A retry/rerun of the page used to append a second copy. pages.keynotes is
+ * NOT touched here: upload writes it in its own page upsert, and the pages row may not exist
+ * yet on the first run (which is why swapShapeParsePage, which needs the row, is not used).
+ * Call only for a scan that did not fail; an empty `keynotes` clears the page's rows.
+ */
+export async function replaceShapeParseAnnotations(
+  writeCapability: ProjectWriteCapability,
+  projectId: number,
+  pageNumber: number,
+  keynotes: readonly KeynoteShapeData[],
+  sink: string,
+): Promise<number> {
+  const rows = keynotes.map((k) => shapeParseAnnotationRow(projectId, pageNumber, k));
+  observeAnnotationDataBatch(rows.map((r) => r.data), sink, { gate: false });
+  return withProjectWrite(writeCapability, projectId, async (tx) => {
+    await tx.delete(annotations).where(
+      and(
+        eq(annotations.projectId, projectId),
+        eq(annotations.pageNumber, pageNumber),
+        eq(annotations.source, "shape-parse"),
+      ),
+    );
+    if (rows.length > 0) await tx.insert(annotations).values(rows);
+    return rows.length;
+  });
+}

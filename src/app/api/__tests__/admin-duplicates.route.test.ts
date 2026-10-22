@@ -141,6 +141,31 @@ describe.skipIf(!dbUp)("admin duplicates — scan", () => {
     expect(await marks(p.id)).toEqual({});
   });
 
+  it("[fix 2026-10-22] counts surplus page rows sharing (project, page number) — skipped projects too; read-only", async () => {
+    const { company, admin } = await world();
+    const p = await createProject(company.id, admin.id);
+    await seedRepeated(p.id, 3, 300);
+    await createPage(p.id, 2, { rawText: "dup row" });
+    await createPage(p.id, 2, { rawText: "dup row again" });
+    await createPage(p.id, 5, { rawText: "dup row" });
+    const busy = await createProject(company.id, admin.id, { status: "processing" });
+    await createPage(busy.id, 1, {});
+    await createPage(busy.id, 1, {});
+    const clean = await createProject(company.id, admin.id);
+    await seedRepeated(clean.id, 2, 400);
+    asUser(admin);
+    const before = (await db.select({ id: pages.id }).from(pages).where(eq(pages.projectId, p.id))).length;
+    const all = (await scan({ all: true })).lines.find((l) => l.t === "duplicatePageRows")!;
+    expect(all.total).toBe(4);
+    expect(all.projects).toEqual([
+      { publicId: p.publicId, name: p.name, rows: 3 },
+      { publicId: busy.publicId, name: busy.name, rows: 1 },
+    ]);
+    const one = (await scan({ projectPublicIds: [clean.publicId] })).lines.find((l) => l.t === "duplicatePageRows")!;
+    expect(one).toMatchObject({ total: 0, projects: [] });
+    expect((await db.select({ id: pages.id }).from(pages).where(eq(pages.projectId, p.id))).length).toBe(before);
+  });
+
   it("company scan reports a page-for-page cross-project copy", async () => {
     const { company, admin } = await world();
     const a = await createProject(company.id, admin.id);

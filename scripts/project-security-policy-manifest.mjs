@@ -697,6 +697,13 @@ export const INTERNAL_MUTATION_SINKS = [
     "swapShapeParsePage",
     "atomic-project-write",
   ],
+  // [fix 2026-10-22] upload pipeline (lib/processing.ts, under its processing lease): replace
+  // one page's source='shape-parse' annotation rows (delete + insert, one tx).
+  [
+    "src/server/services/shape-parse-persist.ts",
+    "replaceShapeParseAnnotations",
+    "atomic-project-write",
+  ],
   ["src/lib/llm/stream.ts", "streamChatResponse", "atomic-or-no-persist"],
   [
     "src/lib/services/chat/scoped.ts",
