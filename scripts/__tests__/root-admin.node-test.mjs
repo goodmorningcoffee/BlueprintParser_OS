@@ -171,6 +171,16 @@ class Pool {
             })),
           };
         }
+        if (text.startsWith("DELETE FROM public.app_settings")) {
+          const rowCount = Number(process.env.MOCK_PG_ROW_COUNT ?? "1");
+          return {
+            rowCount,
+            rows: Array.from({ length: rowCount }, () => ({
+              email: values[0],
+              is_root_admin: true,
+            })),
+          };
+        }
         if (text.startsWith("SELECT email")) {
           return {
             rowCount: 2,
@@ -327,10 +337,10 @@ after(async () => {
   await rm(fixtureDir, { recursive: true, force: true });
 });
 
-async function runRootAdmin(input, extraEnv = {}) {
+async function runRootAdmin(input, extraEnv = {}, args = []) {
   await Promise.all([writeFile(logPath, ""), writeFile(databaseLogPath, "")]);
   const { TASK_ARN: _ignoredTaskArn, ...cleanProcessEnv } = process.env;
-  const result = spawnSync("bash", [scriptPath], {
+  const result = spawnSync("bash", [scriptPath, ...args], {
     cwd: repoRoot,
     encoding: "utf8",
     input,
@@ -652,6 +662,85 @@ test("zero or multiple affected users is a hard failure with rollback", async ()
   }
 });
 
+// [2026-10-23] Root TOTP 2FA break-glass: menu choice 5 and the `2fa-reset <email>` command both
+// run the fixed reset2fa operation through the same verified ECS Exec path as promote/demote.
+test("2fa-reset (menu) is exact-email, explicitly confirmed, and deletes only the prefixed app_settings row", async () => {
+  const email = "owner+lost-phone@example.test";
+  const result = await runRootAdmin(`5\n${email}\nRESET-2FA\nq\n`, {
+    MOCK_EXECUTE_LOCAL: "1",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.log, /CALL\tecs\texecute-command/u);
+  assert.match(result.log, /reset2fa/u);
+  assert.match(result.log, new RegExp(Buffer.from(email).toString("base64")));
+  assert.equal(result.log.includes(email), false);
+  assert.match(result.stdout, /enrollment deleted for exactly one user/u);
+  const databaseEvents = result.databaseLog
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.match(result.databaseLog, /pg_catalog\.pg_advisory_xact_lock/u);
+  assert.equal(
+    databaseEvents.some(
+      (event) =>
+        event.kind === "query" &&
+        event.text.startsWith("DELETE FROM public.app_settings AS setting USING public.users AS owner") &&
+        event.text.includes("setting.key = $2 || owner.id::text") &&
+        JSON.stringify(event.values) === JSON.stringify([email, "root-2fa:"]),
+    ),
+    true,
+    result.databaseLog,
+  );
+  assert.equal(
+    databaseEvents.some((event) => event.kind === "query" && /^UPDATE/u.test(event.text)),
+    false,
+  );
+  assert.equal(
+    databaseEvents.some((event) => event.kind === "query" && event.text === "COMMIT"),
+    true,
+  );
+
+  const cancelled = await runRootAdmin(`5\n${email}\nno\nq\n`);
+  assert.equal(cancelled.status, 0, cancelled.stderr);
+  assert.match(cancelled.stdout, /Two-factor reset cancelled/u);
+  assert.equal(cancelled.log, "");
+});
+
+test("2fa-reset (command line) runs the same confirmed fixed operation; help documents it; misuse is refused before any AWS call", async () => {
+  const email = "owner@example.test";
+  const result = await runRootAdmin("RESET-2FA\n", { MOCK_EXECUTE_LOCAL: "1" }, ["2fa-reset", email]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.log, /CALL\tecs\texecute-command/u);
+  assert.match(result.log, /reset2fa/u);
+  assert.match(result.databaseLog, /DELETE FROM public\.app_settings/u);
+  assert.match(result.stdout, /enrollment deleted for exactly one user/u);
+
+  const missingEnrollment = await runRootAdmin("RESET-2FA\n", { MOCK_EXECUTE_LOCAL: "1", MOCK_PG_ROW_COUNT: "0" }, ["2fa-reset", email]);
+  assert.notEqual(missingEnrollment.status, 0);
+  assert.match(missingEnrollment.stderr, /expected exactly one changed user/u);
+  assert.match(missingEnrollment.databaseLog, /"text":"ROLLBACK"/u);
+
+  const help = await runRootAdmin("", {}, ["help"]);
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /2fa-reset <email>/u);
+  assert.match(help.stdout, /RESET-2FA/u);
+  assert.equal(help.log, "");
+
+  const noEmail = await runRootAdmin("", {}, ["2fa-reset"]);
+  assert.notEqual(noEmail.status, 0);
+  assert.match(noEmail.stderr, /usage: \.\/root_admin\.sh 2fa-reset <email>/u);
+  assert.equal(noEmail.log, "");
+
+  const badEmail = await runRootAdmin("RESET-2FA\n", {}, ["2fa-reset", "not an email"]);
+  assert.notEqual(badEmail.status, 0);
+  assert.equal(badEmail.log, "");
+
+  const unknown = await runRootAdmin("", {}, ["drop-everything"]);
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.stderr, /Unknown command/u);
+  assert.equal(unknown.log, "");
+});
+
 function sourceSecurityIssues(source) {
   const required = [
     'readonly CANONICAL_AWS_REGION="us-east-1"',
@@ -720,11 +809,11 @@ test("source freezes the exact remote operation and SQL set", async () => {
   assert.ok(operationBlock);
   const operations = [
     ...operationBlock.matchAll(
-      /(list|promote|demote):Object\.freeze\(\{text:'([^']+)',values:(\[\]|\[email\]),mutation:(true|false)\}\)/gu,
+      /(list|promote|demote|reset2fa):Object\.freeze\(\{text:'([^']+)',values:(\[\]|\[email\]|\[email,twoFactorKeyPrefix\]),mutation:(true|false)\}\)/gu,
     ),
   ].map((match) => ({
     name: match[1],
-    text: match[2].replace(/\\{3}\$1/gu, "$1"),
+    text: match[2].replace(/\\{3}\$([12])/gu, (_m, n) => `$${n}`),
     values: match[3],
     mutation: match[4],
   }));
@@ -747,15 +836,23 @@ test("source freezes the exact remote operation and SQL set", async () => {
       values: "[email]",
       mutation: "true",
     },
+    // [2026-10-23] Root TOTP 2FA break-glass: exactly the one prefixed app_settings row, no users write.
+    {
+      name: "reset2fa",
+      text: "DELETE FROM public.app_settings AS setting USING public.users AS owner WHERE owner.email = $1 AND setting.key = $2 || owner.id::text RETURNING owner.email, owner.is_root_admin",
+      values: "[email,twoFactorKeyPrefix]",
+      mutation: "true",
+    },
   ]);
+  assert.match(source, /const twoFactorKeyPrefix='root-2fa:';/u);
   assert.equal(
-    (source.match(/run_fixed_operation (?:list|promote|demote)/gu) ?? [])
+    (source.match(/run_fixed_operation (?:list|promote|demote|reset2fa)/gu) ?? [])
       .length,
-    3,
+    4,
   );
   assert.doesNotMatch(
     source,
-    /run_fixed_operation (?!list(?:\s|$)|promote(?:\s|$)|demote(?:\s|$))\w+/u,
+    /run_fixed_operation (?!list(?:\s|$)|promote(?:\s|$)|demote(?:\s|$)|reset2fa(?:\s|$))\w+/u,
   );
 });
 
@@ -769,6 +866,7 @@ test("menu exposes only fixed root-admin operations and side-effect-free setup h
     "2  Promote one exact email",
     "3  Demote one exact email (never the last root admin)",
     "4  Show ROOT_ADMIN_EMAIL Terraform setup",
+    "5  Reset one exact email's root two-factor (TOTP) enrollment",
   ]) {
     assert.equal(plainOutput.includes(label), true, label);
   }

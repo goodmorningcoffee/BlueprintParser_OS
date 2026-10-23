@@ -247,10 +247,18 @@ function checkWebhookSecret(req: Request): void {
   }
 }
 
+// [2026-10-23] Root 2FA: `session.user.isRootAdmin` is the EFFECTIVE authority — the session
+// callback (lib/auth.ts) projects it false while a root login still owes its code, so auth:"root"
+// fails closed here with no extra branch. `rootTwoFactorPending` keeps that user's admin powers.
 async function requireSession(minRole?: "admin" | "root"): Promise<AuthSession> {
   const session = (await auth()) as unknown as AuthSession | null;
   if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");
-  if (minRole === "admin" && session.user.role !== "admin" && !session.user.isRootAdmin) {
+  if (
+    minRole === "admin" &&
+    session.user.role !== "admin" &&
+    !session.user.isRootAdmin &&
+    session.user.rootTwoFactorPending !== true
+  ) {
     throw new ApiError("FORBIDDEN", "Admin only");
   }
   if (minRole === "root" && !session.user.isRootAdmin) {

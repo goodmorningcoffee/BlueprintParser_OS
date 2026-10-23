@@ -8,6 +8,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { audit } from "@/lib/audit";
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { refreshJwtUserAuthority } from "@/server/services/auth-jwt-authority";
+// [2026-10-23] Root TOTP 2FA: three private claims (twoFactorRequired/Verified/Nonce) ride in the
+// encrypted token; the session projects isRootAdmin=false while a root login is still unverified.
+// Claim model: lib/root-two-factor-claims.ts; storage + the server-side verified marker:
+// server/services/root-two-factor.ts.
+import { projectRootAuthority } from "@/lib/root-two-factor-claims";
+import {
+  refreshRootTwoFactorClaims,
+  stampRootTwoFactorAtSignIn,
+} from "@/server/services/root-two-factor";
 // [refactor jul23 P5.4-A] Brute-force lockout helpers extracted to a pure module
 // so the exponential schedule can be frozen by a unit test (auth.ts itself is
 // unimportable in tests — NextAuth/db/Google load-time deps). Behavior identical.
@@ -36,7 +45,10 @@ declare module "next-auth" {
       username: string;
       role: string;
       canRunModels: boolean;
+      /** EFFECTIVE root authority: false while a root login still owes a two-factor code. */
       isRootAdmin: boolean;
+      /** Root in the database with an active enrollment, this login not yet verified. */
+      rootTwoFactorPending: boolean;
     };
   }
 }
@@ -48,7 +60,11 @@ declare module "@auth/core/jwt" {
     username: string;
     role: string;
     canRunModels: boolean;
+    /** Database truth (users.isRootAdmin); the session derives the effective value. */
     isRootAdmin: boolean;
+    twoFactorRequired?: boolean;
+    twoFactorVerified?: boolean;
+    twoFactorNonce?: string;
   }
 }
 
@@ -323,6 +339,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.canRunModels = user.canRunModels;
         token.isRootAdmin = user.isRootAdmin;
       }
+      // Root 2FA claims. Sign-in: a fresh per-login nonce, required = active enrollment, verified
+      // = false. Every other trigger (incl. the client's session.update() after POST
+      // /api/auth/2fa/verify): re-read the enrollment and flip verified ONLY when the server-side
+      // marker for this login's nonce exists — a client-supplied flag is never consulted.
+      if (trigger === "signIn") {
+        await stampRootTwoFactorAtSignIn(token);
+      } else {
+        await refreshRootTwoFactorClaims(token);
+      }
       // Every non-sign-in token must still name a live database user. Refresh
       // tenant, role, model, and root authority together; the helper rejects
       // missing/invalid ids instead of preserving stale claims.
@@ -338,7 +363,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.username = token.username;
         session.user.role = token.role;
         session.user.canRunModels = token.canRunModels;
-        session.user.isRootAdmin = token.isRootAdmin;
+        // A root login that still owes its two-factor code is NOT root anywhere a session is
+        // consulted (route shell, in-service gates, the admin UI) but keeps admin powers.
+        const rootAuthority = projectRootAuthority(token);
+        session.user.isRootAdmin = rootAuthority.isRootAdmin;
+        session.user.rootTwoFactorPending = rootAuthority.rootTwoFactorPending;
       }
       return session;
     },

@@ -3,10 +3,16 @@ set -euo pipefail
 
 # BlueprintParser owner break-glass root-admin helper.
 #
-# This helper exposes three fixed, schema-preserving database operations through
-# ECS Exec: list root-admin status, promote one exact email, and demote one exact
-# email. It deliberately has no arbitrary SQL, DDL, password-reset, task-ARN,
-# container, cluster, service, region, or account override channel.
+# This helper exposes four fixed, schema-preserving database operations through
+# ECS Exec: list root-admin status, promote one exact email, demote one exact
+# email, and delete one exact email's root two-factor (TOTP) enrollment row
+# (`2fa-reset`, the break-glass for a lost authenticator device). It deliberately
+# has no arbitrary SQL, DDL, password-reset, task-ARN, container, cluster,
+# service, region, or account override channel.
+#
+# Usage:  ./root_admin.sh                 interactive menu
+#         ./root_admin.sh 2fa-reset <email>
+#         ./root_admin.sh help
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly DEPLOY_ENV_FILE="${BP_ROOT_ADMIN_ENV_FILE:-${SCRIPT_DIR}/.deploy.env}"
@@ -283,7 +289,7 @@ run_fixed_operation() {
   local email_b64 task_arn
   case "${operation}" in
     list) [ -z "${email}" ] || die "The list operation accepts no value" ;;
-    promote|demote) validate_email "${email}" || return 1 ;;
+    promote|demote|reset2fa) validate_email "${email}" || return 1 ;;
     *) die "Unsupported fixed root-admin operation"; return 1 ;;
   esac
 
@@ -300,10 +306,12 @@ run_fixed_operation() {
   const{databaseTlsOptions}=await import('./scripts/database-tls.mjs');
   const operation=process.argv[1];
   const email=Buffer.from(process.argv[2]||'','base64').toString('utf8');
+  const twoFactorKeyPrefix='root-2fa:';
   const operations=Object.freeze({
     list:Object.freeze({text:'SELECT email, is_root_admin FROM public.users ORDER BY lower(email), email',values:[],mutation:false}),
     promote:Object.freeze({text:'UPDATE public.users SET is_root_admin = true WHERE email = \\\$1 AND is_root_admin = false RETURNING email, is_root_admin',values:[email],mutation:true}),
-    demote:Object.freeze({text:'UPDATE public.users AS target SET is_root_admin = false WHERE target.email = \\\$1 AND target.is_root_admin = true AND EXISTS (SELECT 1 FROM public.users AS other WHERE other.is_root_admin = true AND other.id <> target.id) RETURNING target.email, target.is_root_admin',values:[email],mutation:true})
+    demote:Object.freeze({text:'UPDATE public.users AS target SET is_root_admin = false WHERE target.email = \\\$1 AND target.is_root_admin = true AND EXISTS (SELECT 1 FROM public.users AS other WHERE other.is_root_admin = true AND other.id <> target.id) RETURNING target.email, target.is_root_admin',values:[email],mutation:true}),
+    reset2fa:Object.freeze({text:'DELETE FROM public.app_settings AS setting USING public.users AS owner WHERE owner.email = \\\$1 AND setting.key = \\\$2 || owner.id::text RETURNING owner.email, owner.is_root_admin',values:[email,twoFactorKeyPrefix],mutation:true})
   });
   const spec=operations[operation];
   if(!spec)throw new Error('unsupported fixed operation');
@@ -321,13 +329,13 @@ run_fixed_operation() {
     }
     const result=await client.query(spec.text,spec.values);
     if(spec.mutation&&result.rowCount!==1){
-      throw new Error('safety check refused the update: expected exactly one changed user (demotion also requires another root admin)');
+      throw new Error('safety check refused the update: expected exactly one changed user row (demotion also requires another root admin; 2fa-reset requires an existing enrollment)');
     }
     if(spec.mutation)await client.query('COMMIT');
     for(const row of result.rows||[]){
       console.log(JSON.stringify({email:row.email,isRootAdmin:row.is_root_admin===true}));
     }
-    console.log(spec.mutation?'Root-admin update verified for exactly one user.':('Listed '+result.rowCount+' user(s); only email and root-admin status were emitted.'));
+    console.log(spec.mutation?(operation==='reset2fa'?'Root two-factor enrollment deleted for exactly one user.':'Root-admin update verified for exactly one user.'):('Listed '+result.rowCount+' user(s); only email and root-admin status were emitted.'));
   }catch(error){
     if(client&&spec.mutation){try{await client.query('ROLLBACK');}catch{}}
     throw error;
@@ -351,7 +359,30 @@ show_menu() {
   echo -e "  ${GREEN}2${NC}  Promote one exact email"
   echo -e "  ${GREEN}3${NC}  Demote one exact email (never the last root admin)"
   echo -e "  ${GREEN}4${NC}  Show ROOT_ADMIN_EMAIL Terraform setup"
+  echo -e "  ${GREEN}5${NC}  Reset one exact email's root two-factor (TOTP) enrollment"
   echo -e "  ${GREEN}q${NC}  Quit"
+  echo ""
+}
+
+show_help() {
+  echo ""
+  echo -e "${BOLD}BlueprintParser — Owner Root-Admin Break Glass${NC}"
+  echo ""
+  echo -e "Usage:"
+  echo -e "  ${CYAN}./root_admin.sh${NC}                      interactive menu (choices 1-5 below)"
+  echo -e "  ${CYAN}./root_admin.sh 2fa-reset <email>${NC}    delete that root user's two-factor (TOTP)"
+  echo -e "                                        enrollment row (app_settings key root-2fa:<id>)"
+  echo -e "                                        after typing RESET-2FA; the next sign-in needs"
+  echo -e "                                        no code and the user can enrol again in /admin."
+  echo -e "  ${CYAN}./root_admin.sh help${NC}                 this text"
+  echo ""
+  echo -e "  1  List user emails and root-admin status"
+  echo -e "  2  Promote one exact email"
+  echo -e "  3  Demote one exact email (never the last root admin)"
+  echo -e "  4  Show ROOT_ADMIN_EMAIL Terraform setup"
+  echo -e "  5  Reset one exact email's root two-factor (TOTP) enrollment"
+  echo ""
+  echo -e "${DIM}Every database action re-verifies the canonical AWS service task over ECS Exec.${NC}"
   echo ""
 }
 
@@ -384,6 +415,20 @@ demote_user() {
   run_fixed_operation demote "${email}"
 }
 
+reset_two_factor() {
+  local email="${1:-}" confirmation
+  if [ -z "${email}" ]; then
+    read -rp "Enter the exact email whose root two-factor enrollment to delete: " email
+  fi
+  validate_email "${email}" || return 1
+  read -rp "Type RESET-2FA to confirm: " confirmation
+  [ "${confirmation}" = "RESET-2FA" ] || {
+    echo -e "${YELLOW}Two-factor reset cancelled.${NC}"
+    return 0
+  }
+  run_fixed_operation reset2fa "${email}"
+}
+
 show_root_email_setup() {
   echo -e "\n${BOLD}Root-admin bootstrap configuration:${NC}\n"
   echo -e "${YELLOW}Never place the bootstrap identity in tracked ecs.tf source.${NC}"
@@ -396,15 +441,27 @@ show_root_email_setup() {
 }
 
 main() {
+  case "${1:-}" in
+    2fa-reset)
+      [ "$#" -eq 2 ] || { show_help; die "usage: ./root_admin.sh 2fa-reset <email>"; }
+      assert_canonical_configuration
+      reset_two_factor "$2"
+      exit $?
+      ;;
+    help|-h|--help) show_help; exit 0 ;;
+    "") ;;
+    *) show_help; die "Unknown command: $1" ;;
+  esac
   assert_canonical_configuration
   while true; do
     show_menu
-    read -rp "Choose [1-4, q]: " choice
+    read -rp "Choose [1-5, q]: " choice
     case "${choice}" in
       1) list_users ;;
       2) promote_user ;;
       3) demote_user ;;
       4) show_root_email_setup ;;
+      5) reset_two_factor ;;
       q|Q) echo -e "\n${GREEN}Bye.${NC}\n"; exit 0 ;;
       *) echo -e "${RED}Invalid choice.${NC}" ;;
     esac

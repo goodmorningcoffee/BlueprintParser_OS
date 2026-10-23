@@ -7,6 +7,8 @@
  * Map. The middleware supplies only a verified user id or trusted ALB IP.
  */
 
+import { rootTwoFactorPending, type RootTwoFactorClaims } from "@/lib/root-two-factor-claims";
+
 interface RateBucket {
   count: number;
   resetAt: number;
@@ -155,6 +157,17 @@ const RATE_RULES: RateRule[] = [
     limit: 10,
     windowMs: 60 * 1000,
     keyType: "ip",
+    exact: true,
+  },
+  // [2026-10-23] Root 2FA code check: a 6-digit TOTP (±1 step → 3 live codes in a million) or a
+  // 50-bit backup code. Keyed by the verified user so a holder of the password-only session cannot
+  // guess his way to root; root is never exempt here (ROOT_NEVER_EXEMPT_RULE_PATTERNS).
+  {
+    pattern: "/api/auth/2fa/verify",
+    method: "POST",
+    limit: 10,
+    windowMs: 15 * 60 * 1000,
+    keyType: "user",
     exact: true,
   },
   // Public and synchronous: one request can hold the event loop for about a second at its input
@@ -336,14 +349,18 @@ export function apiIpBackstopForRule(rule: RateRule | undefined): IpBackstop {
 // AUTH_SECRET-encrypted JWE, so neither the isRootAdmin claim nor dbId can be forged by a client.
 // A cookie that fails verification yields null here and the caller is treated as anonymous.
 
-/** The verified root admin's user id, or null for everyone else. */
+/**
+ * The verified root admin's user id, or null for everyone else. [2026-10-23] A root login whose
+ * TOTP enrollment is active but not yet verified (lib/root-two-factor-claims.ts) is NOT root here.
+ */
 export function verifiedRootUserId(token: unknown): number | null {
   if (typeof token !== "object" || token === null) return null;
-  const claims = token as { isRootAdmin?: unknown; dbId?: unknown };
+  const claims = token as RootTwoFactorClaims & { dbId?: unknown };
   return claims.isRootAdmin === true &&
     typeof claims.dbId === "number" &&
     Number.isSafeInteger(claims.dbId) &&
-    claims.dbId > 0
+    claims.dbId > 0 &&
+    !rootTwoFactorPending(claims)
     ? claims.dbId
     : null;
 }
@@ -394,6 +411,9 @@ const ROOT_NEVER_EXEMPT_RULE_PATTERNS: ReadonlySet<string> = new Set([
   "/api/auth/forgot-password",
   "/api/auth/reset-password",
   "/api/auth/callback/credentials",
+  // A verified root re-proving a code is bounded like everyone else: the rule exists to bound
+  // guessing against the root account, and the guesser may hold a root cookie.
+  "/api/auth/2fa/verify",
 ]);
 
 /** Whether a root caller skips this route rule AND the IP backstop for the same request. */
