@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   inputs: [] as Array<Record<string, unknown>>,
@@ -36,6 +36,12 @@ async function loadYolo(overrides: Record<string, string> = {}) {
   vi.resetModules();
   return import("@/lib/yolo");
 }
+
+// [2026-10-23] Warm the transform cache once: the first cold import of @/lib/yolo over this FUSE
+// mount alone took ~5 s and timed out the first test (measured on 359d37d and on node 20).
+beforeAll(async () => {
+  await loadYolo();
+}, 60_000);
 
 beforeEach(() => {
   h.inputs.length = 0;
