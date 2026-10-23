@@ -11,7 +11,10 @@
 // regenerate needs a code and invalidates the old set · verify without a token / not enrolled ·
 // a company admin cannot enroll · [fix round 1] a PENDING root acts on /api/admin/users with its
 // ROLE only (member → 403; admin → own company, no role/company moves, no cross-company delete) ·
-// an ACTIVE enrollment cannot be replaced by enroll/confirm (disable with a code first).
+// an ACTIVE enrollment cannot be replaced by enroll/confirm (disable with a code first) ·
+// [fix round 2] a refresh derives the 2FA claims from the FRESH root flag (a re-promoted root is
+// pending, never full root) · a pre-2FA cookie without a nonce gets one on its first refresh and
+// is never silently locked out (an unrefreshed one gets "sign out and back in").
 //
 // Clock: `Date` is faked (only Date — timers, pg and bcrypt stay real) and pinned mid-step, so a
 // 30-second TOTP boundary can never fall between two calls; enrollRoot() advances one step after
@@ -52,7 +55,8 @@ import { encryptApiKey } from "@/lib/crypto";
 import { projectRootAuthority, rootTwoFactorSettingKey } from "@/lib/root-two-factor-claims";
 import { base32Decode, base32Encode, generateTotpSecret, totpCode, totpStep } from "@/lib/totp";
 import {
-  refreshRootTwoFactorClaims,
+  ROOT_TWO_FACTOR_SIGN_IN_AGAIN,
+  refreshJwtSessionClaims,
   stampRootTwoFactorAtSignIn,
 } from "@/server/services/root-two-factor";
 import {
@@ -94,9 +98,9 @@ async function freshLogin(user: FixtureUser): Promise<Token> {
   return token;
 }
 
-/** What session.update() does server-side: re-check the marker, re-project the session. */
+/** What session.update() does server-side (the real callbacks.jwt refresh): authority, then marker. */
 async function refreshLogin(user: FixtureUser, token: Token): Promise<Token> {
-  await refreshRootTwoFactorClaims(token);
+  expect(await refreshJwtSessionClaims(token)).toBe(token);
   asLogin(user, token);
   return token;
 }
@@ -118,6 +122,7 @@ const codeNow = (secretBase32: string, drift = 0) =>
   totpCode(base32Decode(secretBase32), totpStep(Date.now()) + drift);
 const UNAUTH_CODE = { error: { code: "UNAUTHORIZED", message: "Invalid two-factor code" } };
 const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } };
+const SIGN_IN_AGAIN = { error: { code: "UNAUTHORIZED", message: ROOT_TWO_FACTOR_SIGN_IN_AGAIN } };
 const ALREADY_ENABLED = {
   error: { code: "CONFLICT", message: "Two-factor authentication is already enabled; disable it with a current code first" },
 };
@@ -352,7 +357,7 @@ describe.skipIf(!dbUp)("root TOTP two-factor (2FA)", () => {
     h.token.current = null; // no decodable cookie
     let r = await verify(codeNow(secret));
     expect(r.status).toBe(401);
-    expect(r.body.error.message).toBe("No verifiable session token");
+    expect(r.body).toEqual(SIGN_IN_AGAIN);
     h.token.current = { ...login, dbId: login.dbId + 1 }; // a token for someone else
     r = await verify(codeNow(secret));
     expect(r.status).toBe(401);
@@ -471,5 +476,75 @@ describe.skipIf(!dbUp)("root TOTP two-factor (2FA)", () => {
     advanceOneStep();
     expect((await disable(codeNow(secret))).status).toBe(200);
     expect((await enroll()).status).toBe(200);
+  });
+
+  it("2FA-11 [fix2 1] a refresh derives 2FA from the FRESH root flag: a re-promoted enrolled root is PENDING, not full root", async () => {
+    const { root } = await makeWorld();
+    await enrollRoot(root);
+    // A cookie from while this user was demoted: the last refresh saw isRootAdmin=false.
+    const stale: Token = {
+      dbId: root.id,
+      isRootAdmin: false,
+      twoFactorRequired: false,
+      twoFactorVerified: false,
+      twoFactorNonce: "login-while-demoted",
+    };
+    const refreshed = await refreshJwtSessionClaims(stale);
+    expect(refreshed).toBe(stale);
+    expect(stale).toMatchObject({ isRootAdmin: true, twoFactorRequired: true, twoFactorVerified: false });
+    expect(projectRootAuthority(stale)).toEqual({ isRootAdmin: false, rootTwoFactorPending: true });
+    asLogin(root, stale);
+    expect((await probe(rootProbe)).status).toBe(403);
+
+    // A token naming no live user ends the session; the 2FA claims are never computed for it.
+    const ghost: Token = { dbId: 2_000_000_000, isRootAdmin: true };
+    expect(await refreshJwtSessionClaims(ghost)).toBeNull();
+    expect(ghost.twoFactorNonce).toBeUndefined();
+  });
+
+  it("2FA-12 [fix2 2] a pre-2FA cookie without a nonce: first refresh mints one (stable), enroll+confirm+verify work; an unrefreshed cookie gets 'sign out and back in', never a silent lockout", async () => {
+    const { root } = await makeWorld();
+    const legacy: Token = { dbId: root.id, isRootAdmin: true }; // minted before 2FA shipped
+    asLogin(root, legacy);
+
+    // The request's cookie has not been re-encoded yet: confirm refuses clearly and activates nothing.
+    const e = await enroll();
+    expect(e.status).toBe(200);
+    let r = await confirm(codeNow(e.body.secret));
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual(SIGN_IN_AGAIN);
+    expect((await status()).body).toMatchObject({ enrolled: false, pendingEnrollment: true });
+
+    // First refresh mints the nonce; later refreshes keep it.
+    await refreshLogin(root, legacy);
+    const nonce = legacy.twoFactorNonce;
+    expect(typeof nonce).toBe("string");
+    await refreshLogin(root, legacy);
+    expect(legacy.twoFactorNonce).toBe(nonce);
+
+    // Now the same enrollment confirms and the enrolling login stays root.
+    r = await confirm(codeNow(e.body.secret));
+    expect(r.status).toBe(200);
+    advanceOneStep();
+    await refreshLogin(root, legacy);
+    expect(legacy).toMatchObject({ twoFactorRequired: true, twoFactorVerified: true, twoFactorNonce: nonce });
+    expect((await probe(rootProbe)).status).toBe(200);
+
+    // Another pre-2FA session (second device): pending after its refresh. Until the re-encoded cookie
+    // arrives, verify says "sign out and back in"; with it, verify works.
+    const second: Token = { dbId: root.id, isRootAdmin: true };
+    const unrefreshedCookie = { ...second };
+    await refreshLogin(root, second);
+    expect(projectRootAuthority(second)).toEqual({ isRootAdmin: false, rootTwoFactorPending: true });
+    h.token.current = unrefreshedCookie;
+    r = await verify(codeNow(e.body.secret));
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual(SIGN_IN_AGAIN);
+    h.token.current = second;
+    r = await verify(codeNow(e.body.secret));
+    expect(r.status).toBe(200);
+    await refreshLogin(root, second);
+    expect(projectRootAuthority(second)).toEqual({ isRootAdmin: true, rootTwoFactorPending: false });
+    expect((await probe(rootProbe)).status).toBe(200);
   });
 });

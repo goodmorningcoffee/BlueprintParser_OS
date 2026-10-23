@@ -3,10 +3,12 @@
 // [2026-10-23] Root TOTP 2FA management (Settings tab, root only — the routes are auth:"root").
 // Enroll: POST /enroll shows the base32 key + otpauth:// URI (copyable; paste into any
 // authenticator app) → a valid code to POST /confirm activates it and shows the 10 backup codes
-// ONCE. Disable and "new backup codes" each need a current code. Break-glass if the device is
+// ONCE, and session.update() re-issues the cookie with the enrolling login marked verified (the
+// server-side marker is short-lived). Disable and "new backup codes" each need a current code. Break-glass if the device is
 // lost: `./root_admin.sh 2fa-reset <email>` (deletes the enrollment row over ECS Exec).
 
 import { useCallback, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { apiErrorMessage } from "@/lib/client-persist";
 
 interface Status {
@@ -88,6 +90,7 @@ function BackupCodes({ codes }: { codes: string[] }) {
 }
 
 export default function RootTwoFactorPanel() {
+  const { update } = useSession();
   const [status, setStatus] = useState<Status | null>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
@@ -149,6 +152,9 @@ export default function RootTwoFactorPanel() {
       setBackupCodes(r.body.backupCodes ?? []);
       setCode("");
       setMessage("Two-factor authentication is now active for your root account.");
+      // Pick up the verified marker now, as RootTwoFactorGate does after verify; otherwise this
+      // login would turn pending once the marker expires.
+      await update().catch(() => {});
       await refresh();
     });
 

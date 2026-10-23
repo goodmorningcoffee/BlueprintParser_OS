@@ -7,14 +7,13 @@ import { users, companies } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { audit } from "@/lib/audit";
 import { trustedClientIp } from "@/lib/trusted-client-ip";
-import { refreshJwtUserAuthority } from "@/server/services/auth-jwt-authority";
 // [2026-10-23] Root TOTP 2FA: three private claims (twoFactorRequired/Verified/Nonce) ride in the
 // encrypted token; the session projects isRootAdmin=false while a root login is still unverified.
 // Claim model: lib/root-two-factor-claims.ts; storage + the server-side verified marker:
 // server/services/root-two-factor.ts.
 import { projectRootAuthority } from "@/lib/root-two-factor-claims";
 import {
-  refreshRootTwoFactorClaims,
+  refreshJwtSessionClaims,
   stampRootTwoFactorAtSignIn,
 } from "@/server/services/root-two-factor";
 // [refactor jul23 P5.4-A] Brute-force lockout helpers extracted to a pure module
@@ -339,20 +338,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.canRunModels = user.canRunModels;
         token.isRootAdmin = user.isRootAdmin;
       }
-      // Root 2FA claims. Sign-in: a fresh per-login nonce, required = active enrollment, verified
-      // = false. Every other trigger (incl. the client's session.update() after POST
-      // /api/auth/2fa/verify): re-read the enrollment and flip verified ONLY when the server-side
-      // marker for this login's nonce exists — a client-supplied flag is never consulted.
+      // Root 2FA claims at sign-in: a fresh per-login nonce, required = active enrollment,
+      // verified = false.
       if (trigger === "signIn") {
         await stampRootTwoFactorAtSignIn(token);
-      } else {
-        await refreshRootTwoFactorClaims(token);
       }
       // Every non-sign-in token must still name a live database user. Refresh
-      // tenant, role, model, and root authority together; the helper rejects
-      // missing/invalid ids instead of preserving stale claims.
+      // tenant, role, model, and root authority together (the helper rejects
+      // missing/invalid ids instead of preserving stale claims), THEN re-derive the
+      // 2FA claims from that fresh root flag (incl. the client's session.update()
+      // after POST /api/auth/2fa/verify): verified flips ONLY when the server-side
+      // marker for this login's nonce exists — a client flag is never consulted.
       if (trigger !== "signIn") {
-        return refreshJwtUserAuthority(token);
+        return refreshJwtSessionClaims(token);
       }
       return token;
     },

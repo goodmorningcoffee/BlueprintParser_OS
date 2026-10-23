@@ -6459,16 +6459,19 @@ function jwtAuthorityIssues(authority, auth) {
     (method) => propertyName(method.name) === "jwt",
   );
   const jwt = jwtMethods.length === 1 ? jwtMethods[0] : null;
+  // [2026-10-23 root 2FA] The jwt callback delegates every refresh to refreshJwtSessionClaims
+  // (server/services/root-two-factor.ts), which runs refreshJwtUserAuthority FIRST and then the
+  // 2FA claims on the fresh token; that body is pinned exactly by validateRootTwoFactorPolicy.
   const refreshCalls = jwt
-    ? descendants(jwt, ts.isCallExpression).filter(
-        (call) => callName(call) === "refreshJwtUserAuthority",
+    ? descendants(jwt, ts.isCallExpression).filter((call) =>
+        ["refreshJwtUserAuthority", "refreshJwtSessionClaims"].includes(callName(call)),
       )
     : [];
   const refreshBranches = jwt
     ? descendants(jwt, ts.isIfStatement).filter(
         (statement) =>
           compactNodeText(statement, auth) ===
-          'if(trigger!=="signIn"){returnrefreshJwtUserAuthority(token);}',
+          'if(trigger!=="signIn"){returnrefreshJwtSessionClaims(token);}',
       )
     : [];
   if (refreshCalls.length !== 1 || refreshBranches.length !== 1) {
@@ -6477,7 +6480,7 @@ function jwtAuthorityIssues(authority, auth) {
   const importedRefresh = descendants(auth.source, ts.isImportSpecifier).filter(
     (specifier) =>
       (specifier.propertyName ?? specifier.name).text ===
-      "refreshJwtUserAuthority",
+      "refreshJwtSessionClaims",
   );
   if (importedRefresh.length !== 1) {
     issues.add("jwt-refresh-exact-import");
@@ -9450,14 +9453,17 @@ async function validateRootTwoFactorPolicy() {
   const sessionText = sessionMethods.length === 1 ? sessionMethods[0].getText(auth.source) : "";
   if (
     !textHasAll(jwtText, [
-      'if (trigger === "signIn") {\n        await stampRootTwoFactorAtSignIn(token);\n      } else {\n        await refreshRootTwoFactorClaims(token);\n      }'.replace(/\\n/g, "\n"),
+      'if (trigger === "signIn") {\n        await stampRootTwoFactorAtSignIn(token);\n      }'.replace(/\\n/g, "\n"),
+      'if (trigger !== "signIn") {\n        return refreshJwtSessionClaims(token);\n      }'.replace(/\\n/g, "\n"),
     ]) ||
     !textHasAll(sessionText, [
       "const rootAuthority = projectRootAuthority(token);",
       "session.user.isRootAdmin = rootAuthority.isRootAdmin;",
       "session.user.rootTwoFactorPending = rootAuthority.rootTwoFactorPending;",
     ]) ||
-    sessionText.includes("session.user.isRootAdmin = token.isRootAdmin")
+    sessionText.includes("session.user.isRootAdmin = token.isRootAdmin") ||
+    // 2FA claims are derived only inside refreshJwtSessionClaims, after the authority re-read.
+    jwtText.includes("refreshRootTwoFactorClaims")
   ) {
     report(
       "ROOT_TWO_FACTOR_JWT_PROJECTION_DRIFT",
@@ -9470,6 +9476,27 @@ async function validateRootTwoFactorPolicy() {
   const stamp = functionFor(service, "stampRootTwoFactorAtSignIn");
   const refresh = functionFor(service, "refreshRootTwoFactorClaims");
   const nonceReader = functionFor(service, "readSessionTwoFactorNonce");
+  // Order matters: authority first, 2FA claims from the FRESH isRootAdmin, only on a live user.
+  const sessionRefresh = functionFor(service, "refreshJwtSessionClaims");
+  const expectedSessionRefresh = [
+    "constrefreshed=awaitrefreshJwtUserAuthority(token);",
+    "if(refreshed)awaitrefreshRootTwoFactorClaims(refreshed);",
+    "returnrefreshed;",
+  ];
+  if (
+    !sessionRefresh?.body ||
+    sessionRefresh.body.statements.length !== expectedSessionRefresh.length ||
+    sessionRefresh.body.statements.some(
+      (statement, index) => compactNodeText(statement, service) !== expectedSessionRefresh[index],
+    )
+  ) {
+    report(
+      "ROOT_TWO_FACTOR_REFRESH_ORDER_DRIFT",
+      "every JWT refresh must re-read user authority first and derive the 2FA claims from the fresh root flag",
+      policy.serviceFile,
+      sessionRefresh ?? service.source,
+    );
+  }
   if (
     !stamp ||
     !textHasAll(stamp.getText(service.source), [

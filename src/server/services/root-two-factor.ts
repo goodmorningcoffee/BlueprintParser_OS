@@ -49,6 +49,7 @@ import {
   verifyTotp,
 } from "@/lib/totp";
 import { ApiError } from "@/server/api/envelope";
+import { refreshJwtUserAuthority } from "@/server/services/auth-jwt-authority";
 
 export const ROOT_TWO_FACTOR_VERIFIED_MARKER_TTL_MS = 10 * 60 * 1000;
 const VERIFIED_MARKER_MAX = 20;
@@ -56,6 +57,13 @@ const BACKUP_CODE_BCRYPT_ROUNDS = 10;
 
 export const zTwoFactorCodeBody = z.object({ code: z.string().min(1).max(64) }).strict();
 export type TwoFactorCodeBody = z.infer<typeof zTwoFactorCodeBody>;
+
+/**
+ * /confirm and /verify when the request's own session cookie carries no readable nonce (a cookie
+ * minted before 2FA shipped that has not been refreshed yet, or no decodable token at all).
+ */
+export const ROOT_TWO_FACTOR_SIGN_IN_AGAIN =
+  "This session cannot be verified: sign out and sign back in, then try again";
 
 interface RootTwoFactorRow {
   secretEnc?: string;
@@ -134,6 +142,11 @@ export async function stampRootTwoFactorAtSignIn(token: ClaimToken): Promise<voi
  * marker. Database errors propagate so Auth.js fails the request closed.
  */
 export async function refreshRootTwoFactorClaims(token: ClaimToken, now = Date.now()): Promise<void> {
+  // A session minted before 2FA shipped has no nonce: mint one once (kept stable afterwards), so
+  // the next re-encoded cookie can carry a verified marker instead of locking the owner out.
+  if (typeof token.twoFactorNonce !== "string" || token.twoFactorNonce.length === 0) {
+    token.twoFactorNonce = randomUUID();
+  }
   if (token.isRootAdmin !== true || !Number.isSafeInteger(token.dbId)) {
     token.twoFactorRequired = false;
     return;
@@ -144,6 +157,20 @@ export async function refreshRootTwoFactorClaims(token: ClaimToken, now = Date.n
   const nonce = typeof token.twoFactorNonce === "string" ? token.twoFactorNonce : null;
   const expiresAt = nonce && row ? row.verified?.[nonce] : undefined;
   if (typeof expiresAt === "number" && expiresAt > now) token.twoFactorVerified = true;
+}
+
+/**
+ * Every non-sign-in JWT refresh (lib/auth.ts callbacks.jwt): re-read the user's authority FIRST,
+ * then derive the 2FA claims from that fresh isRootAdmin — never from the cookie's stale copy, or a
+ * re-promoted root with an active enrollment would come back as full root with no code. A null
+ * (deleted / invalid user) ends the session; database errors propagate (fail closed).
+ */
+export async function refreshJwtSessionClaims<T extends Parameters<typeof refreshJwtUserAuthority>[0] & ClaimToken>(
+  token: T,
+): Promise<T | null> {
+  const refreshed = await refreshJwtUserAuthority(token);
+  if (refreshed) await refreshRootTwoFactorClaims(refreshed);
+  return refreshed;
 }
 
 /**
@@ -248,6 +275,9 @@ export async function confirmRootTwoFactorEnrollment(
 ): Promise<{ enrolled: true; backupCodes: string[] }> {
   const user = userOf(session);
   const nonce = await readSessionTwoFactorNonce(req, user.id);
+  // Without this login's nonce the activation could not mark the enrolling login verified, and it
+  // would turn pending on its next refresh: refuse before anything is written.
+  if (!nonce) throw new ApiError("UNAUTHORIZED", ROOT_TWO_FACTOR_SIGN_IN_AGAIN);
   const codes = generateBackupCodes(BACKUP_CODE_COUNT);
   const hashes = await Promise.all(codes.map((c) => bcrypt.hash(normalizeBackupCode(c), BACKUP_CODE_BCRYPT_ROUNDS)));
   await db.transaction(async (tx) => {
@@ -284,7 +314,7 @@ export async function verifyRootTwoFactor(
 ): Promise<{ verified: true; method: CodeMethod; backupCodesRemaining: number }> {
   const user = userOf(session);
   const nonce = await readSessionTwoFactorNonce(req, user.id);
-  if (!nonce) throw new ApiError("UNAUTHORIZED", "No verifiable session token");
+  if (!nonce) throw new ApiError("UNAUTHORIZED", ROOT_TWO_FACTOR_SIGN_IN_AGAIN);
   try {
     const outcome = await db.transaction(async (tx) => {
       const { row, method } = await authenticateCodeLocked(tx, user.id, body.code, now);
