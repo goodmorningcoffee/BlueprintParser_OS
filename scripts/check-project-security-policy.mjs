@@ -6074,6 +6074,34 @@ function adminUserUpdateAuthorityIssues(parsedFile) {
   ) {
     issues.add("database-backed-update-authority");
   }
+  // [2026-10-23] Root 2FA: a pending root login (auth:"admin" admits it) must act with its role
+  // only. The session's effective isRootAdmin is read ONCE outside the lock and may only NARROW
+  // the locked actor row, between the actor read and the first authority check.
+  const rootVerifiedLogin = namedVariableDeclaration(
+    updateUser,
+    "rootVerifiedLogin",
+  );
+  const pendingRootNarrowing = descendants(transaction, ts.isIfStatement).filter(
+    (statement) =>
+      compactNodeText(statement.expression, parsedFile) ===
+        "actor?.isRootAdmin&&!rootVerifiedLogin" &&
+      compactNodeText(statement.thenStatement, parsedFile) ===
+        "actor.isRootAdmin=false;",
+  );
+  const narrowingPosition =
+    pendingRootNarrowing[0]?.getStart(parsedFile.source) ?? -1;
+  if (
+    compactNodeText(rootVerifiedLogin?.initializer, parsedFile) !==
+      "session.user.isRootAdmin===true" ||
+    descendants(transaction, ts.isVariableDeclaration).includes(
+      rootVerifiedLogin,
+    ) ||
+    pendingRootNarrowing.length !== 1 ||
+    narrowingPosition <= (actor?.getStart(parsedFile.source) ?? -1) ||
+    (actorChecks[0]?.getStart(parsedFile.source) ?? -1) <= narrowingPosition
+  ) {
+    issues.add("pending-root-login-narrowing");
+  }
 
   const updated = namedVariableDeclaration(transaction, "updated");
   const exactOne = descendants(transaction, ts.isIfStatement).filter(
@@ -6261,6 +6289,36 @@ function adminUserDeletionAuthorityIssues(parsedFile) {
     )
   ) {
     issues.add("database-backed-delete-authority-and-project-scope");
+  }
+  // [2026-10-23] Root 2FA narrowing — the deleteUser mirror of updateUser's rule.
+  const rootVerifiedLogin = namedVariableDeclaration(
+    deleteUser,
+    "rootVerifiedLogin",
+  );
+  const pendingRootNarrowing = descendants(
+    rootTransaction,
+    ts.isIfStatement,
+  ).filter(
+    (statement) =>
+      compactNodeText(statement.expression, parsedFile) ===
+        "guardedActor?.isRootAdmin&&!rootVerifiedLogin" &&
+      compactNodeText(statement.thenStatement, parsedFile) ===
+        "guardedActor.isRootAdmin=false;",
+  );
+  const narrowingPosition =
+    pendingRootNarrowing[0]?.getStart(parsedFile.source) ?? -1;
+  if (
+    compactNodeText(rootVerifiedLogin?.initializer, parsedFile) !==
+      "session.user.isRootAdmin===true" ||
+    descendants(rootTransaction, ts.isVariableDeclaration).includes(
+      rootVerifiedLogin,
+    ) ||
+    pendingRootNarrowing.length !== 1 ||
+    narrowingPosition <= (guardedActor?.getStart(parsedFile.source) ?? -1) ||
+    (guardedActorChecks[0]?.getStart(parsedFile.source) ?? -1) <=
+      narrowingPosition
+  ) {
+    issues.add("pending-root-login-narrowing");
   }
   const imports = importedBindings(parsedFile);
   const stageBinding = imports.get("stageProjectDeletionsInTransaction");
@@ -12735,6 +12793,16 @@ exit 64
       "      mutationStarted = true;",
       "      await reconcileCommittedProjectDeletions(committedProjectDeletions);\n      mutationStarted = true;",
     ),
+    // [2026-10-23] Root 2FA: dropping the pending-root narrowing, or widening instead of
+    // narrowing, must be rejected.
+    exactAdminDeleteFixture.replace(
+      "      if (guardedActor?.isRootAdmin && !rootVerifiedLogin) guardedActor.isRootAdmin = false;\n",
+      "",
+    ),
+    exactAdminDeleteFixture.replace(
+      "      if (guardedActor?.isRootAdmin && !rootVerifiedLogin) guardedActor.isRootAdmin = false;",
+      "      if (guardedActor && rootVerifiedLogin) guardedActor.isRootAdmin = true;",
+    ),
   ];
   if (
     adminUserDeletionAuthorityIssues(
@@ -12773,6 +12841,16 @@ exit 64
     exactAdminDeleteFixture.replace(
       /if \(updated\.length !== 1\) \{[\s\S]*?\}/u,
       "",
+    ),
+    // [2026-10-23] Root 2FA: the pending-root narrowing must be present, placed before the
+    // first authority check, and sourced from the session outside the lock.
+    exactAdminDeleteFixture.replace(
+      "    if (actor?.isRootAdmin && !rootVerifiedLogin) actor.isRootAdmin = false;\n",
+      "",
+    ),
+    exactAdminDeleteFixture.replace(
+      "  const rootVerifiedLogin = session.user.isRootAdmin === true;\n\n  await db.transaction(async (tx) => {",
+      "  await db.transaction(async (tx) => {\n    const rootVerifiedLogin = session.user.isRootAdmin === true;",
     ),
   ];
   if (

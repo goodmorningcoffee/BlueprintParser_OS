@@ -17,6 +17,11 @@
  * submissions of the same code cannot both be accepted and a backup code is consumed exactly once.
  * Enroll / disable / regenerate are reached only through auth:"root" routes, which a PENDING root
  * cannot pass (the session projects isRootAdmin=false until verified).
+ *
+ * [2026-10-23 fix round 1] An ACTIVE enrollment cannot be replaced: enroll and confirm refuse with
+ * CONFLICT while the row is active, so the only way to a new secret is disable (which needs a
+ * current TOTP or backup code) and then enroll again. Before this, a verified root session alone
+ * — e.g. a stolen cookie — could move 2FA to its own authenticator without ever knowing a code.
  */
 
 import { randomUUID } from "crypto";
@@ -210,7 +215,13 @@ export async function getRootTwoFactorStatus(session: AuthSession): Promise<Root
   };
 }
 
-/** Generate a secret and park it as `pending`; nothing is required of this or any session yet. */
+const ALREADY_ENABLED = () =>
+  new ApiError("CONFLICT", "Two-factor authentication is already enabled; disable it with a current code first");
+
+/**
+ * Generate a secret and park it as `pending`; nothing is required of this or any session yet.
+ * Refused (CONFLICT) while an enrollment is ACTIVE — replacing the secret needs disable first.
+ */
 export async function beginRootTwoFactorEnrollment(
   session: AuthSession,
 ): Promise<{ secret: string; otpauth: string; account: string; issuer: string }> {
@@ -220,6 +231,7 @@ export async function beginRootTwoFactorEnrollment(
   const pending = { secretEnc: encryptApiKey(secret.toString("base64")), createdAt: new Date().toISOString() };
   await db.transaction(async (tx) => {
     const row = (await readRow(tx, user.id, true)) ?? {};
+    if (isActive(row)) throw ALREADY_ENABLED();
     await writeRow(tx, user.id, { ...row, pending });
   });
   audit("root_2fa_enrollment_started", { userId: user.id, companyId: user.companyId });
@@ -240,6 +252,8 @@ export async function confirmRootTwoFactorEnrollment(
   const hashes = await Promise.all(codes.map((c) => bcrypt.hash(normalizeBackupCode(c), BACKUP_CODE_BCRYPT_ROUNDS)));
   await db.transaction(async (tx) => {
     const row = await readRow(tx, user.id, true);
+    // An active secret is never overwritten by a confirm, even if a stale `pending` is present.
+    if (row && isActive(row)) throw ALREADY_ENABLED();
     if (!row?.pending?.secretEnc) throw new ApiError("CONFLICT", "No enrollment in progress");
     const secret = Buffer.from(decryptApiKey(row.pending.secretEnc), "base64");
     const result = verifyTotp(secret, body.code, { nowMs: now, lastStep: null });

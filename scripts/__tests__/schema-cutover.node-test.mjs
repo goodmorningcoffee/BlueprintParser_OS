@@ -1300,9 +1300,11 @@ test("schema cutover policy freezes the root-admin menu, SQL, and TLS allowlist"
   await t.test("rejects an extra executable menu choice", async (t) => {
     const root = await schemaPolicyFixture(t);
     await mutateSchemaPolicyFile(root, "root_admin.sh", (source) =>
+      // [2026-10-23] anchored on the real choice 5 (reset_two_factor, a4ec7de): a duplicate
+      // "5)" key was silently overwritten in the checker's menu Map and the mutation passed.
       source.replace(
-        "      4) show_root_email_setup ;;",
-        "      4) show_root_email_setup ;;\n      5) run_fixed_operation secrets ;;",
+        "      5) reset_two_factor ;;",
+        "      5) reset_two_factor ;;\n      6) run_fixed_operation secrets ;;",
       ),
     );
     const result = runSchemaPolicy(root);
