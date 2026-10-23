@@ -2,12 +2,15 @@
 
 import { useState, useEffect } from "react";
 import CsiSpatialGridPicker from "./CsiSpatialGridPicker";
+import UploadComputePicker from "./UploadComputePicker";
+import { reprocessAllConfirmText, reprocessScopeNote, useReprocessScope } from "./reprocess-scope";
 
 interface PipelineTabProps {
   reprocessing: boolean;
   reprocessLog: string[];
   onReprocess: (scope?: string, projectIds?: string[]) => void;
   projects: Array<{ id: string; name: string; status: string }>;
+  isRootAdmin?: boolean;
 }
 
 interface PipelineConfig {
@@ -79,7 +82,7 @@ const REPROCESS_SCOPES = [
   { id: "shape-parse", label: "Shape Parse (Keynotes)", description: "Detect circles, diamonds, hexagons with text on all pages (uses Lambda if available)" },
 ];
 
-export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, projects }: PipelineTabProps) {
+export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, projects, isRootAdmin = false }: PipelineTabProps) {
   const [config, setConfig] = useState<PipelineConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -126,12 +129,19 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
     }
   };
 
-  const handleReprocess = () => {
-    const ids = selectAll ? undefined : [...selectedProjects];
-    onReprocess(reprocessScope, ids);
-  };
-
   const completedProjects = projects.filter((p) => p.status === "completed");
+  const serverScope = useReprocessScope();
+
+  const handleReprocess = async () => {
+    // [2026-10-23] "All" runs on the SERVER's scope (own company, non-demo, any status), not this list:
+    // re-count it and say so before starting.
+    if (selectAll) {
+      const fresh = await serverScope.reload();
+      const label = REPROCESS_SCOPES.find((s) => s.id === reprocessScope)?.label || "Reprocess";
+      if (!window.confirm(reprocessAllConfirmText(label, fresh.scope, fresh.error, completedProjects.length, isRootAdmin))) return;
+    }
+    onReprocess(reprocessScope, selectAll ? undefined : [...selectedProjects]);
+  };
 
   if (loading) {
     return <div className="text-sm text-[var(--muted)]">Loading pipeline config...</div>;
@@ -143,6 +153,8 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
       <section>
         <h3 className="text-sm font-semibold mb-1">Upload Processing</h3>
         <p className="text-xs text-[var(--muted)] mb-3">Steps that run when a new blueprint is uploaded.</p>
+
+        {isRootAdmin && <UploadComputePicker />}
 
         {/* Page concurrency */}
         <div className="flex items-center gap-3 px-3 py-2 mb-3 rounded border border-[var(--border)] bg-[var(--surface)]">
@@ -453,7 +465,7 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
                   selectAll ? "border-[var(--accent)]/40 bg-[var(--accent)]/10" : "border-[var(--border)] text-[var(--muted)]"
                 }`}
               >
-                All ({completedProjects.length})
+                All ({serverScope.scope ? serverScope.scope.projects : "…"})
               </button>
               <button
                 onClick={() => setSelectAll(false)}
@@ -463,6 +475,9 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
               >
                 Select...
               </button>
+            </div>
+            <div className="text-[10px] text-[var(--muted)] mb-2" data-testid="reprocess-scope-note">
+              {reprocessScopeNote(serverScope.scope, serverScope.error, completedProjects.length, isRootAdmin)}
             </div>
             {!selectAll && (
               <div className="max-h-32 overflow-y-auto space-y-0.5 border border-[var(--border)] rounded p-2">

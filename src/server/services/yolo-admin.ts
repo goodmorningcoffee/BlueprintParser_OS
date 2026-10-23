@@ -14,7 +14,12 @@ import type { AuthSession } from "@/lib/api-utils";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrites } from "@/server/api/project-write-capability";
 
+// [2026-10-23] Root only (route auth:"root"). A root admin's project list (GET /api/projects) spans
+// every company, so the status does too — company-scoped, the AI-models rows of other companies'
+// projects read as "no results" and bulk "only without results" re-ran them. A non-root session
+// (in-service callers) keeps the own-company scope.
 export async function getYoloStatus(session: AuthSession): Promise<unknown> {
+  const companyScope = session.user.isRootAdmin ? sql`TRUE` : sql`p.company_id = ${session.user.companyId}`;
   const results = await db.execute(sql`
     SELECT
       p.public_id AS project_id,
@@ -23,7 +28,7 @@ export async function getYoloStatus(session: AuthSession): Promise<unknown> {
     FROM annotations a
     JOIN projects p ON a.project_id = p.id
     WHERE a.source = 'yolo'
-      AND p.company_id = ${session.user.companyId}
+      AND ${companyScope}
     GROUP BY p.public_id, (a.data->>'modelId')::int
   `);
 

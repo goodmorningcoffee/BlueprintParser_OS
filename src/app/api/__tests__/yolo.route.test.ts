@@ -35,6 +35,11 @@
 //     are soft-fail (response stays success) · PI updates SPREAD-MERGE (user keys
 //     survive — the G3-correct writer) · csiCodes merged from model classCsiCodes.
 // Assertions tagged [S031 fold] flip in the fold commit (sanctioned A/B/E only).
+// [2026-10-23] run/load are ROOT-ONLY (owner): the real shells now pass through
+// services/yolo-root-gate.ts (demo preflight → 401/403 → root) before the services. The YQ-* blocks
+// below characterize the SERVICES, so they call yoloRun/yoloLoad through a test-local shell identical
+// to the pre-gate route (auth:"none" + zLooseBody); the gate itself and the L5 demo freezes run
+// against the REAL routes (describe "root gate").
 import { describe, expect, inject, it, vi, beforeEach, afterEach } from "vitest";
 import { YoloStartRefusedError } from "@/lib/yolo";
 
@@ -148,6 +153,9 @@ vi.mock("@/lib/project-analysis", async (importOriginal) => ({
 import { GET as statusGET } from "@/app/api/yolo/status/route";
 import { POST as runPOST } from "@/app/api/yolo/run/route";
 import { POST as loadPOST } from "@/app/api/yolo/load/route";
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { yoloLoad, yoloRun } from "@/server/services/yolo";
 import {
   asUser,
   createCompany,
@@ -171,6 +179,10 @@ import { and, eq } from "drizzle-orm";
 import { logger } from "@/lib/logger";
 
 const dbUp = inject("dbUp") as boolean;
+
+/** The pre-2026-10-23 shells (no root gate): the services' own characterized behaviour. */
+const runService = defineRoute({ auth: "none", body: zLooseBody, handler: ({ body, req }) => yoloRun(body, req) });
+const loadService = defineRoute({ auth: "none", body: zLooseBody, handler: ({ body }) => yoloLoad(body) });
 
 // [refactor jul23 P4.1 U7] Only the observe module's entries — logger.warn is shared.
 const shapeRegistryWarns = (spy: { mock: { calls: unknown[][] } }) =>
@@ -331,7 +343,8 @@ describe.skipIf(!dbUp)(
   "POST /api/yolo/run — gates in order (YQ-3/YQ-4)",
   () => {
     const call = (b: unknown, headers: Record<string, string> = {}) =>
-      runPOST(makeReq("/api/yolo/run", { body: b, headers }));
+      runService(makeReq("/api/yolo/run", { body: b, headers }));
+    const realCall = (b: unknown) => runPOST(makeReq("/api/yolo/run", { body: b }));
 
     async function runWorld(
       userOver: Record<string, unknown> = {},
@@ -502,7 +515,7 @@ describe.skipIf(!dbUp)(
         statuses.push(
           (
             await readJson(
-              await call({
+              await realCall({ // [2026-10-23] the REAL (root-gated) route: demo preflight still answers first
                 projectId: w.project.publicId,
                 modelId: w.model.id,
               }),
@@ -739,7 +752,8 @@ describe.skipIf(!dbUp)(
 
 // ─── POST /api/yolo/load ─────────────────────────────────────────────────────
 describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
-  const call = (b: unknown) => loadPOST(makeReq("/api/yolo/load", { body: b }));
+  const call = (b: unknown) => loadService(makeReq("/api/yolo/load", { body: b }));
+  const realCall = (b: unknown) => loadPOST(makeReq("/api/yolo/load", { body: b }));
 
   async function loadWorld() {
     const company = await createCompany();
@@ -780,7 +794,7 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
       statuses.push(
         (
           await readJson(
-            await call({
+            await realCall({ // [2026-10-23] the REAL (root-gated) route
               projectId: project.publicId,
               modelId: model.id,
               modelName: "demo",
@@ -1208,5 +1222,82 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
       expect(ctx.sink).toBe("yolo.load");
       expect(ctx.kind).toBe("yolo-detection");
     });
+  });
+});
+
+// ─── [2026-10-23] root gate on the REAL run/load routes ─────────────────────
+describe.skipIf(!dbUp)("POST /api/yolo/run + /api/yolo/load — root only (services/yolo-root-gate.ts)", () => {
+  const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } };
+  const run = (b: unknown) => runPOST(makeReq("/api/yolo/run", { body: b }));
+  const load = (b: unknown) => loadPOST(makeReq("/api/yolo/load", { body: b }));
+
+  async function gateWorld() {
+    const company = await createCompany();
+    const member = await createUser(company.id, { canRunModels: true } as never);
+    const admin = await createUser(company.id, { canRunModels: true, role: "admin" } as never);
+    const root = await createUser(company.id, { canRunModels: true, isRootAdmin: true, role: "admin" } as never);
+    const project = await createProject(company.id, admin.id, { numPages: 5 } as never);
+    const model = await createModel(company.id);
+    return { company, member, admin, root, project, model };
+  }
+
+  it("run: signed-out 401; member and company admin (canRunModels) 403 'Root admin only' before any gate or side effect; root proceeds", async () => {
+    const w = await gateWorld();
+    const body = { projectId: w.project.publicId, modelId: w.model.id };
+    let r = await readJson(await run(body));
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
+    for (const actor of [w.member, w.admin]) {
+      asUser(actor);
+      r = await readJson(await run(body));
+      expect(r.status).toBe(403);
+      expect(r.body).toEqual(ROOT_ONLY);
+    }
+    expect(h.getToggles).not.toHaveBeenCalled();
+    expect(h.checkYoloQuota).not.toHaveBeenCalled();
+    expect(h.uploadToS3).not.toHaveBeenCalled();
+    expect(h.startYoloJob).not.toHaveBeenCalled();
+    expect(await db.select().from(processingJobs).where(eq(processingJobs.projectId, w.project.id))).toEqual([]);
+
+    asUser(w.root);
+    r = await readJson(await run(body));
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ jobName: "job-abc", status: "running" });
+    expect(h.startYoloJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("load: signed-out 403 (never 401, YQ-2), member and company admin 403 'Root admin only' before S3; root reaches the loader", async () => {
+    const w = await gateWorld();
+    const body = { projectId: w.project.publicId, modelId: w.model.id, modelName: "m" };
+    h.sdkSend.mockResolvedValue({ Contents: [] });
+    let r = await readJson(await load(body));
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual(ROOT_ONLY);
+    for (const actor of [w.member, w.admin]) {
+      asUser(actor);
+      r = await readJson(await load(body));
+      expect(r.status).toBe(403);
+      expect(r.body).toEqual(ROOT_ONLY);
+    }
+    expect(h.sdkSend).not.toHaveBeenCalled();
+
+    asUser(w.root);
+    r = await readJson(await load(body));
+    expect(r.status).toBe(404);
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "No results found" } }); // reached the S3 listing
+  });
+
+  it("the demo preflight still answers first: a demo target is the same 403 for signed-out and root alike", async () => {
+    const w = await gateWorld();
+    const demo = await createProject(w.company.id, w.admin.id, { numPages: 5, isDemo: true } as never);
+    const statuses: number[] = [];
+    for (const actor of [null, w.root]) {
+      actor ? asUser(actor) : signedOut();
+      statuses.push((await run({ projectId: demo.publicId, modelId: w.model.id })).status);
+      statuses.push((await load({ projectId: demo.publicId, modelId: w.model.id, modelName: "m" })).status);
+    }
+    expect(statuses).toEqual([403, 403, 403, 403]);
+    expect(h.startYoloJob).not.toHaveBeenCalled();
+    expect(h.sdkSend).not.toHaveBeenCalled();
   });
 });

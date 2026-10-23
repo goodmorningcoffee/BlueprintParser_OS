@@ -57,6 +57,7 @@ import { eq, and } from "drizzle-orm";
 import { processProject } from "@/lib/processing";
 import { headS3Object } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import { processingStartInput } from "@/server/services/processing-start-input";
 import { checkUploadQuota } from "@/lib/quotas";
 import { deleteProjectFully } from "@/lib/project-delete";
 import { visiblePageCount, visiblePageCountsByProject } from "@/server/services/project-page-counts";
@@ -678,13 +679,7 @@ export async function createProject(
               new StartExecutionCommand({
                 stateMachineArn: process.env.STEP_FUNCTION_ARN,
                 name: executionName,
-                input: JSON.stringify({
-                  projectId: project.id,
-                  dataUrl: project.dataUrl,
-                  s3Bucket: process.env.S3_BUCKET,
-                  webhookUrl: `${process.env.NEXTAUTH_URL}/api/processing/webhook`,
-                  webhookSecret: process.env.PROCESSING_WEBHOOK_SECRET,
-                }),
+                input: await processingStartInput(project), // + the root upload compute preset
               }),
             );
           } catch (error) {

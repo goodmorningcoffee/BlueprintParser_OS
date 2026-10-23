@@ -34,6 +34,7 @@ import { YoloBulkCost } from "./YoloCost";
 import { bulkConcurrency, bulkMachineBounds, clampMachines } from "./yolo-bulk-concurrency";
 import { readYoloOptions, useYoloOptions } from "./yolo-options-store";
 import { logYoloDebug, logYoloDebugError } from "./yolo-debug-log";
+import type { YoloStatusLoad } from "./yolo-status-load";
 
 export { YoloRunCost } from "./YoloCost";
 
@@ -160,15 +161,39 @@ export interface UseYoloBulkArgs {
   projects: BulkProject[];
   yoloJobs: Record<string, Record<string, string>>;
   yoloStatus: Record<string, Record<string, number>>;
+  /** [2026-10-23] Whether yoloStatus has landed; omitted = loaded (callers that pass a final map). */
+  yoloStatusLoad?: YoloStatusLoad;
   onRunYolo: RunYoloFn;
   onLoadResults: LoadYoloFn;
 }
 
-export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo, onLoadResults }: UseYoloBulkArgs) {
+/** localStorage key of the "only projects without results" checkbox (per browser). */
+export const ONLY_MISSING_STORAGE_KEY = "bp.admin.yoloBulk.onlyMissing";
+
+function readOnlyMissing(): boolean | null {
+  try {
+    const v = window.localStorage.getItem(ONLY_MISSING_STORAGE_KEY);
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeOnlyMissing(value: boolean): void {
+  try {
+    window.localStorage.setItem(ONLY_MISSING_STORAGE_KEY, value ? "1" : "0");
+  } catch {
+    /* private mode / blocked storage — the choice just is not remembered */
+  }
+}
+
+export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, yoloStatusLoad, onRunYolo, onLoadResults }: UseYoloBulkArgs) {
   const [pickedModelId, setPickedModelId] = useState<number | null>(null);
   const model = models.find((m) => m.id === pickedModelId) ?? models[0] ?? null;
   const [selectedByModel, setSelectedByModel] = useState<Record<number, string[]>>({});
-  const [onlyMissing, setOnlyMissing] = useState(true);
+  const [onlyMissing, setOnlyMissing] = useState(() => readOnlyMissing() ?? true);
+  const statusLoaded = yoloStatusLoad ? yoloStatusLoad.loaded : true;
+  const statusError = yoloStatusLoad?.error ?? null;
   const snapshot = useSyncExternalStore(subscribeStore, readStore, readStore);
   const { data: options } = useYoloOptions();
   const bounds = bulkMachineBounds(options);
@@ -187,9 +212,10 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
     (projectId: string, modelId: number) => ((yoloStatus[projectId] || {})[String(modelId)] || 0) > 0,
     [yoloStatus],
   );
+  // Until the results are known, "without results" cannot be computed: offer none rather than all.
   const candidates = useMemo(
-    () => (model ? projects.filter((p) => !onlyMissing || !hasResults(p.id, model.id)) : []),
-    [projects, model, onlyMissing, hasResults],
+    () => (model && (!onlyMissing || statusLoaded) ? projects.filter((p) => !onlyMissing || !hasResults(p.id, model.id)) : []),
+    [projects, model, onlyMissing, statusLoaded, hasResults],
   );
   const busy = !!snapshot && !snapshot.finished;
 
@@ -302,7 +328,12 @@ export function useYoloBulk({ models, projects, yoloJobs, yoloStatus, onRunYolo,
       onMachines: (value: number) => setMachinesChoice({ instanceType, value }),
       totalCount: projects.length,
       onlyMissing,
-      onToggleOnlyMissing: () => setOnlyMissing((v) => !v),
+      resultsLoaded: statusLoaded,
+      resultsError: statusError,
+      onToggleOnlyMissing: () => {
+        writeOnlyMissing(!onlyMissing);
+        setOnlyMissing(!onlyMissing);
+      },
       onSelectAll: () => setSelection(candidates.map((p) => p.id)),
       onDeselectAll: () => setSelection([]),
       onRunSelected: () => start("run", [...selected]),
@@ -355,8 +386,17 @@ export default function YoloBulkBar(props: YoloBulkBarProps) {
         <button type="button" className={btn} onClick={props.onDeselectAll} disabled={!idle}>Deselect all</button>
         <label className="flex items-center gap-1 text-[var(--muted)]">
           <input type="checkbox" checked={props.onlyMissing} onChange={props.onToggleOnlyMissing} disabled={!idle} />
-          only projects without results for this model ({props.candidateCount} of {props.totalCount})
+          only projects without results for this model (
+          {props.onlyMissing && !props.resultsLoaded
+            ? props.resultsError ? "results unavailable" : "loading results…"
+            : `${props.candidateCount} of ${props.totalCount}`}
+          )
         </label>
+        {props.resultsError && (
+          <span className="text-red-400" data-testid="yolo-bulk-results-error">
+            Could not load YOLO results: {props.resultsError}
+          </span>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <button type="button" className={btn} onClick={props.onRunSelected} disabled={!idle || selectedCount === 0}>

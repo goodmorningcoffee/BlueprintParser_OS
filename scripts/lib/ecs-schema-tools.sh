@@ -645,6 +645,16 @@ process.stdin.on("end", () => {
       WEBHOOK_SECRET: "$.webhookSecret",
       WEBHOOK_URL: "$.webhookUrl",
     };
+    // [2026-10-23] The upload compute preset shape: ValidateInput adds compute.$ (the input merged
+    // over the 8 vCPU / 16 GB / 8-page defaults), Overrides adds Cpu.$ / Memory.$ and the container a
+    // PAGE_CONCURRENCY env. Either the legacy shape or this exact one is accepted, nothing in between.
+    // Every apostrophe is \u0027 and every backslash \\ for the same bash single-quote reason as above.
+    const computeMerge = "States.JsonMerge(States.StringToJson(\u0027\\{\"cpu\":\"8192\",\"memory\":\"16384\",\"pageConcurrency\":\"8\"\\}\u0027), $, false)";
+    const computeShape = validateInput?.Parameters != null && typeof validateInput.Parameters === "object" &&
+      Object.prototype.hasOwnProperty.call(validateInput.Parameters, "compute.$");
+    if (computeShape) expectedEnvironment.PAGE_CONCURRENCY = "$.compute.pageConcurrency";
+    const validateInputKeys = ["dataUrl.$", "projectId.$", "s3Bucket.$", "status", "webhookSecret.$", "webhookUrl.$"];
+    const overrideKeys = computeShape ? ["ContainerOverrides", "Cpu.$", "Memory.$"] : ["ContainerOverrides"];
     const actualEnvironmentNames = Array.isArray(environment)
       ? environment.map((entry) => entry?.Name).sort()
       : [];
@@ -656,7 +666,8 @@ process.stdin.on("end", () => {
       !exactKeys(validateInput, ["Next", "Parameters", "Type"]) ||
       validateInput.Type !== "Pass" ||
       validateInput.Next !== "CPUProcessing" ||
-      !exactKeys(validateInput.Parameters, ["dataUrl.$", "projectId.$", "s3Bucket.$", "status", "webhookSecret.$", "webhookUrl.$"]) ||
+      !exactKeys(validateInput.Parameters, computeShape ? [...validateInputKeys, "compute.$"] : validateInputKeys) ||
+      (computeShape && validateInput.Parameters["compute.$"] !== computeMerge) ||
       validateInput.Parameters["projectId.$"] !== "$.projectId" ||
       validateInput.Parameters["dataUrl.$"] !== "$.dataUrl" ||
       validateInput.Parameters["s3Bucket.$"] !== "$.s3Bucket" ||
@@ -684,7 +695,8 @@ process.stdin.on("end", () => {
       awsvpc.SecurityGroups.length !== 1 ||
       typeof awsvpc.SecurityGroups[0] !== "string" ||
       !awsvpc.SecurityGroups[0].startsWith("sg-") ||
-      !exactKeys(overrides, ["ContainerOverrides"]) ||
+      !exactKeys(overrides, overrideKeys) ||
+      (computeShape && (overrides["Cpu.$"] !== "$.compute.cpu" || overrides["Memory.$"] !== "$.compute.memory")) ||
       !Array.isArray(containerOverrides) ||
       containerOverrides.length !== 1 ||
       !exactKeys(containerOverride, ["Environment", "Name"]) ||

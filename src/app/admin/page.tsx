@@ -23,6 +23,7 @@ import AiRbacTab from "./tabs/AiRbacTab";
 import SettingsTab from "./tabs/SettingsTab";
 import LogsTab from "./tabs/LogsTab";
 import PipelineTab from "./tabs/PipelineTab";
+import { fetchYoloStatus, type YoloStatusLoad } from "./tabs/yolo-status-load";
 import LlmContextTab from "./tabs/LlmContextTab";
 import DataToolsTab from "./tabs/DataToolsTab";
 import ReprocessDebugToggle from "./ReprocessDebugToggle";
@@ -79,6 +80,7 @@ export default function AdminPage() {
   const [unseenAbuseEvents, setUnseenAbuseEvents] = useState(0);
   const [showInvites, setShowInvites] = useState(false);
   const [yoloStatus, setYoloStatus] = useState<Record<string, Record<string, number>>>({});
+  const [yoloStatusLoad, setYoloStatusLoad] = useState<YoloStatusLoad>({ loaded: false, error: null });
   const pollKey = (pid: string, mid: number) => `${pid}:${mid}`;
   const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: true });
   const [togglePassword, setTogglePassword] = useState("");
@@ -154,10 +156,12 @@ export default function AdminPage() {
       } catch { /* table may not exist yet */ }
     }
 
-    try {
-      const yoloRes = await fetch("/api/admin/yolo-status");
-      if (yoloRes.ok) setYoloStatus(await yoloRes.json());
-    } catch { /* ignore */ }
+    // [2026-10-23] Root-only (the YOLO controls are); the bulk bar shows "loading results…" until this lands.
+    if (session?.user?.isRootAdmin) {
+      const r = await fetchYoloStatus();
+      if (r.status) setYoloStatus(r.status);
+      setYoloStatusLoad({ loaded: !!r.status, error: r.error });
+    }
 
     try {
       const togRes = await fetch("/api/admin/toggles");
@@ -677,6 +681,7 @@ export default function AdminPage() {
             projects={projects}
             yoloJobs={yoloJobs}
             yoloStatus={yoloStatus}
+            yoloStatusLoad={yoloStatusLoad}
             uploading={uploading}
             uploadProgress={uploadProgress}
             onUploadModel={uploadModel}
@@ -704,6 +709,7 @@ export default function AdminPage() {
             reprocessLog={reprocessLog}
             onReprocess={reprocessAll}
             projects={projects}
+            isRootAdmin={session?.user?.isRootAdmin === true}
           />
         )}
 

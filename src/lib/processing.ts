@@ -49,7 +49,8 @@ import {
 // [refactor jul23 P4.1 U7 → fix 2026-10-22] shape-parse rows: per-page replace (observe sink inside).
 import { replaceShapeParseAnnotations } from "@/server/services/shape-parse-persist";
 
-const DEFAULT_PAGE_CONCURRENCY = 8;
+// [2026-10-23] company pageConcurrency → else PAGE_CONCURRENCY env (upload compute preset, 1..32) → else 8.
+import { resolvePageConcurrency } from "@/lib/upload-compute";
 
 /** Run async tasks with a concurrency limit. */
 async function mapConcurrent<T, R>(
@@ -329,7 +330,7 @@ async function processProjectWithLease(
 
     // Fetch company config for this project (heuristics + pipeline settings)
     let companyHeuristics: any[] | undefined;
-    let pageConcurrency = DEFAULT_PAGE_CONCURRENCY;
+    let pageConcurrency = resolvePageConcurrency(undefined);
     let csiSpatialGrid: { rows: number; cols: number } | undefined;
     let disabledSteps = new Set<string>();
     try {
@@ -339,9 +340,7 @@ async function processProjectWithLease(
         .where(eq(companies.id, project.companyId))
         .limit(1);
       companyHeuristics = company?.pipelineConfig?.heuristics;
-      pageConcurrency =
-        (company?.pipelineConfig?.pipeline as any)?.pageConcurrency ||
-        DEFAULT_PAGE_CONCURRENCY;
+      pageConcurrency = resolvePageConcurrency((company?.pipelineConfig?.pipeline as any)?.pageConcurrency);
       csiSpatialGrid = (company?.pipelineConfig?.pipeline as any)
         ?.csiSpatialGrid;
       disabledSteps = new Set<string>(

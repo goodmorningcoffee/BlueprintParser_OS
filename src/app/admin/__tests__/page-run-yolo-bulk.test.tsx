@@ -12,8 +12,12 @@ const h = vi.hoisted(() => ({
   tabProps: null as null | {
     onRunYolo: (projectId: string, modelId: number, bulk?: boolean) => Promise<unknown>;
     yoloJobs: Record<string, Record<string, string>>;
+    yoloStatus?: Record<string, Record<string, number>>;
+    yoloStatusLoad?: { loaded: boolean; error: string | null };
   },
 }));
+const NON_ROOT = h.session;
+const ROOT = { data: { user: { role: "admin", isRootAdmin: true } }, status: "authenticated" };
 
 vi.mock("next-auth/react", () => ({
   useSession: () => h.session,
@@ -34,6 +38,7 @@ const calls = (prefix: string) => fetchMock.mock.calls.filter(([u]) => String(u)
 
 beforeEach(() => {
   h.tabProps = null;
+  h.session = NON_ROOT;
   window.history.replaceState(null, "", "/admin?tab=ai-models");
   fetchMock = vi.fn(async (url: string) => {
     const u = String(url);
@@ -91,5 +96,42 @@ describe("AdminPage runYolo", () => {
     let result: unknown;
     await act(async () => { result = await h.tabProps!.onRunYolo("p1", 7, true); });
     expect(result).toEqual({ error: "No SageMaker quota for ml.g4dn.xlarge …", httpStatus: 429 });
+  });
+});
+
+// [2026-10-23] GET /api/admin/yolo-status is root-only (as are the YOLO controls), and its load state
+// reaches the tab so "only projects without results" can say "loading results…" / show the error.
+describe("AdminPage YOLO results status", () => {
+  it("a non-root admin never asks for it", async () => {
+    await mountPage();
+    expect(calls("/api/admin/yolo-status")).toEqual([]);
+    expect(h.tabProps!.yoloStatusLoad).toEqual({ loaded: false, error: null });
+  });
+
+  it("root: loaded once it lands", async () => {
+    h.session = ROOT;
+    const base = fetchMock.getMockImplementation() as (url: string) => Promise<unknown>;
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url) === "/api/admin/yolo-status"
+        ? { ok: true, status: 200, json: async () => ({ p1: { "7": 3 } }) }
+        : base(url),
+    );
+    await mountPage();
+    expect(calls("/api/admin/yolo-status").length).toBe(1);
+    expect(h.tabProps!.yoloStatus).toEqual({ p1: { "7": 3 } });
+    expect(h.tabProps!.yoloStatusLoad).toEqual({ loaded: true, error: null });
+  });
+
+  it("root: a failed load is surfaced, not swallowed", async () => {
+    h.session = ROOT;
+    const base = fetchMock.getMockImplementation() as (url: string) => Promise<unknown>;
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url) === "/api/admin/yolo-status"
+        ? { ok: false, status: 500, json: async () => ({ error: { code: "INTERNAL", message: "Internal error" } }) }
+        : base(url),
+    );
+    await mountPage();
+    expect(h.tabProps!.yoloStatus).toEqual({});
+    expect(h.tabProps!.yoloStatusLoad).toEqual({ loaded: false, error: "Internal error" });
   });
 });
