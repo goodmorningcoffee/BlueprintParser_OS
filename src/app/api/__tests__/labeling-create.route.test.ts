@@ -106,6 +106,7 @@ import {
   asUser,
   createCompany,
   createLabelingSessionFixture,
+  createPage,
   createProject as createProjectFixture,
   createUser,
   createWorld,
@@ -1293,5 +1294,50 @@ describe.skipIf(!dbUp)("POST /api/labeling/create", () => {
         taskCount: 9,
       }),
     ]);
+  });
+
+  it("[2026-10-23 page-permanent-delete] a deleted page leaves a gap: 'all' on a 3-page project with rows 1 and 3 only → tasks 1 and 3, page 2 never read", async () => {
+    const { user, project } = await createWorld(); // numPages 3; page 2 permanently deleted (no row)
+    await createPage(project.id, 1);
+    await createPage(project.id, 3);
+    asUser(user);
+    stubLsEnv();
+    lsMocks.createProject.mockResolvedValueOnce({ id: 91009 });
+    lsMocks.importTasks.mockResolvedValueOnce(undefined);
+
+    const { status, body } = await readJson(
+      await post({ projectId: project.publicId, pageSelection: "all" }),
+    );
+    expect(status).toBe(200);
+    const imported = (
+      lsMocks.importTasks.mock.calls[0]?.[2] as ImportedGrantTask[]
+    ).map(parseGrantTask);
+    expect(imported.map(({ meta }) => meta)).toEqual([
+      { pageNumber: 1 },
+      { pageNumber: 3 },
+    ]);
+    expect(
+      s3Mocks.headS3Object.mock.calls.map(([key]) => key).sort(),
+    ).toEqual(
+      [
+        canonicalPageKey(project.dataUrl, 1),
+        canonicalPageKey(project.dataUrl, 3),
+      ].sort(),
+    );
+    expect(body.sessions).toEqual([
+      expect.objectContaining({ pageRange: "1-3", taskCount: 2 }),
+    ]);
+  });
+
+  it("[2026-10-23 page-permanent-delete] a range made only of deleted pages → 400, no provider call", async () => {
+    const { user, project } = await createWorld(); // numPages 3; only page 1 has a row
+    await createPage(project.id, 1);
+    asUser(user);
+    stubLsEnv();
+    const { status } = await readJson(
+      await post({ projectId: project.publicId, pageSelection: "range", pageRange: "2-3" }),
+    );
+    expect(status).toBe(400);
+    expect(lsMocks.createProject).not.toHaveBeenCalled();
   });
 });

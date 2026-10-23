@@ -8,15 +8,18 @@ interface HiddenDuplicatesState {
   publicId: string;
   /** hidden page → the canonical page it duplicates */
   hidden: Record<number, number>;
+  /** page numbers with no page row (permanently deleted duplicates): never shown */
+  missing: Record<number, true>;
   showHidden: boolean;
-  setHidden: (publicId: string, hidden: Record<number, number>) => void;
+  setHidden: (publicId: string, hidden: Record<number, number>, missing?: Record<number, true>) => void;
   setShowHidden: (showHidden: boolean) => void;
 }
 
 export const useHiddenDuplicatesStore = create<HiddenDuplicatesState>((set) => ({
   publicId: "",
   hidden: {},
+  missing: {},
   showHidden: false,
-  setHidden: (publicId, hidden) => set({ publicId, hidden, showHidden: false }),
+  setHidden: (publicId, hidden, missing = {}) => set({ publicId, hidden, missing, showHidden: false }),
   setShowHidden: (showHidden) => set({ showHidden }),
 }));

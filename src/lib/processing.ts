@@ -8,6 +8,7 @@ import {
 } from "@/lib/intelligence-merge";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { visiblePage } from "@/lib/page-dedup";
 import {
   uploadToS3,
   downloadFromS3,
@@ -708,7 +709,7 @@ async function processProjectWithLease(
           csiCodes: pages.csiCodes,
         })
         .from(pages)
-        .where(eq(pages.projectId, project.id))
+        .where(and(eq(pages.projectId, project.id), visiblePage(pages.pageIntelligence)))
         .orderBy(pages.pageNumber);
 
       const { intelligence, summary } = analyzeProject(

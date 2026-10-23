@@ -13,6 +13,8 @@ import { useHiddenDuplicatesStore } from "@/stores/hiddenDuplicatesStore";
 export interface HiddenDuplicates {
   /** hidden page → the canonical page it duplicates */
   hidden: Record<number, number>;
+  /** page numbers with no page row (permanently deleted duplicates): always skipped */
+  missing: Record<number, true>;
   count: number;
   showHidden: boolean;
   setShowHidden: (show: boolean) => void;
@@ -20,16 +22,20 @@ export interface HiddenDuplicates {
 
 interface PageFlagsResponse {
   hidden?: { pageNumber: number; duplicateOf: number }[];
+  missing?: number[];
 }
+interface Flags { hidden: Record<number, number>; missing: Record<number, true> }
 
 const NONE: Record<number, number> = {};
+const NO_MISSING: Record<number, true> = {};
 
-async function loadHiddenDuplicates(publicId: string, signal: AbortSignal): Promise<Record<number, number>> {
+async function loadHiddenDuplicates(publicId: string, signal: AbortSignal): Promise<Flags> {
   const res = await fetch(`/api/projects/${encodeURIComponent(publicId)}/page-flags`, { signal });
-  if (!res.ok) return {};
+  if (!res.ok) return { hidden: {}, missing: {} };
   const body = (await res.json()) as PageFlagsResponse;
-  const out: Record<number, number> = {};
-  for (const row of body.hidden ?? []) out[row.pageNumber] = row.duplicateOf;
+  const out: Flags = { hidden: {}, missing: {} };
+  for (const row of body.hidden ?? []) out.hidden[row.pageNumber] = row.duplicateOf;
+  for (const n of body.missing ?? []) out.missing[n] = true;
   return out;
 }
 
@@ -39,8 +45,8 @@ export function useLoadHiddenDuplicates(publicId: string | null | undefined): vo
     if (!publicId) return;
     const controller = new AbortController();
     loadHiddenDuplicates(publicId, controller.signal)
-      .then((hidden) => {
-        if (!controller.signal.aborted) useHiddenDuplicatesStore.getState().setHidden(publicId, hidden);
+      .then((flags) => {
+        if (!controller.signal.aborted) useHiddenDuplicatesStore.getState().setHidden(publicId, flags.hidden, flags.missing);
       })
       .catch(() => undefined);
     return () => controller.abort();
@@ -50,8 +56,10 @@ export function useLoadHiddenDuplicates(publicId: string | null | undefined): vo
 /** PageSidebar: the current project's hidden duplicates (empty for any other project). */
 export function useHiddenDuplicates(publicId: string): HiddenDuplicates {
   const state = useHiddenDuplicatesStore(
-    useShallow((s) => ({ publicId: s.publicId, hidden: s.hidden, showHidden: s.showHidden, setShowHidden: s.setShowHidden })),
+    useShallow((s) => ({ publicId: s.publicId, hidden: s.hidden, missing: s.missing, showHidden: s.showHidden, setShowHidden: s.setShowHidden })),
   );
-  const hidden = publicId && state.publicId === publicId ? state.hidden : NONE;
-  return { hidden, count: Object.keys(hidden).length, showHidden: state.showHidden, setShowHidden: state.setShowHidden };
+  const current = Boolean(publicId) && state.publicId === publicId;
+  const hidden = current ? state.hidden : NONE;
+  const missing = current ? state.missing : NO_MISSING;
+  return { hidden, missing, count: Object.keys(hidden).length, showHidden: state.showHidden, setShowHidden: state.setShowHidden };
 }

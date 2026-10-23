@@ -126,7 +126,8 @@ export function planHides(
   return [...plan.values()].sort((a, b) => a.page - b.page);
 }
 
-async function assertNotBusy(tx: ProjectWriteTransaction, projectId: number): Promise<void> {
+/** Any active mutation lease on the project → 409. Call after the project row is locked. */
+export async function assertNotBusy(tx: ProjectWriteTransaction, projectId: number): Promise<void> {
   const [lease] = await tx
     .select({ kind: projectMutationLeases.kind })
     .from(projectMutationLeases)
@@ -135,13 +136,23 @@ async function assertNotBusy(tx: ProjectWriteTransaction, projectId: number): Pr
   if (lease) throw new ApiError("CONFLICT", "Project is busy (a job is running); retry when it finishes");
 }
 
-/** Pages carrying human work: user/takeoff annotations, QTO references, parsed regions. */
-async function humanWorkPages(tx: ProjectWriteTransaction, projectId: number): Promise<Set<number>> {
+/** A transaction or `db`: the permanent-delete dry run plans outside any transaction. */
+export type WorkReader = Pick<ProjectWriteTransaction, "select" | "selectDistinct">;
+
+/**
+ * Pages carrying human work: annotations of the given sources (default: user/takeoff), QTO
+ * references (schedule page, line-item pages and instances), parsed regions.
+ */
+export async function humanWorkPages(
+  tx: WorkReader,
+  projectId: number,
+  sources: readonly string[] = HUMAN_ANNOTATION_SOURCES,
+): Promise<Set<number>> {
   const work = new Set<number>();
   const annotated = await tx
     .selectDistinct({ pageNumber: annotations.pageNumber })
     .from(annotations)
-    .where(and(eq(annotations.projectId, projectId), inArray(annotations.source, [...HUMAN_ANNOTATION_SOURCES])));
+    .where(and(eq(annotations.projectId, projectId), inArray(annotations.source, [...sources])));
   for (const row of annotated) work.add(row.pageNumber);
   const workflows = await tx
     .select({ schedulePageNumber: qtoWorkflows.schedulePageNumber, lineItems: qtoWorkflows.lineItems })
@@ -348,16 +359,26 @@ export async function restoreDuplicates(
   return { projectPublicId: project.publicId, restored: restoredPages };
 }
 
-/** GET /api/projects/[id]/page-flags — the viewer's hidden duplicates (page → canonical). */
+/**
+ * GET /api/projects/[id]/page-flags — the viewer's hidden duplicates (page → canonical) and,
+ * for a completed project, `missing`: numbers in 1..numPages with no page row (permanently
+ * deleted duplicates, page-permanent-delete.ts). The sidebar skips those like hidden pages.
+ */
 export async function getPageFlags(project: ProjectAccessRow): Promise<unknown> {
   const rows = await db
     .select({ pageNumber: pages.pageNumber, mark: sql<unknown>`${pages.pageIntelligence}->'duplicateOf'` })
     .from(pages)
-    .where(and(eq(pages.projectId, project.id), sql`${pages.pageIntelligence} ? 'duplicateOf'`));
+    .where(eq(pages.projectId, project.id));
   const hidden: { pageNumber: number; duplicateOf: number; tier: DuplicateTier }[] = [];
+  const present = new Set<number>();
   for (const row of rows) {
+    present.add(row.pageNumber);
     const mark = getDuplicateOf({ duplicateOf: row.mark });
     if (mark?.hiddenAt) hidden.push({ pageNumber: row.pageNumber, duplicateOf: mark.pageNumber, tier: mark.tier });
   }
-  return { hidden: hidden.sort((a, b) => a.pageNumber - b.pageNumber) };
+  const missing: number[] = [];
+  if (project.status === "completed" && present.size > 0) {
+    for (let n = 1; n <= (project.numPages ?? 0); n++) if (!present.has(n)) missing.push(n);
+  }
+  return { hidden: hidden.sort((a, b) => a.pageNumber - b.pageNumber), missing };
 }

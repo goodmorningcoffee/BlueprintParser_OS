@@ -501,6 +501,12 @@ export async function yoloLoad(
       const classKeywords = model?.config?.classKeywords || {};
 
       const outputPrefix = `${project.dataUrl}/yolo-output/${modelName}/`;
+      // [fix 2026-10-23 page-permanent-delete] A permanently deleted page may leave its
+      // page_NNNN.json behind (S3 delete is best-effort); with page rows present, a file whose
+      // page has no row is skipped so the deleted page's annotations never come back. A project
+      // with NO page rows at all (legacy) keeps the old behaviour: every file loads.
+      const pageRowSet = new Set((await db.select({ n: pages.pageNumber }).from(pages).where(eq(pages.projectId, project.id))).map((r) => r.n));
+      let filesSkippedNoPage = 0; // logged below; the response shape is frozen (yolo.route.test.ts)
 
       // List all JSON result files
       const listed = await loadS3Client.send(
@@ -545,6 +551,7 @@ export async function yoloLoad(
           const pageMatch = filename.match(/page_(\d+)/);
           const pageNumber = pageMatch ? parseInt(pageMatch[1]) : 0;
           if (pageNumber === 0) continue;
+          if (pageRowSet.size > 0 && !pageRowSet.has(pageNumber)) { filesSkippedNoPage++; continue; }
 
           filesProcessed++;
 
@@ -578,6 +585,7 @@ export async function yoloLoad(
         }
       }
 
+      if (filesSkippedNoPage > 0) logger.info(`[YOLO-LOAD] skipped ${filesSkippedNoPage} result file(s) whose page has no row (permanently deleted)`);
       if (allValues.length === 0) {
         return {
           success: false,

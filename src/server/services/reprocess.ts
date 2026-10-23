@@ -49,6 +49,7 @@ import type { AuthSession } from "@/lib/api-utils";
  *  a confident region regardless of pattern family. */
 const HEATMAP_CLASSES = ["text_box", "vertical_area", "horizontal_area"] as const;
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
+import { visiblePage } from "@/lib/page-dedup";
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
 import { assertProjectWritable } from "@/server/api/access";
@@ -661,7 +662,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
           try {
             const allProcessedPages = await db
               .select({ pageNumber: pages.pageNumber, drawingNumber: pages.drawingNumber, pageIntelligence: pages.pageIntelligence, csiCodes: pages.csiCodes })
-              .from(pages).where(eq(pages.projectId, project.id)).orderBy(pages.pageNumber);
+              .from(pages).where(and(eq(pages.projectId, project.id), visiblePage(pages.pageIntelligence))).orderBy(pages.pageNumber);
 
             const { intelligence, summary } = analyzeProject(allProcessedPages.map(p => ({
               pageNumber: p.pageNumber, drawingNumber: p.drawingNumber,

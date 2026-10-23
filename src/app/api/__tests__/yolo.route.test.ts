@@ -1115,6 +1115,31 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
     expect(left.filter((r) => r.projectId === other.id)).toHaveLength(1);
   });
 
+  it("[fix 2026-10-23 page-permanent-delete] a results file whose page has NO row is skipped (a deleted page's leftover JSON never re-imports); a project with no page rows at all still loads every file", async () => {
+    const w = await loadWorld();
+    asUser(w.admin);
+    const p = `${w.project.dataUrl}/yolo-output/m`;
+    const files = [detFile(`${p}/page_0001.json`, [DET]), detFile(`${p}/page_0003.json`, [DET])];
+    const load = async () => readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
+    const yoloPages = async () =>
+      (await db.select({ n: annotationsTable.pageNumber }).from(annotationsTable)
+        .where(and(eq(annotationsTable.projectId, w.project.id), eq(annotationsTable.source, "yolo"))).orderBy(annotationsTable.pageNumber)).map((x) => x.n);
+    // legacy shape (no page rows): unchanged, both files load
+    seedS3Results(files);
+    let r = await load();
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ success: true, detectionsLoaded: 2, deletedPrevious: 0, filesProcessed: 2 });
+    expect(await yoloPages()).toEqual([1, 3]);
+    // page 1 has a row; page 3 was permanently deleted (row gone, S3 file left behind) → skipped, and the
+    // replacement load drops its old rows instead of re-importing them
+    await createPage(w.project.id, 1);
+    seedS3Results(files);
+    r = await load();
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ success: true, detectionsLoaded: 1, deletedPrevious: 2, filesProcessed: 1 }); // response shape unchanged (frozen)
+    expect(await yoloPages()).toEqual([1]);
+  });
+
   // ── yolo.load observe warn-net (rides commit U7-B) [refactor jul23 P4.1 U7] ──
   // Log-mode contract (spec Verdict 2 / RD-U7d): valid detections → zero [shape-registry]
   // warns; a malformed detection STILL persists (log+skip, gate:false — a throw would

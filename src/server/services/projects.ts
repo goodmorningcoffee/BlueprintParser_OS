@@ -53,12 +53,13 @@ import {
   takeoffItems,
   takeoffGroups,
 } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { processProject } from "@/lib/processing";
 import { headS3Object } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { checkUploadQuota } from "@/lib/quotas";
 import { deleteProjectFully } from "@/lib/project-delete";
+import { visiblePageCount, visiblePageCountsByProject } from "@/server/services/project-page-counts";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError, notFound } from "@/server/api/envelope";
@@ -349,14 +350,11 @@ export async function listDemoProjects() {
     .where(eq(projects.isDemo, true))
     .orderBy(projects.createdAt);
 
-  // Actual page counts from the pages table — N+1 loop, FROZEN (do NOT collapse to listProjects's GROUP BY).
+  // Actual VISIBLE page counts — N+1 loop, FROZEN (do NOT collapse to listProjects's GROUP BY).
+  // [2026-10-23] hidden duplicates excluded; the query lives in project-page-counts.ts (ceiling).
   const pageCounts: Record<number, number> = {};
   for (const proj of demoProjects) {
-    const result = await db.execute(sql`
-      SELECT COUNT(*)::int as cnt FROM pages WHERE project_id = ${proj.id}
-    `);
-    pageCounts[proj.id] =
-      (result.rows[0] as { cnt?: number } | undefined)?.cnt || 0;
+    pageCounts[proj.id] = await visiblePageCount(proj.id);
   }
 
   const payload = demoProjects.map((p) => ({
@@ -767,15 +765,10 @@ export async function listProjects(session: AuthSession) {
     )
     .orderBy(projects.createdAt);
 
-  // Get actual page counts in a single query (skipped entirely when there are no projects)
-  const pageCounts: Record<number, number> = {};
-  if (allProjects.length > 0) {
-    const countResult = await db.execute(sql`
-      SELECT project_id, COUNT(*)::int AS cnt FROM pages GROUP BY project_id
-    `);
-    for (const row of countResult.rows as any[])
-      pageCounts[row.project_id] = row.cnt;
-  }
+  // Visible page counts in a single query (skipped entirely when there are no projects).
+  // [2026-10-23] hidden duplicates excluded; the query lives in project-page-counts.ts (ceiling).
+  const pageCounts: Record<number, number> =
+    allProjects.length > 0 ? await visiblePageCountsByProject() : {};
 
   // For root admin: fetch company names for grouping
   let companyNames: Record<number, string> = {};

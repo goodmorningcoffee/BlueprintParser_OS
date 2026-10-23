@@ -308,6 +308,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Check if a page is hidden by active filters
   function isPageHidden(n: number): boolean {
     return (
+      duplicates.missing[n] !== undefined || // no page row (permanently deleted duplicate): never shown
       (!duplicates.showHidden && duplicates.hidden[n] !== undefined) ||
       (isSearchFiltered && !searchResults.includes(n)) ||
       (isKeynoteFiltered && !keynoteFilteredPages.includes(n)) ||
