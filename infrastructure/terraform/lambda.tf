@@ -15,14 +15,14 @@ resource "aws_lambda_function" "beaver_cv_pipeline" {
   role          = aws_iam_role.beaver_lambda_cv_role.arn
   package_type  = "Image"
   image_uri     = "${aws_ecr_repository.beaver_cv_lambda.repository_url}:latest"
-  timeout       = 120
-  memory_size   = 2048
+  timeout       = 300  # [2026-10-23] was 120: big sheets timed out (Sandbox.Timedout) and fell back to local
+  memory_size   = 6144 # [2026-10-23] was 2048: Lambda CPU scales with memory
   architectures = ["x86_64"]
 
   # Hard safety cap on fanout cost. At 200 concurrent invocations and the
   # default 1 page = 1 Lambda batching in lib/lambda-cv.ts (kept at 1 to
   # avoid historical SIGKILLs at 2 GB on big 300 DPI pages), this bounds
-  # worst-case cost to ~200 × $0.0000166667/GB-s × 2 GB × 120 s = ~$0.80
+  # worst-case cost to ~200 × $0.0000166667/GB-s × 6 GB × 300 s = ~$6.00
   # per burst. Reasonable ceiling for a public demo.
   reserved_concurrent_executions = 200
 
