@@ -628,6 +628,13 @@ export const MUTATION_SURFACES = [
     [["src/server/services/page-duplicates-apply.ts", "restoreDuplicates"]],
   ),
   mutation(
+    "admin-duplicates-delete-hidden",
+    "/api/admin/duplicates/delete-hidden",
+    "POST",
+    "batch-non-demo",
+    [["src/server/services/page-permanent-delete.ts", "deleteHiddenPages"]],
+  ),
+  mutation(
     "admin-running-jobs",
     "/api/admin/running-jobs",
     "PUT",

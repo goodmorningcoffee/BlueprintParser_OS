@@ -8,10 +8,13 @@
  * time, a whole tier ("Select all near"), or by score ("Select all ≥ 95 %"), per project or across
  * the whole scan (owner 2026-10-22). Repeat / revision blocks keep the latest copy by default.
  * The server re-plans every selected unit under the project lock (apply-selection).
+ * Root also gets "Delete hidden pages permanently" at the bottom (DataToolsPermanentDelete):
+ * the one irreversible step, previewed first, typed phrase, page numbers kept.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
+import DataToolsPermanentDelete from "./DataToolsPermanentDelete";
 import {
   defaultSelection,
   selectAtLeast,
@@ -438,6 +441,7 @@ export default function DataToolsDuplicates({ isRootAdmin }: { isRootAdmin: bool
         </div>
       )}
       {scan.done && scan.reports.length === 0 && <div className="text-xs text-[var(--muted)]">No completed projects in scope.</div>}
+      {isRootAdmin && <DataToolsPermanentDelete query={query} projects={visibleProjects.map((p) => ({ id: p.id, name: p.name }))} />}
     </section>
   );
 }

@@ -30,7 +30,8 @@ import { buildCsiGraph } from "@/lib/csi-graph";
 import { DIVISION_NAMES } from "@/lib/csi-divisions";
 import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { onVisiblePage, visiblePage } from "@/lib/page-dedup";
 import {
   assertProjectWriteCapability,
   type ProjectWriteCapability,
@@ -328,7 +329,7 @@ export async function computeProjectSummaries(
       pageIntelligence: pages.pageIntelligence,
     })
     .from(pages)
-    .where(eq(pages.projectId, projectId))
+    .where(and(eq(pages.projectId, projectId), visiblePage(pages.pageIntelligence))) // hidden duplicates out
     .orderBy(pages.pageNumber);
 
   // Fetch all annotations (lightweight: no full bbox needed for summary)
@@ -341,7 +342,7 @@ export async function computeProjectSummaries(
       data: annotations.data,
     })
     .from(annotations)
-    .where(eq(annotations.projectId, projectId));
+    .where(and(eq(annotations.projectId, projectId), onVisiblePage(annotations.projectId, annotations.pageNumber)));
 
   // ─── Build schedule + parsed table + keynote table catalogs ───
   const schedules: ScheduleSummaryEntry[] = [];

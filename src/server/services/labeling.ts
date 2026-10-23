@@ -107,6 +107,7 @@ import {
   type PreparedLabelStudioGrant,
 } from "@/lib/label-studio-asset-grant";
 import { reconcileLabelStudioSessionRetirement } from "@/lib/label-studio-session-retirement";
+import { keepExistingPages } from "@/server/services/labeling-page-gaps";
 
 const DEFAULT_LABEL_CONFIG = `<View>
   <Image name="image" value="$image" zoomControl="true" rotateControl="true"/>
@@ -537,11 +538,8 @@ export async function createLabelingSessions(
       // Every task must bind to a real canonical page. The old permissive parseInt flow minted
       // page_NaN and unpadded keys that Label Studio could never load.
       const numPages = project.numPages || 1;
-      const pageNumbers = selectLabelingPages(
-        pageSelection,
-        pageRange,
-        numPages,
-      );
+      // [2026-10-23] permanently deleted pages leave gaps: keep only numbers with a page row.
+      const pageNumbers = await keepExistingPages(project.id, selectLabelingPages(pageSelection, pageRange, numPages));
       const taskSpecs: LabelingTaskSpec[] = tiling
         ? pageNumbers.flatMap((pageNumber) =>
             Array.from({ length: 9 }, (_, tile) => ({
