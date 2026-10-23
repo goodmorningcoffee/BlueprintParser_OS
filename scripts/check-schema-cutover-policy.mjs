@@ -1279,16 +1279,17 @@ const operationNames = operationProperties.map((property) =>
 );
 if (
   !operationsObject ||
-  operationProperties.length !== 3 ||
-  operationNames.join(",") !== "list,promote,demote"
+  operationProperties.length !== 4 ||
+  operationNames.join(",") !== "list,promote,demote,reset2fa"
 ) {
   report(
     "root_admin.sh",
     rootAdminInvariant,
-    "the remote operation allowlist must be exactly list, promote, demote",
+    "the remote operation allowlist must be exactly list, promote, demote, reset2fa",
   );
 }
 const parameterMarker = `${String.fromCharCode(92)}$1`;
+const secondParameterMarker = `${String.fromCharCode(92)}$2`;
 const requiredRootAdminOperations = new Map([
   [
     "list",
@@ -1312,6 +1313,17 @@ const requiredRootAdminOperations = new Map([
       mutation: "true",
       text: `UPDATE public.users AS target SET is_root_admin = false WHERE target.email = ${parameterMarker} AND target.is_root_admin = true AND EXISTS (SELECT 1 FROM public.users AS other WHERE other.is_root_admin = true AND other.id <> target.id) RETURNING target.email, target.is_root_admin`,
       values: "[email]",
+    },
+  ],
+  // [2026-10-23] Root TOTP 2FA break-glass: deletes ONLY the one app_settings row keyed
+  // `root-2fa:<userId>` for the exact email (src/lib/root-two-factor-claims.ts); it never
+  // reads or writes users columns, and the exact-one-row guard + advisory lock still apply.
+  [
+    "reset2fa",
+    {
+      mutation: "true",
+      text: `DELETE FROM public.app_settings AS setting USING public.users AS owner WHERE owner.email = ${parameterMarker} AND setting.key = ${secondParameterMarker} || owner.id::text RETURNING owner.email, owner.is_root_admin`,
+      values: "[email,twoFactorKeyPrefix]",
     },
   ],
 ]);
@@ -1436,26 +1448,27 @@ const rootAdminOperationCase = shellCaseBranches(
 );
 if (
   !rootAdminMenu ||
-  [...rootAdminMenu.keys()].join(",") !== "1,2,3,4,q|Q,*" ||
+  [...rootAdminMenu.keys()].join(",") !== "1,2,3,4,5,q|Q,*" ||
   rootAdminMenu.get("1")?.[0] !== "list_users" ||
   rootAdminMenu.get("2")?.[0] !== "promote_user" ||
   rootAdminMenu.get("3")?.[0] !== "demote_user" ||
-  rootAdminMenu.get("4")?.[0] !== "show_root_email_setup"
+  rootAdminMenu.get("4")?.[0] !== "show_root_email_setup" ||
+  rootAdminMenu.get("5")?.[0] !== "reset_two_factor"
 ) {
   report(
     "root_admin.sh",
     rootAdminInvariant,
-    "the executable menu must expose only the four reviewed choices and quit",
+    "the executable menu must expose only the five reviewed choices and quit",
   );
 }
 if (
   !rootAdminOperationCase ||
-  [...rootAdminOperationCase.keys()].join(",") !== "list,promote|demote,*"
+  [...rootAdminOperationCase.keys()].join(",") !== "list,promote|demote|reset2fa,*"
 ) {
   report(
     "root_admin.sh",
     rootAdminInvariant,
-    "run_fixed_operation must accept only list, promote, and demote",
+    "run_fixed_operation must accept only list, promote, demote, and reset2fa",
   );
 }
 const verifiedTaskFunction = shellFunction(rootAdminLines, "verified_task_arn");

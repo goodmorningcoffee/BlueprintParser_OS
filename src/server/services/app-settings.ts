@@ -19,15 +19,19 @@ import { ApiError } from "@/server/api/envelope";
 import { QUOTA_OVERRIDES_KEY } from "@/lib/quota-overrides";
 import { YOLO_INSTANCE_SETTING_KEY, YOLO_MAX_RUNTIME_SETTING_KEY } from "@/lib/yolo-instances";
 import { UPLOAD_COMPUTE_SETTING_KEY } from "@/lib/upload-compute";
+import { isRootTwoFactorSettingKey } from "@/lib/root-two-factor-claims";
 
 // [2026-10-21] The quota-overrides document lives in this table but is ROOT-ONLY to read and is
 // written only through /api/admin/quota-overrides (strict validation + one audit row per change).
 // This generic route therefore hides it from non-root admins and refuses to write it.
+// [2026-10-23] Root 2FA rows (`root-2fa:<userId>`: encrypted TOTP secret, backup-code hashes,
+// verified markers) are hidden from EVERYONE here and never writable through this route.
 export async function getAppSettings(session?: AuthSession | null): Promise<unknown> {
   const rows = await db.select().from(appSettings);
   const settings: Record<string, unknown> = {};
   for (const r of rows) {
     if (r.key === QUOTA_OVERRIDES_KEY && session?.user?.isRootAdmin !== true) continue;
+    if (isRootTwoFactorSettingKey(r.key)) continue;
     settings[r.key] = r.value;
   }
   return settings;
@@ -57,6 +61,9 @@ export async function putAppSetting(rawBody: Record<string, unknown>, session: A
   // [2026-10-23] Same for the upload processing compute preset (allowlisted + audited, root-only route).
   if (key === UPLOAD_COMPUTE_SETTING_KEY) {
     throw new ApiError("VALIDATION", "Use /api/admin/upload-compute to change the upload processing compute size");
+  }
+  if (isRootTwoFactorSettingKey(key)) {
+    throw new ApiError("VALIDATION", "Root two-factor settings are managed only by /api/auth/2fa");
   }
 
   // Normalize URLs in header_links to always include protocol

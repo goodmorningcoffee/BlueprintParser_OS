@@ -46,7 +46,10 @@ export interface AuthSession {
     username: string;
     role: string;
     canRunModels: boolean;
+    /** Effective root authority — false while a root login still owes a two-factor code. */
     isRootAdmin: boolean;
+    /** [2026-10-23] Root with active 2FA, not yet verified: admin powers only, no root. */
+    rootTwoFactorPending?: boolean;
     email?: string | null;
     name?: string | null;
   };
@@ -83,7 +86,11 @@ export async function requireAdmin(): Promise<
   if (!session?.user) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  if (session.user.role !== "admin" && !session.user.isRootAdmin) {
+  if (
+    session.user.role !== "admin" &&
+    !session.user.isRootAdmin &&
+    session.user.rootTwoFactorPending !== true
+  ) {
     return { session: null, error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
   }
   return { session: session as unknown as AuthSession, error: null };

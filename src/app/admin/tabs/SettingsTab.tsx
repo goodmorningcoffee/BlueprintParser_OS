@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import RootTwoFactorPanel from "./RootTwoFactorPanel";
 
 interface HeaderLinks {
   home: string;
@@ -18,7 +19,9 @@ const HEADER_LINK_FIELDS: Array<{ key: keyof HeaderLinks; label: string }> = [
   { key: "labelFleet", label: "LabelFleet" },
 ];
 
-export default function SettingsTab() {
+// [2026-10-23] isRootAdmin (the session's EFFECTIVE value) shows the root 2FA panel; its routes
+// are auth:"root", so a company admin never sees it.
+export default function SettingsTab({ isRootAdmin = false }: { isRootAdmin?: boolean }) {
   const [headerLinks, setHeaderLinks] = useState<HeaderLinks>({
     home: "", hded: "", modelExchange: "", planExchange: "", labelFleet: "",
   });
@@ -53,6 +56,8 @@ export default function SettingsTab() {
 
   return (
     <div className="space-y-8">
+      {isRootAdmin && <RootTwoFactorPanel />}
+
       {/* Demo Page Header Links */}
       <section>
         <h2 className="text-lg font-semibold mb-3">Demo Page Header Links</h2>

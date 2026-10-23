@@ -252,6 +252,12 @@ export async function updateUser(
     throw new ApiError("VALIDATION", "id required");
   }
 
+  // [2026-10-23] Root 2FA: the locked row below says who IS root; the session says whether THIS
+  // login has proven it (lib/auth.ts projects isRootAdmin=false while a root still owes its code,
+  // and auth:"admin" admits that pending root for company-admin work). Read once, outside the
+  // lock, and used only to NARROW the row's authority — never to widen it.
+  const rootVerifiedLogin = session.user.isRootAdmin === true;
+
   await db.transaction(async (tx) => {
     const lockResult = await tx.execute(
       sql`SELECT pg_catalog.pg_try_advisory_xact_lock(${ROOT_ADMIN_MUTATION_ADVISORY_LOCK}) AS acquired`,
@@ -296,6 +302,9 @@ export async function updateUser(
     const target = currentUsers.find(
       (current) => current.id === candidateTarget.id,
     );
+    // A root login that has not passed 2FA acts with its ROLE only (role/company moves refused,
+    // tenant scope = own company).
+    if (actor?.isRootAdmin && !rootVerifiedLogin) actor.isRootAdmin = false;
 
     if (!actor || (actor.role !== "admin" && !actor.isRootAdmin)) {
       throw new ApiError("FORBIDDEN", "Admin only");
@@ -367,6 +376,9 @@ export async function deleteUser(
     let reassignTargetId: number | undefined;
     let actorCompanyId = session.user.companyId;
     let committedProjectDeletions: StagedProjectAssetDeletion[] = [];
+    // [2026-10-23] Root 2FA: see updateUser — the session's effective isRootAdmin only ever
+    // NARROWS the locked actor row (a pending root deletes with company-admin scope only).
+    const rootVerifiedLogin = session.user.isRootAdmin === true;
 
     // Fail fast so authority-lock waiters cannot consume the pool. Project/outbox/user mutations
     // reuse this exact transaction; no external work or nested transaction runs while it is open.
@@ -406,6 +418,7 @@ export async function deleteUser(
       const guardedTarget = guardedUsers.find(
         (current) => current.publicId === id,
       );
+      if (guardedActor?.isRootAdmin && !rootVerifiedLogin) guardedActor.isRootAdmin = false;
 
       if (
         !guardedActor ||

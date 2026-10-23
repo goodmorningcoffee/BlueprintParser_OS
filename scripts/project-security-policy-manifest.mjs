@@ -1181,3 +1181,36 @@ export const EXPLICIT_NON_PUBLIC_DEMO_SURFACES = [
     policy: "deny-demo",
   },
 ];
+
+/**
+ * [2026-10-23] Root authenticator-app (TOTP) two-factor. Every surface is a defineRoute shell over
+ * ONE service module; the shell's `auth` literal is the whole admission policy. A root login whose
+ * enrollment is active but unverified is projected as isRootAdmin=false by the session callback,
+ * so the "root" surfaces are unreachable until the one "session" surface (verify) has proven a
+ * code; verify is bounded by its own user-keyed middleware rule from which root is never exempt.
+ * The enrollment document lives in app_settings under `settingKeyPrefix`, hidden from and
+ * unwritable through the generic settings route; the only other writer is the break-glass
+ * operation in root_admin.sh.
+ */
+export const ROOT_TWO_FACTOR_POLICY = {
+  settingKeyPrefix: "root-2fa:",
+  claimsFile: "src/lib/root-two-factor-claims.ts",
+  serviceFile: "src/server/services/root-two-factor.ts",
+  authFile: "src/lib/auth.ts",
+  routeShellFile: "src/server/api/defineRoute.ts",
+  appSettingsServiceFile: "src/server/services/app-settings.ts",
+  rateRuleFile: "src/lib/middleware-rate-limit.ts",
+  verifyRoute: "/api/auth/2fa/verify",
+  breakGlass: { file: "root_admin.sh", operation: "reset2fa" },
+  surfaces: [
+    { id: "root-2fa-status", route: "/api/auth/2fa/status", method: "GET", auth: "root", serviceFunction: "getRootTwoFactorStatus" },
+    { id: "root-2fa-enroll", route: "/api/auth/2fa/enroll", method: "POST", auth: "root", serviceFunction: "beginRootTwoFactorEnrollment" },
+    { id: "root-2fa-confirm", route: "/api/auth/2fa/confirm", method: "POST", auth: "root", serviceFunction: "confirmRootTwoFactorEnrollment" },
+    { id: "root-2fa-verify", route: "/api/auth/2fa/verify", method: "POST", auth: "session", serviceFunction: "verifyRootTwoFactor" },
+    { id: "root-2fa-disable", route: "/api/auth/2fa/disable", method: "POST", auth: "root", serviceFunction: "disableRootTwoFactor" },
+    { id: "root-2fa-backup-codes", route: "/api/auth/2fa/backup-codes", method: "POST", auth: "root", serviceFunction: "regenerateRootTwoFactorBackupCodes" },
+  ].map((surface) => ({
+    ...surface,
+    routeFile: `src/app/api${surface.route.slice("/api".length)}/route.ts`,
+  })),
+};
