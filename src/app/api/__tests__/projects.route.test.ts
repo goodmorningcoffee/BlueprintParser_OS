@@ -41,6 +41,13 @@ vi.mock("@aws-sdk/client-sfn", () => ({
   },
 }));
 
+// [2026-10-23] The upload compute preset reader (an app_settings read) → the default unless a test says otherwise.
+const computeMocks = vi.hoisted(() => ({ readUploadComputePreset: vi.fn() }));
+vi.mock("@/server/services/upload-compute", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/services/upload-compute")>();
+  return { ...actual, readUploadComputePreset: computeMocks.readUploadComputePreset };
+});
+
 // s3: keep getS3Url real (GET list thumbnailUrl + any pdf url), make headS3Object a controllable mock for
 // the staging aggregate-cap + missing-file cases (the staging-validation 400s fire before it).
 vi.mock("@/lib/s3", async (importOriginal) => {
@@ -56,6 +63,7 @@ import {
   projectAssetDeletions,
   projects,
 } from "@/lib/db/schema";
+import { uploadComputePreset } from "@/lib/upload-compute";
 import {
   PROJECT_UPLOAD_PUBLICATION_FENCE_SECONDS,
   projectUploadStagingKey,
@@ -90,6 +98,8 @@ const staged = (dataUrl: string, filename: string, index = 0) => ({
 });
 
 beforeEach(() => {
+  computeMocks.readUploadComputePreset.mockReset();
+  computeMocks.readUploadComputePreset.mockResolvedValue(uploadComputePreset("8x16"));
   sfnMocks.send.mockReset();
   sfnMocks.send.mockRejectedValue(new Error("ambiguous SFN transport timeout"));
   vi.mocked(headS3Object).mockReset();
@@ -129,6 +139,28 @@ describe.skipIf(!dbUp)("POST /api/projects (create)", () => {
     expect(row.dataUrl).toBe(dataUrl);
     expect(row.status).toBe("error");
   }, 15000);
+
+  it("[2026-10-23] StartExecution input carries the root upload compute preset (cpu/memory/pageConcurrency strings)", async () => {
+    const { company, user } = await createWorld();
+    asUser(user);
+    const sent = () =>
+      JSON.parse(
+        (sfnMocks.send.mock.calls.at(-1)?.[0] as { input: { input: string } }).input.input,
+      );
+    let dataUrl = canonicalProjectPath(company.dataKey, "c");
+    expect((await post({ name: "Default compute", dataUrl, stagingFiles: [staged(dataUrl, "plan.pdf")] })).status).toBe(200);
+    expect(sent()).toMatchObject({ dataUrl, cpu: "8192", memory: "16384", pageConcurrency: "8" });
+    expect(Object.keys(sent()).sort()).toEqual(
+      ["cpu", "dataUrl", "memory", "pageConcurrency", "projectId", "s3Bucket", "webhookSecret", "webhookUrl"],
+    );
+
+    // The saved preset (services/upload-compute.ts reader; its DB path is pinned in admin-upload-compute.route.test.ts).
+    computeMocks.readUploadComputePreset.mockResolvedValueOnce(uploadComputePreset("16x64"));
+    dataUrl = canonicalProjectPath(company.dataKey, "d");
+    expect((await post({ name: "Big compute", dataUrl, stagingFiles: [staged(dataUrl, "plan.pdf")] })).status).toBe(200);
+    expect(sent()).toMatchObject({ dataUrl, cpu: "16384", memory: "65536", pageConcurrency: "16" });
+    expect(computeMocks.readUploadComputePreset).toHaveBeenCalledTimes(2);
+  }, 15_000);
 
   it("retains a named ingestion intent when StartExecution has an ambiguous rejection", async () => {
     const company = await createCompany();

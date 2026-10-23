@@ -132,6 +132,12 @@ test("publish builds linux/amd64, pushes one immutable tag, and prints its resol
   assert.match(result.stdout, /preflight-outage/u);
   assert.match(result.stdout, /bind-quiescent/u);
   assert.match(result.stdout, /verify-restored/u);
+  // [2026-10-23] The guidance heredoc prints its backticked command names literally (they used to be
+  // command substitutions: "activate: command not found" on stderr and the words missing from stdout).
+  assert.match(result.stdout, /^`activate` is reserved for a same-digest configuration\/secret restart\.$/mu);
+  assert.match(result.stdout, /the old-digest `preflight-outage` witness/u);
+  assert.match(result.stdout, /the documented `bootstrap-empty`$/mu);
+  assert.doesNotMatch(result.stderr, /command not found/u);
 });
 
 test("publish rejects a substituted AWS caller before touching ECR or Docker", async () => {

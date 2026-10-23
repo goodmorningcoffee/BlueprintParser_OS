@@ -267,6 +267,8 @@ publish_image() {
   # digest + the digest it would supersede). Best-effort: never fails the publish.
   bp_deploy_ledger_append publish "${digest}" "${previous_digest:--}" "$(bp_current_head)"
 
+  # The heredoc must expand ${ecr_base}/${ECR_REPO}/${digest}, so it stays unquoted and the
+  # backticks below are escaped: unescaped, bash ran `activate` etc. as commands (2026-10-23).
   cat <<EOF
 Published immutable application image:
   ${ecr_base}/${ECR_REPO}@${digest}
@@ -280,11 +282,11 @@ Only then apply this candidate while preserving the outage and run:
 Restore the exact live tuple with this same digest and finish with:
   ./deploy.sh verify-restored ${digest}
 
-`activate` is reserved for a same-digest configuration/secret restart.
+\`activate\` is reserved for a same-digest configuration/secret restart.
 For an existing database at the one-time P2 boundary, follow README.md: create
-the old-digest `preflight-outage` witness before applying this candidate, then
+the old-digest \`preflight-outage\` witness before applying this candidate, then
 run scripts/p2-schema-cutover.sh with this digest while the outage remains exact.
-Only a proven-empty new database may use the documented `bootstrap-empty`
+Only a proven-empty new database may use the documented \`bootstrap-empty\`
 exception without an old-digest witness.
 EOF
 }

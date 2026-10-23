@@ -9,6 +9,7 @@ import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 P
 import YoloBulkBar, { YoloRunCost, useYoloBulk, type LoadYoloFn, type RunYoloFn } from "./YoloBulkBar";
 import YoloInstancePicker from "./YoloInstancePicker";
 import YoloDebugReport from "./YoloDebugReport";
+import type { YoloStatusLoad } from "./yolo-status-load";
 
 interface ModelItem {
   id: number;
@@ -35,6 +36,7 @@ interface AiModelsTabProps {
   projects: ProjectItem[];
   yoloJobs: Record<string, Record<string, string>>;
   yoloStatus: Record<string, Record<string, number>>;
+  yoloStatusLoad?: YoloStatusLoad;
   uploading: boolean;
   uploadProgress: number;
   onUploadModel: (e: React.FormEvent<HTMLFormElement>) => void;
@@ -57,7 +59,7 @@ interface AiModelsTabProps {
 }
 
 export default function AiModelsTab({
-  yoloModels, projects, yoloJobs, yoloStatus,
+  yoloModels, projects, yoloJobs, yoloStatus, yoloStatusLoad,
   uploading, uploadProgress, onUploadModel, onDeleteModel, onRunYolo, onLoadResults,
   toggles, togglePassword, setTogglePassword, toggleError, setToggleError,
   newTogglePass, setNewTogglePass, currentTogglePass, setCurrentTogglePass,
@@ -235,7 +237,7 @@ export default function AiModelsTab({
   // Models eligible for YOLO run (own + enabled shared)
   const enabledModels = yoloModels.filter((m) => m.enabled !== false);
   const completedProjects = projects.filter((p) => p.status === "completed");
-  const bulk = useYoloBulk({ models: enabledModels, projects: completedProjects, yoloJobs, yoloStatus, onRunYolo, onLoadResults });
+  const bulk = useYoloBulk({ models: enabledModels, projects: completedProjects, yoloJobs, yoloStatus, yoloStatusLoad, onRunYolo, onLoadResults });
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -608,7 +610,8 @@ export default function AiModelsTab({
                   {toggles.quotaEnabled ? "Bypass" : "Enforce"}
                 </button>
               </div>
-              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
+              {/* [2026-10-23] YOLO purge/run/load are root-only (the routes refuse everyone else). */}
+              {isRootAdmin && <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
                 <div>
                   <span className="font-medium">YOLO Detections</span>
                   <span className="text-xs ml-2 text-[var(--muted)]">all projects</span>
@@ -629,7 +632,7 @@ export default function AiModelsTab({
                 >
                   Purge All
                 </button>
-              </div>
+              </div>}
               <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
                 <input type="password" placeholder="Toggle password" value={togglePassword}
                   onChange={(e) => { setTogglePassword(e.target.value); setToggleError(""); }}
@@ -647,7 +650,7 @@ export default function AiModelsTab({
         <section className="lg:col-span-2">
           <h2 className="text-lg font-semibold mb-3">Run YOLO Inference</h2>
           {isRootAdmin && <YoloInstancePicker />}
-          <YoloBulkBar {...bulk.bar} />
+          {isRootAdmin && <YoloBulkBar {...bulk.bar} />}
           {isRootAdmin && bulk.bar.model && (
             <YoloDebugReport
               projects={completedProjects}
@@ -662,8 +665,8 @@ export default function AiModelsTab({
                   className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
                 >
                   <div>
-                    <input type="checkbox" className="mr-2 align-middle" aria-label={`Select ${p.name} for bulk`}
-                      checked={bulk.isSelected(p.id)} onChange={() => bulk.toggle(p.id)} />
+                    {isRootAdmin && <input type="checkbox" className="mr-2 align-middle" aria-label={`Select ${p.name} for bulk`}
+                      checked={bulk.isSelected(p.id)} onChange={() => bulk.toggle(p.id)} />}
                     <span className="font-medium">{p.name}</span>
                     {yoloStatus[p.id] && Object.values(yoloStatus[p.id]).some(c => c > 0) && !(yoloJobs[p.id] && Object.values(yoloJobs[p.id]).some(Boolean)) && (
                       <span className="text-xs ml-2 text-emerald-400/70">
@@ -679,6 +682,7 @@ export default function AiModelsTab({
                       return (
                       <div key={m.id}>
                       <div className="flex gap-1 items-center">
+                        {isRootAdmin && <>
                         <button
                           onClick={() => onRunYolo(p.id, m.id)}
                           disabled={!!mJob && /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/.test(mJob)}
@@ -702,6 +706,7 @@ export default function AiModelsTab({
                         >
                           {mStatus > 0 ? "Loaded" : "Load"}
                         </button>
+                        </>}
                         {mJob && (
                           <>
                             <span className={`text-xs ${

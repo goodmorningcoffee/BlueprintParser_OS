@@ -541,13 +541,17 @@ export const MUTATION_SURFACES = [
     ["src/lib/llm/stream.ts", "streamChatResponse"],
   ]),
 
+  // [2026-10-23] run/load are root-only: the shells reach the services through the root gate
+  // (services/yolo-root-gate.ts — demo preflight, then root), which delegates to the durable domains.
   mutation("yolo-run", "/api/yolo/run", "POST", "shared-guard", [
+    ["src/server/services/yolo-root-gate.ts", "yoloRunRootOnly"],
     ["src/server/services/yolo.ts", "yoloRun"],
   ]),
   mutation("yolo-run-batch", "/api/yolo/run-batch", "POST", "shared-guard", [
     ["src/server/services/yolo-batch-run.ts", "yoloRunBatch"],
   ]),
   mutation("yolo-load", "/api/yolo/load", "POST", "shared-guard", [
+    ["src/server/services/yolo-root-gate.ts", "yoloLoadRootOnly"],
     ["src/server/services/yolo.ts", "yoloLoad"],
   ]),
   mutation("labeling-create", "/api/labeling/create", "POST", "shared-guard", [
@@ -585,6 +589,7 @@ export const MUTATION_SURFACES = [
     "batch-tenant-non-demo",
     [["src/server/services/reprocess-csi.ts", "reprocessCsi"]],
   ),
+  // [2026-10-23] Route is auth:"root" (company-scoped purge unchanged).
   mutation(
     "admin-yolo-purge",
     "/api/admin/yolo-purge",

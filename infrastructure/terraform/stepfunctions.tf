@@ -30,6 +30,10 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
     StartAt = "ValidateInput"
     States = {
 
+      # [2026-10-23] Upload compute preset (root admin › Pipeline): the app sends cpu / memory /
+      # pageConcurrency as strings. `compute` is the input merged OVER the defaults (today's task
+      # definition: 8 vCPU · 16 GB, 8 pages at once), so an execution started without them — an older
+      # app image — still runs. Intrinsic string literals escape { } with a backslash (HCL "\\" → "\").
       ValidateInput = {
         Type = "Pass"
         Parameters = {
@@ -39,6 +43,7 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
           "webhookUrl.$"    = "$.webhookUrl"
           "webhookSecret.$" = "$.webhookSecret"
           "status"          = "PROCESSING"
+          "compute.$"       = "States.JsonMerge(States.StringToJson('\\{\"cpu\":\"8192\",\"memory\":\"16384\",\"pageConcurrency\":\"8\"\\}'), $, false)"
         }
         Next = "CPUProcessing"
       }
@@ -59,6 +64,8 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
             }
           }
           Overrides = {
+            "Cpu.$"    = "$.compute.cpu"
+            "Memory.$" = "$.compute.memory"
             ContainerOverrides = [
               {
                 Name = "beaver-cpu-pipeline"
@@ -68,6 +75,7 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
                   { Name = "S3_BUCKET", "Value.$" = "$.s3Bucket" },
                   { Name = "WEBHOOK_URL", "Value.$" = "$.webhookUrl" },
                   { Name = "WEBHOOK_SECRET", "Value.$" = "$.webhookSecret" },
+                  { Name = "PAGE_CONCURRENCY", "Value.$" = "$.compute.pageConcurrency" },
                 ]
               }
             ]

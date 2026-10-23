@@ -9,7 +9,7 @@ vi.mock("@/app/admin/sections/LLMConfigSection", () => ({ default: () => null })
 vi.mock("@/app/admin/sections/S3Browser", () => ({ default: () => null }));
 
 import AiModelsTab from "@/app/admin/tabs/AiModelsTab";
-import { resetYoloBulkStoreForTests } from "@/app/admin/tabs/YoloBulkBar";
+import { ONLY_MISSING_STORAGE_KEY, resetYoloBulkStoreForTests } from "@/app/admin/tabs/YoloBulkBar";
 import { START_SPACING_MS } from "@/app/admin/tabs/yolo-batch";
 import { resetYoloOptionsForTests } from "@/app/admin/tabs/yolo-options-store";
 import { YOLO_INSTANCE_OPTIONS } from "@/lib/yolo-instances";
@@ -30,6 +30,7 @@ let confirmMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   resetYoloBulkStoreForTests();
+  window.localStorage.clear(); // [2026-10-23] the "only without results" choice persists per browser
   fetchMock = vi.fn(async (url: string) => {
     if (typeof url === "string" && url.startsWith("/api/yolo/status")) {
       return { ok: true, json: async () => ({ status: "Completed" }) };
@@ -48,7 +49,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderTab(overrides: Partial<{ yoloStatus: Record<string, Record<string, number>>; isRootAdmin: boolean }> = {}) {
+// [2026-10-23] YOLO run/load/purge are root-only: the bar, row checkboxes and Run/Load render for root
+// only, so the tab is rendered as root unless a test says otherwise.
+function renderTab(
+  overrides: Partial<{
+    yoloStatus: Record<string, Record<string, number>>;
+    yoloStatusLoad: { loaded: boolean; error: string | null };
+    isRootAdmin: boolean;
+  }> = {},
+) {
   const onRunYolo = vi.fn(async (projectId: string) => ({ jobName: `job-${projectId}` }));
   const onLoadResults = vi.fn(async () => "Completed — 4 detections loaded");
   const noop = () => {};
@@ -58,6 +67,7 @@ function renderTab(overrides: Partial<{ yoloStatus: Record<string, Record<string
       projects={PROJECTS}
       yoloJobs={{}}
       yoloStatus={overrides.yoloStatus ?? { p2: { "7": 12 } }}
+      yoloStatusLoad={overrides.yoloStatusLoad}
       uploading={false}
       uploadProgress={0}
       onUploadModel={noop}
@@ -75,11 +85,11 @@ function renderTab(overrides: Partial<{ yoloStatus: Record<string, Record<string
       setCurrentTogglePass={noop}
       onToggle={noop}
       onSetTogglePassword={noop}
-      isRootAdmin={overrides.isRootAdmin ?? false}
+      isRootAdmin={overrides.isRootAdmin ?? true}
     />,
   );
-  const bar = screen.getByTestId("yolo-bulk-bar");
-  return { onRunYolo, onLoadResults, bar: within(bar) };
+  const bar = screen.queryByTestId("yolo-bulk-bar");
+  return { onRunYolo, onLoadResults, bar: within(bar ?? document.body) };
 }
 
 const rowBox = (name: string) => screen.getByRole("checkbox", { name: `Select ${name} for bulk` }) as HTMLInputElement;
@@ -183,6 +193,64 @@ describe("YoloBulkBar in AiModelsTab", () => {
     expect(screen.getByTestId("yolo-bulk-summary").textContent).toMatch(/1 not started \(queue stopped\)/u);
   });
 
+  it("[2026-10-23] non-root admins get no bulk bar, row checkboxes, per-project Run/Load or Purge", () => {
+    renderTab({ isRootAdmin: false });
+    expect(screen.queryByTestId("yolo-bulk-bar")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Select Alpha for bulk" })).toBeNull();
+    expect(screen.queryByText("Run doors")).toBeNull();
+    expect(screen.queryByText("Load")).toBeNull();
+    expect(screen.queryByText("Purge All")).toBeNull();
+    expect(screen.getByText("Alpha")).toBeTruthy(); // the project list itself still renders
+    cleanup();
+    renderTab({ isRootAdmin: true });
+    expect(screen.getByTestId("yolo-bulk-bar")).toBeTruthy();
+    expect(screen.getAllByText("Run doors").length).toBe(3);
+  });
+
+  it("[2026-10-23] while YOLO results are loading the filter says so and offers no Run all; unchecking it offers every project", () => {
+    const { bar } = renderTab({ yoloStatus: {}, yoloStatusLoad: { loaded: false, error: null } });
+    expect(bar.getByText(/loading results…/u)).toBeTruthy();
+    expect(bar.getByText("Run all (0)")).toHaveProperty("disabled", true);
+    expect(bar.getByText("Load all (0)")).toHaveProperty("disabled", true);
+    fireEvent.click(bar.getByRole("checkbox")); // filter off: no results needed
+    expect(bar.getByText("Run all (3)")).toHaveProperty("disabled", false);
+  });
+
+  it("[2026-10-23] a failed YOLO results load is shown instead of counting every project as missing", () => {
+    const { bar } = renderTab({ yoloStatus: {}, yoloStatusLoad: { loaded: false, error: "Root admin only" } });
+    expect(bar.getByText(/results unavailable/u)).toBeTruthy();
+    expect(bar.getByTestId("yolo-bulk-results-error").textContent).toMatch(/Could not load YOLO results: Root admin only/u);
+    expect(bar.getByText("Run all (0)")).toHaveProperty("disabled", true);
+  });
+
+  it("[2026-10-23] 'only projects without results' is remembered in localStorage, and blocked storage is harmless", async () => {
+    window.localStorage.removeItem(ONLY_MISSING_STORAGE_KEY);
+    let { bar } = renderTab();
+    expect(bar.getByText("Run all (2)")).toBeTruthy();
+    fireEvent.click(bar.getByRole("checkbox"));
+    expect(window.localStorage.getItem(ONLY_MISSING_STORAGE_KEY)).toBe("0");
+    cleanup();
+    ({ bar } = renderTab());
+    await flush();
+    expect((bar.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+    expect(bar.getByText("Run all (3)")).toBeTruthy();
+    cleanup();
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    ({ bar } = renderTab());
+    await flush();
+    expect(bar.getByText("Run all (2)")).toBeTruthy(); // default on
+    fireEvent.click(bar.getByRole("checkbox"));
+    expect(bar.getByText("Run all (3)")).toBeTruthy();
+    getItem.mockRestore();
+    setItem.mockRestore();
+    window.localStorage.removeItem(ONLY_MISSING_STORAGE_KEY);
+  });
+
   it("the inference-instance picker is rendered for root only", () => {
     renderTab({ isRootAdmin: false });
     expect(screen.queryByTestId("yolo-instance-picker")).toBeNull();
@@ -247,7 +315,7 @@ function FakeAdminPage() {
       setCurrentTogglePass={noop}
       onToggle={noop}
       onSetTogglePassword={noop}
-      isRootAdmin={false}
+      isRootAdmin
     />
   );
 }

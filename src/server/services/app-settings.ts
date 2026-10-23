@@ -18,6 +18,7 @@ import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 import { QUOTA_OVERRIDES_KEY } from "@/lib/quota-overrides";
 import { YOLO_INSTANCE_SETTING_KEY, YOLO_MAX_RUNTIME_SETTING_KEY } from "@/lib/yolo-instances";
+import { UPLOAD_COMPUTE_SETTING_KEY } from "@/lib/upload-compute";
 
 // [2026-10-21] The quota-overrides document lives in this table but is ROOT-ONLY to read and is
 // written only through /api/admin/quota-overrides (strict validation + one audit row per change).
@@ -52,6 +53,10 @@ export async function putAppSetting(rawBody: Record<string, unknown>, session: A
   }
   if (key === YOLO_MAX_RUNTIME_SETTING_KEY) {
     throw new ApiError("VALIDATION", "Use /api/admin/yolo-runtime to change the YOLO job timeout");
+  }
+  // [2026-10-23] Same for the upload processing compute preset (allowlisted + audited, root-only route).
+  if (key === UPLOAD_COMPUTE_SETTING_KEY) {
+    throw new ApiError("VALIDATION", "Use /api/admin/upload-compute to change the upload processing compute size");
   }
 
   // Normalize URLs in header_links to always include protocol
