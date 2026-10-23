@@ -5,7 +5,8 @@
  * DataToolsDuplicates. Pick projects (or all), Preview (a dry run that changes nothing: pages
  * that would go, pages skipped and why, annotation/chat counts, S3 objects), then type DELETE.
  * Not reversible. Page numbers stay (gaps); original.pdf keeps the pages. Pages carrying your
- * work are never deleted. Any change to the choices discards the preview.
+ * work are never deleted. Any change to the choices discards the preview, and the server re-plans
+ * under its lock and refuses a project whose plan differs from the previewed one (planDigest).
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -14,7 +15,7 @@ import { apiErrorMessage } from "@/lib/client-persist";
 export interface DeleteProjectOption { id: string; name: string }
 interface PlannedPage { page: number; canonical: number; tier: string; annotations: number; chats: number; s3Keys: string[] }
 interface ProjectPlan {
-  publicId: string; name: string; skippedReason?: string; pages: PlannedPage[];
+  publicId: string; name: string; skippedReason?: string; planDigest?: string; pages: PlannedPage[];
   skipped: { page: number; reason: string }[]; warnings: string[]; deleted?: number; error?: string;
 }
 interface DeleteResult {
@@ -75,7 +76,9 @@ export default function DataToolsPermanentDelete({ query, projects }: { query: s
     setBusy(true);
     setMessage("");
     try {
-      const result = await post<DeleteResult>(`/api/admin/duplicates/delete-hidden${query}`, { ...body, dryRun, ...(dryRun ? {} : { confirm }) });
+      // The real run carries the preview's per-project digests: the server deletes only a plan that still matches.
+      const planDigests = Object.fromEntries((preview?.projects ?? []).flatMap((p) => (p.planDigest ? [[p.publicId, p.planDigest]] : [])));
+      const result = await post<DeleteResult>(`/api/admin/duplicates/delete-hidden${query}`, { ...body, dryRun, ...(dryRun ? {} : { confirm, planDigests }) });
       if (dryRun) { setPreview(result); setDone(null); } else { setDone(result); setPreview(null); setConfirm(""); }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Request failed");

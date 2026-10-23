@@ -10,15 +10,20 @@
 //
 //   POST dryRun:true  → per project: pages to delete (with counts + S3 keys), pages skipped and
 //                       why. Changes nothing.
-//   POST confirm:"DELETE" → the real run: per project ONE transaction (withProjectWrite, busy
-//                       check under the lock, re-planned there), then S3 deletes (failures are
+//   POST confirm:"DELETE" + planDigests → the real run: per project ONE transaction
+//                       (withProjectWrite, busy check under the lock, re-planned there and
+//                       compared with the previewed plan's digest — a difference is a 409-class
+//                       per-project refusal, nothing deleted), then S3 deletes (failures are
 //                       warnings, never a rollback), then the same recompute reprocess does
 //                       (analyzeProject + computeProjectSummaries), then one audit entry.
 // Never deleted: a page carrying human work (humanWorkPages with USER_MADE_SOURCES — user,
 // takeoff, takeoff-scale, symbol-search — QTO references, non-empty parsedRegions), a page
-// number stored twice (duplicate rows; fix those first), a page whose kept copy is gone.
+// number stored twice (duplicate rows; fix those first), a page whose kept copy is gone, and
+// PAGE 1 — both YOLO entry points (yolo.ts yoloRun, yolo-batch-run.ts) HEAD
+// {dataUrl}/pages/page_0001.png before starting, so deleting it would refuse every later run.
 // Demo projects are never in scope (same rule as annotation-cleanup / yolo-purge).
 
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
@@ -45,6 +50,11 @@ import { assertNotBusy, humanWorkPages, type WorkReader } from "./page-duplicate
 export const DELETE_CONFIRM = "DELETE";
 const MAX_PROJECTS = 2000;
 export const ORIGINAL_PDF_NOTE = "original.pdf is not changed: the deleted pages are still in the uploaded file.";
+/** YOLO's "processed?" probe object (yolo.ts yoloRun + yolo-batch-run.ts HEAD it): its page is never deleted. */
+export const PROBE_PAGE = 1;
+export const PROBE_PAGE_REASON = `page ${PROBE_PAGE} is the project's probe page (YOLO checks pages/page_0001.png exists before every run)`;
+export const CHANGED_SINCE_PREVIEW = "Changed since the preview; preview again";
+export const NOT_PREVIEWED = "Not in the preview; preview again";
 
 export const zDeleteHiddenQuery = z.object({ companyId: z.string().optional() });
 export const zDeleteHiddenBody = z.object({
@@ -52,6 +62,8 @@ export const zDeleteHiddenBody = z.object({
   projectPublicIds: z.array(zPublicId).max(MAX_PROJECTS).optional(),
   dryRun: z.boolean(),
   confirm: z.string().max(40).optional(),
+  /** Real run: publicId → planDigest from the dry run. The delete refuses a project whose re-plan differs. */
+  planDigests: z.record(z.string().max(64), z.string().max(64)).optional(),
 });
 type DeleteHiddenBody = z.infer<typeof zDeleteHiddenBody>;
 
@@ -79,6 +91,8 @@ export interface ProjectDeletePlan {
   numPages: number | null;
   /** Set when the whole project is skipped (demo, not completed, busy …). */
   skippedReason?: string;
+  /** sha256 over the planned row ids; the real run must send it back (planDigests) and re-derives it under the lock. */
+  planDigest?: string;
   pages: PlannedPage[];
   skipped: { page: number; reason: string }[];
   warnings: string[];
@@ -178,6 +192,7 @@ async function planProject(reader: WorkReader, project: ScopeProject, yoloKeys: 
   const work = await humanWorkPages(reader, project.id, USER_MADE_SOURCES);
   for (const { row, mark } of hidden) {
     const page = row.pageNumber;
+    if (page === PROBE_PAGE) { plan.skipped.push({ page, reason: PROBE_PAGE_REASON }); continue; }
     if ((rowsPerPage.get(page) ?? 0) > 1) { plan.skipped.push({ page, reason: "stored twice (duplicate page rows)" }); continue; }
     if (work.has(page)) { plan.skipped.push({ page, reason: "has your work" }); continue; }
     if (!rowsPerPage.has(mark.pageNumber)) { plan.skipped.push({ page, reason: `kept copy (page ${mark.pageNumber}) is missing` }); continue; }
@@ -196,25 +211,41 @@ async function planProject(reader: WorkReader, project: ScopeProject, yoloKeys: 
     p.annotations = counts.annotations.get(p.page) ?? 0;
     p.chats = counts.chats.get(p.page) ?? 0;
   }
+  plan.planDigest = planDigest(plan.pages);
   return plan;
 }
 
-/** S3 listing for the plan's YOLO files; a listing failure is a warning (keys may be left behind). */
+/**
+ * The plan's identity: the set of page ROWS it deletes (row ids are never reused, and a page that
+ * gains work, loses its mark or gets a twin leaves the set). S3 keys are left out on purpose: the
+ * YOLO listing is best-effort and taken outside the lock.
+ */
+function planDigest(planned: readonly PlannedPage[]): string {
+  const ids = planned.map((p) => p.rowId).sort((a, b) => a - b);
+  return createHash("sha256").update(ids.join(",")).digest("hex");
+}
+
+/**
+ * S3 listing for the plan's YOLO files; a listing failure is a warning (keys may be left behind).
+ * A leftover page_NNNN.json is harmless to the DB: /yolo/load skips files whose page has no row.
+ */
+const YOLO_LEFTOVER_NOTE = "a later YOLO load skips them (no page row)";
 async function yoloKeysOrWarn(project: ScopeProject, warnings: string[]): Promise<Map<number, string[]> | null> {
   try {
     return await listYoloOutputKeys(project.dataUrl);
   } catch (err) {
-    warnings.push(`YOLO output could not be listed; per-page YOLO files are not deleted (${String(err).slice(0, 120)})`);
+    warnings.push(`YOLO output could not be listed; per-page YOLO files are not deleted, ${YOLO_LEFTOVER_NOTE} (${String(err).slice(0, 120)})`);
     return null;
   }
 }
 
 /**
- * Delete the planned pages of one project in ONE transaction. Re-plans under the lock; deletes
+ * Delete the planned pages of one project in ONE transaction. Re-plans under the lock and refuses
+ * (CONFLICT, nothing deleted) unless the re-plan's digest equals the previewed one; then deletes
  * the page's annotations (memberships cascade), the groups those annotations emptied, the
  * page's chat, then the page row. Returns the committed plan.
  */
-async function deleteInProject(project: ScopeProject, capability: ProjectWriteCapability, yoloKeys: Map<number, string[]> | null): Promise<ProjectDeletePlan> {
+async function deleteInProject(project: ScopeProject, capability: ProjectWriteCapability, yoloKeys: Map<number, string[]> | null, expectedDigest: string): Promise<ProjectDeletePlan> {
   return withProjectWrite(capability, project.id, async (tx) => {
     const [current] = await tx
       .select({ status: projects.status })
@@ -224,6 +255,7 @@ async function deleteInProject(project: ScopeProject, capability: ProjectWriteCa
     if (!current || current.status !== "completed") throw new ApiError("CONFLICT", "Project skipped: not completed");
     await assertNotBusy(tx, project.id);
     const plan = await planProject(tx, project, yoloKeys);
+    if (plan.planDigest !== expectedDigest) throw new ApiError("CONFLICT", CHANGED_SINCE_PREVIEW);
     for (const p of plan.pages) {
       const onPage = and(eq(annotations.projectId, project.id), eq(annotations.pageNumber, p.page));
       const touched = await tx
@@ -267,7 +299,8 @@ async function recomputeProject(projectId: number, capability: ProjectWriteCapab
   await computeProjectSummaries(projectId, capability);
 }
 
-async function runProject(project: ScopeProject, dryRun: boolean): Promise<ProjectDeletePlan> {
+/** `expectedDigest` is the real run's previewed digest for this project (undefined on a dry run). */
+async function runProject(project: ScopeProject, dryRun: boolean, expectedDigest: string | undefined): Promise<ProjectDeletePlan> {
   const skip = projectSkipReason(project);
   if (skip) {
     return { publicId: project.publicId, name: project.name, companyId: project.companyId, numPages: project.numPages, skippedReason: skip, pages: [], skipped: [], warnings: [] };
@@ -279,8 +312,10 @@ async function runProject(project: ScopeProject, dryRun: boolean): Promise<Proje
     plan.warnings.push(...warnings);
     return plan;
   }
+  // A project the preview never saw (e.g. one that completed since, under all:true) is refused.
+  if (expectedDigest === undefined) throw new ApiError("CONFLICT", NOT_PREVIEWED);
   const capability = assertProjectWritable(project);
-  const plan = await deleteInProject(project, capability, yoloKeys);
+  const plan = await deleteInProject(project, capability, yoloKeys, expectedDigest);
   plan.warnings.push(...warnings);
   if (plan.pages.length === 0) return plan;
   // Storage after the commit: a failure here leaves an orphan object, never a half-deleted page.
@@ -288,7 +323,8 @@ async function runProject(project: ScopeProject, dryRun: boolean): Promise<Proje
     try {
       await deleteFromS3(key);
     } catch (err) {
-      plan.warnings.push(`S3 delete failed for ${key} (${String(err).slice(0, 120)})`);
+      const leftover = key.includes("/yolo-output/") ? `, ${YOLO_LEFTOVER_NOTE}` : "";
+      plan.warnings.push(`S3 delete failed for ${key}${leftover} (${String(err).slice(0, 120)})`);
     }
   }
   try {
@@ -309,13 +345,14 @@ export async function deleteHiddenPages(
   rootOnly(session);
   if (!body.all && !body.projectPublicIds?.length) throw new ApiError("VALIDATION", "Pick projects or all projects");
   if (!body.dryRun && body.confirm?.trim() !== DELETE_CONFIRM) throw new ApiError("VALIDATION", `Type ${DELETE_CONFIRM} to confirm`);
+  if (!body.dryRun && !body.planDigests) throw new ApiError("VALIDATION", "Preview first: the real run needs the preview's planDigests");
   const companyId = resolveCompanyScope(session, query.companyId);
   const inScope = await scopeProjects(companyId, body.all ? null : (body.projectPublicIds ?? []));
 
   const results: ProjectDeletePlan[] = [];
   for (const project of inScope) {
     try {
-      results.push(await runProject(project, body.dryRun));
+      results.push(await runProject(project, body.dryRun, body.planDigests?.[project.publicId]));
     } catch (err) {
       logger.error(`[page-permanent-delete] project ${project.publicId} failed:`, err);
       results.push({
