@@ -26,14 +26,12 @@
  *         sheet could exceed it and blow the one-time per-page extraction budget.
  *
  * ---------------------------------------------------------------------------------------
- * NODE VERSION -- READ THIS FIRST. This script needs **node >= 22.6**, which is the OPPOSITE
- * of the constraint on this repo's test suite (which is pinned to node 20 by `.nvmrc`,
- * because node 24 breaks vitest). The reason is that the engine is a TypeScript module
+ * NODE VERSION -- READ THIS FIRST. This script needs **node >= 22.6**. The repo's `.nvmrc`
+ * (node 24 since 2026-10-23) satisfies it. The reason is that the engine is a TypeScript module
  * loaded directly via type-stripping, with no build step. MEASURED 2026-07-26:
  *     node 20.20.2 -> ERR_UNKNOWN_FILE_EXTENSION
  *     node 24.18.0 -> loads fine
- * So: run the TESTS on node 20, run THIS on node 22.6+. The check below fails loud and
- * names the remedy rather than dying on a cryptic loader error.
+ * The check below fails loud and names the remedy rather than dying on a cryptic loader error.
  * ---------------------------------------------------------------------------------------
  *
  * USAGE
@@ -107,9 +105,8 @@ if (major < 22 || (major === 22 && minor < 6)) {
   console.error(
     `\nFATAL: this script needs node >= 22.6 for TypeScript type-stripping; you are on ` +
       `${process.versions.node}.\n\n` +
-      `  This repo pins node 20 in .nvmrc for the TEST SUITE (node 24 breaks vitest).\n` +
-      `  That pin does not apply here. Run this script with a newer node:\n\n` +
-      `      . /usr/local/share/nvm/nvm.sh && nvm use default   # node 24 in this container\n\n` +
+      `  Run this script with the repo's .nvmrc node (24) or any node >= 22.6:\n\n` +
+      `      . /usr/local/share/nvm/nvm.sh && nvm use\n\n` +
       `  Alternatively pass --engine <path> pointing at a compiled .js build of the engine.\n`,
   );
   process.exit(2);

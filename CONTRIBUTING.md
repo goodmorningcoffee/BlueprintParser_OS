@@ -4,8 +4,7 @@ Thanks for your interest in contributing! This guide covers everything you need 
 
 ## Prerequisites
 
-- **Node.js 20 exactly** — pinned by `.nvmrc`; vitest is known-broken under node 24
-  (`ERR_INTERNAL_ASSERTION`), so "20 or newer" is not a safe reading
+- **Node.js 24** — pinned by `.nvmrc`, matching the Dockerfile (`node:24-*`) and CI
 - **Docker** (for PostgreSQL via docker-compose)
 - **npm** (comes with Node.js)
 

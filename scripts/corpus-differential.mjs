@@ -113,8 +113,8 @@
  * `timeout` if that matters.
  *
  * ── NODE ────────────────────────────────────────────────────────────────────────────────
- * Needs node >= 22.6 (type-stripping loads the .ts engine and worker directly). The test suite's
- * .nvmrc pins node 20; this is the opposite requirement and they do not conflict.
+ * Needs node >= 22.6 (type-stripping loads the .ts engine and worker directly). The repo's .nvmrc
+ * (node 24) satisfies it.
  */
 
 // Side-effect import: teaches bare node the "@/" alias + extensionless .ts. MUST come first.
@@ -127,7 +127,7 @@ const [major, minor] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 6)) {
   console.error(
     `\nFATAL: needs node >= 22.6 for TypeScript type-stripping; you are on ${process.versions.node}.\n` +
-      `  .nvmrc pins node 20 for the TEST suite only. Use:  . /usr/local/share/nvm/nvm.sh && nvm use default\n`,
+      `  Use the repo's .nvmrc node (24):  . /usr/local/share/nvm/nvm.sh && nvm use\n`,
   );
   process.exit(2);
 }

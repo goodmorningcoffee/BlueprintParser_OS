@@ -6,7 +6,7 @@
 # Run this once after cloning the repo and starting PostgreSQL.
 #
 # Prerequisites:
-#   - Node.js 20 exactly (see .nvmrc; vitest is known-broken under node 24)
+#   - Node.js 24 (see .nvmrc)
 #   - PostgreSQL running (docker compose up -d)
 #   - .env.local configured with DATABASE_URL
 #

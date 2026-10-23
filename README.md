@@ -862,8 +862,7 @@ All communicate via JSON stdin/stdout. Called with `execFile` (not `exec`) — n
 
 ## Local Development
 
-Prerequisites: Node.js 20 exactly (see `.nvmrc` — vitest is known-broken under node 24 with
-`ERR_INTERNAL_ASSERTION`), Docker
+Prerequisites: Node.js 24 (see `.nvmrc`; the Dockerfile and CI use the same major), Docker
 
 ```bash
 docker compose up -d          # PostgreSQL on port 5433

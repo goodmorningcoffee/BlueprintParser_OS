@@ -3,8 +3,9 @@
 # no-growth lint baseline. Ordinary lint debt remains honestly frozen at whatever
 # scripts/lint-baseline.json records; cleanup passes and can lower the future ceiling, while growth
 # fails. The gate is exact by file+rule+severity+count, so a fix that merely RELOCATES a warning
-# fails it too. Node is PINNED to 20 to match Dockerfile (node:20-alpine); vitest is known-broken
-# under node 24 (ERR_INTERNAL_ASSERTION).
+# fails it too. Node is PINNED to 24 to match Dockerfile (node:24-alpine) and .nvmrc. (The old
+# "vitest is broken under node 24 (ERR_INTERNAL_ASSERTION)" note did not reproduce when re-measured
+# 2026-10-23 with vitest 4.1.2 on node 24.21.0; Node 20 went EOL 2026-04-30.)
 # Deploys stay manual (deploy.sh, owner-run) — CI is the gate, not the trigger.
 name: ci
 
@@ -58,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -93,7 +94,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run check:lint-baseline
@@ -126,7 +127,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium --no-shell

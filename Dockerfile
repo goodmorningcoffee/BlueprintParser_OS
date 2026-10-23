@@ -10,14 +10,14 @@ RUN apk add --no-cache ca-certificates curl \
 
 # ── Stage 1: Install dependencies ──────────────────────────────
 # Build stages use Alpine (small, fast). Runner uses Debian for Python/ML deps.
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install --ignore-scripts
 
 # ── Stage 2: Build the Next.js app ────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY --from=rds-ca /aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 COPY --from=deps /app/node_modules ./node_modules
@@ -45,7 +45,7 @@ RUN --mount=type=cache,target=/app/.next/cache \
 
 # Bundle standalone processing worker for Step Functions / ECS tasks
 RUN npx esbuild scripts/process-worker.ts \
-    --bundle --platform=node --target=node20 \
+    --bundle --platform=node --target=node24 \
     --outfile=dist/process-worker.js \
     --alias:@=./src \
     --external:pg-native
@@ -56,7 +56,7 @@ RUN npx esbuild scripts/process-worker.ts \
 # resolves from /app/node_modules like the app does. (Measured 2026-09-29; process-worker has no
 # bcrypt in its import graph.)
 RUN npx esbuild scripts/project-asset-deletion-worker.ts \
-    --bundle --platform=node --target=node20 \
+    --bundle --platform=node --target=node24 \
     --outfile=dist/project-asset-deletion-worker.js \
     --alias:@=./src \
     --external:pg-native \
@@ -65,7 +65,10 @@ RUN npx esbuild scripts/project-asset-deletion-worker.ts \
 # ── Stage 3: Production runner ─────────────────────────────────
 # Using Debian slim instead of Alpine for full glibc compatibility
 # (required by img2table/polars and future TATR/PyTorch)
-FROM node:20-slim AS runner
+# bookworm is pinned EXPLICITLY: for node 24 the bare `-slim` tag is Debian trixie (Python 3.13,
+# newer tesseract/apt set), which would silently re-resolve the torch/pymupdf/opencv/img2table pins
+# below. node:20-slim was bookworm; this keeps the runner OS identical across the Node 20→24 bump.
+FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

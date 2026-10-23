@@ -77,8 +77,8 @@
  * instrument the right to be believed on fixtures whose answer we do not know.
  *
  * ── NODE ────────────────────────────────────────────────────────────────────────────────
- * Needs node >= 22.6 (both engines are .ts loaded by type-stripping, no build step). This is
- * the OPPOSITE of .nvmrc's node 20, which pins the TEST suite because node 24 breaks vitest.
+ * Needs node >= 22.6 (both engines are .ts loaded by type-stripping, no build step). The repo's
+ * .nvmrc (node 24) satisfies it.
  *
  * ── HONESTY NOTES ───────────────────────────────────────────────────────────────────────
  * - The legacy leg drives the worker's REAL exported primitives (bucketRgbaHistogram,
@@ -104,7 +104,7 @@ const [major, minor] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 6)) {
   console.error(
     `\nFATAL: needs node >= 22.6 for TypeScript type-stripping; you are on ${process.versions.node}.\n` +
-      `  .nvmrc pins node 20 for the TEST suite only. Use:  . /usr/local/share/nvm/nvm.sh && nvm use default\n`,
+      `  Use the repo's .nvmrc node (24):  . /usr/local/share/nvm/nvm.sh && nvm use\n`,
   );
   process.exit(2);
 }

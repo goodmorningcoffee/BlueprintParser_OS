@@ -82,7 +82,7 @@ fs.appendFileSync(ledgerPath, `${JSON.stringify(record)}\n`, { encoding: "utf8",
 
 # ---- [refactor jul23 P5.1-γ] recorded battery-green marker (heavy-gate proxy) ----
 #
-# The heavy landing battery — `npm test` (vitest; needs the test DB + node 20) and `npm run
+# The heavy landing battery — `npm test` (vitest; needs the test DB + the .nvmrc node) and `npm run
 # build` — cannot run fast/hermetically at deploy time on the owner host. Root/owner runs it
 # deliberately at the landing HEAD (L1 of P_LAND_PLAN: "Final HEAD battery green + recorded")
 # and then records THIS marker via scripts/record-battery-green.sh. deploy.sh preflight asserts
