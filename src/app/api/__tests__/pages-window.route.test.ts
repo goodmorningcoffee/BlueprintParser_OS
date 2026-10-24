@@ -49,6 +49,8 @@ function s4PageIntelligenceFixture() {
     csiSpatialMap: { summary: "server spatial context", zones: [] },
     autoTableProposals: [{ id: "legacy-proposal" }],
     evidence: { v: 1, holes: [{ bbox: [0.1, 0.1, 0.2, 0.2], conf: 0.5, zone: "notes" }] },
+    shapes: { v: 1, shapes: [{ c: "circle", t: "D1" }] },
+    regionsV2: { v: 1, regions: [{ kind: "table", bbox: [0.1, 0.1, 0.2, 0.2] }] },
     ensembleRegions: [{ id: "ensemble-1", category: "door-schedule", tableProbability: 0.94 }],
     parsedRegions: [{ id: "user-region", type: "schedule", data: { rows: [{ Mark: "D1" }] } }],
     rejectedTextRegionIds: ["user-rejected-1"],
@@ -68,6 +70,8 @@ describe("serializePageWindowIntelligence", () => {
     expect(serialized).not.toHaveProperty("csiSpatialMap");
     expect(serialized).not.toHaveProperty("autoTableProposals");
     expect(serialized).not.toHaveProperty("evidence"); // [evidence T4] server-only (up to 500 holes/page)
+    expect(serialized).not.toHaveProperty("shapes"); // [viewer trim F1] server-only readers
+    expect(serialized).not.toHaveProperty("regionsV2");
     expect(serialized).toMatchObject({
       ensembleRegions: source.ensembleRegions,
       parsedRegions: source.parsedRegions,
@@ -82,6 +86,8 @@ describe("serializePageWindowIntelligence", () => {
     expect(source).toHaveProperty("yoloHeatmap");
     expect(source).toHaveProperty("csiSpatialMap");
     expect(source).toHaveProperty("autoTableProposals");
+    expect(source).toHaveProperty("shapes");
+    expect(source).toHaveProperty("regionsV2");
     expect(Buffer.byteLength(JSON.stringify(serialized))).toBeLessThan(
       Buffer.byteLength(JSON.stringify(source)),
     );

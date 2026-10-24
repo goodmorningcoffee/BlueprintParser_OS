@@ -10,6 +10,10 @@ const PAGE_WINDOW_OMITTED_INTELLIGENCE_KEYS = [
   "autoTableProposals",
   // [evidence T4 2026-10-24] up to 500 hole boxes per page; server consumers (LLM context) only.
   "evidence",
+  // [viewer trim F1 2026-10-24] read only by server code (map-tags ensemble context, enrichment,
+  // knowledge graph); shapes alone runs to ~45 KB on a dense page.
+  "shapes",
+  "regionsV2",
 ] as const;
 
 /**
