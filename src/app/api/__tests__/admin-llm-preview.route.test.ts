@@ -24,7 +24,8 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { POST as lpPOST } from "@/app/api/admin/llm/preview/route";
-import { createCompany, createUser, createProject, asUser, makeReq, readJson, signedOut } from "@/test/harness";
+import { createCompany, createUser, createProject, createPage, asUser, makeReq, readJson, signedOut } from "@/test/harness";
+import { buildEvidenceSummary } from "@/lib/evidence";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -91,5 +92,19 @@ describe.skipIf(!dbUp)("admin/llm/preview (LP)", () => {
     expect(typeof r.body.totalChars).toBe("number"); // assembled.length
     expect(typeof r.body.budget).toBe("number"); // getContextBudget(...) is a numeric char budget
     expect(r.body.budget).toBeGreaterThan(0);
+  });
+
+  it("LP-5 [evidence T4] PAGE EVIDENCE gets its own id, not 'detected-regions' (whose toggle chat does not apply to it)", async () => {
+    const { company, admin, author } = await makeWorld();
+    const proj = await createProject(company.id, author.id);
+    const evidence = buildEvidenceSummary({
+      textract: { lines: [], words: [], tables: [{ bbox: [0.1, 0.1, 0.2, 0.1], rowCount: 3, colCount: 2, cells: [] }] },
+    });
+    await createPage(proj.id, 1, { pageIntelligence: { evidence } as never });
+    asUser(admin);
+    const r = await readJson(await lpPOST(post({ projectId: proj.publicId, scope: "page", pageNumber: 1 })));
+    expect(r.status).toBe(200);
+    const ev = (r.body.sections as Array<{ id: string; header: string }>).find((s) => s.header.startsWith("PAGE EVIDENCE"));
+    expect(ev?.id).toBe("page-evidence");
   });
 });

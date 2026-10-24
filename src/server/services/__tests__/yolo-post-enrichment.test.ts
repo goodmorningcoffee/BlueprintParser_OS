@@ -129,6 +129,14 @@ describe("enrichPageAfterYolo — [evidence T4] evidence summary", () => {
     expect((again.evidence as { computedAt: string }).computedAt).toBe("2026-01-01T00:00:00.000Z");
   });
 
+  it("a throwing evidence build is contained: evidence kept, the rest of the page still enriched", () => {
+    const broken = { lines: [], words: [{ text: "X", confidence: 90, bbox: null }] } as never;
+    const { updated, pageChanged } = enrichPageAfterYolo({ ...page({ evidence: "kept" }), textractData: broken }, dets, opts([]));
+    expect(updated.evidence).toBe("kept");
+    expect(pageChanged).toBe(true);
+    expect(updated.pageZones).toBeDefined();
+  });
+
   it("no textractData → evidence left as it was", () => {
     const { updated } = enrichPageAfterYolo({ ...page({ evidence: "kept" }), textractData: null }, dets, opts([]));
     expect(updated.evidence).toBe("kept");

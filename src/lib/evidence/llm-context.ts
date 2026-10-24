@@ -19,7 +19,10 @@ export function buildEvidenceContextSection(
   pageNumber: number,
 ): { section: ContextSection; summaryLine: string } | null {
   const ev = storedPageEvidence(pageIntelligence);
-  if (!ev) return null;
+  // Nothing the model cannot already see (no unread spots, no grids) → no section: it sits at 5.2,
+  // ahead of note blocks / regions / raw OCR, and must not spend their budget on a coverage line.
+  const hasHoles = !!ev && ev.channels.yoloText && ev.counts.holes > 0;
+  if (!ev || (!hasHoles && ev.tables.length === 0)) return null;
   const lines: string[] = [];
   const c = ev.counts;
   if (ev.channels.ocr) {
@@ -27,10 +30,10 @@ export function buildEvidenceContextSection(
     lines.push(
       ev.channels.yoloText
         ? `Text: ${c.ocrWords} OCR words (${located}% also located by the text detector).`
-        : `Text: ${c.ocrWords} OCR words (text detector has not run on this page).`,
+        : `Text: ${c.ocrWords} OCR words (no text-detector boxes on this page).`,
     );
   }
-  if (ev.channels.yoloText && c.holes > 0) {
+  if (hasHoles) {
     const byZone = Object.entries(ev.holesByZone)
       .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
       .map(([zone, n]) => `${zone} ${n}`)
@@ -44,8 +47,7 @@ export function buildEvidenceContextSection(
     }
     if (ev.tables.length > EVIDENCE_CONTEXT_TABLES) lines.push(`  ... (+${ev.tables.length - EVIDENCE_CONTEXT_TABLES} more)`);
   }
-  if (lines.length === 0) return null;
-  const parts = [c.holes > 0 && ev.channels.yoloText ? `${c.holes} unread text spot(s)` : "", c.tables > 0 ? `${c.tables} OCR table grid(s)` : ""]
+  const parts = [hasHoles ? `${c.holes} unread text spot(s)` : "", c.tables > 0 ? `${c.tables} OCR table grid(s)` : ""]
     .filter(Boolean);
   return {
     section: { header: `PAGE EVIDENCE — Page ${pageNumber}`, content: lines.join("\n") + "\n", priority: EVIDENCE_CONTEXT_PRIORITY },

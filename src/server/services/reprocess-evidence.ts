@@ -63,7 +63,8 @@ const dbDeps: EvidenceScopeDeps = {
         maxY: annotations.maxY, pageNumber: annotations.pageNumber, data: annotations.data,
       })
       .from(annotations)
-      .where(and(eq(annotations.projectId, projectId), eq(annotations.source, "yolo")));
+      .where(and(eq(annotations.projectId, projectId), eq(annotations.source, "yolo")))
+      .orderBy(annotations.id);
     const byPage = new Map<number, EvidenceDetectionInput[]>();
     for (const a of rows) {
       const data = a.data as { confidence?: number; modelName?: string } | null;

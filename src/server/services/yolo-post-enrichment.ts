@@ -78,8 +78,13 @@ export function enrichPageAfterYolo(
   const zones = computePageZones(yoloDets);
   if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
   // [evidence T4] fused OCR × YOLO evidence summary (src/lib/evidence), same zones; skipped without OCR.
-  const evidence = page.textractData ? buildEvidenceSummary({ textract: page.textractData, detections: yoloDets, zones }) : null;
-  if (evidence && !sameEvidence(evidence, existing.evidence)) { updated.evidence = evidence; pageChanged = true; }
+  // Guarded like the composite classifier below: a throw here must not drop the page's other enrichment.
+  try {
+    const evidence = page.textractData ? buildEvidenceSummary({ textract: page.textractData, detections: yoloDets, zones }) : null;
+    if (evidence && !sameEvidence(evidence, existing.evidence)) { updated.evidence = evidence; pageChanged = true; }
+  } catch (err) {
+    logger.error(`[yolo-post-enrichment] Evidence summary FAILED for page ${page.pageNumber}:`, err);
+  }
 
   // Existing: re-run heuristic engine with YOLO data
   const inferences = runHeuristicEngine(opts.rules, {

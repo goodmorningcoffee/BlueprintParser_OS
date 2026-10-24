@@ -81,8 +81,10 @@ export function summarizePageEvidence(ev: PageEvidence, now: Date = new Date()):
   }
   const holesByZone: Partial<Record<ZoneKind, number>> = {};
   for (const h of ev.holes) holesByZone[h.zone] = (holesByZone[h.zone] ?? 0) + 1;
+  // Total order (confidence, then position): YOLO rows come back from the DB in no fixed order, and
+  // an order-dependent summary would look "changed" to sameEvidence — or keep a different top-N.
   const holes = [...ev.holes]
-    .sort((a, b) => b.cYolo - a.cYolo)
+    .sort((a, b) => b.cYolo - a.cYolo || a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0] || a.bbox[3] - b.bbox[3] || a.bbox[2] - b.bbox[2])
     .slice(0, EVIDENCE_HOLE_CAP)
     .map((h) => ({ bbox: roundBox(h.bbox), conf: round(h.cYolo, 3), zone: h.zone }));
   return {
@@ -126,13 +128,33 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** Shallow guard for a stored summary (jsonb, so the shape is not guaranteed). */
+/**
+ * Full shape guard for a stored summary. jsonb, so nothing is guaranteed: consumers format every
+ * number (`toFixed`) and paste every zone into an LLM prompt, so each field is checked, not just the top.
+ */
 export function isEvidenceSummary(value: unknown): value is EvidenceSummary {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const v = value as Record<string, unknown>;
-  return v.v === EVIDENCE_VERSION && typeof v.computedAt === "string"
-    && !!v.counts && typeof v.counts === "object" && Array.isArray(v.holes) && Array.isArray(v.tables);
+  if (!isRecord(value)) return false;
+  const v = value;
+  if (v.v !== EVIDENCE_VERSION || typeof v.computedAt !== "string" || !isNum(v.holesTruncated)) return false;
+  if (v.zonesSource !== "detector" && v.zonesSource !== "fixed-fallback") return false;
+  const ch = v.channels;
+  if (!isRecord(ch) || typeof ch.ocr !== "boolean" || typeof ch.yoloText !== "boolean" || typeof ch.layout !== "boolean") return false;
+  const c = v.counts;
+  if (!isRecord(c) || !COUNT_KEYS.every((k) => isNum(c[k]))) return false;
+  if (!isRecord(c.detections) || !Object.values(c.detections).every((m) => isRecord(m) && Object.values(m).every(isNum))) return false;
+  if (!isRecord(v.holesByZone) || !Object.entries(v.holesByZone).every(([z, n]) => isZone(z) && isNum(n))) return false;
+  if (!Array.isArray(v.holes) || !v.holes.every((h) => isRecord(h) && isBox(h.bbox) && isNum(h.conf) && isZone(h.zone))) return false;
+  return Array.isArray(v.tables) && v.tables.every((t) =>
+    isRecord(t) && isBox(t.bbox) && isNum(t.rows) && isNum(t.cols) && isNum(t.cells) && isZone(t.zone));
 }
+
+const COUNT_KEYS = ["ocrWords", "both", "ocrOnly", "yoloTextBoxes", "holes", "fragments", "tables"] as const;
+/** Exhaustive over ZoneKind (a new kind fails to compile here until it is listed). */
+const ZONE_KINDS: Record<ZoneKind, true> = { title_block: true, drawing: true, table: true, legend: true, notes: true, margin: true };
+const isRecord = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
+const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+const isZone = (x: unknown): x is ZoneKind => typeof x === "string" && Object.hasOwn(ZONE_KINDS, x);
+const isBox = (x: unknown): x is BboxMinMax => Array.isArray(x) && x.length === 4 && x.every(isNum);
 
 /** The persisted evidence summary of a page, or undefined (none yet, malformed, or another version). */
 export function storedPageEvidence(pageIntelligence: unknown): EvidenceSummary | undefined {

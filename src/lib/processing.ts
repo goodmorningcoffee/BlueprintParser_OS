@@ -614,8 +614,12 @@ async function processProjectWithLease(
         }
 
         // [evidence T4] OCR-only evidence summary (word counts, Textract tables); YOLO load adds the rest.
-        const evidence = textractData.words.length > 0 ? buildEvidenceSummary({ textract: textractData, zones: pageZones }) : null;
-        if (evidence) pageIntelligence = { ...(pageIntelligence ?? {}), evidence };
+        try {
+          const evidence = textractData.words.length > 0 ? buildEvidenceSummary({ textract: textractData, zones: pageZones }) : null;
+          if (evidence) pageIntelligence = { ...(pageIntelligence ?? {}), evidence };
+        } catch (err) {
+          logger.error(`[processing] Evidence summary FAILED for page ${pageNum}:`, err);
+        }
         // Build page data
         const pageData: Record<string, unknown> = {
           textractData,
