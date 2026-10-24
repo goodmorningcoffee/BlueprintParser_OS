@@ -775,6 +775,21 @@ export const INTERNAL_MUTATION_SINKS = [
     "persistPageTiles",
     "atomic-project-write",
   ],
+  // [census F2 2026-10-24] Upload channel census: merge ONE key, projectIntelligence.channels (kind
+  // counts + shares), under the caller's capability — upload pipeline (processing lease) and the
+  // Reprocess "PDF channels" stage (admin-reprocess lease).
+  [
+    "src/server/services/channel-census.ts",
+    "writeProjectChannels",
+    "atomic-project-write",
+  ],
+  // [census F2 2026-10-24] Reprocess "PDF channels": merge pageIntelligence.channels into every page
+  // row of one project (one tx) under the admin-reprocess lease.
+  [
+    "src/server/services/reprocess-channels.ts",
+    "persistPageChannels",
+    "atomic-project-write",
+  ],
   // [graph T8 2026-10-24] Knowledge graph: merge ONE key, projectIntelligence.knowledgeGraph (the
   // compact summary; the graph itself is an S3 object under the project's data prefix), under the
   // caller's capability — upload pipeline, intelligence reprocess, recomputeProject, scope=graph.

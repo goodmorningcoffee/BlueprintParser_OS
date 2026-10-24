@@ -10,7 +10,7 @@
 // the UI. An auto-included stage can be unticked; the plan then carries a "leaves … stale" warning.
 // Ordering is fixed by the DAG, never by click order.
 
-export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph";
+export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph" | "channels";
 
 export type StageId =
   | "thumbnails"
@@ -26,6 +26,7 @@ export type StageId =
   | "graph"
   | "evidence"
   | "tiles"
+  | "channels"
   | "re-ocr";
 
 /**
@@ -225,6 +226,18 @@ export const STAGES: readonly StageDef[] = [
     pulls: [],
   },
   {
+    // [census F2 2026-10-24] services/reprocess-channels.ts — depends only on the source PDF.
+    id: "channels",
+    label: "PDF channels",
+    writes: "pageIntelligence.channels (text layer / vector paths / images / kind, counts only); projects.project_intelligence.channels (kind counts + shares)",
+    cost: "downloads original.pdf once per project and runs python (PyMuPDF) over every page ON THE WEB TASK — about a second per dense sheet; no S3 writes, no SageMaker, no Textract",
+    kind: "reprocess",
+    scope: "channels",
+    rootOnly: true,
+    overlap: "Uploads record it already — on its own this is the backfill for projects uploaded before the census existed. Nothing reads it yet.",
+    pulls: [],
+  },
+  {
     id: "re-ocr",
     label: "Re-OCR (Textract)",
     writes: "pages.textract_data, raw_text",
@@ -251,7 +264,8 @@ export type ReprocessPreset =
   | "clean-yolo"
   | "thumbnails"
   | "shape-parse"
-  | "tiles";
+  | "tiles"
+  | "channels";
 
 export interface PresetDef {
   id: ReprocessPreset;
@@ -273,6 +287,7 @@ export const PRESETS: readonly PresetDef[] = [
   { id: "thumbnails", label: "Thumbnails", stages: ["thumbnails"], replaces: "Pipeline › Regenerate Thumbnails" },
   { id: "shape-parse", label: "Shape parse", stages: ["shape-parse"], replaces: "Pipeline › Shape Parse (Keynotes)" },
   { id: "tiles", label: "Tile images", stages: ["tiles"], rootOnly: true, replaces: "nothing — new 2026-10-24 (backfills the tile pyramid for projects uploaded before it)" },
+  { id: "channels", label: "PDF channels", stages: ["channels"], rootOnly: true, replaces: "nothing — new 2026-10-24 (backfills the upload channel census for projects uploaded before it)" },
 ];
 
 export const presetDef = (id: ReprocessPreset): PresetDef | undefined => PRESETS.find((p) => p.id === id);

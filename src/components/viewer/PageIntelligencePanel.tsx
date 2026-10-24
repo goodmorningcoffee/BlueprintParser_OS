@@ -8,6 +8,7 @@ import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { usePageGraphLinks } from "@/queries/useProjectGraph";
 import type { GraphLink, UnresolvedReference } from "@/lib/knowledge-graph/summary";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
+import PdfChannelsLine from "./PdfChannelsLine";
 
 /**
  * `embedded`: when true the outer panel chrome (fixed width, border, shadow,
@@ -158,6 +159,8 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
       <div className="px-3 py-1.5 border-b border-[var(--border)] text-[10px] text-[var(--muted)]">
         Page {pageNumber}
       </div>
+      {/* [census F2] PDF layer: text / vector paths / images / kind (pageIntelligence.channels) */}
+      <PdfChannelsLine intelligence={intel} />
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">

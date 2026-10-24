@@ -196,11 +196,11 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     // wholesale — do NOT "fix" into a recursive merge: the CSI merge below reads merged.parsedRegions).
     const existing = (pageRow.pageIntelligence || {}) as Record<string, unknown>;
     // duplicateOf (admin Data tools), evidence (src/lib/evidence), tiles (the tile-pyramid record,
-    // lib/tiles/keys.ts) and shapes (src/lib/shape-ensemble) are server-owned: a client patch can
-    // neither set nor clear them.
+    // lib/tiles/keys.ts), shapes (src/lib/shape-ensemble) and channels (the upload PDF channel census,
+    // lib/pdf-channels — [census F2 2026-10-24]) are server-owned: a client patch can neither set nor clear them.
     const merged: Record<string, unknown> = {
       ...existing, ...intelligence, duplicateOf: existing.duplicateOf, evidence: existing.evidence, tiles: existing.tiles,
-      shapes: existing.shapes,
+      shapes: existing.shapes, channels: existing.channels,
     };
 
     // CSI merge: collect csiTags from parsedRegions and merge into the page-level csiCodes.

@@ -414,6 +414,25 @@ describe.skipIf(!dbUp)("hidden duplicates — viewer flags + server-owned mark",
     expect((await patch({ tiles }, 2)).status).toBe(200);
     expect((await pi(2))?.tiles).toBeUndefined();
   });
+
+  it("[census F2 2026-10-24] PATCH /api/pages/intelligence can neither set nor clear the server-owned channels record", async () => {
+    const { company, admin, member } = await world();
+    const p = await createProject(company.id, admin.id);
+    await seedRepeated(p.id, 2, 1300);
+    const channels = { v: 1, kind: "vector", textChars: 900, textWords: 120, fonts: 3, images: 0, fullPageImage: false, vectorPaths: 12345, formXObjects: 2, annots: 0, links: 0, widthPt: 2592, heightPt: 1728, rotation: 0 };
+    await db.update(pages).set({ pageIntelligence: { channels, classification: "old" } as never }).where(and(eq(pages.projectId, p.id), eq(pages.pageNumber, 1)));
+    const pi = async (pageNumber: number) =>
+      (await db.select({ pi: pages.pageIntelligence }).from(pages).where(and(eq(pages.projectId, p.id), eq(pages.pageNumber, pageNumber))))[0].pi as Record<string, unknown> | null;
+    asUser(member);
+    const patch = (intelligence: unknown, pageNumber: number) =>
+      intelligencePATCH(makeReq("/api/pages/intelligence", { method: "PATCH", body: { publicId: p.publicId, pageNumber, intelligence } }));
+    expect((await patch({ channels: { ...channels, kind: "scanned" }, classification: "plan" }, 1)).status).toBe(200);
+    expect(await pi(1)).toEqual({ channels, classification: "plan" });
+    expect((await patch({ channels: null }, 1)).status).toBe(200);
+    expect((await pi(1))?.channels).toEqual(channels);
+    expect((await patch({ channels }, 2)).status).toBe(200);
+    expect((await pi(2))?.channels).toBeUndefined();
+  });
 });
 
 describe("planHides (pure)", () => {

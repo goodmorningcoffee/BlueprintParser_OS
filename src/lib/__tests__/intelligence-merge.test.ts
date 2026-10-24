@@ -36,6 +36,13 @@ describe("carryNonComputedIntelligence", () => {
     expect(carryNonComputedIntelligence({ evidence: { v: 1 }, parsedRegions: [] })).toEqual({ parsedRegions: [] });
   });
 
+  it("[census F2 2026-10-24] channels and tiles are NOT computed keys: no reprocess that clears computed keys rebuilds them, so they must survive it", () => {
+    expect(REPROCESS_COMPUTED_KEYS).not.toContain("channels");
+    expect(REPROCESS_COMPUTED_KEYS).not.toContain("tiles");
+    const channels = { v: 1, kind: "vector", vectorPaths: 10 };
+    expect(carryNonComputedIntelligence({ channels, tiles: { v: 1 }, classifiedTables: [] })).toEqual({ channels, tiles: { v: 1 } });
+  });
+
   it("clears every computed key so the rebuild refreshes-or-drops them", () => {
     const allComputed = Object.fromEntries(
       REPROCESS_COMPUTED_KEYS.map((k) => [k, { stale: true }]),
