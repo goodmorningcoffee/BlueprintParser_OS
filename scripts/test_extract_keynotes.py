@@ -161,6 +161,157 @@ def test_overlap_300_dedupes_boundary_shape(monkeypatch, tmp_path):
     assert len(deduped) == 1
 
 
+# ─── Tile parallelism (2026-10-24) ───────────────────────────────
+#
+# Every backend must hand deduplicate() the SAME list in the SAME order as the old serial
+# loop, so results are byte-identical whichever executor ran. The fixture is a 9-tile page
+# with glyphs in single tiles and in overlap bands (conftest.shapes_png).
+
+import json
+import os
+
+from conftest import CENTER_TILE_MARKER_VALUE, SHAPES_ONLY_IN_CENTER_TILE
+
+
+_PARENT_PID = None
+_REAL_RUN_TILE = None
+
+
+def _die_in_children(ti, tile):
+    """Kill switch for test_broken_worker_pool_falls_back_to_serial: a worker process exits
+    hard, the parent (same pid as the test) runs the real tile code."""
+    if os.getpid() != _PARENT_PID:
+        os._exit(1)
+    return _REAL_RUN_TILE(ti, tile)
+
+
+def _near(result, center, size=2500):
+    l, t, r, b = result["bbox"]
+    return abs((l + r) / 2 * size - center[0]) < 50 and abs((t + b) / 2 * size - center[1]) < 50
+
+
+def test_parallel_backends_match_serial(shapes_png):
+    """serial == pool == pipe == auto: identical results (order included) and warnings."""
+    serial = main(shapes_png, workers=1)
+    assert len(serial[0]) >= 8, "fixture must produce detections or the equality is vacuous"
+    assert len(ek.generate_tiles(2500, 2500)) == 9
+    for backend in ("pool", "pipe", "auto"):
+        assert main(shapes_png, workers=3, backend=backend) == serial, backend
+
+
+@pytest.mark.parametrize("workers,backend", [(1, "serial"), (3, "pool"), (3, "pipe")])
+def test_bad_tile_adds_warning_and_keeps_other_tiles(shapes_png, monkeypatch, workers, backend):
+    """One tile raising used to abort the page (87 good tiles discarded). Now it is a warning
+    and only that tile's shapes are missing. The failing tile is recognised by the marker
+    pixel conftest plants in the glyph that lives in the centre tile alone."""
+    baseline, _ = main(shapes_png, workers=1)
+    assert any(_near(r, SHAPES_ONLY_IN_CENTER_TILE) for r in baseline)
+
+    real = ek.extract_from_image
+
+    def boom(img, skip_ocr=False):
+        if (img == CENTER_TILE_MARKER_VALUE).any():
+            raise RuntimeError("synthetic tile failure")
+        return real(img, skip_ocr=skip_ocr)
+
+    monkeypatch.setattr(ek, "extract_from_image", boom)
+    results, warnings = main(shapes_png, workers=workers, backend=backend)
+
+    assert [w for w in warnings if w.startswith("Shape Parse skipped tile 4 @ (900,900)")], warnings
+    assert all("synthetic tile failure" in w for w in warnings if "skipped tile" in w)
+    assert not any(w.startswith("Extraction failed") for w in warnings), (
+        "a skipped tile must not look like a failed page to src/lib/keynotes.ts"
+    )
+    assert not any(_near(r, SHAPES_ONLY_IN_CENTER_TILE) for r in results)
+    # Everything that survived came from the other 8 tiles, unchanged; what is lost is bounded
+    # by what tile 4 alone contributed (the detector is crop-sensitive, so an overlap-band
+    # glyph may be seen by tile 4 only — the exact count is a fixture property, not a contract).
+    base_boxes = {tuple(round(v, 6) for v in r["bbox"]) for r in baseline}
+    assert all(tuple(round(v, 6) for v in r["bbox"]) in base_boxes for r in results)
+    assert len(baseline) - 3 <= len(results) < len(baseline)
+
+
+def test_all_tiles_failed_raises(shapes_png, monkeypatch):
+    """Zero tiles scanned is a failed page, not an empty one — same rule as an undecodable
+    image: the Lambda must put it in page_errors, the CLI must print 'Extraction failed'."""
+    def boom(img, skip_ocr=False):
+        raise RuntimeError("everything is on fire")
+
+    monkeypatch.setattr(ek, "extract_from_image", boom)
+    with pytest.raises(RuntimeError, match="all 9 tiles failed; first: RuntimeError: everything"):
+        main(shapes_png, workers=1)
+
+
+@pytest.mark.parametrize("backend", ["pool", "pipe"])
+def test_broken_worker_pool_falls_back_to_serial(shapes_png, monkeypatch, backend):
+    """A worker killed mid-page (the Lambda OOM case) must not fail the page: the parent
+    finishes the unfinished tiles itself and says so in a warning. Workers die via os._exit
+    only in child processes (pid check), so the in-parent sweep runs the real tile code."""
+    serial = main(shapes_png, workers=1)
+    global _PARENT_PID, _REAL_RUN_TILE
+    _PARENT_PID, _REAL_RUN_TILE = os.getpid(), ek._run_tile
+    # Module-level, not a closure: the pool backend pickles the callable by reference.
+    monkeypatch.setattr(ek, "_run_tile", _die_in_children)
+    results, warnings = main(shapes_png, workers=3, backend=backend)
+    assert results == serial[0]
+    assert any(f"tile worker pool ({backend}) broke" in w for w in warnings), warnings
+
+
+def test_timing_line_is_structured(shapes_png, capfd, monkeypatch):
+    """One '[keynote] timing {json}' line per page, honouring KEYNOTE_TILE_WORKERS."""
+    monkeypatch.setenv(ek.TILE_WORKERS_ENV, "2")
+    monkeypatch.setenv(ek.TILE_BACKEND_ENV, "pipe")
+    main(shapes_png)
+    err = capfd.readouterr().err
+    lines = [l for l in err.splitlines() if l.startswith("[keynote] timing ")]
+    assert len(lines) == 1, err
+    t = json.loads(lines[0][len("[keynote] timing "):])
+    assert t["tiles"] == 9 and t["failed_tiles"] == 0
+    assert t["workers"] == 2 and t["backend"] == "pipe"
+    for key in ("decode_s", "extract_s", "tile_cpu_s", "dedup_s", "total_s",
+                "text_candidates", "shape_candidates", "selected", "before_dedup", "keynotes"):
+        assert key in t, key
+    assert t["total_s"] >= t["extract_s"] >= 0
+    assert "in " in [l for l in err.splitlines() if l.startswith("[keynote] Tile 0 ")][0]
+
+
+def test_tile_worker_count_knobs(monkeypatch):
+    monkeypatch.delenv(ek.TILE_WORKERS_ENV, raising=False)
+    assert ek.tile_worker_count(1) == 1                       # never more workers than tiles
+    assert ek.tile_worker_count(500) <= ek.MAX_TILE_WORKERS   # never more than the cap
+    assert ek.tile_worker_count(500, workers=0) == 1          # 0/1 → serial
+    assert ek.tile_worker_count(500, workers=3) == 3
+    monkeypatch.setenv(ek.TILE_WORKERS_ENV, "2")
+    assert ek.tile_worker_count(500) == 2
+    monkeypatch.setenv(ek.TILE_WORKERS_ENV, "banana")
+    assert 1 <= ek.tile_worker_count(500) <= ek.MAX_TILE_WORKERS  # ignored, not fatal
+
+
+def test_fork_after_cv2_threads_does_not_deadlock(shapes_png):
+    """Regression for the 2026-10-24 hang: the parent had used OpenCV's thread pool (a serial
+    page) before forking tile workers, and every worker blocked forever. Parent pins threads=1
+    around the fork and children never call cv2.setNumThreads. A hang here is a 300 s Lambda
+    timeout in production, so the run is a bounded subprocess (a hang must fail, not stall
+    the suite)."""
+    import subprocess
+    import sys
+
+    script = (
+        "import sys, json, cv2; sys.path.insert(0, %r); import extract_keynotes as ek\n"
+        "warm = ek.main(%r, workers=1)\n"  # parent uses cv2 (thread pool created) BEFORE forking
+        "before = cv2.getNumThreads()\n"
+        "par = ek.main(%r, workers=3, backend='pool')\n"
+        "print(json.dumps({'same': par == warm, 'restored': cv2.getNumThreads() == before}))\n"
+    ) % (os.path.dirname(os.path.abspath(__file__)), shapes_png, shapes_png)
+    try:
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        pytest.fail("parallel tile run hung after the parent had used cv2 threads")
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    verdict = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert verdict == {"same": True, "restored": True}, proc.stderr[-2000:]
+
+
 # ─── Helpers ─────────────────────────────────────────────────────
 
 def _capture_filter_calls(monkeypatch):

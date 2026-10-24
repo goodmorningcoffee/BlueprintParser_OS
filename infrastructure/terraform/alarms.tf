@@ -126,6 +126,48 @@ resource "aws_cloudwatch_metric_alarm" "beaver_lambda_cv_throttles" {
   }
 }
 
+# [2026-10-24] Errors + Duration were the two signals missing when big sheets started hitting
+# Sandbox.Timedout: a timeout counts as an Error, and the duration climb that precedes it was
+# invisible. Both alarms use the existing alerts topic — no new SNS resources. The function
+# serves template_match AND shape_parse, so a page here says "a CV invocation", not which.
+resource "aws_cloudwatch_metric_alarm" "beaver_lambda_cv_errors" {
+  alarm_name          = "blueprintparser-lambda-cv-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Lambda CV reported >= 1 Error in 5 min. The handler catches its own exceptions and returns status=error, so this metric only moves on timeouts (Sandbox.Timedout), OOM kills and runtime crashes — each one is a page the user saw fail or fall back to the slower local engine."
+  alarm_actions       = [aws_sns_topic.beaver_alerts.arn]
+  ok_actions          = [aws_sns_topic.beaver_alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.beaver_cv_pipeline.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "beaver_lambda_cv_duration_p95" {
+  alarm_name          = "blueprintparser-lambda-cv-duration-p95"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  extended_statistic  = "p95"
+  threshold           = 240000 # ms = 240 s, 80% of the 300 s timeout in lambda.tf
+  alarm_description   = "Lambda CV p95 Duration > 240 s over 5 min — invocations are within 20% of the 300 s timeout. Check the '[keynote] timing' lines in /aws/lambda/beaver-cv-pipeline for tiles/workers/extract_s before raising memory or timeout."
+  alarm_actions       = [aws_sns_topic.beaver_alerts.arn]
+  ok_actions          = [aws_sns_topic.beaver_alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.beaver_cv_pipeline.function_name
+  }
+}
+
 ###############################################################################
 # RDS — connection count pressure
 ###############################################################################

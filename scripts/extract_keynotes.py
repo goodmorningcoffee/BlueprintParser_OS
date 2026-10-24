@@ -13,6 +13,10 @@ import os
 import sys
 import json
 import string
+import time
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, BrokenExecutor
+from multiprocessing.connection import wait as _wait_connections
 import cv2
 import numpy as np
 
@@ -42,6 +46,22 @@ IOU_DEDUP_THRESHOLD = 0.5
 # below 18 ensures no recall regression from the unified refactor.
 MIN_KN_ABS = 15
 MAX_KN_ABS = 200
+
+# ── Tile parallelism knobs (2026-10-24) ──
+# Tiles are independent, so a page's 88-140 tiles (D/E sheets at 300 DPI) run across worker
+# processes instead of one serial loop — the Lambda's 6 GB buys ~3-4 vCPU that the serial loop
+# never used, and big sheets were hitting Sandbox.Timedout. Both knobs are env-overridable so a
+# tuning change never needs an image rebuild:
+#   KEYNOTE_TILE_WORKERS  int; 0 or 1 = serial. Default: usable CPUs, capped at MAX_TILE_WORKERS.
+#   KEYNOTE_TILE_BACKEND  auto | pool | pipe | serial (see _run_tiles for what each means).
+TILE_WORKERS_ENV = "KEYNOTE_TILE_WORKERS"
+TILE_BACKEND_ENV = "KEYNOTE_TILE_BACKEND"
+MAX_TILE_WORKERS = 8
+_EMPTY_STATS = {"text_candidates": 0, "keynote_candidates": 0, "selected": 0}
+# Page image the tile workers slice from. Set by _init_tile_worker (in each worker) and by
+# _run_tiles (in the parent, for the serial path). Under fork it is inherited copy-on-write, so
+# only tile COORDINATES cross the process boundary — never 1.4 MB tile copies.
+_PAGE_IMG = None
 
 
 # ── Geometry helpers ─────────────────────────────────────────────
@@ -427,9 +447,196 @@ def extract_from_image(img, skip_ocr=False):
     return results, stats
 
 
+# ── Tile execution (serial + parallel share one per-tile runner) ──
+
+def _init_tile_worker(page_img):
+    """Runs once per worker process (ProcessPoolExecutor initializer / pipe worker prologue).
+    Pins the page image and keeps Tesseract (a subprocess) single-threaded: with N workers on
+    ~3-4 vCPU, per-process threading only oversubscribes the box.
+    ⚠ Do NOT call cv2.setNumThreads here. The child inherits the parent's OpenCV thread pool
+    OBJECT but none of its threads; reconfiguring it waits on them forever (measured 2026-10-24:
+    every tile worker hung). The parent pins threads=1 before forking instead (_run_tiles)."""
+    global _PAGE_IMG
+    _PAGE_IMG = page_img
+    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
+
+def _run_tile(ti, tile):
+    """
+    Extract one tile of _PAGE_IMG. NEVER raises — a bad tile (cv2 assertion, Tesseract crash,
+    MemoryError on a pathological region) used to abort the whole page and discard the other
+    87 good tiles. Returns an outcome dict with tile-LOCAL results; the parent remaps.
+      {index, tile, results, stats, error (str|None), seconds}
+    """
+    ty, tx, th, tw = tile
+    t0 = time.monotonic()
+    try:
+        tile_img = _PAGE_IMG[ty : ty + th, tx : tx + tw].copy()  # copy: don't pin the page view
+        results, stats = extract_from_image(tile_img, skip_ocr=False)
+        del tile_img
+        return {"index": ti, "tile": tile, "results": results, "stats": stats,
+                "error": None, "seconds": time.monotonic() - t0}
+    except Exception as e:  # noqa: BLE001 — isolation is the point
+        return {"index": ti, "tile": tile, "results": [], "stats": dict(_EMPTY_STATS),
+                "error": f"{type(e).__name__}: {e}", "seconds": time.monotonic() - t0}
+
+
+def _pipe_worker(conn, page_img, jobs):
+    """Child body for the pipe backend: run my tiles, stream each outcome back, then a None
+    sentinel. Streaming (not one send at the end) means a crash mid-way loses only the tiles
+    not yet sent — the parent re-runs those serially."""
+    _init_tile_worker(page_img)
+    try:
+        for ti, tile in jobs:
+            conn.send(_run_tile(ti, tile))
+        conn.send(None)
+    finally:
+        conn.close()
+
+
+def _mp_context():
+    # fork: workers inherit the page image copy-on-write and any monkeypatched module state;
+    # it is the Linux default on the Lambda/ECS python (3.11) and still available on 3.14.
+    methods = multiprocessing.get_all_start_methods()
+    return multiprocessing.get_context("fork" if "fork" in methods else methods[0])
+
+
+def _run_tiles_pool(page_img, jobs, workers, outcomes):
+    """concurrent.futures backend. Raises OSError at construction where SemLock is unavailable
+    (AWS Lambda has no /dev/shm → errno 38); BrokenExecutor if a worker is killed (OOM)."""
+    with ProcessPoolExecutor(
+        max_workers=workers, mp_context=_mp_context(),
+        initializer=_init_tile_worker, initargs=(page_img,),
+    ) as pool:
+        futures = [pool.submit(_run_tile, ti, tile) for ti, tile in jobs]
+        for fut in futures:
+            out = fut.result()  # BrokenProcessPool propagates to _run_tiles
+            outcomes[out["index"]] = out
+
+
+def _run_tiles_pipe(page_img, jobs, workers, outcomes):
+    """multiprocessing.Process + Pipe backend — the only primitives Lambda supports (no shared-
+    memory semaphores). Tiles are dealt round-robin; the parent drains all pipes concurrently
+    so a child never blocks on a full 64 KB pipe buffer. A dead child shows up as EOFError and
+    its unsent tiles simply stay missing from `outcomes` for the serial sweep."""
+    ctx = _mp_context()
+    pending = {}
+    for wi in range(workers):
+        my_jobs = jobs[wi::workers]
+        if not my_jobs:
+            continue
+        parent_conn, child_conn = ctx.Pipe(duplex=False)
+        proc = ctx.Process(target=_pipe_worker, args=(child_conn, page_img, my_jobs), daemon=True)
+        proc.start()
+        child_conn.close()  # parent must drop its copy or a dead child never reads as EOF
+        pending[parent_conn] = proc
+    died = 0
+    while pending:
+        for conn in _wait_connections(list(pending)):
+            try:
+                msg = conn.recv()
+            except EOFError:
+                msg = None
+                died += 1
+            if msg is None:
+                proc = pending.pop(conn)
+                conn.close()
+                proc.join()
+            else:
+                outcomes[msg["index"]] = msg
+    if died:
+        raise BrokenExecutor(f"{died} tile worker process(es) exited without finishing")
+
+
+def tile_worker_count(num_tiles, workers=None):
+    """Workers for the tile stage: explicit arg → KEYNOTE_TILE_WORKERS → usable CPUs; never more
+    than tiles, never more than MAX_TILE_WORKERS. 0/1 means serial."""
+    n = workers
+    if n is None:
+        raw = os.environ.get(TILE_WORKERS_ENV, "").strip()
+        if raw:
+            try:
+                n = int(raw)
+            except ValueError:
+                print(f"[keynote] ignoring non-integer {TILE_WORKERS_ENV}={raw!r}", file=sys.stderr)
+    if n is None:
+        try:
+            n = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            n = os.cpu_count() or 1
+    return max(1, min(int(n), num_tiles, MAX_TILE_WORKERS))
+
+
+def _run_tiles(page_img, tiles, workers=None, backend=None):
+    """
+    Run every tile and return (outcomes_in_tile_order, workers_used, backend_used, warnings).
+    Output order is the tile order regardless of which process finished first, so the result
+    list handed to deduplicate() is byte-identical to the old serial loop's.
+
+    backend: "auto" tries pool then pipe; "pool"/"pipe" force one; "serial" is the old loop.
+    Any parallel failure — construction error, broken worker — degrades to running the
+    not-yet-finished tiles in-process; the page never fails because parallelism did.
+    """
+    global _PAGE_IMG
+    num_tiles = len(tiles)
+    workers = tile_worker_count(num_tiles, workers)
+    backend = (backend or os.environ.get(TILE_BACKEND_ENV) or "auto").strip().lower()
+    if backend not in ("auto", "pool", "pipe", "serial"):
+        print(f"[keynote] unknown tile backend {backend!r}; using auto", file=sys.stderr)
+        backend = "auto"
+    if workers <= 1:
+        backend = "serial"
+
+    jobs = list(enumerate(tiles))
+    outcomes = {}
+    warnings = []
+    used = "serial"
+    attempts = {"auto": ["pool", "pipe"], "pool": ["pool"], "pipe": ["pipe"], "serial": []}[backend]
+    if attempts:
+        # fork + OpenCV: a child that runs parallel_for_ against the inherited (thread-less) pool
+        # deadlocks. With the parent at 1 thread the children run cv2 inline and never touch it;
+        # the previous value is restored once the tiles are done so other work in a warm Lambda
+        # (template_match) keeps its threads.
+        prev_threads = cv2.getNumThreads()
+        cv2.setNumThreads(1)
+    for name in attempts:
+        runner = _run_tiles_pool if name == "pool" else _run_tiles_pipe
+        remaining = [(ti, tile) for ti, tile in jobs if ti not in outcomes]
+        try:
+            runner(page_img, remaining, workers, outcomes)
+            used = name
+            break
+        except BrokenExecutor as e:
+            # Workers died (SIGKILL/OOM is the usual cause). Keep what came back; the serial
+            # sweep below finishes the rest — the caller still sees a complete page.
+            msg = f"tile worker pool ({name}) broke: {e}; finishing {num_tiles - len(outcomes)} tile(s) serially"
+            print(f"[keynote] WARNING {msg}", file=sys.stderr)
+            warnings.append(f"Shape Parse {msg}")
+            used = f"{name}+serial"
+            break
+        except (OSError, ImportError, ValueError, RuntimeError) as e:
+            # Backend unavailable here (Lambda: SemLock → OSError 38). Try the next one.
+            print(f"[keynote] tile backend {name} unavailable ({type(e).__name__}: {e})", file=sys.stderr)
+
+    if attempts:
+        cv2.setNumThreads(prev_threads)
+
+    missing = [(ti, tile) for ti, tile in jobs if ti not in outcomes]
+    if missing:
+        _PAGE_IMG = page_img
+        try:
+            for ti, tile in missing:
+                outcomes[ti] = _run_tile(ti, tile)
+        finally:
+            _PAGE_IMG = None
+    if used == "serial" and backend != "serial":
+        used = "serial (fallback)"
+    return [outcomes[ti] for ti in range(num_tiles)], (1 if used.startswith("serial") else workers), used, warnings
+
+
 # ── Main entry point ─────────────────────────────────────────────
 
-def main(img_path):
+def main(img_path, *, workers=None, backend=None):
     """
     Run keynote extraction on a page PNG file.
 
@@ -444,14 +651,20 @@ def main(img_path):
          worker_fn; warnings flow into the result JSON.
 
     Raises ValueError when the image cannot be decoded (never returns an
-    empty result for a page it did not actually scan).
+    empty result for a page it did not actually scan), and RuntimeError
+    when EVERY tile failed (same reasoning: that page was not scanned).
+    A subset of failed tiles is a warning, not a failure.
+
+    workers / backend: tile-parallelism overrides for tests and tuning;
+    None defers to KEYNOTE_TILE_WORKERS / KEYNOTE_TILE_BACKEND (see
+    _run_tiles). Results are identical for every setting — only the
+    wall clock changes.
 
     Both callers depend on this being a 2-tuple. If you change the
     shape, update both call sites OR this becomes a silent Lambda
     crash (for h in tuple: h["key"] = v → TypeError).
     """
-    import gc
-
+    t_start = time.monotonic()
     img = cv2.imread(img_path, 0)
     if img is None:
         # [fix 2026-10-21] An undecodable page used to return ([], []) — indistinguishable from
@@ -459,6 +672,7 @@ def main(img_path):
         # page as empty. Raise instead: the Lambda marks the page failed (page_errors) and the
         # CLI prints "Extraction failed: ..." which src/lib/keynotes.ts reports as failed.
         raise ValueError(f"cv2 could not decode page image {os.path.basename(img_path)}")
+    t_decoded = time.monotonic()
 
     h, w = img.shape
     print(f"[keynote] Image: {w}x{h}", file=sys.stderr)
@@ -471,16 +685,20 @@ def main(img_path):
     num_tiles = len(tiles)
     print(f"[keynote] Tiling: {num_tiles} tiles ({TILE_SIZE}px, {TILE_OVERLAP}px overlap)", file=sys.stderr)
 
+    outcomes, workers_used, backend_used, diag_warnings = _run_tiles(img, tiles, workers, backend)
+    t_extracted = time.monotonic()
+
     all_results = []
     # Aggregate pipeline-stage counts across tiles so the UI warning can show
     # WHERE shapes are getting dropped (filter stage vs. text-inside stage).
     agg_text_candidates = 0
     agg_keynote_candidates = 0
     agg_selected = 0
-    for ti, (ty, tx, th, tw) in enumerate(tiles):
-        tile_img = img[ty : ty + th, tx : tx + tw].copy()  # copy to avoid holding ref to full image
-        tile_results, tile_stats = extract_from_image(tile_img, skip_ocr=False)
-        del tile_img
+    failed_tiles = []
+    for out in outcomes:  # tile order — the same order the serial loop produced
+        ti = out["index"]
+        ty, tx, th, tw = out["tile"]
+        tile_results, tile_stats = out["results"], out["stats"]
 
         agg_text_candidates += tile_stats["text_candidates"]
         agg_keynote_candidates += tile_stats["keynote_candidates"]
@@ -499,17 +717,31 @@ def main(img_path):
             f"{len(tile_results)} keynotes "
             f"(stages: {tile_stats['text_candidates']} text, "
             f"{tile_stats['keynote_candidates']} shape, "
-            f"{tile_stats['selected']} selected)",
+            f"{tile_stats['selected']} selected) "
+            f"in {out['seconds']:.2f}s"
+            + (f" FAILED: {out['error']}" if out["error"] else ""),
             file=sys.stderr,
         )
+        if out["error"]:
+            failed_tiles.append(out)
 
-        # Free memory every 10 tiles
-        if ti % 10 == 9:
-            gc.collect()
+    if failed_tiles and len(failed_tiles) == num_tiles:
+        # Nothing was scanned — report the page failed, not empty (same rule as undecodable).
+        raise RuntimeError(
+            f"all {num_tiles} tiles failed; first: {failed_tiles[0]['error']}"
+        )
+    for out in failed_tiles:
+        ty, tx, th, tw = out["tile"]
+        # Deliberately NOT prefixed "Extraction failed" — src/lib/keynotes.ts treats that prefix
+        # on an empty result as a failed page; a skipped tile is a partial scan, not a failure.
+        diag_warnings.append(
+            f"Shape Parse skipped tile {out['index']} @ ({tx},{ty}) {tw}x{th}: {out['error']}"
+        )
 
     print(f"[keynote] Total before dedup: {len(all_results)}", file=sys.stderr)
 
     results = deduplicate(all_results)
+    t_deduped = time.monotonic()
     print(f"[keynote] After dedup: {len(results)} keynotes", file=sys.stderr)
 
     # Surface 0-keynote runs as a user-visible warning so silent failures
@@ -517,7 +749,6 @@ def main(img_path):
     # goes wrong next has its symptoms visible to the user immediately.
     # Warning reaches the UI via both ECS single-page path and Lambda
     # scanAll path (process_pages → fanOut warnings → shape-parse/route.ts).
-    diag_warnings = []
     if len(results) == 0 and num_tiles > 0:
         # Pipeline funnel tells us WHICH stage dropped shapes:
         #   text_candidates high + keynote_candidates low → size/aspect filter too tight
@@ -539,6 +770,29 @@ def main(img_path):
         f"{agg_selected} passed text-inside filter (pre-dedup)",
         file=sys.stderr,
     )
+    # One machine-readable line per page (CloudWatch Logs Insights: `parse @message
+    # "[keynote] timing *" as t | filter ...`). Stage seconds are wall clock in the parent;
+    # tile_cpu_s is the sum of per-tile worker time, so tile_cpu_s / extract_s ≈ the
+    # parallel speed-up actually achieved on this host.
+    t_end = time.monotonic()
+    timing = {
+        "image": [w, h],
+        "tiles": num_tiles,
+        "failed_tiles": len(failed_tiles),
+        "workers": workers_used,
+        "backend": backend_used,
+        "text_candidates": agg_text_candidates,
+        "shape_candidates": agg_keynote_candidates,
+        "selected": agg_selected,
+        "before_dedup": len(all_results),
+        "keynotes": len(results),
+        "decode_s": round(t_decoded - t_start, 3),
+        "extract_s": round(t_extracted - t_decoded, 3),
+        "tile_cpu_s": round(sum(o["seconds"] for o in outcomes), 3),
+        "dedup_s": round(t_deduped - t_extracted, 3),
+        "total_s": round(t_end - t_start, 3),
+    }
+    print(f"[keynote] timing {json.dumps(timing, separators=(',', ':'))}", file=sys.stderr)
 
     return results, diag_warnings
 

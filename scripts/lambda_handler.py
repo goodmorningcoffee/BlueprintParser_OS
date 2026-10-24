@@ -84,8 +84,10 @@ def process_pages(event, worker_fn):
 
     for i, page_key in enumerate(page_keys):
         page_path = os.path.join(TMP, f"page_{i:04d}.png")
+        t_page = time.time()
         try:
             download_s3(bucket, page_key, page_path)
+            t_got = time.time()
             hits, page_warnings = worker_fn(page_path)
 
             for h in hits:
@@ -96,6 +98,15 @@ def process_pages(event, worker_fn):
                 all_warnings.extend(page_warnings)
             pages_processed += 1
             pages_ok.append(page_key)
+            # [2026-10-24] One line per page so a slow page is attributable in CloudWatch before
+            # the 300 s timeout makes the whole invocation disappear (Sandbox.Timedout logs
+            # nothing of its own). extract_keynotes adds its own "[keynote] timing {...}" line.
+            print(
+                f"[lambda] {action} page {i} ({page_key}): {len(hits)} hits, "
+                f"{len(page_warnings or [])} warnings, download {t_got - t_page:.2f}s, "
+                f"work {time.time() - t_got:.2f}s",
+                file=sys.stderr,
+            )
         except Exception as e:
             pages_failed += 1
             errors.append(f"Page {page_key}: {e}")
