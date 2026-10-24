@@ -650,6 +650,14 @@ export const MUTATION_SURFACES = [
     "batch-non-demo",
     [["src/server/services/annotation-cleanup.ts", "runAnnotationCleanup"]],
   ),
+  // [clf step 4 2026-10-24] Root-only, read-only weight fit over one company's non-demo verdicts (dryRun only).
+  mutation(
+    "admin-classifiers-fit",
+    "/api/admin/classifiers/fit",
+    "POST",
+    "batch-non-demo",
+    [["src/server/services/classifier-fit.ts", "fitCompanyClassifiers"]],
+  ),
   mutation(
     "admin-duplicates-restore",
     "/api/admin/duplicates/restore",

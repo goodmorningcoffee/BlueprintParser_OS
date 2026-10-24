@@ -21,20 +21,19 @@
  * label's own `name` matches), and the same accuracy for legacy region v2 className mapped onto the
  * vocabulary. Projects are reported as "set N"; no OCR text is printed (derived names are not shown).
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import type { BboxMinMax } from "@/types";
+import { writeFileSync } from "node:fs";
 import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import { iou } from "@/lib/region-classifier-v2/geometry";
 import { BUILT_IN_RECIPES, OTHER_SCHEDULE, runClassifierEngine, scheduleKind, type ClassifierProposal } from "@/lib/classifier-engine";
 import { createCsiBoxTagger } from "@/lib/classifier-engine/csi-box-tagger";
-import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage, readSample } from "./lib/corpus-v2-marks";
+import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage } from "./lib/corpus-v2-marks";
+import { DEFAULT_LABELS, labelledSamplePages, labelsByPage, matchLabel, readKindLabels, type KindLabel as Label } from "./lib/classifier-labels";
 
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; };
 const CORPUS = opt("corpus") ?? DEFAULT_CORPUS;
 const RESEARCH = opt("research") ?? DEFAULT_RESEARCH;
-const LABELS = opt("labels") ?? "/workspaces/projects/gitignore/projects/classifier_builder/labels/kinds.v1.json";
+const LABELS = opt("labels") ?? DEFAULT_LABELS;
 const setsArg = opt("sets") ?? "all";
 const setFilter = (set: number): boolean => setsArg === "all" ? true : setsArg === "odd" ? set % 2 === 1 : setsArg === "even" ? set % 2 === 0 : setsArg.split(",").map(Number).includes(set);
 
@@ -48,33 +47,10 @@ const LEGACY_TO_KIND: Record<string, { kind: string | null; group: string }> = {
   "structural schedule": { kind: null, group: "struct" }, "drawing list": { kind: "drawing-list", group: "arch" },
 };
 
-interface Label { set: number; page: number; regionId?: string; bbox?: BboxMinMax; kind: string; name?: string; printedTitle?: string | null }
-function readLabels(): { labeller: string; items: Label[] } | null {
-  if (!existsSync(LABELS)) return null;
-  const raw = JSON.parse(readFileSync(LABELS, "utf8")) as unknown;
-  const r = raw as { items?: unknown[]; labels?: unknown[]; labeller?: unknown };
-  const items = (Array.isArray(raw) ? raw : r.labels ?? r.items ?? []) as Label[];
-  const labeller = Array.isArray(raw) ? "unknown" : String(r.labeller ?? "unknown");
-  return {
-    labeller,
-    items: items.filter((l) => l && typeof l.kind === "string" && l.kind !== "unreadable" && typeof l.set === "number" && typeof l.page === "number")
-      .map((l) => ({ ...l, name: l.name ?? (typeof l.printedTitle === "string" ? l.printedTitle : undefined) })),
-  };
-}
-
-const PAGE_LIST = opt("pages") ?? dirname(LABELS) + "/tools/out/pages.json";
-const sampleAll = readSample(RESEARCH);
-const seen = new Set(sampleAll.map((s) => `${s.set}:${s.page}`));
-if (existsSync(PAGE_LIST)) {
-  for (const p of JSON.parse(readFileSync(PAGE_LIST, "utf8")) as Array<{ pid: string; set: number; page: number }>) {
-    if (!seen.has(`${p.set}:${p.page}`)) { seen.add(`${p.set}:${p.page}`); sampleAll.push({ pid: p.pid, set: p.set, page: p.page, run: "" }); }
-  }
-}
-const sample = sampleAll.filter((s) => setFilter(s.set));
-const labels = readLabels();
+const sample = labelledSamplePages(RESEARCH, LABELS, opt("pages")).filter((s) => setFilter(s.set));
+const labels = readKindLabels(LABELS);
 const tagger = createCsiBoxTagger();
-const byKey = new Map<string, Label[]>();
-for (const l of labels?.items ?? []) { const k = `${l.set}:${l.page}`; (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(l); }
+const byKey = labelsByPage(labels?.items ?? []);
 
 const bump = (m: Map<string, number>, k: string, n = 1) => m.set(k, (m.get(k) ?? 0) + n);
 const acc = () => ({ n: 0, ok: 0 });
@@ -112,7 +88,7 @@ for (const s of sample) {
   const regionById = new Map(regionsV2.regions.map((r) => [r.id, r]));
   for (const l of pageLabels) {
     stats.labelled++;
-    const p = proposals.find((x) => (l.regionId && x.regionId === l.regionId) || (l.bbox && iou(x.bbox, l.bbox) >= 0.5));
+    const p = matchLabel(proposals, l);
     const region = (l.regionId && regionById.get(l.regionId)) || regionsV2.regions.find((r) => l.bbox && iou(r.bbox, l.bbox) >= 0.5);
     if (l.kind === "not-a-schedule") { stats.engine.notASchedule.n++; if (p) stats.engine.notASchedule.proposed++; continue; }
     if (!p) { stats.unmatchedLabels++; continue; }
