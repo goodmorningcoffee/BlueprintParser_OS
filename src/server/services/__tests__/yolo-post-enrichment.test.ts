@@ -11,6 +11,7 @@ vi.mock("@/lib/table-classifier", () => ({ classifyTables: spy.classifyTables })
 import {
   enrichPageAfterYolo,
   type PostYoloDetection,
+  stableStringify,
 } from "@/server/services/yolo-post-enrichment";
 
 const DOORS: CsiCode = { code: "08 11 16", description: "Aluminum Doors and Frames", trade: "Openings", division: "08 00 00" };
@@ -105,6 +106,19 @@ describe("enrichPageAfterYolo — regions v2 runs in shadow", () => {
     expect(second.updated.regionsV2).toBe(first.updated.regionsV2);
     const bare = enrichPageAfterYolo(page(null), [tables], opts([])).updated.regionsV2 as { regions: Array<{ className: string; signals: { words: number } }> };
     expect(bare.regions[0]).toMatchObject({ className: "unclassified", signals: { words: 0 } });
+  });
+
+  it("[T5 fix LOW 3] a stored record whose jsonb keys came back in another order is still 'unchanged'", () => {
+    const first = enrichPageAfterYolo(page({ words }), [tables], opts([]));
+    // Postgres reorders jsonb object keys: simulate a round trip by reversing every object's key order
+    const reorder = (v: unknown): unknown => Array.isArray(v) ? v.map(reorder)
+      : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).reverse().map((k) => [k, reorder((v as Record<string, unknown>)[k])])) : v;
+    const stored = reorder({ ...page({ words }).pageIntelligence, regionsV2: first.updated.regionsV2, pageZones: first.updated.pageZones });
+    expect(JSON.stringify(stored)).not.toBe(JSON.stringify({ ...page({ words }).pageIntelligence, regionsV2: first.updated.regionsV2, pageZones: first.updated.pageZones }));
+    const second = enrichPageAfterYolo({ ...page({ words }), pageIntelligence: stored }, [tables], opts([]));
+    expect(second.updated.regionsV2).toBe((stored as Record<string, unknown>).regionsV2); // the spread, untouched
+    expect(second.updated.pageZones).toBe((stored as Record<string, unknown>).pageZones);
+    expect(stableStringify({ b: [{ d: 1, c: 2 }], a: null })).toBe('{"a":null,"b":[{"c":2,"d":1}]}');
   });
 });
 

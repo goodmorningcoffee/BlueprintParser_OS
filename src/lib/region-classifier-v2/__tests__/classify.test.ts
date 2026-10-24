@@ -132,9 +132,40 @@ describe("classifyRegionsV2 — a synthetic sheet", () => {
     const zones = computePageZones(sheet());
     const withZones = classifyRegionsV2({ pageNumber: 7, detections: sheet(), zones, textractData: { words: words() }, csiCodes: csi() });
     expect(withZones.stats.inTitleBlock).toBe(1);
-    // a fixed-fallback zone (no title block detected) drops only what sits in the legacy corner
+    // [T5 fix MED 2] a fixed-fallback zone (no title block detected) drops NOTHING: the corner
+    // {.45,.7,1,1} is 16.5 % of the sheet and often holds schedules. REVISIONS lies in it and is kept,
+    // and the title-block text prior is empty (the corner OCR is not a prior either).
     const noTitle = classifyRegionsV2({ pageNumber: 7, detections: sheet().filter((d) => d.name !== "title_block"), textractData: { words: words() } });
-    expect(noTitle.stats.inTitleBlock).toBe(1); // REVISIONS lies in {.45,.7,1,1} too
+    expect(computePageZones(sheet().filter((d) => d.name !== "title_block")).source).toBe("fixed-fallback");
+    expect(noTitle.stats.inTitleBlock).toBe(0);
+    expect(noTitle.regions.filter((r) => r.anchor === "tables").map((r) => r.anchorBbox)).toEqual(expect.arrayContaining([SCHEDULE, REVISIONS]));
+    expect(noTitle.regions.map((r) => r.evidence.join(" | ")).join("\n")).not.toMatch(/title block says/);
+    // the caller's fixed-fallback zones are honoured the same way
+    const fixed = classifyRegionsV2({ pageNumber: 7, detections: sheet().filter((d) => d.name !== "title_block"), zones: computePageZones([]), textractData: { words: words() } });
+    expect(fixed.stats.inTitleBlock).toBe(0);
+  });
+
+  it("[T5 fix LOW 4] the anchor model matches page-zones' pattern, so a renamed yolo_medium_v2 still proposes regions", () => {
+    const renamed = sheet().map((d) => (d.modelName === "yolo_medium" ? { ...d, modelName: "yolo_medium_v2" } : d));
+    const out = classifyRegionsV2({ pageNumber: 7, detections: renamed, textractData: { words: words() }, csiCodes: csi() });
+    expect(out.stats).toMatchObject({ rawTables: 2, rawLegends: 1, rawTextBoxes: 1, inTitleBlock: 1 }); // its title_block drops too
+    expect(out.regions.find((r) => r.anchor === "tables")).toMatchObject({ className: "door schedule" });
+  });
+
+  it("[T5 fix LOW 5] a csi-v2 trigger whose words span two boxes counts where MOST of its words sit, not at the union centre", () => {
+    // three word boxes: two inside the schedule, one far away in the notes box; the union centre lands between them, outside both
+    const wide: CsiCode = {
+      code: "08 11 13", description: "", trade: "", division: "08 00 00",
+      triggers: [{ text: "HM FRAME", tier: 1, bbox: [0.15, 0.15, 0.6, 0.05], bboxes: [[0.15, 0.15, 0.01, 0.005], [0.2, 0.15, 0.01, 0.005], [0.64, 0.15, 0.01, 0.005]] }],
+    };
+    const out = classifyRegionsV2({ pageNumber: 7, detections: sheet(), textractData: { words: words() }, csiCodes: [wide] });
+    const schedule = out.regions.find((r) => r.anchor === "tables")!;
+    const notes = out.regions.find((r) => r.anchor === "text_box")!;
+    expect(schedule.signals.csiCodes).toBe(1);
+    expect(notes.signals.csiCodes).toBe(0);
+    // pre-v2 data (no `bboxes`) still places the trigger by its single bbox centre
+    const legacy = classifyRegionsV2({ pageNumber: 7, detections: sheet(), textractData: { words: words() }, csiCodes: csi() });
+    expect(legacy.regions.find((r) => r.anchor === "tables")!.signals.csiCodes).toBe(2);
   });
 
   it("drops against EVERY yolo_medium title_block detection, not only the zone's best one", () => {

@@ -5,11 +5,13 @@
  * the 2026-10-24 measurement (research/regions/REPORT.md). The order of operations is the
  * inverse of BP2's text-first classifier:
  *   L1  the yolo_medium box IS the region (`tables` → table; `symbol_legend` → legend; `text_box`
- *       → notes). Anything ≥ 70 % inside a detected title block is dropped (51 % of detector
- *       tables; 12/12 referee-checked drops were right): the page-zones title block (the best
- *       detection, or the fixed corner when none was detected) AND every other yolo_medium
- *       `title_block` detection — sheets often carry 2–5 (stamps, agency boxes), and the Python
- *       reference drops against all of them. The box widens toward yolo_primitive
+ *       → notes). Anything ≥ 70 % inside a DETECTED title block is dropped (51 % of detector
+ *       tables; 12/12 referee-checked drops were right): the page-zones title block when its
+ *       `source` is "detector" AND every other yolo_medium `title_block` detection — sheets often
+ *       carry 2–5 (stamps, agency boxes), and the Python reference drops against all of them.
+ *       The fixed-corner fallback zone (no title block detected) drops NOTHING and lends no text
+ *       prior: that corner is 16.5 % of the sheet and a common home for schedules (T5 fix, MED 2).
+ *       The box widens toward yolo_primitive
  *       grid / vertical_area / horizontal_area boxes (≥ 30 % cover, ≤ 2× per side) and a
  *       STRUCTURE score says how table-like / legend-like the box is from detector signals only.
  *   L2  OCR words + CSI codes inside the box are scored against the editable class rows
@@ -29,7 +31,7 @@
  */
 
 import type { BboxMinMax } from "@/types";
-import { computePageZones, containmentRatio, ZONE_CONTAINMENT_THRESHOLD, type PageZones } from "@/lib/page-zones";
+import { computePageZones, containmentRatio, ZONE_CONTAINMENT_THRESHOLD, ZONE_MODEL_PATTERN, type PageZones } from "@/lib/page-zones";
 import {
   REGION_CLASS_TABLE, REGION_CLASSES_HASH, TABLE_ROWS, TEXT_ROWS,
   type ClassFamily, type PreparedRow,
@@ -46,7 +48,8 @@ import {
 // Vocabulary (models/classes_medium.txt, classes_primitives.txt)
 // ═══════════════════════════════════════════════════════════════════
 
-const MODEL_MEDIUM = "yolo_medium";
+/** The anchor model: any name matching page-zones' pattern (`yolo_medium`, `yolo_medium_v2`, …). */
+const isMediumModel = (modelName: string | undefined): boolean => typeof modelName === "string" && ZONE_MODEL_PATTERN.test(modelName);
 const MODEL_PRIMITIVE = "yolo_primitive";
 const MODEL_TEXT = "yolo_text";
 const AREA_CLASSES = new Set(["grid", "vertical_area", "horizontal_area"]);
@@ -91,21 +94,30 @@ export function textStructureScore(s: RegionV2Signals): number {
 
 interface Mark { bbox: BboxMinMax; c: [number, number] }
 interface Word extends Mark { text: string }
+/** A CSI trigger: `cs` are its matched words' centres (csi-v2 `bboxes`), or just `c` on pre-v2 data. */
+interface CsiMark extends Mark { cs: [number, number][]; division: string }
 
 interface PageContext {
   zones: PageZones;
-  /** The zone title block plus every other yolo_medium `title_block` detection. */
+  /** The DETECTED zone title block (never the fixed fallback) plus every other yolo_medium `title_block` detection. */
   titleBlocks: BboxMinMax[];
   areas: Array<{ label: string; bbox: BboxMinMax }>;
   textBoxes: BboxMinMax[];
   tagCentres: [number, number][];
   shapeCentres: Array<{ label: string; c: [number, number] }>;
   words: Word[];
-  csi: Array<Mark & { division: string }>;
+  csi: CsiMark[];
   textractTables: BboxMinMax[];
   titleBlockText: string;
   sheetCounts: Map<string, number>;
 }
+
+/** A trigger sits in `S` when most of its matched words do; a tie falls back to the union's centre
+ *  (a trigger whose words span two regions used to be counted wherever the union centre fell — T5 LOW 5). */
+const csiInside = (m: CsiMark, S: BboxMinMax): boolean => {
+  const n = m.cs.filter((c) => inside(c, S)).length;
+  return n * 2 > m.cs.length || (n * 2 === m.cs.length && inside(m.c, S));
+};
 
 const toBbox = (d: RegionDetection): BboxMinMax | null => {
   const b: BboxMinMax = [d.minX, d.minY, d.maxX, d.maxY];
@@ -116,7 +128,7 @@ const toBbox = (d: RegionDetection): BboxMinMax | null => {
 function buildContext(input: RegionClassifierInput): PageContext {
   const zones = input.zones ?? computePageZones(input.detections);
   const ctx: PageContext = {
-    zones, titleBlocks: zones.titleBlock ? [zones.titleBlock] : [], areas: [], textBoxes: [], tagCentres: [], shapeCentres: [],
+    zones, titleBlocks: zones.titleBlock && zones.source === "detector" ? [zones.titleBlock] : [], areas: [], textBoxes: [], tagCentres: [], shapeCentres: [],
     words: [], csi: [], textractTables: [], titleBlockText: "", sheetCounts: new Map(),
   };
   const perModel = new Map<string, number>();
@@ -125,7 +137,7 @@ function buildContext(input: RegionClassifierInput): PageContext {
     if (!bbox) continue;
     const key = `${d.modelName ?? ""}\u0000${d.name}`;
     perModel.set(key, (perModel.get(key) ?? 0) + 1);
-    if (d.modelName === MODEL_MEDIUM && d.name === "title_block") {
+    if (isMediumModel(d.modelName) && d.name === "title_block") {
       if (!ctx.titleBlocks.some((tb) => tb.every((v, i) => v === bbox[i]))) ctx.titleBlocks.push(bbox);
     } else if (d.modelName === MODEL_PRIMITIVE) {
       if (AREA_CLASSES.has(d.name)) ctx.areas.push({ label: d.name, bbox });
@@ -154,7 +166,8 @@ function buildContext(input: RegionClassifierInput): PageContext {
     for (const t of code.triggers ?? []) {
       if (!t?.bbox) continue;
       const bbox = ltwhToMinMax(t.bbox);
-      ctx.csi.push({ bbox, c: center(bbox), division });
+      const cs = (t.bboxes ?? []).filter((b) => Array.isArray(b) && b.length === 4).map((b) => center(ltwhToMinMax(b)));
+      ctx.csi.push({ bbox, c: center(bbox), cs: cs.length ? cs : [center(bbox)], division });
     }
   }
   for (const t of input.textractData?.tables ?? []) {
@@ -187,7 +200,7 @@ function candidate(anchor: RegionV2Anchor, det: RegionDetection, T: BboxMinMax, 
   const ca = cover(T, ctx.areas.filter((a) => inter(T, a.bbox) > 0).map((a) => a.bbox));
   const grid = textGrid(ctx.textBoxes.filter((b) => inside(center(b), S)));
   const wordsIn = ctx.words.filter((w) => inside(w.c, S));
-  const csiIn = ctx.csi.filter((m) => inside(m.c, S));
+  const csiIn = ctx.csi.filter((m) => csiInside(m, S));
   const tx = ctx.textractTables.reduce((best, b) => Math.max(best, overlapSmaller(S, b)), 0);
   const ntag = ctx.tagCentres.filter((c) => inside(c, S)).length;
   const shapesIn = ctx.shapeCentres.filter((s) => inside(s.c, S));
@@ -234,7 +247,7 @@ function name(cand: Candidate, ctx: PageContext, family: ClassFamily, rows: read
   const wordsIn = ctx.words.filter((w) => inside(w.c, cand.S));
   const tokens: TokenCounts = tokenize(wordsIn.map((w) => w.text));
   const text = ` ${wordsIn.map((w) => w.text.toUpperCase()).join(" ")} `;
-  const csiDivisions = ctx.csi.filter((m) => inside(m.c, cand.S)).map((m) => m.division);
+  const csiDivisions = ctx.csi.filter((m) => csiInside(m, cand.S)).map((m) => m.division);
   const isTable = cand.anchor === "tables";
   const l2 = scoreRows(
     { tokens, text, csiDivisions, titleBlockText: ctx.titleBlockText, sheetCounts: ctx.sheetCounts, tagShapes: isTable ? cand.signals.tagShapes : undefined },
@@ -292,7 +305,7 @@ export function classifyRegionsV2(input: RegionClassifierInput): RegionsV2 {
   const texts: Candidate[] = [];
   for (const d of input.detections) {
     const anchor = ANCHOR_CLASSES[d.name];
-    if (!anchor || d.modelName !== MODEL_MEDIUM) continue;
+    if (!anchor || !isMediumModel(d.modelName)) continue;
     const T = toBbox(d);
     if (!T || area(T) <= 0) continue;
     if (anchor === "tables") stats.rawTables++; else if (anchor === "symbol_legend") stats.rawLegends++; else stats.rawTextBoxes++;

@@ -52,8 +52,8 @@ export interface PostYoloPage {
   pageIntelligence: unknown;
   /** `pages.csiCodes` — the page's CSI codes. NOT pageIntelligence (it has no csiCodes key). */
   csiCodes: CsiCode[] | null;
-  /** `pages.textractData` — words + Textract tables for the shadow region classifier v2 (optional). */
-  textractData?: TextractPageData | null;
+  /** `pages.textractData` `words` + `tables` for the shadow region classifier v2 (optional; `lines` unused). */
+  textractData?: Pick<TextractPageData, "words" | "tables"> | null;
 }
 
 export interface PostYoloOptions {
@@ -62,6 +62,18 @@ export interface PostYoloOptions {
   ensembleEnabled: boolean;
   ensembleConfig?: Partial<EnsembleConfig>;
 }
+
+/** JSON with object keys sorted at every depth: Postgres reorders jsonb keys, so a stored record
+ *  and a freshly computed one never match as plain `JSON.stringify` strings (T5 fix, LOW 3). */
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+const sameJson = (a: unknown, b: unknown): boolean => stableStringify(a) === stableStringify(b);
 
 /** → the page's next pageIntelligence (a spread of the existing one) and whether it changed. */
 export function enrichPageAfterYolo(
@@ -74,9 +86,9 @@ export function enrichPageAfterYolo(
   let pageChanged = false;
   const csiCodes = page.csiCodes ?? [];
   // [zones T2] detector zones (src/lib/page-zones.ts): yolo_medium only, fixed-zone fallback
-  // otherwise; written only when they differ so an unchanged page is not rewritten.
+  // otherwise; written only when they differ (key order aside) so an unchanged page is not rewritten.
   const zones = computePageZones(yoloDets);
-  if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
+  if (!sameJson(zones, existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
 
   // [regions v2 2026-10-24] SHADOW: detector-first region classifier (src/lib/region-classifier-v2).
   // Persisted as `regionsV2` beside the legacy keys; nothing reads it yet and `classifiedTables`
@@ -85,7 +97,7 @@ export function enrichPageAfterYolo(
     const regionsV2 = classifyRegionsV2({
       pageNumber: page.pageNumber, detections: yoloDets, zones, textractData: page.textractData, csiCodes,
     });
-    if (JSON.stringify(regionsV2) !== JSON.stringify(existing.regionsV2)) { updated.regionsV2 = regionsV2; pageChanged = true; }
+    if (!sameJson(regionsV2, existing.regionsV2)) { updated.regionsV2 = regionsV2; pageChanged = true; }
   } catch (err) {
     logger.error(`[YOLO-LOAD] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
   }

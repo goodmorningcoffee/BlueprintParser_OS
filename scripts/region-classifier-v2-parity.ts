@@ -94,7 +94,6 @@ for (const s of sample) {
   const drawings = yolo.filter((m) => m.label === "drawings" && modelOf(m) === "yolo_medium").map((m) => m.bbox);
   const areas = yolo.filter((m) => ["grid", "vertical_area", "horizontal_area"].includes(m.label) && modelOf(m) === "yolo_primitive").map((m) => m.bbox);
   const textBoxes = yolo.filter((m) => m.label === "text_box" && modelOf(m) !== "yolo_text").map((m) => m.bbox);
-  const titleBlocks = yolo.filter((m) => m.label === "title_block" && modelOf(m) === "yolo_medium").length;
 
   for (const r of refs.get(`${s.set}:${s.page}`) ?? []) {
     tally.boxes++;
@@ -108,7 +107,7 @@ for (const s of sample) {
       if (pyKept) tally.tables.pyKept++;
       if (tsKept) tally.tables.tsKept++;
       if (pyKept === tsKept) { tally.tables.keepAgree++; ps.keepAgree++; }
-      else if (pyKept) bump(tally.tables.divergence, titleBlocks === 0 ? "TS dropped: no title block detected ⇒ fixed-zone fallback (page-zones)" : "TS dropped: IoU ≥ .6 duplicate ordering");
+      else if (pyKept) bump(tally.tables.divergence, "TS dropped: IoU ≥ .6 duplicate ordering" /* the fixed-corner zone no longer drops (T5 fix), so this is the only TS-only drop */);
       else bump(tally.tables.divergence, "TS kept, Python dropped");
       if (emitted) {
         const aT = area(T);
@@ -141,7 +140,7 @@ for (const s of sample) {
       } else if (pyKept && !tsKept) {
         const reason = r.rc2_fallback && ["short label", "view title / callout", "room / space labels", "address / project info", "existing / new / demo callouts", "material callouts", "dimensions / data"].includes(r.rc2_fallback)
           ? `TS dropped as page label (Python fallback: ${r.rc2_fallback})` : r.rc2_fallback === "table text (see Tables tab)" ? "TS dropped as table text"
-          : titleBlocks === 0 ? "TS dropped: no title block detected ⇒ fixed-zone fallback" : "TS dropped: duplicate / folded into a legend";
+          : "TS dropped: duplicate / folded into a legend";
         if (reason.startsWith("TS dropped as page label")) tally.text.labelDropped++;
         bump(tally.text.divergence, reason);
       } else if (!pyKept && tsKept) bump(tally.text.divergence, "TS kept, Python dropped (title-block rule differs)");
