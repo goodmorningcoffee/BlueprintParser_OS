@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
+import { usePageGraphLinks } from "@/queries/useProjectGraph";
+import type { GraphLink, UnresolvedReference } from "@/lib/knowledge-graph/summary";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
 
 /**
@@ -12,13 +14,18 @@ import { migrateTextRegions } from "@/lib/text-region-migrate";
  * parent orchestrator (e.g. ToolsPanel).
  */
 export default function PageIntelligencePanel({ embedded = false }: { embedded?: boolean } = {}) {
-  const { pageNumber } = useNavigation();
+  const { pageNumber, setPage } = useNavigation();
   const intel = usePageIntelligenceForPage(pageNumber) as any;
   const togglePageIntelPanel = useUiStore((s) => s.togglePageIntelPanel);
+  // [graph T8] resolved sheet/detail references from the knowledge graph (GET /api/projects/[id]/graph).
+  const graph = usePageGraphLinks(pageNumber);
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     classification: true,
     crossRefs: true,
+    refersTo: true,
+    referencedBy: true,
+    unresolvedRefs: false,
     noteBlocks: false,
     regions: true,
     heuristics: true,
@@ -399,7 +406,77 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
             })()}
           </>
         )}
+
+        {/* [graph T8] Knowledge graph: resolved references (click → that page) + the QA queue */}
+        {graph.built && (
+          <>
+            <Section title={`Refers to (${graph.refersTo.length})`} sectionKey="refersTo" expanded={expandedSections} onToggle={toggleSection}>
+              <GraphLinkList links={graph.refersTo} empty="No references from this page." onGo={setPage} />
+            </Section>
+            <Section title={`Referenced by (${graph.referencedBy.length})`} sectionKey="referencedBy" expanded={expandedSections} onToggle={toggleSection}>
+              <GraphLinkList links={graph.referencedBy} empty="No other page references this one." onGo={setPage} />
+            </Section>
+            <Section title={`Unresolved references — project (${graph.unresolved.length})`} sectionKey="unresolvedRefs" expanded={expandedSections} onToggle={toggleSection}>
+              <UnresolvedList items={graph.unresolved} onGo={setPage} />
+            </Section>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** One resolved / unresolved reference row; a resolved one navigates to its page. */
+function GraphLinkList({ links, empty, onGo }: { links: GraphLink[]; empty: string; onGo: (page: number) => void }) {
+  if (links.length === 0) return <p className="text-[10px] text-[var(--muted)] italic">{empty}</p>;
+  return (
+    <div className="space-y-0.5">
+      {links.map((l, i) => {
+        const label = l.kind === "detail" && l.detail ? `${l.detail}/${l.sheet}` : l.sheet;
+        const page = l.page;
+        return (
+          <div key={i} className="text-[11px] flex items-center gap-1">
+            {page !== null ? (
+              <button
+                type="button"
+                onClick={() => onGo(page)}
+                className="text-[var(--accent)] hover:underline text-left"
+                title={l.text ? `"${l.text}" — page ${page}` : `page ${page}`}
+              >
+                {label} <span className="text-[var(--muted)]">p.{page}</span>
+              </button>
+            ) : (
+              <span className="text-[var(--fg)]" title={l.text}>{label}</span>
+            )}
+            {l.status !== "resolved" && (
+              <span className="text-[9px] px-1 rounded bg-amber-500/10 text-amber-300">{l.status}</span>
+            )}
+            {l.seen > 1 && <span className="text-[9px] text-[var(--muted)]">×{l.seen}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function UnresolvedList({ items, onGo }: { items: UnresolvedReference[]; onGo: (page: number) => void }) {
+  if (items.length === 0) return <p className="text-[10px] text-[var(--muted)] italic">Every reference resolves to a sheet in this project.</p>;
+  return (
+    <div className="space-y-0.5">
+      {items.slice(0, 100).map((u, i) => (
+        <div key={i} className="text-[11px]">
+          <button type="button" onClick={() => onGo(u.fromPage)} className="text-[var(--accent)] hover:underline" title={u.text}>
+            p.{u.fromPage}{u.fromSheet ? ` ${u.fromSheet}` : ""}
+          </button>
+          <span className="text-[var(--muted)]"> → </span>
+          <span className="text-[var(--fg)]">{u.detail ? `${u.detail}/${u.sheet}` : u.sheet}</span>
+          <span className="text-[9px] ml-1 px-1 rounded bg-amber-500/10 text-amber-300">{u.status}</span>
+          {u.candidates && u.candidates.length > 0 && (
+            <span className="text-[10px] text-[var(--muted)]"> candidates p.{u.candidates.join(", p.")}</span>
+          )}
+        </div>
+      ))}
+      {items.length > 100 && <div className="text-[10px] text-[var(--muted)] italic">+{items.length - 100} more</div>}
     </div>
   );
 }

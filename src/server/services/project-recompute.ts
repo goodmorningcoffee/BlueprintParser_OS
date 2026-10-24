@@ -12,6 +12,7 @@ import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
 import { visiblePage } from "@/lib/page-dedup";
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 import { withProjectWrite, type ProjectWriteCapability } from "@/server/api/project-write-capability";
+import { refreshProjectGraph } from "./project-graph";
 
 export async function recomputeProject(projectId: number, capability: ProjectWriteCapability): Promise<void> {
   const visible = await db
@@ -30,4 +31,6 @@ export async function recomputeProject(projectId: number, capability: ProjectWri
       .where(eq(projects.id, projectId));
   });
   await computeProjectSummaries(projectId, capability);
+  // [graph T8] a hidden / restored / deleted page changes the sheet set the graph resolves against.
+  await refreshProjectGraph(projectId, capability);
 }

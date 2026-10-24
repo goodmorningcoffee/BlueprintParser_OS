@@ -77,6 +77,10 @@ export const queryKeys = {
   csiGraph: {
     all: (publicId: string) => ["project", publicId, "csiGraph"] as const,
   },
+  // [graph T8 2026-10-24] knowledge-graph reference index, GET /api/projects/[id]/graph once per open.
+  projectGraph: {
+    index: (publicId: string) => ["project", publicId, "knowledgeGraph", "index"] as const,
+  },
   // [bucketfill P2] pageGeometry — extracted PDF vector linework, one entry per project/page.
   // Derived locally from the open pdf.js document (see lib/pdf-document-registry.ts), never
   // fetched, so it has no transport policy at all; a QueryClient coordinator enforces a 4-page

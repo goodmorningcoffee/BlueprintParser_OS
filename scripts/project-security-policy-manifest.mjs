@@ -775,6 +775,14 @@ export const INTERNAL_MUTATION_SINKS = [
     "persistPageTiles",
     "atomic-project-write",
   ],
+  // [graph T8 2026-10-24] Knowledge graph: merge ONE key, projectIntelligence.knowledgeGraph (the
+  // compact summary; the graph itself is an S3 object under the project's data prefix), under the
+  // caller's capability — upload pipeline, intelligence reprocess, recomputeProject, scope=graph.
+  [
+    "src/server/services/project-graph.ts",
+    "writeSummary",
+    "atomic-project-write",
+  ],
   ["src/lib/llm/stream.ts", "streamChatResponse", "atomic-or-no-persist"],
   [
     "src/lib/services/chat/scoped.ts",
