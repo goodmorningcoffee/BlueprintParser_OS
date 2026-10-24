@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { usePageGraphLinks } from "@/queries/useProjectGraph";
 import type { GraphLink, UnresolvedReference } from "@/lib/knowledge-graph/summary";
@@ -14,7 +15,7 @@ import { migrateTextRegions } from "@/lib/text-region-migrate";
  * parent orchestrator (e.g. ToolsPanel).
  */
 export default function PageIntelligencePanel({ embedded = false }: { embedded?: boolean } = {}) {
-  const { pageNumber, setPage } = useNavigation();
+  const { pageNumber } = useNavigation();
   const intel = usePageIntelligenceForPage(pageNumber) as any;
   const togglePageIntelPanel = useUiStore((s) => s.togglePageIntelPanel);
   // [graph T8] resolved sheet/detail references from the knowledge graph (GET /api/projects/[id]/graph).
@@ -411,13 +412,13 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
         {graph.built && (
           <>
             <Section title={`Refers to (${graph.refersTo.length})`} sectionKey="refersTo" expanded={expandedSections} onToggle={toggleSection}>
-              <GraphLinkList links={graph.refersTo} empty="No references from this page." onGo={setPage} />
+              <GraphLinkList links={graph.refersTo} empty="No references from this page." onGo={navigateViewerPage} />
             </Section>
             <Section title={`Referenced by (${graph.referencedBy.length})`} sectionKey="referencedBy" expanded={expandedSections} onToggle={toggleSection}>
-              <GraphLinkList links={graph.referencedBy} empty="No other page references this one." onGo={setPage} />
+              <GraphLinkList links={graph.referencedBy} empty="No other page references this one." onGo={navigateViewerPage} />
             </Section>
             <Section title={`Unresolved references — project (${graph.unresolved.length})`} sectionKey="unresolvedRefs" expanded={expandedSections} onToggle={toggleSection}>
-              <UnresolvedList items={graph.unresolved} onGo={setPage} />
+              <UnresolvedList items={graph.unresolved} onGo={navigateViewerPage} />
             </Section>
           </>
         )}

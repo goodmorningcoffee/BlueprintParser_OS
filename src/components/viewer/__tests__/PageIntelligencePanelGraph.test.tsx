@@ -11,6 +11,7 @@ const graphState: { value: ReturnType<typeof import("@/queries/useProjectGraph")
 };
 
 vi.mock("@/stores/viewerCoreStore", () => ({ useNavigation: () => ({ pageNumber: 1, numPages: 3, setPage, setNumPages: vi.fn() }) }));
+vi.mock("@/stores/viewerCommands", () => ({ navigateViewerPage: (n: number) => setPage(n) })); // links go through the sanctioned page command
 vi.mock("@/stores/uiStore", () => ({ useUiStore: (sel: (s: { togglePageIntelPanel: () => void }) => unknown) => sel({ togglePageIntelPanel: vi.fn() }) }));
 vi.mock("@/queries/usePageWindow", () => ({ usePageIntelligenceForPage: () => ({ classification: { discipline: "Architectural", disciplinePrefix: "A", confidence: 0.9 } }) }));
 vi.mock("@/queries/useProjectGraph", () => ({ usePageGraphLinks: () => graphState.value }));
