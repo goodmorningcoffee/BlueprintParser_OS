@@ -293,9 +293,10 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections;
     // +evidence [evidence T4 2026-10-24] — written whenever the page has OCR;
     // +regionsV2 [regions v2 2026-10-24] — the shadow detector-first classifier, same trigger;
-    // +shapes [tag-mapping v2 2026-10-24] — the shape-ensemble summary, same trigger; empty here)
+    // +shapes [tag-mapping v2 2026-10-24] — the shape-ensemble summary, same trigger; empty here;
+    // +classifierProposals [clf 2a 2026-10-24] — the classifier engine's proposals, same trigger)
     expect(Object.keys(pi).sort()).toEqual([
-      "classifiedRegions", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "regionsV2", "shapes", "someFutureKey", "yoloHeatmap",
+      "classifiedRegions", "classifierProposals", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "regionsV2", "shapes", "someFutureKey", "yoloHeatmap",
     ]);
     expect(pi.shapes).toMatchObject({ v: 1, shapes: [] });
     // evidence: the yolo_medium text_box is a layout box, never a yolo_text word box → no holes
