@@ -35,7 +35,7 @@ import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { writeClassifierDebugBundle } from "@/lib/text-region-classifier-debug";
-import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
+import { getEffectiveHeuristicRecipes, runHeuristicRecipes } from "@/lib/heuristic-port";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
@@ -503,7 +503,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       if (scope === "intelligence") {
         // Intelligence-only reprocess: re-run page analysis + project analysis on existing data.
         // Pulls existing YOLO annotations from the `annotations` table (no SageMaker
-        // re-run). If YOLO data exists for a page, it's passed to runHeuristicEngine
+        // re-run). If YOLO data exists for a page, it's passed to runHeuristicRecipes
         // and classifyPageRegions — mirrors /api/yolo/load post-processing.
         for (const project of allProjects) {
           try {
@@ -562,7 +562,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             yoloPages: yoloByPage.size,
           });
 
-          const rules = getEffectiveRules(companyHeuristics);
+          const rules = getEffectiveHeuristicRecipes(companyHeuristics); // [2b] heuristic port
           const clfRecipes = classifierRecipesFor(company?.pipelineConfig?.classifiers); // [clf 2a]
 
           for (const page of projectPages) {
@@ -609,7 +609,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               if (textRegions.length > 0) pageIntelligence.textRegions = textRegions;
 
               // Heuristic engine — YOLO-aware if annotations exist on this page
-              const inferences = runHeuristicEngine(rules, {
+              const inferences = runHeuristicRecipes(rules, {
                 rawText: page.rawText || "",
                 yoloDetections: pageYolo,
                 textRegions: textRegions.length > 0 ? textRegions : undefined,

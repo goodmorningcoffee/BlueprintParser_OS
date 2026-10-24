@@ -31,7 +31,7 @@ import { detectTextAnnotations } from "@/lib/text-annotations";
 import { extractKeynotes } from "@/lib/keynotes";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
-import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
+import { getEffectiveHeuristicRecipes, runHeuristicRecipes } from "@/lib/heuristic-port";
 import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
@@ -558,8 +558,8 @@ async function processProjectWithLease(
 
         // Run heuristic engine (text-only mode — no YOLO data during initial processing)
         try {
-          const rules = getEffectiveRules(companyHeuristics);
-          const inferences = runHeuristicEngine(rules, {
+          const rules = getEffectiveHeuristicRecipes(companyHeuristics); // [2b] port: page-unit recipes
+          const inferences = runHeuristicRecipes(rules, {
             rawText: rawText || "",
             textRegions: (pageIntelligence as any)?.textRegions,
             csiCodes,

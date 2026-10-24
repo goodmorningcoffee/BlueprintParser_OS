@@ -1,4 +1,4 @@
-// Post-YOLO per-page enrichment for yolo/load (services/yolo.ts `yoloLoad`): heuristic engine →
+// Post-YOLO per-page enrichment for yolo/load (services/yolo.ts `yoloLoad`): heuristic recipes [2b port] →
 // table reclassification → composite region classifier → density heatmap → ensemble reducer.
 // [fix 2026-10-24 T1a] Extracted VERBATIM from the yoloLoad page loop so it can be unit-tested
 // (the loop was untestable, which is how the defect below shipped), with three wiring fixes:
@@ -9,7 +9,7 @@
 //   3. the ensemble override arrives through lib/pipeline-toggles.ts (caller-resolved).
 // Pure: no DB, no I/O — the caller merges YOLO class-config CSI codes and persists.
 
-import { runHeuristicEngine, type HeuristicRule } from "@/lib/heuristic-engine";
+import { runHeuristicRecipes } from "@/lib/heuristic-port";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones, type PageZones } from "@/lib/page-zones";
@@ -68,7 +68,8 @@ export interface PostYoloPage {
 }
 
 export interface PostYoloOptions {
-  rules: HeuristicRule[];
+  /** [2b] The company's heuristic recipes (lib/heuristic-port `getEffectiveHeuristicRecipes`). */
+  rules: readonly ClassifierRecipe[];
   heatmapEnabled: boolean;
   ensembleEnabled: boolean;
   ensembleConfig?: Partial<EnsembleConfig>;
@@ -175,13 +176,13 @@ export function enrichPageAfterYolo(
   }
 
   // Existing: re-run heuristic engine with YOLO data
-  const inferences = runHeuristicEngine(opts.rules, {
+  const inferences = runHeuristicRecipes(opts.rules, {
     rawText: page.rawText || "",
     yoloDetections: yoloDets,
-    textRegions: existing.textRegions as unknown,
+    textRegions: existing.textRegions,
     csiCodes,
     pageNumber: page.pageNumber,
-  } as Parameters<typeof runHeuristicEngine>[1]);
+  });
 
   if (inferences.length > 0) {
     updated.heuristicInferences = inferences;

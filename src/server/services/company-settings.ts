@@ -41,7 +41,7 @@ import { auth } from "@/lib/auth";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 import type { CsiConfigPutBody } from "@/server/api/schemas"; // [refactor jul9 P2-A C1]
-import { BUILT_IN_RULES, withoutRetiredBuiltIns } from "@/lib/heuristic-engine";
+import { BUILT_IN_RULES, withoutRetiredBuiltIns } from "@/lib/heuristic-rules";
 import { getAllDetectorMeta } from "@/lib/detectors/registry";
 // [refactor jul23 P4.1 U11] the companies-row FOR-UPDATE write wrapper + its shared
 // PipelineConfig type (single source of truth; was a duplicate local alias here).

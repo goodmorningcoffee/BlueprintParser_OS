@@ -18,7 +18,7 @@
  * Idempotent on already-new rules.
  */
 
-import type { HeuristicRule, SpatialCondition } from "@/lib/heuristic-engine";
+import type { HeuristicRule, SpatialCondition } from "@/lib/heuristic-rules";
 import { migrateTextRegionType } from "@/lib/text-region-migrate";
 
 /** Shape of a HeuristicRule as it may appear in legacy DB payloads or

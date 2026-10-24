@@ -43,11 +43,31 @@ export type SignalScope = "box" | "header" | "columns" | "body" | "above" | "pag
 export type SignalSpec =
   /** value = 1 − exp(−Σ termWeight × sqrt(min(3, count)) / saturation). Terms are upper-case words or phrases. */
   | { type: "words"; where: SignalScope; terms: Record<string, number>; saturation?: number }
-  /** CSI codes from tagging the scope's own words. share = matching / all codes (0 below minCodes); count saturates at 3. */
-  | { type: "csi"; where: "box" | "page"; divisions?: string[]; sectionPrefixes?: string[]; measure: "share" | "count"; minCodes?: number }
+  /**
+   * CSI codes from tagging the scope's own words. share = matching / all codes (0 below minCodes); count saturates at 3.
+   * [2b additive] where "pageCodes" = every code in `pages.csiCodes` once (division = the code's first two digits,
+   * trigger positions ignored; the legacy heuristic rules' `csiDivisionsRequired`); measure "presence" = 1 when any matches.
+   */
+  | { type: "csi"; where: "box" | "page" | "pageCodes"; divisions?: string[]; sectionPrefixes?: string[]; measure: "share" | "count" | "presence"; minCodes?: number }
   /** Sheet discipline from the sheet-number prefix (A, M, E, P, S, C, L, FP, FA, T, …) and/or a sheet-number regex. 0/1. */
   | { type: "sheet"; disciplines?: string[]; numberPattern?: string }
-  | { type: "yolo"; where: "inside" | "overlap" | "page" | "near"; classes: string[]; model?: string; minConfidence?: number; measure: "presence" | "count" | "maxConfidence" | "cover" }
+  /**
+   * [2b additive] `classes` may hold "*" (any class). `noDetections`: the value when YOLO did not run on the page
+   * (`ClassifierPageInput.yoloAvailable` false) — a "required" gate with 1 passes on text-only runs (legacy
+   * yoloAvailabilityMode degrade / ignore). Default: evaluated normally (no detections → 0).
+   */
+  | { type: "yolo"; where: "inside" | "overlap" | "page" | "near"; classes: string[]; model?: string; minConfidence?: number; measure: "presence" | "count" | "maxConfidence" | "cover"; noDetections?: number }
+  /** [2b additive] Whole-word, case-insensitive match on the page's raw OCR text (legacy heuristic keywords). 0/1. */
+  | { type: "text"; terms: string[]; mode: "any" | "all" }
+  /** [2b additive] The page carries an OCR text region of one of these types (`pageIntelligence.textRegions`, legacy types migrated). 0/1. */
+  | { type: "text-region"; regionTypes: string[] }
+  /**
+   * [2b additive] A legacy heuristic spatial condition between two YOLO classes on the page (classB "*" = any other
+   * class): contains = some A holds ≥ minInstances B centres; overlaps = a B covers > 30% of an A; near = centres within
+   * maxDistance (default .1); aligned = ≥ minInstances B centres inside one A share an x (vertical) / y (horizontal)
+   * centre within .03 of their mean. 0/1.
+   */
+  | { type: "yolo-spatial"; operator: "contains" | "overlaps" | "near" | "aligned"; classA: string; classB: string; minInstances?: number; axis?: "horizontal" | "vertical" | "any"; maxDistance?: number }
   /** A region-v2 structure signal (or its structureScore), mapped to 0/1 by min/max, or scaled by `scale`. */
   | { type: "structure"; feature: keyof RegionV2Signals | "structureScore"; min?: number; max?: number; scale?: number }
   | { type: "textract-table"; minContainment?: number }
@@ -126,6 +146,22 @@ export interface ClassifierRecipe {
   deriveName: boolean;
   fallbackClassName: string;
   note?: string;
+  /** [2b additive] A page-unit recipe ported from the legacy heuristic engine: how its proposal maps back to a HeuristicInference. */
+  heuristic?: HeuristicRecipeOutput;
+}
+
+/**
+ * [2b additive] Legacy heuristic output of a ported page recipe (src/lib/heuristic-port). The detect head carries the
+ * old additive ladder as weights with bias −minConfidence (detect threshold .5 ⇔ score ≥ minConfidence); the
+ * adapter reports `confidence` = Σ weight × value over the score signals (×0.6 on a text-only run in "degrade" mode).
+ */
+export interface HeuristicRecipeOutput {
+  /** (The rule's `outputLabel` is the recipe's `target`.) */
+  minConfidence: number;
+  outputCsiCode?: string;
+  yoloAvailabilityMode: "require" | "degrade" | "ignore";
+  /** The inference's bbox = the first detection of this class (the rule's first yoloRequired class). */
+  bboxClass?: string;
 }
 
 /** Per-company edits on top of the built-ins: whole custom recipes plus sparse patches of built-ins. */

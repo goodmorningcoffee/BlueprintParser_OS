@@ -1,0 +1,573 @@
+[
+  {
+    "id": "keynote-table",
+    "name": "Keynote Table Detection",
+    "version": 1,
+    "enabled": true,
+    "source": "built-in",
+    "unit": "page",
+    "target": "keynote-table",
+    "candidates": [],
+    "scope": {},
+    "detect": {
+      "bias": -0.5,
+      "signals": [
+        {
+          "id": "yolo-gate",
+          "label": "YOLO required: horizontal_area",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "yolo-required",
+          "label": "YOLO: horizontal_area detected",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.3,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "yolo-booster-0",
+          "label": "YOLO booster: table",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "table"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.1,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "yolo-booster-1",
+          "label": "YOLO booster: grid",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "grid"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.1,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "keywords-gate",
+          "label": "Required keywords (any): KEYNOTE, KEYNOTES, KEY NOTES, LEGEND",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "KEYNOTE",
+              "KEYNOTES",
+              "KEY NOTES",
+              "LEGEND"
+            ],
+            "mode": "any"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "keywords",
+          "label": "Required keywords: KEYNOTE, KEYNOTES, KEY NOTES, LEGEND",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "KEYNOTE",
+              "KEYNOTES",
+              "KEY NOTES",
+              "LEGEND"
+            ],
+            "mode": "any"
+          },
+          "weight": 0.25,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "overlap",
+          "label": "Keywords overlap YOLO region",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.15,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "spatial-0",
+          "label": "Spatial: horizontal_area contains oval (3+)",
+          "spec": {
+            "type": "yolo-spatial",
+            "operator": "contains",
+            "classA": "horizontal_area",
+            "classB": "oval",
+            "minInstances": 3,
+            "axis": "vertical"
+          },
+          "weight": 0.2,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "text-region",
+          "label": "OCR region: notes-key-value detected",
+          "spec": {
+            "type": "text-region",
+            "regionTypes": [
+              "notes-key-value"
+            ]
+          },
+          "weight": 0.15,
+          "role": "score",
+          "enabled": true
+        }
+      ],
+      "threshold": 0.5
+    },
+    "classes": [],
+    "nameThreshold": 0,
+    "minMargin": 0,
+    "deriveName": false,
+    "fallbackClassName": "Keynote Table Detection",
+    "note": "Ported from the legacy heuristic engine (src/lib/heuristic-port/convert.ts).",
+    "heuristic": {
+      "minConfidence": 0.5,
+      "yoloAvailabilityMode": "require",
+      "bboxClass": "horizontal_area"
+    }
+  },
+  {
+    "id": "symbol-legend",
+    "name": "Symbol Legend Detection",
+    "version": 1,
+    "enabled": true,
+    "source": "built-in",
+    "unit": "page",
+    "target": "symbol-legend",
+    "candidates": [],
+    "scope": {},
+    "detect": {
+      "bias": -0.5,
+      "signals": [
+        {
+          "id": "yolo-gate",
+          "label": "YOLO required: horizontal_area",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "yolo-required",
+          "label": "YOLO: horizontal_area detected",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.3,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "yolo-booster-0",
+          "label": "YOLO booster: table",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "table"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.1,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "yolo-booster-1",
+          "label": "YOLO booster: symbol_legend",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "symbol_legend"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.1,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "keywords-gate",
+          "label": "Required keywords (any): LEGEND, SYMBOL",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "LEGEND",
+              "SYMBOL"
+            ],
+            "mode": "any"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "keywords",
+          "label": "Required keywords: LEGEND, SYMBOL",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "LEGEND",
+              "SYMBOL"
+            ],
+            "mode": "any"
+          },
+          "weight": 0.25,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "overlap",
+          "label": "Keywords overlap YOLO region",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.15,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "spatial-0",
+          "label": "Spatial: horizontal_area contains * (3+)",
+          "spec": {
+            "type": "yolo-spatial",
+            "operator": "contains",
+            "classA": "horizontal_area",
+            "classB": "*",
+            "minInstances": 3,
+            "axis": "vertical"
+          },
+          "weight": 0.2,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "text-region",
+          "label": "OCR region: notes-key-value detected",
+          "spec": {
+            "type": "text-region",
+            "regionTypes": [
+              "notes-key-value"
+            ]
+          },
+          "weight": 0.15,
+          "role": "score",
+          "enabled": true
+        }
+      ],
+      "threshold": 0.5
+    },
+    "classes": [],
+    "nameThreshold": 0,
+    "minMargin": 0,
+    "deriveName": false,
+    "fallbackClassName": "Symbol Legend Detection",
+    "note": "Ported from the legacy heuristic engine (src/lib/heuristic-port/convert.ts).",
+    "heuristic": {
+      "minConfidence": 0.5,
+      "yoloAvailabilityMode": "require",
+      "bboxClass": "horizontal_area"
+    }
+  },
+  {
+    "id": "general-notes",
+    "name": "General Notes Detection",
+    "version": 1,
+    "enabled": true,
+    "source": "built-in",
+    "unit": "page",
+    "target": "general-notes",
+    "candidates": [],
+    "scope": {},
+    "detect": {
+      "bias": -0.4,
+      "signals": [
+        {
+          "id": "yolo-booster-0",
+          "label": "YOLO booster: text_box",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "text_box"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.1,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "yolo-booster-1",
+          "label": "YOLO booster: vertical_area",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "vertical_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.1,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "keywords-gate",
+          "label": "Required keywords (any): GENERAL NOTES, GENERAL NOTE, NOTES:",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "GENERAL NOTES",
+              "GENERAL NOTE",
+              "NOTES:"
+            ],
+            "mode": "any"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "keywords",
+          "label": "Required keywords: GENERAL NOTES, GENERAL NOTE, NOTES:",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "GENERAL NOTES",
+              "GENERAL NOTE",
+              "NOTES:"
+            ],
+            "mode": "any"
+          },
+          "weight": 0.25,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "text-region",
+          "label": "OCR region: notes-numbered detected",
+          "spec": {
+            "type": "text-region",
+            "regionTypes": [
+              "notes-numbered"
+            ]
+          },
+          "weight": 0.15,
+          "role": "score",
+          "enabled": true
+        }
+      ],
+      "threshold": 0.5
+    },
+    "classes": [],
+    "nameThreshold": 0,
+    "minMargin": 0,
+    "deriveName": false,
+    "fallbackClassName": "General Notes Detection",
+    "note": "Ported from the legacy heuristic engine (src/lib/heuristic-port/convert.ts).",
+    "heuristic": {
+      "minConfidence": 0.4,
+      "yoloAvailabilityMode": "require"
+    }
+  },
+  {
+    "id": "section-cut",
+    "name": "Section Cut Detection",
+    "version": 1,
+    "enabled": true,
+    "source": "built-in",
+    "unit": "page",
+    "target": "section-cut",
+    "candidates": [],
+    "scope": {},
+    "detect": {
+      "bias": -0.5,
+      "signals": [
+        {
+          "id": "yolo-gate",
+          "label": "YOLO required: horizontal_area",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "yolo-required",
+          "label": "YOLO: horizontal_area detected",
+          "spec": {
+            "type": "yolo",
+            "where": "page",
+            "classes": [
+              "horizontal_area"
+            ],
+            "measure": "presence"
+          },
+          "weight": 0.3,
+          "role": "score",
+          "enabled": true
+        },
+        {
+          "id": "keywords-gate",
+          "label": "Required keywords (any): SECTION",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "SECTION"
+            ],
+            "mode": "any"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "keywords",
+          "label": "Required keywords: SECTION",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "SECTION"
+            ],
+            "mode": "any"
+          },
+          "weight": 0.25,
+          "role": "score",
+          "enabled": true
+        }
+      ],
+      "threshold": 0.5
+    },
+    "classes": [],
+    "nameThreshold": 0,
+    "minMargin": 0,
+    "deriveName": false,
+    "fallbackClassName": "Section Cut Detection",
+    "note": "Ported from the legacy heuristic engine (src/lib/heuristic-port/convert.ts).",
+    "heuristic": {
+      "minConfidence": 0.5,
+      "yoloAvailabilityMode": "require",
+      "bboxClass": "horizontal_area"
+    }
+  },
+  {
+    "id": "typical-plan",
+    "name": "Typical Floor Plan Detection",
+    "version": 1,
+    "enabled": true,
+    "source": "built-in",
+    "unit": "page",
+    "target": "typical-plan",
+    "candidates": [],
+    "scope": {},
+    "detect": {
+      "bias": -0.4,
+      "signals": [
+        {
+          "id": "keywords-gate",
+          "label": "Required keywords (any): TYPICAL, TYP",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "TYPICAL",
+              "TYP"
+            ],
+            "mode": "any"
+          },
+          "weight": 0,
+          "role": "required",
+          "enabled": true
+        },
+        {
+          "id": "keywords",
+          "label": "Required keywords: TYPICAL, TYP",
+          "spec": {
+            "type": "text",
+            "terms": [
+              "TYPICAL",
+              "TYP"
+            ],
+            "mode": "any"
+          },
+          "weight": 0.25,
+          "role": "score",
+          "enabled": true
+        }
+      ],
+      "threshold": 0.5
+    },
+    "classes": [],
+    "nameThreshold": 0,
+    "minMargin": 0,
+    "deriveName": false,
+    "fallbackClassName": "Typical Floor Plan Detection",
+    "note": "Ported from the legacy heuristic engine (src/lib/heuristic-port/convert.ts).",
+    "heuristic": {
+      "minConfidence": 0.4,
+      "yoloAvailabilityMode": "require"
+    }
+  }
+]

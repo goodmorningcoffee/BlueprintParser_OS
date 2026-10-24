@@ -128,9 +128,10 @@ vi.mock("@/lib/admin-logs/record-abuse", () => ({
 }));
 vi.mock("@/lib/email", () => ({ sendAlertEmail: h.sendAlertEmail }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
-vi.mock("@/lib/heuristic-engine", () => ({
-  getEffectiveRules: h.getEffectiveRules,
-  runHeuristicEngine: h.runHeuristicEngine,
+// [2b] the call sites run the heuristic PORT (lib/heuristic-port); the spies keep their old names.
+vi.mock("@/lib/heuristic-port", () => ({
+  getEffectiveHeuristicRecipes: h.getEffectiveRules,
+  runHeuristicRecipes: h.runHeuristicEngine,
 }));
 vi.mock("@/lib/table-classifier", () => ({ classifyTables: h.classifyTables }));
 vi.mock("@/lib/composite-classifier", () => ({

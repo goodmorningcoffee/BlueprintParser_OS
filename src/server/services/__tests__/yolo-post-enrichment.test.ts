@@ -2,7 +2,8 @@
 // engine, composite classifier, heatmap and ensemble; only the table classifier is a stub, so its
 // CSI input can be read back.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { HeuristicRule } from "@/lib/heuristic-engine";
+import type { HeuristicRule } from "@/lib/heuristic-rules";
+import { ruleToRecipe } from "@/lib/heuristic-port";
 import type { CsiCode } from "@/types";
 
 const spy = vi.hoisted(() => ({ classifyTables: vi.fn() }));
@@ -31,7 +32,7 @@ const det = (name: string, modelName: string, x: number, y: number, confidence =
 });
 
 const opts = (rules: HeuristicRule[] = [div08Rule]) => ({
-  rules, heatmapEnabled: true, ensembleEnabled: true, ensembleConfig: undefined,
+  rules: rules.map(ruleToRecipe), heatmapEnabled: true, ensembleEnabled: true, ensembleConfig: undefined,
 });
 
 beforeEach(() => {
