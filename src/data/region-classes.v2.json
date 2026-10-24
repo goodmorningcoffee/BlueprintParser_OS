@@ -1,0 +1,1050 @@
+{
+ "_how": "Editable class table for src/lib/region-classifier-v2 (ported 2026-10-24 from corpus_v2 regions_rc_classes.json + regions_rc2_classes.json, same row schema so the Python reference stays comparable). `tables` names yolo_medium `tables` boxes; `text` names symbol_legend / text_box boxes. One row = one class; add a row to add a class. keywords: WORD or PHRASE (upper case, phrases match inside the box text) -> weight; a keyword seen n times counts weight x sqrt(min(n,3)). csi_divisions: 2-digit CSI divisions (share of the box's codes in these divisions x csi_weight, needs >= csi_min_codes codes). titleblock_plus / titleblock_minus: words in the sheet's title block that raise / lower the class prior by titleblock_weight. A box gets the best class when score >= min_score and >= min_keywords different keywords matched; otherwise it is 'unclassified' (tables), or runs the text `fallback` checklist (first rule that fits wins; names listed in fallback.labelClasses are page labels, not regions, and are dropped).",
+ "version": "rc-v2/0.1",
+ "tables": {
+  "rules": {
+   "min_score": 4.0,
+   "min_keywords": 2,
+   "csi_weight": 2.0,
+   "csi_min_codes": 2,
+   "titleblock_weight": 1.0,
+   "sheet_yolo_weight": 1.5,
+   "tag_weight": 1.0,
+   "tag_min": 3,
+   "schedule_word_weight": 1.0
+  },
+  "classes": [
+   {
+    "name": "door schedule",
+    "keywords": {
+     "DOOR SCHEDULE": 4,
+     "DOOR": 1.5,
+     "DOORS": 1,
+     "FRAME": 1.5,
+     "HARDWARE": 1,
+     "HM": 1,
+     "WD": 0.5,
+     "HW": 0.5,
+     "UNDERCUT": 1.5,
+     "LOUVER": 1,
+     "HEAD": 0.5,
+     "JAMB": 1,
+     "SILL": 0.3,
+     "THRESHOLD": 1,
+     "LABEL": 0.5,
+     "RATING": 0.5,
+     "MIN": 0.2,
+     "POCKET": 0.5,
+     "GLAZING": 0.5,
+     "PANEL": 0.2,
+     "LEAF": 1
+    },
+    "csi_divisions": [
+     "08"
+    ],
+    "titleblock_plus": [
+     "DOOR"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "MECHANICAL",
+     "STRUCTURAL"
+    ],
+    "tags_expected": true,
+    "sheet_yolo_plus": [
+     "door_single",
+     "door_double"
+    ]
+   },
+   {
+    "name": "window schedule",
+    "keywords": {
+     "WINDOW SCHEDULE": 4,
+     "WINDOW": 1.5,
+     "WINDOWS": 1,
+     "GLAZING": 1,
+     "GLASS": 0.7,
+     "SILL": 1,
+     "CASEMENT": 1.5,
+     "SASH": 1.5,
+     "DOUBLE HUNG": 2,
+     "STOREFRONT": 1,
+     "LOUVER": 0.5,
+     "MULLION": 1,
+     "U-VALUE": 1.5,
+     "SHGC": 1.5,
+     "ROUGH OPENING": 2,
+     "OPERABLE": 1,
+     "FIXED": 0.5
+    },
+    "csi_divisions": [
+     "08"
+    ],
+    "titleblock_plus": [
+     "WINDOW"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "MECHANICAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "hardware schedule",
+    "keywords": {
+     "HARDWARE SCHEDULE": 4,
+     "HARDWARE SET": 3,
+     "HARDWARE": 1.5,
+     "HINGES": 1.5,
+     "HINGE": 1.5,
+     "LOCKSET": 2,
+     "LATCHSET": 2,
+     "CLOSER": 1.5,
+     "EXIT DEVICE": 2,
+     "PANIC": 1,
+     "KICK PLATE": 2,
+     "STOP": 0.5,
+     "SILENCER": 1.5,
+     "SILENCERS": 1.5,
+     "PASSAGE": 1,
+     "PRIVACY": 1,
+     "CYLINDER": 1,
+     "STRIKE": 1,
+     "US26D": 1.5,
+     "630": 0.3
+    },
+    "csi_divisions": [
+     "08"
+    ],
+    "titleblock_plus": [
+     "HARDWARE"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "finish schedule",
+    "keywords": {
+     "FINISH SCHEDULE": 4,
+     "ROOM FINISH": 3,
+     "FINISH": 1,
+     "FINISHES": 1,
+     "FLOOR": 0.5,
+     "BASE": 0.7,
+     "CEILING": 0.7,
+     "WALLS": 0.5,
+     "PAINT": 1,
+     "CARPET": 1.5,
+     "TILE": 1,
+     "VCT": 1.5,
+     "LVT": 1.5,
+     "GWB": 0.7,
+     "ACT": 1,
+     "EPOXY": 1,
+     "WAINSCOT": 1.5,
+     "RUBBER": 0.7,
+     "PTD": 0.7,
+     "CPT": 1.5,
+     "CT": 0.5,
+     "COLOR": 0.5,
+     "MANUFACTURER": 0.3,
+     "SEALED CONCRETE": 1.5
+    },
+    "csi_divisions": [
+     "09"
+    ],
+    "titleblock_plus": [
+     "FINISH"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "MECHANICAL",
+     "STRUCTURAL"
+    ]
+   },
+   {
+    "name": "room schedule",
+    "keywords": {
+     "ROOM SCHEDULE": 4,
+     "ROOM NAME": 2,
+     "ROOM NO": 2,
+     "ROOM": 0.7,
+     "AREA": 0.5,
+     "SF": 0.7,
+     "OCCUPANCY": 1,
+     "OCCUPANT LOAD": 2,
+     "OCCUPANTS": 1,
+     "CORRIDOR": 0.5,
+     "OFFICE": 0.5,
+     "TOILET": 0.4,
+     "STORAGE": 0.4,
+     "CLOSET": 0.4,
+     "LOBBY": 0.4,
+     "GROSS": 0.5,
+     "NET": 0.5
+    },
+    "csi_divisions": [],
+    "titleblock_plus": [
+     "ROOM"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "MECHANICAL"
+    ]
+   },
+   {
+    "name": "plumbing fixture schedule",
+    "keywords": {
+     "PLUMBING FIXTURE": 4,
+     "FIXTURE SCHEDULE": 1,
+     "PLUMBING": 1,
+     "WC": 1.5,
+     "LAV": 1.5,
+     "LAVATORY": 1.5,
+     "URINAL": 1.5,
+     "SINK": 1.2,
+     "WATER CLOSET": 2,
+     "FAUCET": 1.5,
+     "DRAIN": 0.8,
+     "TRAP": 0.8,
+     "VENT": 0.5,
+     "HW": 0.5,
+     "CW": 0.8,
+     "GPF": 2,
+     "GPM": 1,
+     "FLUSH VALVE": 2,
+     "FLUSHOMETER": 2,
+     "KOHLER": 1.5,
+     "SLOAN": 1.5,
+     "AMERICAN STANDARD": 1.5,
+     "CARRIER": 0.5,
+     "MOP": 1,
+     "SHOWER": 1,
+     "DRINKING FOUNTAIN": 2,
+     "WASTE": 0.8
+    },
+    "csi_divisions": [
+     "22"
+    ],
+    "titleblock_plus": [
+     "PLUMBING"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "STRUCTURAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "HVAC equipment schedule",
+    "keywords": {
+     "EQUIPMENT SCHEDULE": 2,
+     "FAN SCHEDULE": 3,
+     "RTU": 2,
+     "AHU": 2,
+     "FCU": 2,
+     "VAV": 1.5,
+     "ERV": 2,
+     "EF": 1,
+     "CFM": 1.5,
+     "MBH": 2,
+     "BTU": 1.5,
+     "BTUH": 1.5,
+     "TONS": 1.5,
+     "ESP": 1.5,
+     "EER": 1.5,
+     "SEER": 1.5,
+     "HP": 0.7,
+     "RPM": 1.2,
+     "FAN": 1,
+     "EXHAUST": 0.8,
+     "SUPPLY": 0.5,
+     "HEATING": 1,
+     "COOLING": 1,
+     "COIL": 1,
+     "COMPRESSOR": 1.5,
+     "CONDENSING": 1.5,
+     "REFRIGERANT": 1.5,
+     "MCA": 1,
+     "MOCP": 1,
+     "EAT": 1,
+     "LAT": 1,
+     "DB": 0.5,
+     "WB": 0.7,
+     "UNIT HEATER": 2,
+     "MECHANICAL": 0.5
+    },
+    "csi_divisions": [
+     "23"
+    ],
+    "titleblock_plus": [
+     "MECHANICAL",
+     "HVAC"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "ARCHITECTURAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "air distribution schedule",
+    "keywords": {
+     "DIFFUSER": 2,
+     "DIFFUSERS": 2,
+     "GRILLE": 2,
+     "GRILLES": 2,
+     "REGISTER": 1.5,
+     "REGISTERS": 1.5,
+     "AIR DEVICE": 2,
+     "AIR DISTRIBUTION": 3,
+     "NECK SIZE": 2,
+     "NECK": 1,
+     "NC": 1,
+     "CFM": 1,
+     "LOUVER": 0.7,
+     "RETURN": 0.7,
+     "SUPPLY": 0.5,
+     "TITUS": 1.5,
+     "PRICE": 0.5,
+     "LINEAR": 0.7,
+     "SLOT": 1,
+     "DAMPER": 1,
+     "BORDER": 1,
+     "PATTERN": 0.5,
+     "THROW": 1
+    },
+    "csi_divisions": [
+     "23"
+    ],
+    "titleblock_plus": [
+     "MECHANICAL",
+     "HVAC"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "ARCHITECTURAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "lighting fixture schedule",
+    "keywords": {
+     "LIGHTING FIXTURE": 4,
+     "LUMINAIRE": 2,
+     "LUMINAIRE SCHEDULE": 4,
+     "LIGHT FIXTURE": 3,
+     "FIXTURE": 0.7,
+     "LAMP": 1.5,
+     "LAMPS": 1.5,
+     "LED": 1.2,
+     "LUMENS": 2,
+     "LUMEN": 2,
+     "CCT": 2,
+     "CRI": 2,
+     "DOWNLIGHT": 2,
+     "RECESSED": 1,
+     "PENDANT": 1.5,
+     "TROFFER": 2,
+     "STRIP": 0.8,
+     "LINEAR": 0.5,
+     "DRIVER": 1.2,
+     "DIMMING": 1.2,
+     "0-10V": 2,
+     "WATTS": 0.8,
+     "VA": 0.5,
+     "VOLTAGE": 0.5,
+     "LITHONIA": 2,
+     "MOUNTING": 0.5,
+     "EMERGENCY": 0.4,
+     "3000K": 2,
+     "3500K": 2,
+     "4000K": 2
+    },
+    "csi_divisions": [
+     "26"
+    ],
+    "titleblock_plus": [
+     "LIGHTING",
+     "ELECTRICAL"
+    ],
+    "titleblock_minus": [
+     "PLUMBING",
+     "MECHANICAL",
+     "ARCHITECTURAL",
+     "STRUCTURAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "electrical panel schedule",
+    "keywords": {
+     "PANEL SCHEDULE": 4,
+     "PANELBOARD": 3,
+     "PANEL": 1,
+     "CKT": 2,
+     "CIRCUIT": 1,
+     "BKR": 2,
+     "BREAKER": 1.5,
+     "POLE": 1.2,
+     "AMP": 0.8,
+     "AMPS": 0.8,
+     "MAIN": 0.5,
+     "MLO": 2,
+     "MCB": 2,
+     "BUS": 1,
+     "PHASE": 1,
+     "KVA": 1.5,
+     "VA": 0.8,
+     "LOAD": 0.8,
+     "FEEDER": 1,
+     "120/208V": 2,
+     "277/480V": 2,
+     "SPARE": 1.5,
+     "SPACE": 0.4,
+     "NEUTRAL": 1,
+     "AIC": 2,
+     "RECEPTACLE": 0.7,
+     "RECEPTACLES": 0.7
+    },
+    "csi_divisions": [
+     "26"
+    ],
+    "titleblock_plus": [
+     "ELECTRICAL",
+     "POWER"
+    ],
+    "titleblock_minus": [
+     "PLUMBING",
+     "MECHANICAL",
+     "ARCHITECTURAL",
+     "STRUCTURAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "other electrical equipment schedule",
+    "keywords": {
+     "ELECTRICAL": 0.7,
+     "DISCONNECT": 2,
+     "TRANSFORMER": 2,
+     "SWITCHBOARD": 2,
+     "MOTOR": 1.2,
+     "STARTER": 1.5,
+     "VFD": 2,
+     "CONDUIT": 1.2,
+     "WIRE": 0.8,
+     "AWG": 1.5,
+     "FUSE": 1.5,
+     "FUSED": 1.5,
+     "NEMA": 1.5,
+     "KW": 1,
+     "GENERATOR": 1.5,
+     "ATS": 2,
+     "JUNCTION": 0.8,
+     "FIRE ALARM": 1.5,
+     "STROBE": 1,
+     "SMOKE DETECTOR": 1.5,
+     "DETECTOR": 0.8,
+     "OUTLET": 0.7,
+     "SWITCH": 0.6,
+     "EQUIPMENT": 0.5
+    },
+    "csi_divisions": [
+     "26",
+     "27",
+     "28"
+    ],
+    "titleblock_plus": [
+     "ELECTRICAL",
+     "POWER",
+     "FIRE ALARM"
+    ],
+    "titleblock_minus": [
+     "PLUMBING",
+     "ARCHITECTURAL",
+     "STRUCTURAL"
+    ],
+    "tags_expected": true
+   },
+   {
+    "name": "structural schedule",
+    "keywords": {
+     "FOOTING": 2,
+     "FOOTINGS": 2,
+     "FOOTING SCHEDULE": 4,
+     "BEAM SCHEDULE": 4,
+     "COLUMN SCHEDULE": 4,
+     "LINTEL": 1.5,
+     "BEAM": 1,
+     "BEAMS": 1,
+     "COLUMN": 1,
+     "COLUMNS": 1,
+     "PIER": 1.2,
+     "PILE": 1.5,
+     "REINF": 1.5,
+     "REINFORCING": 1.5,
+     "REBAR": 1.5,
+     "BARS": 1,
+     "STIRRUPS": 2,
+     "TIES": 1,
+     "DOWELS": 1.5,
+     "BASE PLATE": 2,
+     "ANCHOR": 0.7,
+     "W8": 1,
+     "W10": 1,
+     "W12": 1,
+     "HSS": 1.5,
+     "PSI": 1,
+     "KSI": 1.5,
+     "KIPS": 1.5,
+     "EW": 1,
+     "T&B": 1.5,
+     "STEEL": 0.5,
+     "CONCRETE": 0.5,
+     "JOIST": 1,
+     "JOISTS": 1,
+     "SLAB": 0.5,
+     "STRUCTURAL": 0.5
+    },
+    "csi_divisions": [
+     "03",
+     "04",
+     "05",
+     "31"
+    ],
+    "titleblock_plus": [
+     "STRUCTURAL",
+     "FOUNDATION",
+     "FRAMING"
+    ],
+    "titleblock_minus": [
+     "ELECTRICAL",
+     "PLUMBING",
+     "MECHANICAL"
+    ]
+   },
+   {
+    "name": "drawing list",
+    "keywords": {
+     "DRAWING LIST": 4,
+     "DRAWING INDEX": 4,
+     "SHEET INDEX": 4,
+     "LIST OF DRAWINGS": 4,
+     "DRAWING TITLE": 2,
+     "SHEET TITLE": 2,
+     "SHEET NO": 1,
+     "DWG NO": 1,
+     "DRAWING NO": 1,
+     "COVER SHEET": 1.5,
+     "FLOOR PLAN": 0.5,
+     "ELEVATIONS": 0.4,
+     "DETAILS": 0.3,
+     "SECTIONS": 0.3,
+     "ISSUED": 0.5,
+     "REVISED": 0.4
+    },
+    "csi_divisions": [],
+    "titleblock_plus": [
+     "COVER",
+     "TITLE SHEET",
+     "INDEX"
+    ],
+    "titleblock_minus": [],
+    "is_schedule": false
+   }
+  ],
+  "_how_signals": "2026-10-22 owner signals: sheet_yolo_plus = yolo labels on the SAME sheet that raise this class (door detections → door schedule) by sheet_yolo_weight; tags_expected = schedules that usually carry shape tags: ≥ tag_min yolo_primitive shapes inside the table add tag_weight; any class with ≥1 keyword hit gets schedule_word_weight when SCHEDULE/SCHED is in the box (is_schedule false opts out). L1 also scores 'table and grid/area box line up' (IoU ≥ .5) and shape tags inside."
+ },
+ "text": {
+  "rules": {
+   "min_score": 4.0,
+   "min_keywords": 1,
+   "csi_weight": 2.0,
+   "csi_min_codes": 2,
+   "titleblock_weight": 1.0
+  },
+  "classes": [
+   {
+    "name": "keynotes",
+    "keywords": {
+     "KEYNOTES": 4,
+     "KEYNOTE": 3.5,
+     "KEY NOTES": 4,
+     "KEYED NOTES": 4,
+     "KEYED": 2,
+     "KEY": 0.5,
+     "NOTES": 0.3
+    },
+    "csi_divisions": [],
+    "titleblock_plus": [],
+    "titleblock_minus": []
+   },
+   {
+    "name": "symbol legend",
+    "keywords": {
+     "SYMBOL LEGEND": 4.5,
+     "LEGEND": 3,
+     "SYMBOLS": 2.5,
+     "SYMBOL": 2,
+     "DENOTES": 1.5,
+     "INDICATES": 1,
+     "DESCRIPTION": 0.7,
+     "EXISTING TO REMAIN": 1,
+     "NEW WALL": 1,
+     "PARTITION": 0.3,
+     "DEVICE": 0.3
+    },
+    "csi_divisions": [],
+    "titleblock_plus": [],
+    "titleblock_minus": []
+   },
+   {
+    "name": "abbreviations",
+    "keywords": {
+     "ABBREVIATIONS": 4.5,
+     "ABBREVIATION": 4.5,
+     "ABBR": 3,
+     "A.F.F.": 0.5,
+     "AFF": 0.5,
+     "CLG": 0.3,
+     "GYP": 0.3,
+     "O.C.": 0.3,
+     "N.I.C.": 0.5,
+     "NIC": 0.5,
+     "V.I.F.": 0.3,
+     "N.T.S.": 0.4,
+     "EQ": 0.2,
+     "EXIST": 0.2,
+     "ALUM": 0.3,
+     "CONC": 0.3
+    },
+    "csi_divisions": [],
+    "titleblock_plus": [],
+    "titleblock_minus": []
+   },
+   {
+    "name": "general notes",
+    "keywords": {
+     "GENERAL NOTES": 5,
+     "GENERAL": 1.5,
+     "SHALL": 0.7,
+     "CONTRACTOR": 0.7,
+     "COMPLY": 0.7,
+     "ACCORDANCE": 0.5,
+     "VERIFY": 0.5,
+     "PRIOR": 0.4,
+     "RESPONSIBLE": 0.6,
+     "NOTIFY": 0.6,
+     "APPLICABLE": 0.5,
+     "OWNER": 0.4,
+     "ARCHITECT": 0.4,
+     "DO NOT SCALE": 2,
+     "SUBMIT": 0.5,
+     "SHOP DRAWINGS": 1,
+     "CONTRACT DOCUMENTS": 1
+    },
+    "csi_divisions": [
+     "01"
+    ],
+    "titleblock_plus": [
+     "GENERAL"
+    ],
+    "titleblock_minus": []
+   },
+   {
+    "name": "sheet / coded notes",
+    "keywords": {
+     "SHEET NOTES": 5,
+     "PLAN NOTES": 4,
+     "DRAWING NOTES": 4,
+     "CODED NOTES": 5,
+     "CONSTRUCTION NOTES": 4,
+     "FLOOR PLAN NOTES": 4,
+     "NOTES": 1,
+     "NOTE": 0.8,
+     "REFER": 0.4,
+     "TYP": 0.3,
+     "TYP.": 0.3,
+     "TYPICAL": 0.3,
+     "PROVIDE": 0.4,
+     "INSTALL": 0.4,
+     "SEE": 0.2
+    },
+    "csi_divisions": [],
+    "titleblock_plus": [],
+    "titleblock_minus": []
+   },
+   {
+    "name": "demolition notes",
+    "keywords": {
+     "DEMOLITION NOTES": 5,
+     "DEMOLITION": 2,
+     "DEMO": 1.5,
+     "REMOVE": 1,
+     "REMOVED": 1,
+     "REMOVAL": 1,
+     "EXISTING TO REMAIN": 1.5,
+     "SALVAGE": 1,
+     "PATCH": 0.7,
+     "DEBRIS": 1,
+     "DISPOSAL": 1,
+     "PROTECT": 0.5,
+     "CAPPED": 0.7,
+     "RELOCATE": 0.7
+    },
+    "csi_divisions": [
+     "02"
+    ],
+    "titleblock_plus": [
+     "DEMOLITION",
+     "DEMO"
+    ],
+    "titleblock_minus": []
+   },
+   {
+    "name": "code / life-safety notes",
+    "keywords": {
+     "LIFE SAFETY": 4,
+     "CODE": 1,
+     "CODES": 1,
+     "BUILDING CODE": 3,
+     "EGRESS": 2,
+     "OCCUPANCY": 2,
+     "OCCUPANT LOAD": 3,
+     "OCCUPANT": 1.5,
+     "SPRINKLER": 1,
+     "SPRINKLERED": 1.5,
+     "FIRE RATED": 1.5,
+     "FIRE": 0.5,
+     "RATED": 0.4,
+     "EXIT": 1,
+     "ACCESSIBILITY": 1,
+     "ADA": 1,
+     "IBC": 2,
+     "NFPA": 2,
+     "CONSTRUCTION CLASSIFICATION": 3,
+     "ZONING": 2,
+     "SMOKE": 0.6,
+     "ALARM": 0.6,
+     "TRAVEL DISTANCE": 3
+    },
+    "csi_divisions": [
+     "21",
+     "28"
+    ],
+    "titleblock_plus": [
+     "LIFE SAFETY",
+     "CODE",
+     "EGRESS"
+    ],
+    "titleblock_minus": []
+   },
+   {
+    "name": "structural notes",
+    "keywords": {
+     "STRUCTURAL NOTES": 5,
+     "STRUCTURAL": 1,
+     "CONCRETE": 0.8,
+     "REINFORCING": 1.2,
+     "REBAR": 1.2,
+     "PSI": 1,
+     "KSI": 1.5,
+     "ASTM": 0.8,
+     "ACI": 1.5,
+     "AISC": 1.5,
+     "STEEL": 0.6,
+     "BEAM": 0.6,
+     "COLUMN": 0.5,
+     "FOOTING": 1,
+     "FOUNDATION": 0.8,
+     "LOADS": 0.8,
+     "PSF": 1.2,
+     "WELD": 1,
+     "BOLTS": 0.7,
+     "DEFLECTION": 1,
+     "SHORING": 1,
+     "UNDERPINNING": 1.5,
+     "LINTEL": 0.7,
+     "JOIST": 0.8,
+     "JOISTS": 0.8
+    },
+    "csi_divisions": [
+     "03",
+     "04",
+     "05"
+    ],
+    "titleblock_plus": [
+     "STRUCTURAL"
+    ],
+    "titleblock_minus": []
+   }
+  ],
+  "fallback": {
+   "_how": "Hierarchy checklist for boxes the keyword rows above leave unclassified. Checked top to bottom; the FIRST rule that fits wins; nothing fits -> 'text (unclassified)'. Edit the word lists and thresholds freely. words = counted OCR tokens inside the box; min_hits = how many tokens from the list must appear (repeats count); max_words / min_words limit the box size in words; csi_min = CSI codes needed. 'digits_share' = share of tokens containing a digit. Trade is added to the evidence from the CSI majority, else the drawing-number prefix.",
+   "rules": [
+    {
+     "name": "table text (see Tables tab)",
+     "if_rebuilt_table": true
+    },
+    {
+     "name": "short label",
+     "max_words": 9
+    },
+    {
+     "name": "view title / callout",
+     "max_words": 40,
+     "min_hits": 1,
+     "words": [
+      "SCALE",
+      "PLAN",
+      "PLANS",
+      "ELEVATION",
+      "ELEVATIONS",
+      "SECTION",
+      "SECTIONS",
+      "DETAIL",
+      "DETAILS",
+      "ENLARGED",
+      "RCP",
+      "VIEW",
+      "NTS",
+      "N.T.S."
+     ]
+    },
+    {
+     "name": "specification text",
+     "min_words": 150,
+     "min_hits": 6,
+     "csi_min": 3,
+     "csi_or_words": true,
+     "words": [
+      "SHALL",
+      "SECTION",
+      "PART",
+      "SUBMITTALS",
+      "SUBMIT",
+      "COMPLY",
+      "STANDARD",
+      "ASTM",
+      "QUALITY",
+      "WARRANTY",
+      "MANUFACTURER",
+      "PRODUCTS",
+      "EXECUTION",
+      "INSTALLATION"
+     ]
+    },
+    {
+     "name": "notes (untitled)",
+     "min_words": 20,
+     "min_hits": 3,
+     "words": [
+      "SHALL",
+      "PROVIDE",
+      "CONTRACTOR",
+      "VERIFY",
+      "INSTALL",
+      "REFER",
+      "SEE",
+      "ALL",
+      "REQUIRED",
+      "COORDINATE",
+      "PER",
+      "ACCORDANCE",
+      "FIELD",
+      "PRIOR",
+      "ENSURE",
+      "MUST",
+      "NOTE",
+      "NOTES"
+     ]
+    },
+    {
+     "name": "room / space labels",
+     "max_words": 80,
+     "min_hits": 2,
+     "words": [
+      "ROOM",
+      "BATH",
+      "BATHROOM",
+      "KITCHEN",
+      "CORRIDOR",
+      "BEDROOM",
+      "BDRM",
+      "CLOSET",
+      "CLO",
+      "STAIR",
+      "ELEVATOR",
+      "OFFICE",
+      "LOBBY",
+      "STORAGE",
+      "TOILET",
+      "MECH",
+      "ELEC",
+      "LIVING",
+      "DINING",
+      "LAUNDRY",
+      "VESTIBULE",
+      "HALL",
+      "PANTRY",
+      "TERRACE",
+      "BALCONY",
+      "ENTRY",
+      "FOYER",
+      "UTILITY",
+      "JANITOR",
+      "CLASSROOM",
+      "CONFERENCE",
+      "LOUNGE",
+      "WC"
+     ]
+    },
+    {
+     "name": "address / project info",
+     "max_words": 60,
+     "min_hits": 2,
+     "words": [
+      "STREET",
+      "AVENUE",
+      "AVE",
+      "AVE.",
+      "ROAD",
+      "BLVD",
+      "YORK",
+      "PROJECT",
+      "DATE",
+      "DRAWING",
+      "CLIENT",
+      "OWNER",
+      "ARCHITECT",
+      "ENGINEER",
+      "ISSUE",
+      "REVISION",
+      "JOB",
+      "LOT",
+      "BLOCK",
+      "ZONING"
+     ]
+    },
+    {
+     "name": "existing / new / demo callouts",
+     "max_words": 60,
+     "min_hits": 2,
+     "words": [
+      "EXISTING",
+      "EXIST",
+      "EXIST.",
+      "(E)",
+      "NEW",
+      "(N)",
+      "REMOVE",
+      "REMOVED",
+      "REMAIN",
+      "DEMO",
+      "DEMOLISH",
+      "RELOCATE",
+      "RELOCATED",
+      "ABANDON",
+      "REPLACE"
+     ]
+    },
+    {
+     "name": "material callouts",
+     "max_words": 80,
+     "min_hits": 2,
+     "words": [
+      "CONCRETE",
+      "CONC",
+      "CONC.",
+      "STEEL",
+      "STL",
+      "STL.",
+      "GWB",
+      "GYP",
+      "STUD",
+      "STUDS",
+      "INSULATION",
+      "INSUL",
+      "BRICK",
+      "CMU",
+      "TILE",
+      "WOOD",
+      "SEALANT",
+      "BOARD",
+      "METAL",
+      "MTL",
+      "MTL.",
+      "GLASS",
+      "ALUM",
+      "ALUMINUM",
+      "MEMBRANE",
+      "FLASHING",
+      "PLYWOOD",
+      "STONE",
+      "MORTAR",
+      "GROUT",
+      "SLAB"
+     ]
+    },
+    {
+     "name": "dimensions / data",
+     "digits_share": 0.5
+    }
+   ],
+   "trade_by_csi": {
+    "21": "fire protection",
+    "22": "plumbing",
+    "23": "HVAC",
+    "26": "electrical",
+    "27": "communications",
+    "28": "security",
+    "03": "structural",
+    "04": "structural",
+    "05": "structural",
+    "06": "carpentry",
+    "07": "envelope",
+    "08": "openings",
+    "09": "finishes",
+    "31": "civil",
+    "32": "civil",
+    "33": "civil"
+   },
+   "trade_by_prefix": {
+    "A": "architectural",
+    "PA": "architectural",
+    "G": "general",
+    "E": "electrical",
+    "M": "HVAC",
+    "P": "plumbing",
+    "S": "structural",
+    "C": "civil",
+    "CS": "civil",
+    "L": "landscape",
+    "FP": "fire protection",
+    "FA": "fire alarm",
+    "T": "telecom",
+    "D": "demolition",
+    "Q": "equipment"
+   },
+   "labelClasses": [
+    "short label",
+    "view title / callout",
+    "room / space labels",
+    "address / project info",
+    "existing / new / demo callouts",
+    "material callouts",
+    "dimensions / data"
+   ]
+  }
+ }
+}

@@ -56,7 +56,7 @@ import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
 import { getEffectiveRules } from "@/lib/heuristic-engine";
 import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
-import type { CsiCode } from "@/types";
+import type { CsiCode, TextractPageData } from "@/types";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import {
@@ -667,6 +667,8 @@ export async function yoloLoad(
               rawText: pages.rawText,
               pageIntelligence: pages.pageIntelligence,
               csiCodes: pages.csiCodes,
+              // [regions v2 T5 fix] textractData is NOT selected here: every page of the project in
+              // one select could need > 1 GB on a dense 500-page set. It is read per page below.
             })
             .from(pages)
             .where(eq(pages.projectId, project.id));
@@ -734,10 +736,19 @@ export async function yoloLoad(
             const yoloDets = yoloByPage.get(page.pageNumber);
             if (!yoloDets?.length) continue;
 
-            // [evidence T4] the page's OCR for the evidence summary — one page at a time, never the
-            // whole project's textractData at once.
-            const [ocr] = await db.select({ textractData: pages.textractData }).from(pages)
-              .where(eq(pages.id, page.id)).limit(1);
+            // [regions v2 T5 fix] ONE page at a time, and only the two keys the shadow classifier
+            // reads (`words`, `tables`; never `lines`), so memory is bounded by a single page.
+            const [ocr] = await db
+              .select({
+                words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`,
+                tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'`,
+              })
+              .from(pages)
+              .where(eq(pages.id, page.id));
+            const textractData = Array.isArray(ocr?.words)
+              ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) }
+              : null;
+
             // [fix 2026-10-24 T1a] heuristics → tables → composite → heatmap → ensemble live in
             // yolo-post-enrichment.ts (unit-tested); it gets the page's REAL csiCodes.
             const { updated, pageChanged } = enrichPageAfterYolo(
@@ -746,7 +757,7 @@ export async function yoloLoad(
                 rawText: page.rawText,
                 pageIntelligence: page.pageIntelligence,
                 csiCodes: page.csiCodes,
-                textractData: ocr?.textractData ?? null,
+                textractData,
               },
               yoloDets,
               { rules, heatmapEnabled, ensembleEnabled, ensembleConfig },

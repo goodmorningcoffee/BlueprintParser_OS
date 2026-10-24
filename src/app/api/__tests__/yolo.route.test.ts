@@ -1136,6 +1136,38 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
     });
   });
 
+  // [regions v2 T5 fix MED 1] textractData is read per page (words + tables only), never for the
+  // whole project in one select. This pins that the per-page read still feeds the shadow classifier.
+  it("[regions v2] the post-YOLO pass reads each page's textractData words for regionsV2", async () => {
+    const w = await loadWorld();
+    const word = (text: string, left: number, top: number) => ({ text, confidence: 99, bbox: [left, top, 0.01, 0.005] });
+    await createPage(w.project.id, 1, {
+      rawText: "text",
+      pageIntelligence: { parsedRegions: [] } as never,
+      textractData: {
+        lines: [], tables: [],
+        words: [word("DOOR", 0.12, 0.12), word("SCHEDULE", 0.15, 0.12), word("ELSEWHERE", 0.7, 0.7)],
+      } as never,
+    });
+    asUser(w.admin);
+    seedS3Results([
+      detFile(`${w.project.dataUrl}/yolo-output/yolo_medium/page_0001.json`, [
+        { ...DET, class_name: "tables", confidence: 0.7, bbox_normalized: [0.1, 0.1, 0.3, 0.3] },
+      ]),
+    ]);
+    const { status } = await readJson(
+      await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "yolo_medium" }),
+    );
+    expect(status).toBe(200);
+    const [pageRow] = await db
+      .select({ pi: pagesTable.pageIntelligence })
+      .from(pagesTable)
+      .where(and(eq(pagesTable.projectId, w.project.id), eq(pagesTable.pageNumber, 1)));
+    const v2 = (pageRow.pi as { regionsV2: { regions: Array<{ anchor: string; signals: { words: number } }> } }).regionsV2;
+    expect(v2.regions).toHaveLength(1);
+    expect(v2.regions[0]).toMatchObject({ anchor: "tables", signals: { words: 2 } }); // the two words inside the box
+  });
+
   // [fix 2026-10-24 T1a] The post-YOLO pass used to hand the engine + table classifier
   // `pageIntelligence.csiCodes` — a key that does not exist — so CSI-division rules never fired.
   it("[fix 2026-10-24] post-YOLO pass hands the heuristic engine and table classifier the page's csiCodes", async () => {

@@ -20,7 +20,7 @@ export interface EvidenceDetectionInput {
 }
 
 export interface PageEvidenceInput {
-  textract: TextractPageData | null | undefined;
+  textract: Pick<TextractPageData, "words" | "tables"> | null | undefined;
   detections?: readonly EvidenceDetectionInput[] | null;
   /** Persisted/known zones; omitted → computed from `detections` (fixed-zone fallback without YOLO). */
   zones?: PageZones;

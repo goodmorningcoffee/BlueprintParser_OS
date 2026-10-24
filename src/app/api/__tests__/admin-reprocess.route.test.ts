@@ -291,13 +291,18 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     // exact key-set pin: with this fixture the yolo sub-branch writes EXACTLY these
     // four computed keys alongside the two carried user keys (observed 2026-07-08;
     // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections;
-    // +evidence [evidence T4 2026-10-24] — written whenever the page has OCR)
+    // +evidence [evidence T4 2026-10-24] — written whenever the page has OCR;
+    // +regionsV2 [regions v2 2026-10-24] — the shadow detector-first classifier, same trigger)
     expect(Object.keys(pi).sort()).toEqual([
-      "classifiedRegions", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "someFutureKey", "yoloHeatmap",
+      "classifiedRegions", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "regionsV2", "someFutureKey", "yoloHeatmap",
     ]);
     // evidence: the yolo_medium text_box is a layout box, never a yolo_text word box → no holes
     expect(pi.evidence).toMatchObject({ v: 1, zonesSource: "fixed-fallback", channels: { yoloText: false, layout: true } });
     expect(pi.evidence.counts.holes).toBe(0);
+    // regions v2: the yolo_medium text_box is a notes anchor; richTextract puts 8 words inside it,
+    // so the fallback checklist calls it a "short label" (≤ 9 words) and drops it as a page label —
+    // the record still carries the stats.
+    expect(pi.regionsV2).toMatchObject({ version: "rc-v2/0.1", regions: [], stats: { rawTextBoxes: 1, labelsDropped: 1 } });
     // G3 carry still holds WITH the yolo path active
     expect(pi.parsedRegions).toEqual(userParsedRegions);
     expect(pi.someFutureKey).toEqual({ keep: "me" });

@@ -11,6 +11,7 @@ vi.mock("@/lib/table-classifier", () => ({ classifyTables: spy.classifyTables })
 import {
   enrichPageAfterYolo,
   type PostYoloDetection,
+  stableStringify,
 } from "@/server/services/yolo-post-enrichment";
 
 const DOORS: CsiCode = { code: "08 11 16", description: "Aluminum Doors and Frames", trade: "Openings", division: "08 00 00" };
@@ -67,6 +68,57 @@ describe("enrichPageAfterYolo — CSI codes come from pages.csiCodes", () => {
     enrichPageAfterYolo(page([DOORS]), [det("tables", "yolo_medium", 0.1, 0.1)], opts());
     expect(spy.classifyTables).toHaveBeenCalledTimes(1);
     expect(spy.classifyTables.mock.calls[0][0].csiCodes).toEqual([DOORS]);
+  });
+});
+
+describe("enrichPageAfterYolo — regions v2 runs in shadow", () => {
+  const words = Array.from({ length: 12 }, (_, i) => ({
+    text: ["DOOR", "SCHEDULE", "FRAME", "HARDWARE", "HM", "WD"][i % 6], confidence: 99,
+    bbox: [0.11 + (i % 3) * 0.02, 0.11 + Math.floor(i / 3) * 0.02, 0.01, 0.005] as [number, number, number, number],
+  }));
+  const page = (textractData: unknown) => ({
+    pageNumber: 2, rawText: "", csiCodes: [DOORS], textractData: textractData as never,
+    pageIntelligence: { textRegions: [{ id: "r1", type: "schedule-table", bbox: [0.1, 0.1, 0.1, 0.1], confidence: 0.9, wordCount: 30 }] },
+  });
+  const tables = { name: "tables", modelName: "yolo_medium", confidence: 0.85, minX: 0.1, minY: 0.1, maxX: 0.2, maxY: 0.2 };
+
+  it("persists regionsV2 beside the legacy keys without touching classifiedTables", () => {
+    spy.classifyTables.mockReturnValue([{ id: "legacy", category: "material-schedule" }]);
+    const { updated, pageChanged } = enrichPageAfterYolo(page({ words }), [tables], opts([]));
+    expect(pageChanged).toBe(true);
+    const v2 = updated.regionsV2 as { version: string; regions: Array<{ kind: string; className: string }> };
+    expect(v2.version).toBe("rc-v2/0.1");
+    expect(v2.regions).toEqual([expect.objectContaining({ kind: "table", className: "door schedule" })]);
+    // classifiedTables is whatever the legacy classifier returned — v2 never replaces it
+    expect(updated.classifiedTables).toBeUndefined(); // no inference fired ⇒ the legacy reclassifier did not run
+    expect(spy.classifyTables).not.toHaveBeenCalled();
+  });
+
+  it("an unchanged record is not rewritten; a missing textractData still yields a (wordless) record", () => {
+    // a yolo_text-only page: no anchors ⇒ an empty regionsV2 record + fixed-fallback zones are the ONLY
+    // writes (the legacy composite/heatmap/ensemble steps flag a change whenever they emit anything).
+    const textOnly = [{ ...tables, name: "text_box", modelName: "yolo_text" }];
+    const first = enrichPageAfterYolo(page({ words }), textOnly, opts([]));
+    expect(first.pageChanged).toBe(true);
+    expect(first.updated.regionsV2).toMatchObject({ version: "rc-v2/0.1", regions: [] });
+    const second = enrichPageAfterYolo({ ...page({ words }), pageIntelligence: first.updated }, textOnly, opts([]));
+    expect(second.pageChanged).toBe(false);
+    expect(second.updated.regionsV2).toBe(first.updated.regionsV2);
+    const bare = enrichPageAfterYolo(page(null), [tables], opts([])).updated.regionsV2 as { regions: Array<{ className: string; signals: { words: number } }> };
+    expect(bare.regions[0]).toMatchObject({ className: "unclassified", signals: { words: 0 } });
+  });
+
+  it("[T5 fix LOW 3] a stored record whose jsonb keys came back in another order is still 'unchanged'", () => {
+    const first = enrichPageAfterYolo(page({ words }), [tables], opts([]));
+    // Postgres reorders jsonb object keys: simulate a round trip by reversing every object's key order
+    const reorder = (v: unknown): unknown => Array.isArray(v) ? v.map(reorder)
+      : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).reverse().map((k) => [k, reorder((v as Record<string, unknown>)[k])])) : v;
+    const stored = reorder({ ...page({ words }).pageIntelligence, regionsV2: first.updated.regionsV2, pageZones: first.updated.pageZones });
+    expect(JSON.stringify(stored)).not.toBe(JSON.stringify({ ...page({ words }).pageIntelligence, regionsV2: first.updated.regionsV2, pageZones: first.updated.pageZones }));
+    const second = enrichPageAfterYolo({ ...page({ words }), pageIntelligence: stored }, [tables], opts([]));
+    expect(second.updated.regionsV2).toBe((stored as Record<string, unknown>).regionsV2); // the spread, untouched
+    expect(second.updated.pageZones).toBe((stored as Record<string, unknown>).pageZones);
+    expect(stableStringify({ b: [{ d: 1, c: 2 }], a: null })).toBe('{"a":null,"b":[{"c":2,"d":1}]}');
   });
 });
 

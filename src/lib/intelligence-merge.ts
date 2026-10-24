@@ -37,6 +37,9 @@ export const REPROCESS_COMPUTED_KEYS = [
   // [evidence T4 2026-10-24] compact evidence summary (src/lib/evidence): written by upload
   // processing, the post-YOLO enrichment, the intelligence reprocess and the evidence scope.
   "evidence",
+  // [regions v2 2026-10-24] shadow detector-first region classifier (src/lib/region-classifier-v2),
+  // written beside the legacy keys by the same two writers; absent on pages without YOLO detections.
+  "regionsV2",
 ] as const;
 
 /**

@@ -14,6 +14,7 @@ import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones } from "@/lib/page-zones";
 import { buildEvidenceSummary, sameEvidence } from "@/lib/evidence";
+import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -52,8 +53,8 @@ export interface PostYoloPage {
   pageIntelligence: unknown;
   /** `pages.csiCodes` — the page's CSI codes. NOT pageIntelligence (it has no csiCodes key). */
   csiCodes: CsiCode[] | null;
-  /** [evidence T4] `pages.textractData`; absent/null → the evidence summary is left as it was. */
-  textractData?: TextractPageData | null;
+  /** `pages.textractData` `words` + `tables` for the shadow region classifier v2 and the evidence summary [T4] (optional; `lines` unused; null → evidence left as it was). */
+  textractData?: Pick<TextractPageData, "words" | "tables"> | null;
 }
 
 export interface PostYoloOptions {
@@ -62,6 +63,18 @@ export interface PostYoloOptions {
   ensembleEnabled: boolean;
   ensembleConfig?: Partial<EnsembleConfig>;
 }
+
+/** JSON with object keys sorted at every depth: Postgres reorders jsonb keys, so a stored record
+ *  and a freshly computed one never match as plain `JSON.stringify` strings (T5 fix, LOW 3). */
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+const sameJson = (a: unknown, b: unknown): boolean => stableStringify(a) === stableStringify(b);
 
 /** → the page's next pageIntelligence (a spread of the existing one) and whether it changed. */
 export function enrichPageAfterYolo(
@@ -74,9 +87,9 @@ export function enrichPageAfterYolo(
   let pageChanged = false;
   const csiCodes = page.csiCodes ?? [];
   // [zones T2] detector zones (src/lib/page-zones.ts): yolo_medium only, fixed-zone fallback
-  // otherwise; written only when they differ so an unchanged page is not rewritten.
+  // otherwise; written only when they differ (key order aside) so an unchanged page is not rewritten.
   const zones = computePageZones(yoloDets);
-  if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
+  if (!sameJson(zones, existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
   // [evidence T4] fused OCR × YOLO evidence summary (src/lib/evidence), same zones; skipped without OCR.
   // Guarded like the composite classifier below: a throw here must not drop the page's other enrichment.
   try {
@@ -84,6 +97,17 @@ export function enrichPageAfterYolo(
     if (evidence && !sameEvidence(evidence, existing.evidence)) { updated.evidence = evidence; pageChanged = true; }
   } catch (err) {
     logger.error(`[yolo-post-enrichment] Evidence summary FAILED for page ${page.pageNumber}:`, err);
+  }
+  // [regions v2 2026-10-24] SHADOW: detector-first region classifier (src/lib/region-classifier-v2).
+  // Persisted as `regionsV2` beside the legacy keys; nothing reads it yet and `classifiedTables`
+  // below is unchanged. Written only when it differs, like the zones.
+  try {
+    const regionsV2 = classifyRegionsV2({
+      pageNumber: page.pageNumber, detections: yoloDets, zones, textractData: page.textractData, csiCodes,
+    });
+    if (!sameJson(regionsV2, existing.regionsV2)) { updated.regionsV2 = regionsV2; pageChanged = true; }
+  } catch (err) {
+    logger.error(`[YOLO-LOAD] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
   }
 
   // Existing: re-run heuristic engine with YOLO data
