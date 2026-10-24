@@ -10,6 +10,12 @@
 // the convention the thumbnails scope already relies on); the manifest takes the default
 // cache-control because a re-tile with other levels changes it.
 //
+// Memory (T9 fix round): the python cutter holds the decoded raster (~340 MB for a 113 MP RGB
+// sheet). processing.ts runs one page per `pageConcurrency` slot — up to 32 on the default task —
+// so the cut step is gated by ONE process-wide semaphore (TILES_CUT_CONCURRENCY, default 2 → at
+// most ~700 MB of cutters at once), independent of the page concurrency. The plan, the tempdir
+// write and the S3 uploads are not gated; only the python process is.
+//
 // tilePage THROWS on any failure (the reprocess stage counts it); tilePageSafely logs ONE warning
 // and returns null — the upload pipeline must never fail a page over its tiles.
 
@@ -22,7 +28,8 @@ import { cutTilesWithPython, type CutTile, type TileCutter } from "./cut";
 import {
   pngDimensions,
   tileKey,
-  tilesLevelPrefix,
+  tileRelPath,
+  tilesLevelRelPrefix,
   tilesManifestKey,
   TILES_RECORD_VERSION,
   type TilesManifest,
@@ -42,11 +49,50 @@ export interface TilePageInput {
 
 export type TileUploader = (key: string, body: Buffer, contentType: string, cacheControl?: string) => Promise<void>;
 
+/** A counting semaphore: `run` waits for a slot, runs `fn`, releases the slot even when `fn` throws. */
+export class Semaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(readonly size: number) {
+    if (!Number.isInteger(size) || size < 1) throw new Error(`Semaphore size must be a positive integer, got ${size}`);
+  }
+  /** Slots in use right now (for tests and log lines). */
+  get inFlight(): number {
+    return this.active;
+  }
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.size) await new Promise<void>((resolve) => this.waiters.push(resolve));
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      this.waiters.shift()?.();
+    }
+  }
+}
+
+export const DEFAULT_TILE_CUT_CONCURRENCY = 2;
+const MAX_TILE_CUT_CONCURRENCY = 8;
+
+/** TILES_CUT_CONCURRENCY → 1..8; anything unparseable is the default. */
+export function tileCutConcurrency(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.TILES_CUT_CONCURRENCY;
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return DEFAULT_TILE_CUT_CONCURRENCY;
+  const n = Number(raw.trim());
+  return n < 1 ? DEFAULT_TILE_CUT_CONCURRENCY : Math.min(n, MAX_TILE_CUT_CONCURRENCY);
+}
+
+/** The one process-wide gate on python cutters (processing.ts pages + a concurrent Reprocess run share it). */
+export const cutGate = new Semaphore(tileCutConcurrency());
+
 export interface TilePageDeps {
   cut?: TileCutter;
   upload?: TileUploader;
   /** Parallel S3 PUTs per page (the page loop above is already concurrent). */
   uploadConcurrency?: number;
+  /** The python-process gate; defaults to the process-wide cutGate. */
+  gate?: Semaphore;
   now?: () => Date;
 }
 
@@ -69,6 +115,7 @@ async function forEachLimited<T>(items: readonly T[], limit: number, fn: (item: 
 export async function tilePage(input: TilePageInput, deps: TilePageDeps = {}): Promise<TilesRecord> {
   const cut = deps.cut ?? cutTilesWithPython;
   const upload = deps.upload ?? uploadToS3;
+  const gate = deps.gate ?? cutGate;
   const levels = input.levels ?? DEFAULT_TILES_SETTING.levels;
   const overlap = input.overlap ?? DEFAULT_TILES_SETTING.overlap;
   const { dataUrl, pageNumber } = input;
@@ -87,11 +134,10 @@ export async function tilePage(input: TilePageInput, deps: TilePageDeps = {}): P
       stride: level.stride,
       rows: level.rows,
       cols: level.cols,
-      prefix: tilesLevelPrefix(dataUrl, level.size, pageNumber),
+      prefix: tilesLevelRelPrefix(level.size, pageNumber),
       tiles: level.tiles.map((t) => {
-        const key = tileKey(dataUrl, level.size, pageNumber, t.row, t.col);
-        cutTiles.push({ name: tileName(level.size, t.row, t.col), x: t.x, y: t.y, w: t.w, h: t.h, key });
-        return { ...t, key };
+        cutTiles.push({ name: tileName(level.size, t.row, t.col), x: t.x, y: t.y, w: t.w, h: t.h, key: tileKey(dataUrl, level.size, pageNumber, t.row, t.col) });
+        return { ...t, path: tileRelPath(level.size, pageNumber, t.row, t.col) };
       }),
     })),
     tiledAt: (deps.now ?? (() => new Date()))().toISOString(),
@@ -102,7 +148,7 @@ export async function tilePage(input: TilePageInput, deps: TilePageDeps = {}): P
     const pngPath = join(tempDir, "page.png");
     const outDir = join(tempDir, "out");
     await writeFile(pngPath, input.png);
-    await cut(pngPath, outDir, cutTiles);
+    await gate.run(() => cut(pngPath, outDir, cutTiles));
     await forEachLimited(cutTiles, deps.uploadConcurrency ?? DEFAULT_UPLOAD_CONCURRENCY, async (tile) => {
       await upload(tile.key, await readFile(join(outDir, tile.name)), "image/png", IMMUTABLE);
     });
@@ -110,12 +156,10 @@ export async function tilePage(input: TilePageInput, deps: TilePageDeps = {}): P
     await rm(tempDir, { recursive: true, force: true });
   }
 
-  const manifestKey = tilesManifestKey(dataUrl, pageNumber);
-  await upload(manifestKey, Buffer.from(JSON.stringify(manifest)), "application/json");
+  await upload(tilesManifestKey(dataUrl, pageNumber), Buffer.from(JSON.stringify(manifest)), "application/json");
 
   return {
     v: TILES_RECORD_VERSION,
-    manifestKey,
     width,
     height,
     overlap,

@@ -158,11 +158,16 @@ const listYoloOutputKeys = (dataUrl: string) =>
 const listTileKeys = (dataUrl: string) =>
   listPageKeys(tilesRootPrefix(dataUrl), (key) => (key.endsWith(".png") ? tileKeyPageNumber(key) : null));
 
-/** The page's listed tile PNGs + its manifest — the manifest only when tiles exist or the row points at one. */
+/**
+ * The page's listed tile PNGs + its manifest — the manifest only when tiles exist or the row points
+ * at one. The manifest key is ALWAYS derived from (dataUrl, page): the record is member-writable
+ * jsonb and must never name an object to delete (T9 fix round — a forged key could have reached
+ * another tenant's prefix).
+ */
 function tileObjectKeys(dataUrl: string, page: number, record: TilesRecord | undefined, tileKeys: Map<number, string[]> | null): string[] {
   const listed = tileKeys?.get(page) ?? [];
   if (listed.length === 0 && !record) return [];
-  return [...listed, record?.manifestKey ?? tilesManifestKey(dataUrl, page)];
+  return [...listed, tilesManifestKey(dataUrl, page)];
 }
 
 /** S3 listings taken outside the lock (null = listing failed; see keysOrWarn). */

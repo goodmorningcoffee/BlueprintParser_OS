@@ -189,7 +189,7 @@ describe("ReprocessTab", () => {
     expect(box("purge-yolo").disabled).toBe(true);
     expect(box("dedupe").disabled).toBe(true);
     expect(box("evidence").disabled).toBe(true);
-    expect(box("tiles").disabled).toBe(false); // [tiles T9 2026-10-24] a real stage now, not a placeholder; any admin may run it
+    expect(box("tiles").disabled).toBe(true); // [tiles T9 fix round] a real stage, but root-only: python on the web task
     expect(within(stage("tiles")).queryByText("coming soon")).toBeNull();
     expect(box("re-ocr").disabled).toBe(true);
     expect(within(stage("evidence")).getByText("coming soon")).toBeTruthy();

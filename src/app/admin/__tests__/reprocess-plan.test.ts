@@ -92,16 +92,21 @@ describe("resolvePlan", () => {
     expect(resolvePlan(set<StageId>("dedupe", "purge-yolo"), new Set(), true).confirmPhrase).toBe("DELETE");
   });
 
-  it("[tiles T9] tile images runs alone, pulls nothing, is pulled by nothing, and becomes one scope=tiles request", () => {
-    const alone = resolvePlan(set<StageId>("tiles"), new Set(), false);
+  it("[tiles T9] tile images is ROOT-ONLY (python on the web task), runs alone, pulls nothing, is pulled by nothing, and becomes one scope=tiles request", () => {
+    expect(stageDef("tiles").rootOnly).toBe(true); // [T9 fix round] was open to every admin in 1882a1b
+    const alone = resolvePlan(set<StageId>("tiles"), new Set(), true);
     expect(ids(alone.run)).toEqual(["tiles"]);
     expect(alone.confirmPhrase).toBeNull();
-    expect(ids(resolvePlan(set<StageId>("thumbnails", "intelligence", "tiles"), new Set(), false).run)).toEqual(["thumbnails", "intelligence", "tiles"]);
-    expect(ids(resolvePlan(set<StageId>("thumbnails", "full"), new Set(), false).run)).not.toContain("tiles");
+    expect(ids(resolvePlan(set<StageId>("thumbnails", "intelligence", "tiles"), new Set(), true).run)).toEqual(["thumbnails", "intelligence", "tiles"]);
+    expect(ids(resolvePlan(set<StageId>("thumbnails", "full"), new Set(), true).run)).not.toContain("tiles");
     expect(buildRunSteps(alone, { projectIds: ["p1"], companyId: 3 }, { clearPageCsi: false })).toEqual([
       { kind: "reprocess", id: "tiles", label: "Tile images", scope: "tiles", projectIds: ["p1"] },
     ]);
-    expect([...presetTicks("tiles", false)]).toEqual(["tiles"]);
+    expect([...presetTicks("tiles", true)]).toEqual(["tiles"]);
+    // non-root: the tick is dropped, the preset is empty
+    expect(ids(resolvePlan(set<StageId>("tiles"), new Set(), false).run)).toEqual([]);
+    expect(PRESETS.find((p) => p.id === "tiles")?.rootOnly).toBe(true);
+    expect(presetTicks("tiles", false).size).toBe(0);
   });
 
   it("non-runnable ticks (handoff / placeholder / unavailable) are dropped", () => {

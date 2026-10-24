@@ -392,6 +392,28 @@ describe.skipIf(!dbUp)("hidden duplicates — viewer flags + server-owned mark",
     const [row] = await db.select({ pi: pages.pageIntelligence }).from(pages).where(and(eq(pages.projectId, p.id), eq(pages.pageNumber, 4)));
     expect((row.pi as Record<string, unknown>).classification).toBe("plan");
   });
+
+  it("[tiles T9 fix round] PATCH /api/pages/intelligence can neither set nor clear the server-owned tiles pointer", async () => {
+    const { company, admin, member } = await world();
+    const p = await createProject(company.id, admin.id);
+    await seedRepeated(p.id, 2, 1200);
+    const tiles = { v: 1, width: 10800, height: 7200, overlap: 0.2, levels: [{ size: 3600, rows: 3, cols: 4, tiles: 12 }], tiledAt: "2026-10-24T00:00:00.000Z" };
+    await db.update(pages).set({ pageIntelligence: { tiles, classification: "old" } as never }).where(and(eq(pages.projectId, p.id), eq(pages.pageNumber, 1)));
+    const pi = async (pageNumber: number) =>
+      (await db.select({ pi: pages.pageIntelligence }).from(pages).where(and(eq(pages.projectId, p.id), eq(pages.pageNumber, pageNumber))))[0].pi as Record<string, unknown> | null;
+    asUser(member);
+    const patch = (intelligence: unknown, pageNumber: number) =>
+      intelligencePATCH(makeReq("/api/pages/intelligence", { method: "PATCH", body: { publicId: p.publicId, pageNumber, intelligence } }));
+    // forge: a key under another prefix (the pre-fix delete path trusted it)
+    expect((await patch({ tiles: { ...tiles, manifestKey: "other-company/x/original.pdf" }, classification: "plan" }, 1)).status).toBe(200);
+    expect(await pi(1)).toEqual({ tiles, classification: "plan" });
+    // clear
+    expect((await patch({ tiles: null }, 1)).status).toBe(200);
+    expect((await pi(1))?.tiles).toEqual(tiles);
+    // set on a page that has none
+    expect((await patch({ tiles }, 2)).status).toBe(200);
+    expect((await pi(2))?.tiles).toBeUndefined();
+  });
 });
 
 describe("planHides (pure)", () => {

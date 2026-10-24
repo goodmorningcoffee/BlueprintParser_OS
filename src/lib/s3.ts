@@ -346,9 +346,18 @@ export interface S3PrefixPurgeResult {
 export interface S3PrefixPurgeOptions {
   /** Called once, after listing finds objects but before the first destructive request. */
   onObjectsFound?: () => Promise<void>;
+  /** Wall-clock budget for one attempt (tests); defaults to PROJECT_PURGE_ATTEMPT_DEADLINE_MS. */
+  attemptDeadlineMs?: number;
 }
 
-const PROJECT_PURGE_MAX_LIST_PAGES = 20;
+// One attempt's budget. The page cap was 20 (~20k versions) until the T9 tile pyramid (2026-10-24):
+// tiling adds ~90 objects per page on a versioned bucket, so a ~220-page project (or ~110 pages after
+// one re-tile) blew the cap on its first purge and finished only through outbox retries with
+// exponential backoff. The real invariant is the 15-minute deletion lease (project-asset-deletion.ts
+// DELETION_LEASE_SECONDS) — so the attempt is bounded by wall clock, well inside that lease, and the
+// page cap is now a runaway guard only (500 pages ≈ 500k versions ≈ 5,000 tiled pages).
+export const PROJECT_PURGE_MAX_LIST_PAGES = 500;
+export const PROJECT_PURGE_ATTEMPT_DEADLINE_MS = 10 * 60_000;
 const PROJECT_PURGE_MAX_SWEEPS = 4;
 const PROJECT_PURGE_CALL_TIMEOUT_MS = 30_000;
 
@@ -362,6 +371,8 @@ async function deleteS3PrefixAllVersions(
   let deletedObjects = 0;
   let listPages = 0;
   let objectsAnnounced = false;
+  const deadlineMs = options.attemptDeadlineMs ?? PROJECT_PURGE_ATTEMPT_DEADLINE_MS;
+  const startedAt = Date.now();
   for (let sweep = 0; sweep < PROJECT_PURGE_MAX_SWEEPS; sweep++) {
     let keyMarker: string | undefined;
     let versionIdMarker: string | undefined;
@@ -373,6 +384,13 @@ async function deleteS3PrefixAllVersions(
       if (listPages > PROJECT_PURGE_MAX_LIST_PAGES) {
         throw new Error(
           `S3 version purge exceeded its ${PROJECT_PURGE_MAX_LIST_PAGES}-page attempt budget: ${prefix}`,
+        );
+      }
+      // Checked before every list call after the first, so the attempt always makes progress and
+      // never outlives the lease; the deleted objects stay deleted and the retry resumes the purge.
+      if (listPages > 1 && Date.now() - startedAt >= deadlineMs) {
+        throw new Error(
+          `S3 version purge exceeded its ${Math.round(deadlineMs / 1000)}s attempt deadline after ${deletedObjects} deletions: ${prefix}`,
         );
       }
       const listed = await s3Client.send(

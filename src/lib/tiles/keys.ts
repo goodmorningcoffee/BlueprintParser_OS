@@ -1,14 +1,21 @@
 // [tiles T9 2026-10-24] Where a page's tiles live and how a page row points at them. Pure.
 //
 //   {dataUrl}/tiles/L{size}/page_{NNNN}/r{row}_c{col}.png   one PNG per tile, native 300-DPI pixels
-//   {dataUrl}/pages/page_{NNNN}/tiles.json                  the manifest: every level + rect + key
-//   pageIntelligence.tiles                                   TilesRecord — the manifest pointer + counts
+//   {dataUrl}/pages/page_{NNNN}/tiles.json                  the manifest: every level + rect + path
+//   pageIntelligence.tiles                                   TilesRecord — sizes + counts, NO keys
 //
 // Everything sits under the project's dataUrl, so project deletion (deleteProjectFiles purges
 // `{dataUrl}/`) removes tiles with the rest; page-permanent-delete lists `{dataUrl}/tiles/` for the
-// page's tiles and deletes the manifest key. `tiles` is NOT a REPROCESS_COMPUTED_KEY on purpose: the
+// page's tiles and derives the manifest key. `tiles` is NOT a REPROCESS_COMPUTED_KEY on purpose: the
 // intelligence reprocess rebuilds derived data, but tiles are physical objects that stay valid until
 // the page raster or the tile settings change — the Reprocess "Tile images" stage rewrites them.
+//
+// ⚠ NO S3 KEY IS EVER STORED (T9 fix round, 2026-10-24). pageIntelligence reaches every project
+// member (page window), the admin data export (whose contract is "never emitted: dataUrl and any
+// other S3 key") and bp-export/1 — and a member can PATCH it. So the record holds sizes and counts
+// only, every key is DERIVED from (dataUrl, pageNumber) by the functions below, and the manifest in
+// S3 names its tiles by project-RELATIVE path. A record that still carries a `manifestKey` (written
+// by 1882a1b before this fix) is simply not a TilesRecord any more and is re-tiled on the next run.
 
 import type { TileRect } from "./plan";
 
@@ -17,16 +24,25 @@ export const TILES_RECORD_VERSION = 1;
 
 const pad4 = (n: number) => String(n).padStart(4, "0");
 
+/** Project-relative paths (what the manifest stores; prepend `${dataUrl}/` for the S3 key). */
+export function tilesLevelRelPrefix(size: number, pageNumber: number): string {
+  return `tiles/L${size}/page_${pad4(pageNumber)}/`;
+}
+
+export function tileRelPath(size: number, pageNumber: number, row: number, col: number): string {
+  return `${tilesLevelRelPrefix(size, pageNumber)}r${row}_c${col}.png`;
+}
+
 export function tilesRootPrefix(dataUrl: string): string {
   return `${dataUrl}/tiles/`;
 }
 
 export function tilesLevelPrefix(dataUrl: string, size: number, pageNumber: number): string {
-  return `${tilesRootPrefix(dataUrl)}L${size}/page_${pad4(pageNumber)}/`;
+  return `${dataUrl}/${tilesLevelRelPrefix(size, pageNumber)}`;
 }
 
 export function tileKey(dataUrl: string, size: number, pageNumber: number, row: number, col: number): string {
-  return `${tilesLevelPrefix(dataUrl, size, pageNumber)}r${row}_c${col}.png`;
+  return `${dataUrl}/${tileRelPath(size, pageNumber, row, col)}`;
 }
 
 export function tilesManifestKey(dataUrl: string, pageNumber: number): string {
@@ -44,12 +60,12 @@ export interface TilesManifestLevel {
   stride: number;
   rows: number;
   cols: number;
-  /** S3 prefix of this level's tiles for the page. */
+  /** Project-relative prefix of this level's tiles for the page (`tiles/L3600/page_0007/`). */
   prefix: string;
-  tiles: Array<TileRect & { key: string }>;
+  tiles: Array<TileRect & { path: string }>;
 }
 
-/** Stored at tilesManifestKey(). Self-describing: a consumer needs nothing but this file. */
+/** Stored at tilesManifestKey(). Self-describing relative to the project root: no dataUrl inside. */
 export interface TilesManifest {
   v: typeof TILES_RECORD_VERSION;
   pageNumber: number;
@@ -68,10 +84,9 @@ export interface TilesRecordLevel {
   tiles: number;
 }
 
-/** pageIntelligence.tiles — small on purpose: the rects live in the manifest. */
+/** pageIntelligence.tiles — small on purpose: the rects live in the manifest, the keys are derived. */
 export interface TilesRecord {
   v: typeof TILES_RECORD_VERSION;
-  manifestKey: string;
   width: number;
   height: number;
   overlap: number;
@@ -85,7 +100,7 @@ export function isTilesRecord(value: unknown): value is TilesRecord {
   const r = value as Record<string, unknown>;
   return (
     r.v === TILES_RECORD_VERSION &&
-    typeof r.manifestKey === "string" &&
+    !("manifestKey" in r) && // pre-fix shape (1882a1b) carried an S3 key — not a record any more
     typeof r.width === "number" &&
     typeof r.height === "number" &&
     typeof r.overlap === "number" &&
@@ -106,6 +121,25 @@ export function storedTiles(pageIntelligence: unknown): TilesRecord | undefined 
   if (!pageIntelligence || typeof pageIntelligence !== "object") return undefined;
   const stored = (pageIntelligence as Record<string, unknown>)[TILES_INTELLIGENCE_KEY];
   return isTilesRecord(stored) ? stored : undefined;
+}
+
+/**
+ * Keys of the tiles a re-tile left behind: every level in `previous` that `next` no longer has,
+ * expanded from the stored rows × cols (no listing needed). Levels kept are overwritten in place by
+ * the tiler, so they are not stale. Nothing here can name another project's objects: every key is
+ * built from the caller's (dataUrl, pageNumber), never from the stored record.
+ */
+export function staleTileKeys(dataUrl: string, pageNumber: number, previous: TilesRecord | undefined, next: TilesRecord): string[] {
+  if (!previous) return [];
+  const kept = new Set(next.levels.map((l) => l.size));
+  const keys: string[] = [];
+  for (const level of previous.levels) {
+    if (kept.has(level.size)) continue;
+    for (let row = 0; row < level.rows; row++) {
+      for (let col = 0; col < level.cols; col++) keys.push(tileKey(dataUrl, level.size, pageNumber, row, col));
+    }
+  }
+  return keys;
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

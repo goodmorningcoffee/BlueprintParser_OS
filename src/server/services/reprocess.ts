@@ -451,7 +451,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
       if (scope === "tiles") {
         // [tiles T9 2026-10-24] Loop + per-project guard live in reprocess-tiles.ts (zero line headroom here).
-        await reprocessTilesScope({ projects: allProjects, withReprocessLease, stream: out, levels: (await readTilesSetting()).levels });
+        await reprocessTilesScope({ projects: allProjects, withReprocessLease, stream: out, levels: (await readTilesSetting()).levels, isRootAdmin: session.user.isRootAdmin });
         out.close();
         return;
       }

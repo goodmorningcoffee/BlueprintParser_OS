@@ -357,12 +357,10 @@ describe.skipIf(!dbUp)("admin duplicates — delete hidden pages permanently", (
   it("[tiles T9] a hidden page's tiles and manifest go with it; pages without tiles add no keys; a leftover tile delete says tiles are harmless", async () => {
     const w = await world();
     await createPage(w.p1.id, 1);
-    const tilesRecord = {
-      v: 1, manifestKey: `${w.p1.dataUrl}/pages/page_0002/tiles.json`, width: 10800, height: 7200, overlap: 0.2,
-      levels: [{ size: 3600, rows: 3, cols: 4, tiles: 12 }], tiledAt: AT,
-    };
-    await hiddenPage(w.p1.id, 2, 1, { pageIntelligence: { ...mark(1), tiles: tilesRecord } as never }); // row points at its manifest
-    await hiddenPage(w.p1.id, 3, 1); // no record, but orphan tiles listed → tiles + derived manifest key
+    const tilesRecord = { v: 1, width: 10800, height: 7200, overlap: 0.2, levels: [{ size: 3600, rows: 3, cols: 4, tiles: 12 }], tiledAt: AT };
+    const manifestKey = `${w.p1.dataUrl}/pages/page_0002/tiles.json`; // DERIVED from (dataUrl, page) — the record holds no key (T9 fix round)
+    await hiddenPage(w.p1.id, 2, 1, { pageIntelligence: { ...mark(1), tiles: tilesRecord } as never }); // row says the page is tiled
+    await hiddenPage(w.p1.id, 3, 1, { pageIntelligence: { ...mark(1), tiles: { ...tilesRecord, manifestKey: `${w.p2.dataUrl}/original.pdf` } } as never }); // forged pre-fix record (not a TilesRecord) + orphan tiles listed → tiles + DERIVED manifest key
     await hiddenPage(w.p1.id, 4, 1); // nothing: no extra keys
     const tile = (size: number, page: string, rc: string) => `${w.p1.dataUrl}/tiles/L${size}/page_${page}/${rc}.png`;
     s3Mocks.listed.keys = [
@@ -379,7 +377,7 @@ describe.skipIf(!dbUp)("admin duplicates — delete hidden pages permanently", (
     expect(dryPlan.pages.map((p) => p.s3Keys)).toEqual([
       [
         `${w.p1.dataUrl}/pages/page_0002.png`, `${w.p1.dataUrl}/thumbnails/page_0002.png`,
-        tile(3600, "0002", "r0_c0"), tile(3600, "0002", "r0_c1"), tile(1280, "0002", "r0_c0"), tilesRecord.manifestKey,
+        tile(3600, "0002", "r0_c0"), tile(3600, "0002", "r0_c1"), tile(1280, "0002", "r0_c0"), manifestKey,
       ],
       [
         `${w.p1.dataUrl}/pages/page_0003.png`, `${w.p1.dataUrl}/thumbnails/page_0003.png`,
@@ -392,6 +390,9 @@ describe.skipIf(!dbUp)("admin duplicates — delete hidden pages permanently", (
     expect(await pageNumbers(w.p1.id)).toEqual([1]);
     expect(s3Mocks.deleteFromS3.mock.calls.map(([k]) => k).sort()).toEqual([...dryPlan.pages.flatMap((p) => p.s3Keys)].sort());
     expect(s3Mocks.deleteFromS3.mock.calls.map(([k]) => k)).not.toContain(tile(3600, "0001", "r0_c0"));
+    // [T9 fix round] a member-forged record naming another tenant's object never reaches the delete list
+    const forged = `${w.p2.dataUrl}/original.pdf`;
+    expect(JSON.stringify(dryPlan)).not.toContain(forged);
 
     // a failed tile / manifest delete is a warning that names them harmless
     const w2 = await world();

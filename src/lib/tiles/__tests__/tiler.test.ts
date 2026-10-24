@@ -14,8 +14,8 @@ vi.mock("@/lib/s3", async (importOriginal) => ({ ...(await importOriginal<object
 
 import { logger } from "@/lib/logger";
 import type { CutTile } from "../cut";
-import { isTilesRecord, pngDimensions, storedTiles, tileKey, tileKeyPageNumber, tilesManifestKey, type TilesManifest } from "../keys";
-import { tilePage, tilePageSafely, tileName } from "../tiler";
+import { isTilesRecord, pngDimensions, staleTileKeys, storedTiles, tileKey, tileKeyPageNumber, tilesManifestKey, type TilesManifest, type TilesRecord } from "../keys";
+import { Semaphore, tileCutConcurrency, tilePage, tilePageSafely, tileName } from "../tiler";
 
 /** A PNG with only the header: signature + IHDR for width x height (what pngDimensions reads). */
 function pngHeader(width: number, height: number): Buffer {
@@ -65,8 +65,22 @@ describe("pngDimensions + keys", () => {
     expect(tileKeyPageNumber("acme/abc/yolo-output/m/page_0007.json")).toBeNull();
     expect(storedTiles(null)).toBeUndefined();
     expect(storedTiles({ tiles: { v: 1 } })).toBeUndefined();
-    expect(isTilesRecord({ v: 1, manifestKey: "k", width: 1, height: 1, overlap: 0.2, tiledAt: "t", levels: [{ size: 1280, rows: 1, cols: 1, tiles: 1 }] })).toBe(true);
-    expect(isTilesRecord({ v: 2, manifestKey: "k", width: 1, height: 1, overlap: 0.2, tiledAt: "t", levels: [] })).toBe(false);
+    expect(isTilesRecord({ v: 1, width: 1, height: 1, overlap: 0.2, tiledAt: "t", levels: [{ size: 1280, rows: 1, cols: 1, tiles: 1 }] })).toBe(true);
+    expect(isTilesRecord({ v: 2, width: 1, height: 1, overlap: 0.2, tiledAt: "t", levels: [] })).toBe(false);
+    // [T9 fix round] the pre-fix shape carried an S3 key in member-writable jsonb — never a record again
+    expect(isTilesRecord({ v: 1, manifestKey: "other/tenant/original.pdf", width: 1, height: 1, overlap: 0.2, tiledAt: "t", levels: [] })).toBe(false);
+  });
+
+  it("[T9 fix round] staleTileKeys names only the dropped levels' tiles, from the caller's dataUrl and the previous rows × cols", () => {
+    const rec = (levels: Array<[number, number, number]>): TilesRecord => ({
+      v: 1, width: 1, height: 1, overlap: 0.2, tiledAt: "t", levels: levels.map(([size, rows, cols]) => ({ size, rows, cols, tiles: rows * cols })),
+    });
+    expect(staleTileKeys("acme/abc", 7, undefined, rec([[3600, 1, 1]]))).toEqual([]);
+    expect(staleTileKeys("acme/abc", 7, rec([[3600, 3, 4], [1280, 8, 10]]), rec([[3600, 3, 4], [1280, 8, 10]]))).toEqual([]);
+    expect(staleTileKeys("acme/abc", 7, rec([[1824, 1, 2], [1280, 3, 3]]), rec([[3600, 1, 1], [1280, 1, 1]]))).toEqual([
+      "acme/abc/tiles/L1824/page_0007/r0_c0.png",
+      "acme/abc/tiles/L1824/page_0007/r0_c1.png",
+    ]);
   });
 });
 
@@ -105,15 +119,16 @@ describe("tilePage", () => {
     expect(manifestCache).toBeUndefined();
     const manifest = JSON.parse(manifestBody.toString()) as TilesManifest;
     expect(manifest).toMatchObject({ v: 1, pageNumber: 3, width: 3000, height: 2000, overlap: 0.2, tiledAt: now.toISOString() });
+    // [T9 fix round] project-relative paths only: the manifest never names the dataUrl
     expect(manifest.levels.map((l) => [l.size, l.stride, l.rows, l.cols, l.prefix, l.tiles.length])).toEqual([
-      [2000, 1600, 1, 2, "acme/abc/tiles/L2000/page_0003/", 2],
-      [1280, 1024, 2, 3, "acme/abc/tiles/L1280/page_0003/", 6],
+      [2000, 1600, 1, 2, "tiles/L2000/page_0003/", 2],
+      [1280, 1024, 2, 3, "tiles/L1280/page_0003/", 6],
     ]);
-    expect(manifest.levels[1].tiles[5]).toEqual({ row: 1, col: 2, x: 1720, y: 720, w: 1280, h: 1280, key: "acme/abc/tiles/L1280/page_0003/r1_c2.png" });
+    expect(manifest.levels[1].tiles[5]).toEqual({ row: 1, col: 2, x: 1720, y: 720, w: 1280, h: 1280, path: "tiles/L1280/page_0003/r1_c2.png" });
+    expect(manifestBody.toString()).not.toContain("acme/abc");
 
     expect(record).toEqual({
       v: 1,
-      manifestKey: "acme/abc/pages/page_0003/tiles.json",
       width: 3000,
       height: 2000,
       overlap: 0.2,
@@ -121,6 +136,7 @@ describe("tilePage", () => {
       tiledAt: now.toISOString(),
     });
     expect(isTilesRecord(record)).toBe(true);
+    expect(JSON.stringify(record)).not.toContain("acme/abc"); // no S3 key in the row (page window, data export, bp-export/1 all emit it)
     expect(storedTiles({ tiles: record, parsedRegions: [] })).toEqual(record);
     expect(existsSync(seen.outDir!)).toBe(false); // tempdir removed
   });
@@ -161,5 +177,40 @@ describe("tilePage", () => {
     const ok = await tilePageSafely({ dataUrl: "a/b", pageNumber: 4, png: pngHeader(100, 100), levels: [64] }, { cut: fakeCut });
     expect(ok?.levels).toEqual([{ size: 64, rows: 2, cols: 2, tiles: 4 }]);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("[T9 fix round] the python cutter is gated by one semaphore, independent of how many pages tile at once", async () => {
+    const gate = new Semaphore(2);
+    let inFlight = 0;
+    let peak = 0;
+    const slowCut = async (pngPath: string, outDir: string, tiles: readonly CutTile[]) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 15));
+      inFlight--;
+      await fakeCut(pngPath, outDir, tiles);
+    };
+    const pagesAtOnce = [1, 2, 3, 4, 5, 6];
+    const records = await Promise.all(
+      pagesAtOnce.map((n) => tilePage({ dataUrl: "a/b", pageNumber: n, png: pngHeader(100, 100), levels: [64] }, { cut: slowCut, gate })),
+    );
+    expect(records).toHaveLength(6);
+    expect(peak).toBe(2);
+    expect(gate.inFlight).toBe(0);
+    expect(s3Mocks.uploadToS3).toHaveBeenCalledTimes(6 * 5); // 4 tiles + manifest per page: nothing else is gated
+
+    // a throwing cutter releases its slot
+    const failing = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    await expect(tilePage({ dataUrl: "a/b", pageNumber: 9, png: pngHeader(100, 100), levels: [64] }, { cut: failing, gate })).rejects.toThrow(/boom/);
+    expect(gate.inFlight).toBe(0);
+
+    expect(tileCutConcurrency({})).toBe(2);
+    expect(tileCutConcurrency({ TILES_CUT_CONCURRENCY: "4" })).toBe(4);
+    expect(tileCutConcurrency({ TILES_CUT_CONCURRENCY: "99" })).toBe(8);
+    expect(tileCutConcurrency({ TILES_CUT_CONCURRENCY: "0" })).toBe(2);
+    expect(tileCutConcurrency({ TILES_CUT_CONCURRENCY: "lots" })).toBe(2);
+    expect(() => new Semaphore(0)).toThrow(/positive integer/);
   });
 });

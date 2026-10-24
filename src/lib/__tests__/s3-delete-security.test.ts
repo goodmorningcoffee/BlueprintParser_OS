@@ -141,6 +141,51 @@ describe("version-aware project S3 deletion", () => {
     });
   });
 
+  it("[tiles T9 fix round] a tiled project's purge is not cut off at 20 list pages; the attempt is bounded by wall clock instead", async () => {
+    // 40 truncated pages of 1000 versions each (~40 tiled pages' worth of ~90 objects + versions) → one attempt
+    const PAGES = 40;
+    let page = 0;
+    sendMock.mockImplementation(async (command) => {
+      if (command.kind === "list-versions") {
+        page++;
+        if (page > PAGES) return { Versions: [], DeleteMarkers: [], IsTruncated: false };
+        return {
+          Versions: Array.from({ length: 1000 }, (_, i) => ({ Key: `company/project/tiles/L3600/page_${page}/r${i}_c0.png`, VersionId: `v${i}` })),
+          IsTruncated: page < PAGES,
+          NextKeyMarker: `company/project/tiles/L3600/page_${page}/r999_c0.png`,
+          NextVersionIdMarker: "v999",
+        };
+      }
+      return { Errors: [] };
+    });
+
+    const result = await deleteProjectFiles("company/project");
+    expect(result.deletedObjects).toBe(PAGES * 1000);
+    expect(result.emptySweepObserved).toBe(true);
+  });
+
+  it("[tiles T9 fix round] the attempt deadline stops the purge between list pages, after progress, with a retryable error", async () => {
+    let page = 0;
+    sendMock.mockImplementation(async (command) => {
+      if (command.kind === "list-versions") {
+        page++; // markers progress, so only the deadline can stop this listing
+        return {
+          Versions: [{ Key: `company/project/a${page}`, VersionId: "v1" }],
+          IsTruncated: true,
+          NextKeyMarker: `company/project/a${page}`,
+          NextVersionIdMarker: "v1",
+        };
+      }
+      return { Errors: [] };
+    });
+
+    await expect(deleteProjectFiles("company/project", { attemptDeadlineMs: 0 })).rejects.toThrow(
+      /exceeded its 0s attempt deadline after 1 deletions/,
+    );
+    // the first page was listed AND deleted before the deadline check; the second list never happened
+    expect(sendMock.mock.calls.map(([c]) => c.kind)).toEqual(["list-versions", "delete-objects"]);
+  });
+
   it("fails closed when a truncated version listing omits its continuation marker", async () => {
     sendMock.mockResolvedValueOnce({
       Versions: [],
