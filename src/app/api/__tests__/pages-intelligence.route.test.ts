@@ -54,6 +54,20 @@ describe.skipIf(!dbUp)("PATCH /api/pages/intelligence", () => {
     expect(await piOf(page.id)).toEqual({ existing: 1, foo: "bar" });
   });
 
+  it("[evidence T4] evidence is server-owned: a patch can neither forge, replace nor clear it", async () => {
+    const { user, project } = await createWorld();
+    const stored = { v: 1, computedAt: "2026-10-24T00:00:00.000Z", holes: [], tables: [] };
+    const page = await createPage(project.id, 1, { pageIntelligence: { evidence: stored } as any });
+    const bare = await createPage(project.id, 2, { pageIntelligence: { other: 1 } as any });
+    asUser(user);
+    const forged = { v: 1, computedAt: "x", counts: {}, holes: [], tables: [{ bbox: "x" }] };
+    expect((await req({ publicId: project.publicId, pageNumber: 1, intelligence: { evidence: forged, foo: 1 } })).status).toBe(200);
+    expect((await req({ publicId: project.publicId, pageNumber: 1, intelligence: { evidence: null } })).status).toBe(200);
+    expect(await piOf(page.id)).toEqual({ evidence: stored, foo: 1 });
+    expect((await req({ publicId: project.publicId, pageNumber: 2, intelligence: { evidence: forged } })).status).toBe(200);
+    expect(await piOf(bare.id)).toEqual({ other: 1 });
+  });
+
   it("dual-accept: numeric projectId (dbId) fallback works", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);

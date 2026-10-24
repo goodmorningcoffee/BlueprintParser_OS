@@ -156,6 +156,7 @@ export async function previewLlmContext(rawBody: Record<string, unknown>, sessio
           if (s.header.includes("CLASSIFICATION")) id = "page-classification";
           else if (s.header.includes("CROSS-REFERENCES")) id = "cross-refs";
           else if (s.header.includes("NOTE BLOCKS")) id = "note-blocks";
+          else if (s.header.includes("PAGE EVIDENCE")) id = "page-evidence"; // no registry row: always on, as in chat
           else if (s.header.includes("DETECTED REGIONS")) id = "detected-regions";
           sections.push({ ...s, id });
         }

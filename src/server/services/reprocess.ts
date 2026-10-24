@@ -28,6 +28,7 @@ import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { computePageZones, storedPageZones, type PageZoneDetection, type PageZones } from "@/lib/page-zones";
+import { buildEvidenceSummary } from "@/lib/evidence";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
@@ -58,6 +59,7 @@ import { logger } from "@/lib/logger";
 import { assertProjectWritable } from "@/server/api/access";
 // [fix 2026-10-21] shape-parse (compute-then-swap + Lambda fan-out) and the shared NDJSON/debug stream.
 import { reprocessProjectShapeParse } from "./reprocess-shape-parse";
+import { reprocessEvidenceScope } from "./reprocess-evidence";
 import { createReprocessStream } from "./reprocess-stream";
 import { loadProjectYoloCsiCodes, withYoloCsiCodes } from "./reprocess-yolo-csi";
 import {
@@ -447,6 +449,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         return;
       }
 
+      if (scope === "evidence") {
+        // [evidence T4] evidence summary only — loop + per-project guard live in reprocess-evidence.ts.
+        send({ type: "done", ...(await reprocessEvidenceScope({ projects: allProjects, withLease: withReprocessLease, stream: out })) });
+        out.close();
+        return;
+      }
+
       if (scope === "intelligence") {
         // Intelligence-only reprocess: re-run page analysis + project analysis on existing data.
         // Pulls existing YOLO annotations from the `annotations` table (no SageMaker
@@ -538,6 +547,9 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               const pageYolo = yoloByPage.get(page.pageNumber);
               const pageZones = pageYolo?.length ? computePageZones(pageYolo) : undefined;
               if (pageZones) pageIntelligence.pageZones = pageZones;
+              // [evidence T4] fused OCR × YOLO evidence summary (src/lib/evidence; a computed key).
+              const evidence = buildEvidenceSummary({ textract: textractData, detections: pageYolo, zones: pageZones });
+              if (evidence) pageIntelligence.evidence = evidence;
 
               // Text region classification (with optional debug bundle to S3)
               const debugWrites: Promise<void>[] = [];

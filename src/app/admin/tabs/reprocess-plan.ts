@@ -10,7 +10,7 @@
 // the UI. An auto-included stage can be unticked; the plan then carries a "leaves … stale" warning.
 // Ordering is fixed by the DAG, never by click order.
 
-export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse";
+export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence";
 
 export type StageId =
   | "thumbnails"
@@ -63,6 +63,15 @@ export interface StageDef {
   overlap?: string;
   pulls: StagePull[];
 }
+
+// [evidence T4] Evidence fuses OCR with the YOLO rows, so any stage that rewrites YOLO rows pulls it.
+// Intelligence rebuilds evidence too; run after it, the Evidence stage finds every page unchanged and
+// writes nothing — it matters when Intelligence is unticked.
+const PULL_EVIDENCE: StagePull = {
+  stage: "evidence",
+  reason: "Evidence added because it fuses OCR with the YOLO rows this changes",
+  stale: "pages.page_intelligence.evidence",
+};
 
 const PULL_FULL_THEN_INTEL = (because: string): StagePull[] => [
   { stage: "full", reason: `CSI + text annotations added because ${because}`, stale: "pages.csi_codes / text_annotations" },
@@ -132,7 +141,7 @@ export const STAGES: readonly StageDef[] = [
     rootOnly: true,
     destructive: true,
     overlap: "Supersedes AI Models › Purge All, which only ever purged your own company.",
-    pulls: PULL_FULL_THEN_INTEL("deleted YOLO rows leave YOLO-class CSI codes and YOLO-derived intelligence stale"),
+    pulls: [...PULL_FULL_THEN_INTEL("deleted YOLO rows leave YOLO-class CSI codes and YOLO-derived intelligence stale"), PULL_EVIDENCE],
   },
   {
     id: "dedupe",
@@ -145,6 +154,7 @@ export const STAGES: readonly StageDef[] = [
     destructive: true,
     pulls: [
       { stage: "intelligence", reason: "Intelligence added because page intelligence is derived from the annotation rows", stale: "pages.page_intelligence" },
+      PULL_EVIDENCE,
     ],
   },
   {
@@ -183,9 +193,11 @@ export const STAGES: readonly StageDef[] = [
   {
     id: "evidence",
     label: "Evidence",
-    writes: "evidence ensembles per page (planned)",
-    cost: "—",
-    kind: "placeholder",
+    writes: "pages.page_intelligence.evidence only — OCR × YOLO text fusion (unread-text holes), Textract table grids, per-model counts",
+    cost: "DB + local CPU; reads stored OCR and YOLO rows (no SageMaker, no Textract); unchanged pages are not rewritten",
+    kind: "reprocess",
+    scope: "evidence",
+    overlap: "Needs OCR (pages without it are skipped) and YOLO load for the text-detector holes. YOLO load and Intelligence also rebuild it — on its own this is the fast backfill.",
     pulls: [],
   },
   {

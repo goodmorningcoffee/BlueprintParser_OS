@@ -34,6 +34,9 @@ export const REPROCESS_COMPUTED_KEYS = [
   // [zones T2 2026-10-24] detector zones (src/lib/page-zones.ts), written by the post-YOLO
   // enrichment and the intelligence reprocess; absent on pages without YOLO detections.
   "pageZones",
+  // [evidence T4 2026-10-24] compact evidence summary (src/lib/evidence): written by upload
+  // processing, the post-YOLO enrichment, the intelligence reprocess and the evidence scope.
+  "evidence",
 ] as const;
 
 /**

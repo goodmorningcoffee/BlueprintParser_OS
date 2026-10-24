@@ -101,3 +101,44 @@ describe("enrichPageAfterYolo — heatmap layout classes are model-scoped", () =
     expect(updated.yoloHeatmap).toBeUndefined();
   });
 });
+
+describe("enrichPageAfterYolo — [evidence T4] evidence summary", () => {
+  const textractData = {
+    lines: [],
+    words: [{ text: "DOOR", confidence: 90, bbox: [0.1, 0.1, 0.04, 0.01] as [number, number, number, number] }],
+  };
+  const dets = [
+    det("text_box", "yolo_text", 0.09, 0.095, 0.9), // holds the word centre (0.12, 0.105)
+    det("text_box", "yolo_text", 0.6, 0.6, 0.6), // no word → hole
+    det("title_block", "yolo_medium", 0.8, 0.8, 0.9),
+  ];
+  const page = (pageIntelligence: unknown = {}) => ({ pageNumber: 1, rawText: "", pageIntelligence, csiCodes: [], textractData });
+
+  it("writes the fused summary with the same zones as pageZones", () => {
+    const { updated, pageChanged } = enrichPageAfterYolo(page(), dets, opts([]));
+    expect(pageChanged).toBe(true);
+    const ev = updated.evidence as { counts: Record<string, unknown>; zonesSource: string; holes: unknown[] };
+    expect(ev.counts).toMatchObject({ ocrWords: 1, both: 1, holes: 1, yoloTextBoxes: 2 });
+    expect(ev.zonesSource).toBe((updated.pageZones as { source: string }).source);
+  });
+
+  it("an unchanged summary is kept as stored (computedAt not churned)", () => {
+    const first = enrichPageAfterYolo(page(), dets, opts([])).updated;
+    const stored = { ...first, evidence: { ...(first.evidence as object), computedAt: "2026-01-01T00:00:00.000Z" } };
+    const again = enrichPageAfterYolo(page(stored), dets, opts([])).updated;
+    expect((again.evidence as { computedAt: string }).computedAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("a throwing evidence build is contained: evidence kept, the rest of the page still enriched", () => {
+    const broken = { lines: [], words: [{ text: "X", confidence: 90, bbox: null }] } as never;
+    const { updated, pageChanged } = enrichPageAfterYolo({ ...page({ evidence: "kept" }), textractData: broken }, dets, opts([]));
+    expect(updated.evidence).toBe("kept");
+    expect(pageChanged).toBe(true);
+    expect(updated.pageZones).toBeDefined();
+  });
+
+  it("no textractData → evidence left as it was", () => {
+    const { updated } = enrichPageAfterYolo({ ...page({ evidence: "kept" }), textractData: null }, dets, opts([]));
+    expect(updated.evidence).toBe("kept");
+  });
+});

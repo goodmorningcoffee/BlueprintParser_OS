@@ -290,10 +290,14 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const pi = row.pageIntelligence as Record<string, any>;
     // exact key-set pin: with this fixture the yolo sub-branch writes EXACTLY these
     // four computed keys alongside the two carried user keys (observed 2026-07-08;
-    // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections)
+    // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections;
+    // +evidence [evidence T4 2026-10-24] — written whenever the page has OCR)
     expect(Object.keys(pi).sort()).toEqual([
-      "classifiedRegions", "ensembleRegions", "pageZones", "parsedRegions", "someFutureKey", "yoloHeatmap",
+      "classifiedRegions", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "someFutureKey", "yoloHeatmap",
     ]);
+    // evidence: the yolo_medium text_box is a layout box, never a yolo_text word box → no holes
+    expect(pi.evidence).toMatchObject({ v: 1, zonesSource: "fixed-fallback", channels: { yoloText: false, layout: true } });
+    expect(pi.evidence.counts.holes).toBe(0);
     // G3 carry still holds WITH the yolo path active
     expect(pi.parsedRegions).toEqual(userParsedRegions);
     expect(pi.someFutureKey).toEqual({ keep: "me" });

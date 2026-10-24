@@ -48,6 +48,7 @@ function s4PageIntelligenceFixture() {
     yoloHeatmap: { confidentRegions: [{ id: "server-heatmap" }] },
     csiSpatialMap: { summary: "server spatial context", zones: [] },
     autoTableProposals: [{ id: "legacy-proposal" }],
+    evidence: { v: 1, holes: [{ bbox: [0.1, 0.1, 0.2, 0.2], conf: 0.5, zone: "notes" }] },
     ensembleRegions: [{ id: "ensemble-1", category: "door-schedule", tableProbability: 0.94 }],
     parsedRegions: [{ id: "user-region", type: "schedule", data: { rows: [{ Mark: "D1" }] } }],
     rejectedTextRegionIds: ["user-rejected-1"],
@@ -57,7 +58,7 @@ function s4PageIntelligenceFixture() {
 }
 
 describe("serializePageWindowIntelligence", () => {
-  it("clones without mutation, removes only the four response keys, and preserves runtime shapes", () => {
+  it("clones without mutation, removes only the response-only keys, and preserves runtime shapes", () => {
     const source = Object.freeze(s4PageIntelligenceFixture());
     const serialized = serializePageWindowIntelligence(source) as Record<string, unknown>;
 
@@ -66,6 +67,7 @@ describe("serializePageWindowIntelligence", () => {
     expect(serialized).not.toHaveProperty("yoloHeatmap");
     expect(serialized).not.toHaveProperty("csiSpatialMap");
     expect(serialized).not.toHaveProperty("autoTableProposals");
+    expect(serialized).not.toHaveProperty("evidence"); // [evidence T4] server-only (up to 500 holes/page)
     expect(serialized).toMatchObject({
       ensembleRegions: source.ensembleRegions,
       parsedRegions: source.parsedRegions,
