@@ -28,6 +28,9 @@ export interface TagRulesOptions {
   glueGap: number;
   /** Gap, in word heights, within which a neighbour makes a short tag part of a sentence. */
   aloneGap: number;
+  /** Type 3 fallback: a floating word binds to a tag shape only within this many shape long-sides
+   *  (matchers/ensemble-shapes.ts FLOATING_BIND_REACH). null = v1 semantics, any distance. */
+  floatingBindReach: number | null;
 }
 
 export const DEFAULT_TAG_RULES: TagRulesOptions = {
@@ -36,6 +39,7 @@ export const DEFAULT_TAG_RULES: TagRulesOptions = {
   tokenBoundary: true,
   glueGap: 0.3,
   aloneGap: 1.5,
+  floatingBindReach: null,
 };
 
 export type TagRuleVerdict = "ok" | "dimension" | "partial_token" | "in_sentence" | "detail_callout";

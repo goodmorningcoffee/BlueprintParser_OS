@@ -120,3 +120,26 @@ describe("Type 4 with the ensemble", () => {
     expect(v2.map((m) => [m.annotationId, m.confidence])).toEqual([[annotations[0].id, 0.9]]);
   });
 });
+
+describe("Type 3 floating fallback — binding reach is an owner option", () => {
+  // A floating "D-101" word far from the only circle on the page (the circle holds "D-7").
+  const annotations = [yoloAnn("circle", 1, 0.1, 0.1, BIG, 0.9)];
+  const textractData = { 1: textract([word("D-7", 0.105, 0.105), word("D-101", 0.8, 0.8)]) };
+  const item: CountableItem = { itemType: "yolo-with-inner-text", label: "D-101", yoloClass: "circle", text: "D-101" };
+
+  it("default (floatingBindReach null) keeps v1 semantics: the far word binds to the nearest circle", () => {
+    const v1 = findOccurrences(item, v1Context(annotations, textractData));
+    const v2 = findOccurrences(item, v2Context(annotations, textractData));
+    expect(v1.map((m) => [m.annotationId, m.confidence])).toEqual([[annotations[0].id, 0.8]]);
+    expect(v2.map((m) => [m.annotationId, m.confidence])).toEqual([[annotations[0].id, 0.8]]);
+  });
+
+  it("with a reach cap the far word does not bind, and a word within reach of an empty circle does", () => {
+    const capped = { ...v2Context(annotations, textractData), rules: { ...DEFAULT_TAG_RULES, floatingBindReach: 1.5 } };
+    expect(findOccurrences(item, capped)).toHaveLength(0);
+    const empty = [yoloAnn("circle", 1, 0.5, 0.5, BIG, 0.9)];
+    const near = { 1: textract([word("D-101", 0.5 + BIG + 0.002, 0.5 + BIG / 2)]) };
+    const hits = findOccurrences(item, { ...v2Context(empty, near), rules: { ...DEFAULT_TAG_RULES, floatingBindReach: 1.5 } });
+    expect(hits.map((m) => [m.annotationId, m.confidence])).toEqual([[empty[0].id, 0.8]]);
+  });
+});

@@ -29,6 +29,7 @@ export type ShapeTextSource =
 export type ShapeKind =
   | "tag"              // a tag bubble candidate (the default)
   | "detail_callout"   // number-in-circle over a sheet number: "3 over R-3" (owner rule 1)
+  | "detail_title"     // number-in-circle beside a view name + scale ("12  ADMIN SUITE  1/4" = 1'-0"", owner rule 1)
   | "legend_key";      // inside a detected legend / table: a symbol-legend key, not a plan tag
 
 /** One yolo_primitive detection as the yolo / reprocess loops already hold it. */
@@ -110,7 +111,7 @@ export interface ShapeEnsembleDrops {
 export interface ShapeEnsembleResult {
   shapes: EnsembleShape[];
   drops: ShapeEnsembleDrops;
-  counts: { yolo: number; classical: number; both: number; callouts: number; legendKeys: number };
+  counts: { yolo: number; classical: number; both: number; callouts: number; detailTitles: number; legendKeys: number };
 }
 
 /** Compact projection persisted as `pageIntelligence.shapes`. Short keys: a page can hold hundreds. */
@@ -137,8 +138,8 @@ export interface CompactShape {
   t: string | null;
   /** text source: c crop | x textract | a agree | d disagree */
   ts: "c" | "x" | "a" | "d" | null;
-  /** kind: t tag | d detail_callout | l legend_key */
-  kd: "t" | "d" | "l";
+  /** kind: t tag | d detail_callout | v detail_title | l legend_key */
+  kd: "t" | "d" | "v" | "l";
   z: ZoneKind;
   /** callout sheet (detail_callout only) */
   sh?: string;

@@ -13,7 +13,7 @@
  */
 
 import type { YoloTagInstance } from "@/types";
-import { isSheetNumber, sheetKey, type EnsembleShape } from "@/lib/shape-ensemble";
+import { isSheetNumber, isTagLike as isTagLikeText, sheetKey, type EnsembleShape } from "@/lib/shape-ensemble";
 import { isFuzzyCandidate } from "./fuzzy";
 
 /** A raw hit that remembers the shape it came from (scored as `shapeContainBoost`). */
@@ -78,4 +78,63 @@ export function findEnsembleShapeMatches(
     }
   }
   return out;
+}
+
+/** Floating words bind to a shape only within this many shape long-sides of its centre
+ *  (research/shapes §4: "nearest word within one box width" lifts Textract binding 56 → 64 %;
+ *  beyond that a word belongs to something else). */
+export const FLOATING_BIND_REACH = 1.5;
+
+/**
+ * v2's Type 3 fallback: bind free-floating word hits that passed the text rules to the nearest
+ * ensemble tag shape of `cls` on the same page, each shape used once.
+ *
+ * `reach === null` keeps v1's binding semantics (nearest shape at ANY distance, whatever it holds)
+ * — the default, because no owner rule covers it. With a reach (in shape long-sides, see
+ * FLOATING_BIND_REACH) a word binds only to a shape within reach that does not already hold a
+ * different tag-like text. MEASURED (scripts/tag-mapping-v2-measure.ts, 12 sets): ~85 % of v1's
+ * Type 3 count is floating words bound at arbitrary distance; the owner decides whether to cap it.
+ */
+export function bindFloatingToShapes(
+  floatingHits: readonly YoloTagInstance[],
+  shapeHits: readonly ShapeBackedInstance[],
+  normalizedTag: string,
+  cls: string,
+  shapesByPage: Record<number, readonly EnsembleShape[] | undefined>,
+  reach: number | null = null,
+  boundConfidence: { exact: number; fuzzy: number } = { exact: 0.8, fuzzy: 0.7 },
+): ShapeBackedInstance[] {
+  const merged: ShapeBackedInstance[] = [...shapeHits];
+  const used = new Set<string>();
+  for (const h of shapeHits) used.add(`${h.pageNumber}:${h.bbox.join(",")}`);
+  for (const f of floatingHits) {
+    const fx = (f.bbox[0] + f.bbox[2]) / 2;
+    const fy = (f.bbox[1] + f.bbox[3]) / 2;
+    // Already counted by a direct shape hit whose box holds the word → skip.
+    if (shapeHits.some((s) => s.pageNumber === f.pageNumber && fx >= s.bbox[0] && fx <= s.bbox[2] && fy >= s.bbox[1] && fy <= s.bbox[3])) continue;
+    let best: EnsembleShape | null = null;
+    let bestD = Infinity;
+    for (const s of shapesByPage[f.pageNumber] ?? []) {
+      if (s.cls !== cls || s.kind !== "tag") continue;
+      if (reach != null && s.text && s.text !== normalizedTag && isTagLikeText(s.text)) continue; // holds another tag
+      const key = `${f.pageNumber}:${s.bbox.join(",")}`;
+      if (used.has(key)) continue;
+      const cx = (s.bbox[0] + s.bbox[2]) / 2;
+      const cy = (s.bbox[1] + s.bbox[3]) / 2;
+      const d = Math.hypot(cx - fx, cy - fy);
+      if (reach != null && d > reach * Math.max(s.longSide, f.bbox[2] - f.bbox[0])) continue;
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    if (!best) continue;
+    used.add(`${f.pageNumber}:${best.bbox.join(",")}`);
+    merged.push({
+      pageNumber: f.pageNumber,
+      annotationId: ensembleAnnotationId(best),
+      bbox: [best.bbox[0], best.bbox[1], best.bbox[2], best.bbox[3]],
+      confidence: f.confidence < 1.0 ? boundConfidence.fuzzy : boundConfidence.exact,
+      shapeConfidence: best.confidence,
+      shapeSource: best.source,
+    });
+  }
+  return merged;
 }

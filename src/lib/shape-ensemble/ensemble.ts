@@ -114,12 +114,56 @@ export function mergeHalfBubbles(classical: readonly EnsembleClassicalInput[]): 
   return out;
 }
 
-function textractInside(words: readonly TextractWord[] | null | undefined, bbox: BboxMinMax): string | null {
+/**
+ * Textract words centred inside `bbox` that this shape OWNS: a word whose centre is nearer another
+ * candidate shape's centre belongs to that shape (two touching bubbles "A1" "D1" — a wide YOLO box
+ * must not read its neighbour's glyphs; seen in the corpus spot check).
+ */
+function textractInside(words: readonly TextractWord[] | null | undefined, bbox: BboxMinMax, allBoxes: readonly BboxMinMax[]): string | null {
   if (!words || words.length === 0) return null;
   const inside = findWordsInBbox(words as TextractWord[], bbox);
   if (inside.length === 0) return null;
-  const text = normalizeTagText(sortWordsReadingOrder(inside).map((w) => w.text).join(" "));
+  const cx = (bbox[0] + bbox[2]) / 2;
+  const cy = (bbox[1] + bbox[3]) / 2;
+  const owned = inside.filter((w) => {
+    const wx = w.bbox[0] + w.bbox[2] / 2;
+    const wy = w.bbox[1] + w.bbox[3] / 2;
+    const mine = Math.hypot(wx - cx, wy - cy);
+    // A competitor is a DISTINCT shape (IoU < matchIou): a matched pair or a half-bubble inside a
+    // divided bubble is the same shape and never steals its own glyphs.
+    return !allBoxes.some((o) => o !== bbox && bboxIoU(o, bbox) < 0.3 && bboxContainsPoint(o, { x: wx, y: wy })
+      && Math.hypot(wx - (o[0] + o[2]) / 2, wy - (o[1] + o[3]) / 2) < mine);
+  });
+  if (owned.length === 0) return null;
+  const text = normalizeTagText(sortWordsReadingOrder(owned).map((w) => w.text).join(" "));
   return text || null;
+}
+
+const SCALE_WORD = /^SCALE:?$|^N\.?T\.?S\.?$|^\d+\/\d+"?$|^\d+'-?\d*"?$|^=$/;
+
+/**
+ * Owner rule 1: a detail TITLE is a number in a bubble with the view name and a scale to its right
+ * ("12  ADMIN SUITE  1/4" = 1'-0""). Detected when the bubble holds a bare number and a scale
+ * fragment (SCALE, N.T.S., 1/4", =, 1'-0") sits within 8 long-sides to the right, on the bubble's
+ * line or the line below it.
+ */
+export function isDetailTitle(text: string | null, bbox: BboxMinMax, words: readonly TextractWord[] | null | undefined): boolean {
+  if (!text || !/^[A-Z]?\d{1,3}$/.test(text) || !words || words.length === 0) return false;
+  const long = Math.max(bbox[2] - bbox[0], bbox[3] - bbox[1]);
+  const x0 = bbox[2];
+  const x1 = bbox[2] + 8 * long;
+  const y0 = bbox[1] - 0.5 * long;
+  const y1 = bbox[3] + 1.5 * long;
+  let scale = 0;
+  for (const w of words) {
+    const wx = w.bbox[0] + w.bbox[2] / 2;
+    const wy = w.bbox[1] + w.bbox[3] / 2;
+    if (wx < x0 || wx > x1 || wy < y0 || wy > y1) continue;
+    const t = w.text.toUpperCase().replace(/[“”″]/g, '"').replace(/[‘’′]/g, "'");
+    if (t === "SCALE" || t === "SCALE:" || /^N\.?T\.?S\.?$/.test(t)) return true;
+    if (SCALE_WORD.test(t)) scale++;
+  }
+  return scale >= 2;
 }
 
 /** Rule 4: crop first, Textract validates. Returns the chosen text and where it came from. */
@@ -154,7 +198,7 @@ export function detailCalloutOf(text: string | null, cls: string, sheets: Readon
 
 export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsembleConfig = DEFAULT_SHAPE_ENSEMBLE_CONFIG): ShapeEnsembleResult {
   const drops: ShapeEnsembleDrops = { inTable: 0, inTitleBlock: 0, classicalLarge: 0, classicalTextless: 0, yoloTextless: 0, notTagClass: 0 };
-  const counts = { yolo: 0, classical: 0, both: 0, callouts: 0, legendKeys: 0 };
+  const counts = { yolo: 0, classical: 0, both: 0, callouts: 0, detailTitles: 0, legendKeys: 0 };
   const sheets = sheetKeySet(input.sheetNumbers ?? undefined);
   const tableBoxes = input.tableBoxes ?? [];
   const yolo: EnsembleYoloInput[] = [];
@@ -182,6 +226,8 @@ export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsem
     classicalMatch.set(p.c, p.y);
   }
 
+  const allBoxes: BboxMinMax[] = [...yolo.map((d) => d.bbox), ...classical.map((c) => c.bbox)];
+
   const zoneFor = (bbox: BboxMinMax): ZoneKind => {
     const centre = bboxCenterMinMax(bbox);
     if (tableBoxes.some((t) => bboxContainsPoint(t, centre))) return "table";
@@ -196,7 +242,9 @@ export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsem
     let kind: ShapeKind = zone === "legend" ? "legend_key" : "tag";
     const callout = kind === "tag" ? detailCalloutOf(shape.text, shape.cls, sheets) : null;
     if (callout) kind = "detail_callout";
+    else if (kind === "tag" && isDetailTitle(shape.text, shape.bbox, input.words)) kind = "detail_title";
     if (kind === "detail_callout") counts.callouts++;
+    if (kind === "detail_title") counts.detailTitles++;
     if (kind === "legend_key") counts.legendKeys++;
     counts[shape.source]++;
     shapes.push({ ...shape, zone, kind, longSide: longSideOf(shape.bbox), ...(callout ? { callout } : {}) });
@@ -205,7 +253,7 @@ export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsem
   for (let y = 0; y < yolo.length; y++) {
     const d = yolo[y];
     const c = yoloMatch.has(y) ? classical[yoloMatch.get(y)!] : null;
-    const textractText = textractInside(input.words, d.bbox);
+    const textractText = textractInside(input.words, d.bbox, allBoxes);
     const fused = fuseInnerText(c?.text ?? null, textractText);
     let confidence = c ? Math.max(d.confidence, config.bothConfidence) : d.confidence;
     if (fused.agree) confidence = Math.min(1, confidence + config.agreeBonus);
@@ -226,7 +274,7 @@ export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsem
     if (classicalMatch.has(ci)) continue;
     const c = classical[ci];
     if (longSideOf(c.bbox) >= config.classicalMaxLongSide) { drops.classicalLarge++; continue; }
-    const textractText = textractInside(input.words, c.bbox);
+    const textractText = textractInside(input.words, c.bbox, allBoxes);
     const fused = fuseInnerText(c.text, textractText);
     if (!fused.text) { drops.classicalTextless++; continue; }
     const confidence = fused.agree ? config.classicalOnlyConfidence + config.agreeBonus : config.classicalOnlyConfidence;

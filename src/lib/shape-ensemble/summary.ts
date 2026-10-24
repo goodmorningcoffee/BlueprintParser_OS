@@ -14,8 +14,8 @@ const SOURCE: Record<ShapeSource, CompactShape["s"]> = { yolo: "y", classical: "
 const SOURCE_BACK: Record<CompactShape["s"], ShapeSource> = { y: "yolo", c: "classical", b: "both" };
 const TEXT_SOURCE: Record<ShapeTextSource, NonNullable<CompactShape["ts"]>> = { crop: "c", textract: "x", "both-agree": "a", "both-disagree": "d" };
 const TEXT_SOURCE_BACK: Record<NonNullable<CompactShape["ts"]>, ShapeTextSource> = { c: "crop", x: "textract", a: "both-agree", d: "both-disagree" };
-const KIND: Record<ShapeKind, CompactShape["kd"]> = { tag: "t", detail_callout: "d", legend_key: "l" };
-const KIND_BACK: Record<CompactShape["kd"], ShapeKind> = { t: "tag", d: "detail_callout", l: "legend_key" };
+const KIND: Record<ShapeKind, CompactShape["kd"]> = { tag: "t", detail_callout: "d", detail_title: "v", legend_key: "l" };
+const KIND_BACK: Record<CompactShape["kd"], ShapeKind> = { t: "tag", d: "detail_callout", v: "detail_title", l: "legend_key" };
 
 const round = (n: number, places: number): number => Math.round(n * 10 ** places) / 10 ** places;
 

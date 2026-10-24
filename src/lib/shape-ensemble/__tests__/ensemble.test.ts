@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { TextractWord } from "@/types";
 import {
-  buildShapeEnsemble, DEFAULT_SHAPE_ENSEMBLE_CONFIG, fuseInnerText, detailCalloutOf, mergeHalfBubbles,
+  buildShapeEnsemble, DEFAULT_SHAPE_ENSEMBLE_CONFIG, fuseInnerText, detailCalloutOf, isDetailTitle, mergeHalfBubbles,
   summarizeShapeEnsemble, storedShapeEnsemble, sameShapeEnsemble, fromCompactShape, SHAPE_SUMMARY_CAP,
   type EnsembleYoloInput, type EnsembleClassicalInput,
 } from "@/lib/shape-ensemble";
@@ -164,5 +164,44 @@ describe("half bubbles and the persisted summary", () => {
     expect(widened).toMatchObject({ cls: "circle", source: "both", text: "T-01", textSource: "crop", kind: "tag" });
     expect(a.truncated).toBe(0);
     expect(SHAPE_SUMMARY_CAP).toBeGreaterThan(100);
+  });
+});
+
+describe("spot-check fixes (corpus 2026-10-24)", () => {
+  it("a bare-number bubble with a view name and a scale to its right is a detail TITLE, not a tag", () => {
+    const r = buildShapeEnsemble({
+      yolo: [yolo("circle", 0.1, 0.5, BIG, 0.9)],
+      classical: [],
+      words: [word("12", 0.105, 0.505), word("ADMIN", 0.13, 0.503, 0.02), word("SUITE", 0.152, 0.503, 0.02), word('1/4"', 0.13, 0.512, 0.01), word("=", 0.142, 0.512, 0.003), word("1'-0\"", 0.147, 0.512, 0.012)],
+    });
+    expect(r.shapes[0].kind).toBe("detail_title");
+    expect(r.counts.detailTitles).toBe(1);
+    expect(isDetailTitle("12", [0.1, 0.5, 0.1 + BIG, 0.5 + BIG], [word("SCALE:", 0.13, 0.512)])).toBe(true);
+    expect(isDetailTitle("D-12", [0.1, 0.5, 0.1 + BIG, 0.5 + BIG], [word("SCALE:", 0.13, 0.512)])).toBe(false);
+    expect(isDetailTitle("12", [0.1, 0.5, 0.1 + BIG, 0.5 + BIG], [word("ADMIN", 0.13, 0.503)])).toBe(false);
+  });
+
+  it("a word nearer a neighbouring bubble's centre belongs to that bubble (A1 beside D1)", () => {
+    const r = buildShapeEnsemble({
+      yolo: [yolo("circle", 0.1, 0.1, BIG, 0.9, 1), yolo("circle", 0.1 + BIG * 0.9, 0.1, BIG, 0.9, 2)],
+      classical: [],
+      // "A1" sits in the overlap of the two boxes, nearer the first centre; "D1" nearer the second.
+      words: [word("A1", 0.1 + BIG * 0.45, 0.1 + BIG * 0.5), word("D1", 0.1 + BIG * 1.35, 0.1 + BIG * 0.5)],
+    });
+    const byId = new Map(r.shapes.map((s) => [s.yoloAnnotationId, s.text]));
+    expect(byId.get(1)).toBe("A1");
+    expect(byId.get(2)).toBe("D1");
+  });
+});
+
+describe("word ownership never steals from the same bubble", () => {
+  it("a classical half-circle inside a YOLO divided bubble does not take the bubble's words", () => {
+    const r = buildShapeEnsemble({
+      yolo: [yolo("circle", 0.3, 0.3, BIG, 0.9, 1)],
+      classical: [{ shape: "half-circle", text: "", bbox: [0.3, 0.3, 0.3 + BIG, 0.3 + BIG / 2] }],
+      words: [word("3", 0.305, 0.301), word("R-3", 0.303, 0.309)],
+      sheetNumbers: ["R-3"],
+    });
+    expect(r.shapes.map((s) => [s.source, s.kind, s.text])).toEqual([["both", "detail_callout", "3 R-3"]]);
   });
 });

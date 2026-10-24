@@ -1,6 +1,6 @@
 // [tag-mapping v2 / shape ensemble 2026-10-24] Public surface — see ./ensemble.ts.
 export * from "./types";
-export { buildShapeEnsemble, DEFAULT_SHAPE_ENSEMBLE_CONFIG, TAG_SHAPE_CLASSES, fuseInnerText, detailCalloutOf, mergeHalfBubbles, type ShapeEnsembleInput } from "./ensemble";
+export { buildShapeEnsemble, DEFAULT_SHAPE_ENSEMBLE_CONFIG, TAG_SHAPE_CLASSES, fuseInnerText, detailCalloutOf, isDetailTitle, mergeHalfBubbles, type ShapeEnsembleInput } from "./ensemble";
 export {
   SHAPE_SUMMARY_CAP, summarizeShapeEnsemble, toCompactShape, fromCompactShape,
   isShapeEnsembleSummary, storedShapeEnsemble, sameShapeEnsemble, stableStringify,

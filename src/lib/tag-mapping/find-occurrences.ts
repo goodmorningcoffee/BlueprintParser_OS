@@ -14,11 +14,12 @@
  * src/lib/shape-ensemble) the shape half of Types 1/3/4 reads TAG-CLASS shapes from it — YOLO,
  * classical and both, with the ensemble's fused inner text — and the ensemble's confidence enters
  * the score as `shapeContainBoost`. Free-floating hits (Type 2, and the fallbacks of 3 and 5) pass
- * the owner's text rules when `rules` is set. Object classes (doors, outlets, …) and every context
- * without those fields keep v1's behaviour verbatim.
+ * the owner's text rules when `rules` is set, and Type 3's floating fallback binds a word only to a
+ * tag shape within reach (matchers/ensemble-shapes.ts). Object classes (doors, outlets, …) and every
+ * context without those fields keep v1's behaviour verbatim.
  */
 
-import type { YoloTagInstance, ClassifiedPageRegions, ClientAnnotation } from "@/types";
+import type { YoloTagInstance, ClassifiedPageRegions } from "@/types";
 import { bboxCenterMinMax } from "@/lib/bbox-utils";
 import { TAG_SHAPE_CLASSES, isSheetNumber, sheetKeySet } from "@/lib/shape-ensemble";
 import type {
@@ -42,7 +43,7 @@ import {
 import { findObjectWithTagShapeMatches } from "./matchers/type4-yolo-object-with-tag-shape";
 import { findObjectWithNearbyTextMatches } from "./matchers/type5-yolo-object-with-nearby-text";
 import { bindToNearestTargets } from "./matchers/fuzzy";
-import { ensembleAnnotationId, findEnsembleShapeMatches, type ShapeBackedInstance } from "./matchers/ensemble-shapes";
+import { bindFloatingToShapes, findEnsembleShapeMatches, type ShapeBackedInstance } from "./matchers/ensemble-shapes";
 
 /** v2 applies to a shape class when the ensemble is present and the class is a tag-bubble class. */
 function ensembleFor(ctx: MatchContext, cls: string | undefined): boolean {
@@ -56,20 +57,6 @@ function rulesFor(ctx: MatchContext, normalizedTag: string): TextRulesContext | 
     shapesByPage: ctx.shapes,
     tagIsSheetNumber: isSheetNumber(normalizedTag, sheetKeySet(ctx.sheetNumbers)),
   };
-}
-
-/** Ensemble tag shapes as nearest-binding targets (the shape of `bindToNearestTargets`'s input). */
-function ensembleTargets(ctx: MatchContext, cls: string, scope: "page" | "project", pageNumber: number | undefined): ClientAnnotation[] {
-  const out: ClientAnnotation[] = [];
-  for (const [pn, shapes] of Object.entries(ctx.shapes ?? {})) {
-    const pageNum = Number(pn);
-    if (scope === "page" && pageNumber != null && pageNum !== pageNumber) continue;
-    for (const s of shapes ?? []) {
-      if (s.cls !== cls || s.kind !== "tag") continue;
-      out.push({ id: ensembleAnnotationId(s), pageNumber: pageNum, name: s.cls, bbox: [s.bbox[0], s.bbox[1], s.bbox[2], s.bbox[3]], note: null, source: "yolo" });
-    }
-  }
-  return out;
 }
 
 /**
@@ -106,9 +93,7 @@ function dispatchMatcher(item: CountableItem, ctx: MatchContext): YoloTagInstanc
       );
       if (ensembleFor(ctx, item.yoloClass)) {
         const shapeHits = findEnsembleShapeMatches(normalizedTag, item.yoloClass, scopeLegacy, pageNumber, ctx.shapes!, sheets);
-        return bindToNearestTargets(
-          floatingHits, shapeHits, ensembleTargets(ctx, item.yoloClass, scopeLegacy, pageNumber), { exact: 0.8, fuzzy: 0.7 },
-        );
+        return bindFloatingToShapes(floatingHits, shapeHits, normalizedTag, item.yoloClass, ctx.shapes!, ctx.rules?.floatingBindReach ?? null);
       }
       const yoloHits = findYoloMatches(
         normalizedTag, item.yoloClass, item.yoloModel,
