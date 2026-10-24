@@ -6,7 +6,9 @@
  *           sentence ("A" in "provide A solution");
  *   rule 3  dimensions are never tags (8'-0", 12");
  *   rule 4  keep full strings: "1" must not match the "1" that Textract split off "D-1";
- *   rule 1  a detail callout ("3 over R-3") is a detail title, never tag "3".
+ *   rule 1  a detail callout ("3 over R-3") or a detail title ("3  ADMIN SUITE  SCALE: 1/4"") is
+ *           never tag "3"; a legend key is not a plan tag. Only a TAG-kind shape vouches for the
+ *           word inside it.
  *
  * `verdictForWordHit` returns why a hit is rejected (or "ok"); the matcher drops rejected hits
  * before scoring, so v1's `dropCounts` keys (a frozen 5-key object) are untouched. The legacy
@@ -42,7 +44,7 @@ export const DEFAULT_TAG_RULES: TagRulesOptions = {
   floatingBindReach: null,
 };
 
-export type TagRuleVerdict = "ok" | "dimension" | "partial_token" | "in_sentence" | "detail_callout";
+export type TagRuleVerdict = "ok" | "dimension" | "partial_token" | "in_sentence" | "detail_callout" | "detail_title" | "legend_key";
 
 export interface WordHitContext {
   rules: TagRulesOptions;
@@ -69,15 +71,18 @@ function gapInHeights(w: TextractWord, other: TextractWord): number {
   return gap / h;
 }
 
-/** The shape (if any) whose bbox holds the centre of the hit's first and last word. */
-export function enclosingShape(words: readonly TextractWord[], shapes: readonly EnsembleShape[] | undefined): EnsembleShape | null {
-  if (!shapes || shapes.length === 0 || words.length === 0) return null;
+/** Every shape whose bbox holds the centre of the hit's first and last word (a tag bubble drawn
+ *  inside a detail-title bubble's box yields both; the non-tag kind decides). */
+export function enclosingShapes(words: readonly TextractWord[], shapes: readonly EnsembleShape[] | undefined): EnsembleShape[] {
+  if (!shapes || shapes.length === 0 || words.length === 0) return [];
   const first = bboxCenterLTWH(words[0].bbox);
   const last = bboxCenterLTWH(words[words.length - 1].bbox);
-  for (const s of shapes) {
-    if (bboxContainsPoint(s.bbox, first) && bboxContainsPoint(s.bbox, last)) return s;
-  }
-  return null;
+  return shapes.filter((s) => bboxContainsPoint(s.bbox, first) && bboxContainsPoint(s.bbox, last));
+}
+
+/** The first shape (if any) whose bbox holds the centre of the hit's first and last word. */
+export function enclosingShape(words: readonly TextractWord[], shapes: readonly EnsembleShape[] | undefined): EnsembleShape | null {
+  return enclosingShapes(words, shapes)[0] ?? null;
 }
 
 /**
@@ -95,9 +100,14 @@ export function verdictForWordHit(
   const hitText = hitWords.map((w) => w.text).join(" ");
   if (rules.rejectDimensions && looksLikeDimension(hitText)) return "dimension";
 
-  const shape = enclosingShape(hitWords, ctx.shapes);
-  if (shape?.kind === "detail_callout" && !ctx.tagIsSheetNumber) return "detail_callout";
-  if (shape) return "ok"; // inside a tag shape: rules 2 and 4 are satisfied by the bubble itself
+  // Owner rule 1 (fix round 1): only a TAG shape vouches for the word inside it. A detail callout,
+  // a detail title ("3" beside "ADMIN SUITE SCALE: 1/4"") or a legend key is never tag "3" —
+  // except a callout when the tag searched is its sheet number ("R-3" resolves to the callouts).
+  const enclosing = enclosingShapes(hitWords, ctx.shapes);
+  if (enclosing.some((s) => s.kind === "detail_callout") && !ctx.tagIsSheetNumber) return "detail_callout";
+  if (enclosing.some((s) => s.kind === "detail_title")) return "detail_title";
+  if (enclosing.some((s) => s.kind === "legend_key")) return "legend_key";
+  if (enclosing.length > 0) return "ok"; // inside a tag shape: rules 2 and 4 are satisfied by the bubble itself
 
   const first = hitWords[0];
   const last = hitWords[hitWords.length - 1];

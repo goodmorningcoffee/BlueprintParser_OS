@@ -35,8 +35,22 @@ export function shapeTextConfidence(s: EnsembleShape, normalizedTag: string): nu
 }
 
 /**
+ * v1's model filter (fix round 1): with an item `yoloModel`, a YOLO-backed shape counts only when
+ * that model produced it — another model's "circle" is neither counted nor double-counted. A
+ * classical-only shape has no model and stays: it is the ensemble's recall arm, not a model output.
+ */
+export function shapeFromModel(s: EnsembleShape, yoloModel: string | undefined): boolean {
+  return !yoloModel || s.source === "classical" || s.modelName === yoloModel;
+}
+
+/** A point inside a NON-tag shape (detail title / callout / legend key) belongs to that shape. */
+function insideNonTagShape(x: number, y: number, shapes: readonly EnsembleShape[]): boolean {
+  return shapes.some((s) => s.kind !== "tag" && x >= s.bbox[0] && x <= s.bbox[2] && y >= s.bbox[1] && y <= s.bbox[3]);
+}
+
+/**
  * `normalizedTag` null → every tag shape of `cls` (Type 1). Otherwise the shapes of `cls` whose
- * inner text matches (Types 3 / 4).
+ * inner text matches (Types 3 / 4). `yoloModel` → `shapeFromModel`.
  */
 export function findEnsembleShapeMatches(
   normalizedTag: string | null,
@@ -45,6 +59,7 @@ export function findEnsembleShapeMatches(
   pageNumber: number | undefined,
   shapesByPage: Record<number, readonly EnsembleShape[] | undefined>,
   sheets: ReadonlySet<string>,
+  yoloModel?: string,
 ): ShapeBackedInstance[] {
   const out: ShapeBackedInstance[] = [];
   const tagIsSheet = normalizedTag != null && isSheetNumber(normalizedTag, sheets);
@@ -54,7 +69,7 @@ export function findEnsembleShapeMatches(
     : Object.keys(shapesByPage).map(Number);
   for (const pn of pageNums) {
     for (const s of shapesByPage[pn] ?? []) {
-      if (s.cls !== cls) continue;
+      if (s.cls !== cls || !shapeFromModel(s, yoloModel)) continue;
       let confidence: number | null = null;
       if (s.kind === "detail_callout") {
         if (!tagIsSheet || !s.callout || sheetKey(s.callout.sheet) !== tagSheetKey) continue;
@@ -94,6 +109,10 @@ export const FLOATING_BIND_REACH = 1.5;
  * FLOATING_BIND_REACH) a word binds only to a shape within reach that does not already hold a
  * different tag-like text. MEASURED (scripts/tag-mapping-v2-measure.ts, 12 sets): ~85 % of v1's
  * Type 3 count is floating words bound at arbitrary distance; the owner decides whether to cap it.
+ *
+ * Whatever the reach, a word sitting inside a detail title / callout / legend key never binds
+ * (owner rule 1, fix round 1): it belongs to that shape, not to a tag circle elsewhere on the page.
+ * With `yoloModel`, only that model's shapes (and classical-only ones) are binding targets.
  */
 export function bindFloatingToShapes(
   floatingHits: readonly YoloTagInstance[],
@@ -103,6 +122,7 @@ export function bindFloatingToShapes(
   shapesByPage: Record<number, readonly EnsembleShape[] | undefined>,
   reach: number | null = null,
   boundConfidence: { exact: number; fuzzy: number } = { exact: 0.8, fuzzy: 0.7 },
+  yoloModel?: string,
 ): ShapeBackedInstance[] {
   const merged: ShapeBackedInstance[] = [...shapeHits];
   const used = new Set<string>();
@@ -112,10 +132,12 @@ export function bindFloatingToShapes(
     const fy = (f.bbox[1] + f.bbox[3]) / 2;
     // Already counted by a direct shape hit whose box holds the word → skip.
     if (shapeHits.some((s) => s.pageNumber === f.pageNumber && fx >= s.bbox[0] && fx <= s.bbox[2] && fy >= s.bbox[1] && fy <= s.bbox[3])) continue;
+    const pageShapes = shapesByPage[f.pageNumber] ?? [];
+    if (insideNonTagShape(fx, fy, pageShapes)) continue;
     let best: EnsembleShape | null = null;
     let bestD = Infinity;
-    for (const s of shapesByPage[f.pageNumber] ?? []) {
-      if (s.cls !== cls || s.kind !== "tag") continue;
+    for (const s of pageShapes) {
+      if (s.cls !== cls || s.kind !== "tag" || !shapeFromModel(s, yoloModel)) continue;
       if (reach != null && s.text && s.text !== normalizedTag && isTagLikeText(s.text)) continue; // holds another tag
       const key = `${f.pageNumber}:${s.bbox.join(",")}`;
       if (used.has(key)) continue;

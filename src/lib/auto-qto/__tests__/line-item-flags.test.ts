@@ -14,6 +14,17 @@ describe("qtoLineItemFlags", () => {
     expect(qtoLineItemFlags([{ confidenceTier: "high", confidence: 1 }], cert)).toEqual(["qty-mismatch"]);
     expect(lineItemCertificate("D-2", schedule.rows[1], roles, [{ pageNumber: 4 }])?.verdict).toBe("MATCH");
   });
+  it("fix round 1: a door schedule without a QTY header gets no certificate and no qty-mismatch flag", () => {
+    const schedule = {
+      headers: ["DOOR", "ROOM", "WIDTH", "HEIGHT", "HW SET"], tagColumn: "DOOR",
+      rows: [{ DOOR: "101", ROOM: "101", WIDTH: "36", HEIGHT: "84", "HW SET": "3" }, { DOOR: "102", ROOM: "104", WIDTH: "36", HEIGHT: "84", "HW SET": "1" }, { DOOR: "103", ROOM: "107", WIDTH: "42", HEIGHT: "84", "HW SET": "2" }],
+    };
+    const roles = scheduleColumnRoles(schedule);
+    expect(roles).toMatchObject({ tagColumn: "DOOR", qtyColumn: null, grid: "enumerating" });
+    const cert = lineItemCertificate("101", schedule.rows[0], roles, [{ pageNumber: 1 }]);
+    expect(cert).toBeNull();
+    expect(qtoLineItemFlags([{ confidenceTier: "high", confidence: 1 }], cert)).toEqual([]);
+  });
   it("no certificate without a quantity column", () => {
     const schedule = { headers: ["TAG", "FINISH"], rows: [{ TAG: "P-1", FINISH: "PAINT" }], tagColumn: "TAG" };
     expect(lineItemCertificate("P-1", schedule.rows[0], scheduleColumnRoles(schedule), [])).toBeNull();

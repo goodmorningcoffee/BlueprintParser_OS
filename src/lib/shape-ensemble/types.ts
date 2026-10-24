@@ -90,6 +90,9 @@ export interface EnsembleShape {
   longSide: number;
   yoloAnnotationId: number | null;
   classicalAnnotationId: number | null;
+  /** The YOLO model that produced the detection (an item's `yoloModel` filter, as in v1); null for a
+   *  classical-only shape or one read back from a stored summary (the model is not persisted). */
+  modelName: string | null;
   /** Set for `detail_callout`: the detail number and the sheet it lives on. */
   callout?: { detail: string; sheet: string };
 }

@@ -194,6 +194,20 @@ describe("spot-check fixes (corpus 2026-10-24)", () => {
   });
 });
 
+describe("model name (fix round 1)", () => {
+  it("a YOLO-backed shape carries its model; a classical-only shape and a stored summary carry null", () => {
+    const r = buildShapeEnsemble({
+      yolo: [{ name: "circle", bbox: [0.1, 0.1, 0.1 + BIG, 0.1 + BIG], confidence: 0.9, modelName: "custom" }],
+      classical: [classical("circle", "7", 0.5, 0.5, SMALL)],
+      words: [word("D-1", 0.105, 0.105)],
+    });
+    expect(r.shapes.map((s) => [s.source, s.modelName])).toEqual([["yolo", "custom"], ["classical", null]]);
+    const stored = summarizeShapeEnsemble(r);
+    expect(stored.shapes.map((c) => fromCompactShape(c, 0).modelName)).toEqual([null, null]);
+    expect(JSON.stringify(stored)).not.toContain("custom");
+  });
+});
+
 describe("word ownership never steals from the same bubble", () => {
   it("a classical half-circle inside a YOLO divided bubble does not take the bubble's words", () => {
     const r = buildShapeEnsemble({

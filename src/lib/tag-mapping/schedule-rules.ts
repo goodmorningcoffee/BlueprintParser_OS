@@ -33,14 +33,21 @@ export interface ColumnRoles {
 
 const TAG_HEADER = /^(TAG|MARK|SYMBOL|SYM|TYPE|NO\.?|#|NUMBER|NUM|ID|KEY|CODE|DOOR|WINDOW|FIXTURE|ITEM|ROOM|EQUIP(MENT)?|UNIT)\b/;
 const QTY_HEADER = /^(QTY|QUANTITY|QUAN|COUNT|NO\.?\s*(OF|REQ)|TOTAL|EA\b)/;
+/** Headers that may hold a quantity without saying so ("NO." 4, 2, 6) — the whole header, so a
+ *  door schedule's DOOR / ROOM / WIDTH / HEIGHT / HW SET columns never qualify. */
+const WEAK_QTY_HEADER = /^(NO\.?|#|EA\.?|EACH|PCS?\.?|UNITS?|REQ'?D\.?|REQUIRED|AMOUNT|AMT\.?)$/;
 const SHEET_HEADER = /^(SHEET|SHT|DWG|DRAWING|LOCATION|FLOOR|LEVEL|AREA)\b/;
 
 const INT = /^\(?\s*\d{1,4}\s*\)?(\s*(EA|PCS?|NOS?))?\.?$/;
+/** A quantity a schedule states is small; 101, 102, 103 are marks (or room numbers), never counts. */
+const SMALL_QTY_MAX = 99;
 
 interface ColumnStats {
   header: string;
   nonEmpty: number;
   int: number;
+  /** Integers ≤ SMALL_QTY_MAX. */
+  smallInt: number;
   tagLike: number;
   lettered: number;
   letterOnly: number;
@@ -52,7 +59,7 @@ interface ColumnStats {
 }
 
 function columnStats(header: string, rows: readonly Record<string, string>[], sheets: ReadonlySet<string>): ColumnStats {
-  const s: ColumnStats = { header, nonEmpty: 0, int: 0, tagLike: 0, lettered: 0, letterOnly: 0, digitOnly: 0, sheet: 0, distinct: 0, rowIndex: false };
+  const s: ColumnStats = { header, nonEmpty: 0, int: 0, smallInt: 0, tagLike: 0, lettered: 0, letterOnly: 0, digitOnly: 0, sheet: 0, distinct: 0, rowIndex: false };
   const seen = new Set<string>();
   let expectIndex = 1;
   let indexRun = true;
@@ -61,7 +68,10 @@ function columnStats(header: string, rows: readonly Record<string, string>[], sh
     if (!v) continue;
     s.nonEmpty++;
     seen.add(v);
-    if (INT.test(v)) s.int++;
+    if (INT.test(v)) {
+      s.int++;
+      if ((parseQuantity(v) ?? Infinity) <= SMALL_QTY_MAX) s.smallInt++;
+    }
     if (!/^\d+$/.test(v) || parseInt(v, 10) !== expectIndex++) indexRun = false;
     if (isTagLike(v)) {
       s.tagLike++;
@@ -99,17 +109,21 @@ export function arbitrateColumnRoles(
   const stats = headers.map((h) => columnStats(h, rows, sheets));
   const share = (s: ColumnStats, n: number) => (s.nonEmpty > 0 ? n / s.nonEmpty : 0);
 
-  // Quantity: nominated by header, confirmed by body; else the most int-parsable column (≥ 80 %).
+  // Quantity: nominated by header, confirmed by body. Without a nomination the body alone never
+  // makes a quantity — a door schedule's ROOM / WIDTH / HEIGHT / HW SET columns are ≥ 80 % integers
+  // too, and treating one as the count certified every door MISMATCH ("qty 1≠101", fix round 1).
   let qty: ColumnStats | null = null;
   const qtyNominees = stats.filter((s) => QTY_HEADER.test(normalizeTagText(s.header)) && share(s, s.int) >= 0.6);
   if (qtyNominees.length > 0) {
     qty = qtyNominees.sort((a, b) => share(b, b.int) - share(a, a.int))[0];
     reasons.push(`qty: header "${qty.header}" nominated, body ${Math.round(share(qty, qty.int) * 100)} % integers`);
   } else {
-    // Headers only nominate: a "NO." column whose body is 4, 2, 6 is the quantity; 1, 2, 3 is a row index.
-    const body = stats.filter((s) => s.nonEmpty >= 2 && share(s, s.int) >= 0.8 && !s.rowIndex && s.header !== opts.preferredTagColumn)
+    // A weak nominee ("NO.", "#", "EA") whose body is SMALL integers: 4, 2, 6 is the quantity;
+    // 1, 2, 3 is a row index; 101, 102, 103 are marks.
+    const body = stats.filter((s) => WEAK_QTY_HEADER.test(normalizeTagText(s.header)) && s.nonEmpty >= 2
+        && share(s, s.int) >= 0.8 && share(s, s.smallInt) >= 0.8 && !s.rowIndex && s.header !== opts.preferredTagColumn)
       .sort((a, b) => share(b, b.int) - share(a, a.int));
-    if (body.length > 0) { qty = body[0]; reasons.push(`qty: body arbitrated "${qty.header}" (${Math.round(share(qty, qty.int) * 100)} % integers)`); }
+    if (body.length > 0) { qty = body[0]; reasons.push(`qty: weak header "${qty.header}" confirmed by body (${Math.round(share(qty, qty.int) * 100)} % small integers)`); }
   }
 
   // Tag: preferred column if tag-like, else header nominee with the best body, else body ranking.

@@ -110,6 +110,34 @@ describe("Type 2 — owner rules on free-floating text", () => {
   });
 });
 
+describe("fix round 1 — detail titles and the model filter", () => {
+  // A bubble "3" with "ADMIN SUITE SCALE: 1/4\"" to its right (a detail title) and an unrelated empty
+  // circle elsewhere on the page.
+  const annotations = [yoloAnn("circle", 1, 0.1, 0.1, 0.006, 0.9), yoloAnn("circle", 1, 0.5, 0.5, 0.006, 0.9)];
+  const textractData = { 1: textract([word("3", 0.1015, 0.1015, 0.002), word("ADMIN", 0.12, 0.102), word("SUITE", 0.13, 0.102), word("SCALE:", 0.15, 0.102), word('1/4"', 0.16, 0.102)]) };
+
+  it("the title's '3' is neither a Type 2 hit nor a Type 3 instance bound to the other circle (any reach)", () => {
+    const ctx = v2Context(annotations, textractData);
+    expect(ctx.shapes![1]!.map((s) => s.kind)).toEqual(["detail_title", "tag"]);
+    expect(findOccurrences({ itemType: "text-only", label: "3", text: "3" }, ctx)).toHaveLength(0);
+    expect(findOccurrences({ itemType: "yolo-with-inner-text", label: "3", yoloClass: "circle", text: "3" }, ctx)).toHaveLength(0);
+    // even with no text rules in the context the floating fallback never binds a word inside a non-tag shape
+    expect(findOccurrences({ itemType: "yolo-with-inner-text", label: "3", yoloClass: "circle", text: "3" }, { ...ctx, rules: undefined })).toHaveLength(0);
+  });
+
+  it("item.yoloModel filters YOLO-backed shapes as in v1; classical-only bubbles stay", () => {
+    const custom: ClientAnnotation = { id: nextId++, pageNumber: 1, name: "circle", bbox: [0.3, 0.3, 0.3 + BIG, 0.3 + BIG], note: null, source: "yolo", data: { modelName: "custom", confidence: 0.9 } };
+    const anns = [yoloAnn("circle", 1, 0.1, 0.1, BIG, 0.9), custom, shapeAnn("circle", "7", 1, 0.6, 0.6, SMALL)];
+    const td = { 1: textract([word("7", 0.105, 0.105), word("7", 0.305, 0.305)]) };
+    const count = (yoloModel?: string) => findOccurrences({ itemType: "yolo-only", label: "circle", yoloClass: "circle", yoloModel }, v2Context(anns, td)).map((m) => m.annotationId).sort();
+    expect(count()).toEqual([anns[0].id, custom.id, anns[2].id].sort());
+    expect(count("yolo_primitive")).toEqual([anns[0].id, anns[2].id].sort());
+    expect(count("custom")).toEqual([custom.id, anns[2].id].sort());
+    const sevens = findOccurrences({ itemType: "yolo-with-inner-text", label: "7", yoloClass: "circle", yoloModel: "yolo_primitive", text: "7" }, v2Context(anns, td));
+    expect(sevens.map((m) => m.annotationId).sort()).toEqual([anns[0].id, anns[2].id].sort());
+  });
+});
+
 describe("Type 4 with the ensemble", () => {
   it("binds the matched tag shape to the nearest object and keeps v1 confidences", () => {
     const annotations = [yoloAnn("door_single", 1, 0.2, 0.2, BIG, 0.9), shapeAnn("hexagon", "101", 1, 0.2 + BIG + 0.002, 0.2, SMALL)];

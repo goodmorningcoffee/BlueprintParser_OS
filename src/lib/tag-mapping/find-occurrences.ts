@@ -17,6 +17,18 @@
  * the owner's text rules when `rules` is set, and Type 3's floating fallback binds a word only to a
  * tag shape within reach (matchers/ensemble-shapes.ts). Object classes (doors, outlets, …) and every
  * context without those fields keep v1's behaviour verbatim.
+ *
+ * v1 outputs that CHANGE under the ensemble (for a tag-shape class; measured on 12 sets, see
+ * scripts/tag-mapping-v2-measure.ts):
+ *   • Type 1 (count every shape of a class) no longer counts YOLO shapes inside a detected table or
+ *     title block, detail callouts / titles, legend keys, or textless low-confidence (< .5) and
+ *     textless square / rectangle detections — and it ADDS small classical-only bubbles with a read.
+ *     The v1 "all rows of the class" count is `findYoloOnlyMatches` (no `shapes` in the context).
+ *   • Type 2: 1–2-char tags in sentences, split tokens, dimensions, words inside callouts / detail
+ *     titles / legend keys are rejected (`rules.rejected` counts them).
+ *   • Type 3 / 4: shapes come from the ensemble (same drops and additions as Type 1); the floating
+ *     fallback never binds a word that sits inside a non-tag shape, and with `floatingBindReach`
+ *     set it binds only within reach. `item.yoloModel` filters YOLO-backed shapes as in v1.
  */
 
 import type { YoloTagInstance, ClassifiedPageRegions } from "@/types";
@@ -73,7 +85,7 @@ function dispatchMatcher(item: CountableItem, ctx: MatchContext): YoloTagInstanc
     case "yolo-only":
       if (!item.yoloClass) return [];
       if (ensembleFor(ctx, item.yoloClass)) {
-        return findEnsembleShapeMatches(null, item.yoloClass, scopeLegacy, pageNumber, ctx.shapes!, sheets);
+        return findEnsembleShapeMatches(null, item.yoloClass, scopeLegacy, pageNumber, ctx.shapes!, sheets, item.yoloModel);
       }
       return findYoloOnlyMatches(
         item.yoloClass, item.yoloModel, scopeLegacy, pageNumber, ctx.annotations,
@@ -92,8 +104,8 @@ function dispatchMatcher(item: CountableItem, ctx: MatchContext): YoloTagInstanc
         normalizedTag, scopeLegacy, pageNumber, ctx.textractData, rulesFor(ctx, normalizedTag),
       );
       if (ensembleFor(ctx, item.yoloClass)) {
-        const shapeHits = findEnsembleShapeMatches(normalizedTag, item.yoloClass, scopeLegacy, pageNumber, ctx.shapes!, sheets);
-        return bindFloatingToShapes(floatingHits, shapeHits, normalizedTag, item.yoloClass, ctx.shapes!, ctx.rules?.floatingBindReach ?? null);
+        const shapeHits = findEnsembleShapeMatches(normalizedTag, item.yoloClass, scopeLegacy, pageNumber, ctx.shapes!, sheets, item.yoloModel);
+        return bindFloatingToShapes(floatingHits, shapeHits, normalizedTag, item.yoloClass, ctx.shapes!, ctx.rules?.floatingBindReach ?? null, undefined, item.yoloModel);
       }
       const yoloHits = findYoloMatches(
         normalizedTag, item.yoloClass, item.yoloModel,
@@ -107,7 +119,7 @@ function dispatchMatcher(item: CountableItem, ctx: MatchContext): YoloTagInstanc
     case "yolo-object-with-tag-shape": {
       if (ensembleFor(ctx, item.tagShapeClass) && item.yoloClass && item.text?.trim()) {
         const normalizedTag = item.text.toUpperCase().trim();
-        const tagShapeHits = findEnsembleShapeMatches(normalizedTag, item.tagShapeClass!, scopeLegacy, pageNumber, ctx.shapes!, sheets);
+        const tagShapeHits = findEnsembleShapeMatches(normalizedTag, item.tagShapeClass!, scopeLegacy, pageNumber, ctx.shapes!, sheets, item.yoloModel);
         if (tagShapeHits.length === 0) return [];
         const objectTargets = ctx.annotations.filter((a) =>
           a.source === "yolo" &&

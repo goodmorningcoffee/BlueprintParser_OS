@@ -18,6 +18,21 @@ describe("arbitrateColumnRoles — body arbitrates, headers nominate", () => {
     expect(roles.tagColumn).toBe("SYMBOL");
   });
 
+  it("fix round 1: a door schedule with no QTY header has NO quantity column — ROOM / WIDTH / HEIGHT / HW SET are integers too", () => {
+    const headers = ["DOOR", "ROOM", "WIDTH", "HEIGHT", "HW SET"];
+    const roles = arbitrateColumnRoles(headers, rows(headers, [["101", "101", "36", "84", "3"], ["102", "104", "36", "84", "1"], ["103", "107", "42", "84", "2"]]), { preferredTagColumn: "DOOR" });
+    expect(roles).toMatchObject({ tagColumn: "DOOR", qtyColumn: null, grid: "enumerating" });
+  });
+
+  it("fix round 1: a 'NO.' column of marks (101, 102, 103) is not a quantity; small integers under a tag header never are", () => {
+    const headers = ["NO.", "SYMBOL", "DESCRIPTION"];
+    const roles = arbitrateColumnRoles(headers, rows(headers, [["101", "L1", "LIGHT"], ["102", "L2", "LIGHT"], ["103", "L3", "FAN"]]));
+    expect(roles.qtyColumn).toBeNull();
+    const windows = ["WINDOW", "TYPE", "SILL"];
+    const r2 = arbitrateColumnRoles(windows, rows(windows, [["W1", "4", "30"], ["W2", "2", "30"], ["W3", "6", "36"]]));
+    expect(r2).toMatchObject({ tagColumn: "WINDOW", qtyColumn: null, grid: "enumerating" });
+  });
+
   it("without a quantity column the grid is enumerating (presence only)", () => {
     const headers = ["TAG", "FINISH"];
     const roles = arbitrateColumnRoles(headers, rows(headers, [["P-1", "PAINT"], ["P-2", "PAINT"], ["WD-1", "OAK"]]));

@@ -267,6 +267,7 @@ export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsem
       bbox: d.bbox, cls: d.name, source: c ? "both" : "yolo", confidence: Math.round(confidence * 100) / 100,
       text: fused.text, textSource: fused.source, cropText: c?.text ? normalizeTagText(c.text) || null : null, textractText,
       yoloAnnotationId: d.annotationId ?? null, classicalAnnotationId: c?.annotationId ?? null,
+      modelName: d.modelName ?? null,
     });
   }
 
@@ -283,6 +284,7 @@ export function buildShapeEnsemble(input: ShapeEnsembleInput, config: ShapeEnsem
       bbox: c.bbox, cls: c.cls, source: "classical", confidence: Math.round(confidence * 100) / 100,
       text: fused.text, textSource: fused.source, cropText: normalizeTagText(c.text) || null, textractText,
       yoloAnnotationId: null, classicalAnnotationId: c.annotationId ?? null,
+      modelName: null,
     });
   }
 

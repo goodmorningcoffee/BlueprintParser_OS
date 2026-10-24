@@ -61,6 +61,7 @@ export function fromCompactShape(c: CompactShape, index: number): EnsembleShape 
     longSide: Math.max(c.b[2] - c.b[0], c.b[3] - c.b[1]),
     yoloAnnotationId: null,
     classicalAnnotationId: null,
+    modelName: null,
     ...(kind === "detail_callout" && c.sh ? { callout: { detail: c.t?.replace(c.sh, "").trim() ?? "", sheet: c.sh } } : {}),
   };
 }

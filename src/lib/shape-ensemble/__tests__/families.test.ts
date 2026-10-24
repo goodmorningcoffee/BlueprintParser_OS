@@ -8,7 +8,7 @@ import {
 const shape = (cls: string, text: string | null, pageNumber: number, longSide = 0.012, over: Partial<EnsembleShape> = {}): EnsembleShape => ({
   id: `${cls}-${text}-${pageNumber}`, bbox: [0.1, 0.1, 0.1 + longSide, 0.1 + longSide], cls, source: "yolo", confidence: 0.8, kind: "tag",
   text, textSource: text ? "textract" : null, cropText: null, textractText: text, zone: "drawing", longSide,
-  yoloAnnotationId: null, classicalAnnotationId: null, ...over,
+  yoloAnnotationId: null, classicalAnnotationId: null, modelName: "yolo_primitive", ...over,
 });
 
 describe("discoverTagFamilies", () => {

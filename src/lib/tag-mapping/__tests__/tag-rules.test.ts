@@ -10,7 +10,7 @@ const w = (text: string, x: number, y = 0.5, width = 0.02): TextractWord => ({ t
 const ctx = { rules: DEFAULT_TAG_RULES };
 const shape = (bbox: [number, number, number, number], kind: EnsembleShape["kind"] = "tag", callout?: EnsembleShape["callout"]): EnsembleShape => ({
   id: "s", bbox, cls: "circle", source: "yolo", confidence: 0.9, kind, text: "A", textSource: "textract", cropText: null, textractText: "A",
-  zone: "drawing", longSide: bbox[2] - bbox[0], yoloAnnotationId: 1, classicalAnnotationId: null, ...(callout ? { callout } : {}),
+  zone: "drawing", longSide: bbox[2] - bbox[0], yoloAnnotationId: 1, classicalAnnotationId: null, modelName: "yolo_primitive", ...(callout ? { callout } : {}),
 });
 
 describe("rule 3 — dimensions are never tags", () => {
@@ -63,6 +63,15 @@ describe("rule 1 — detail callouts are detail titles", () => {
   });
   it("…but when the tag searched IS the sheet number, the callout is a hit", () => {
     expect(verdictForWordHit([words[1]], words, "R-3", { ...ctx, shapes: [callout], tagIsSheetNumber: true })).toBe("ok");
+  });
+  it("fix round 1: the '3' inside a detail TITLE bubble is not tag 3, nor is a word inside a legend key", () => {
+    const title = [w("3", 0.3, 0.3, 0.008), w("ADMIN", 0.32, 0.3, 0.03), w("SUITE", 0.355, 0.3, 0.03), w("SCALE:", 0.39, 0.3, 0.03)];
+    const bubble = shape([0.29, 0.29, 0.31, 0.31], "detail_title");
+    expect(verdictForWordHit([title[0]], title, "3", { ...ctx, shapes: [bubble] })).toBe("detail_title");
+    const key = shape([0.29, 0.29, 0.31, 0.31], "legend_key");
+    expect(verdictForWordHit([title[0]], title, "3", { ...ctx, shapes: [key] })).toBe("legend_key");
+    // a tag bubble whose box also lies inside a detail title's box: the non-tag kind decides
+    expect(verdictForWordHit([title[0]], title, "3", { ...ctx, shapes: [shape([0.295, 0.295, 0.309, 0.309]), bubble] })).toBe("detail_title");
   });
   it("sheet-number guard compares modulo separators", () => {
     const sheets = sheetKeySet(["A-101.00", "R-3"]);
