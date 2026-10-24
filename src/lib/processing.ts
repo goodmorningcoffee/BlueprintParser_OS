@@ -20,6 +20,7 @@ import { logger } from "@/lib/logger";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
+import { storedPageZones } from "@/lib/page-zones";
 import { detectCsiCodes } from "@/lib/csi-detect";
 // [refactor jul9 P2-A C1] company CSI context (config + custom DB) resolver — threaded
 // into the detect call below so a company's stored pipelineConfig.csi + uploaded DB take
@@ -430,10 +431,15 @@ async function processProjectWithLease(
         const textractData = await analyzePageImageWithFallback(ocrBuffer);
         const rawText = extractRawText(textractData);
 
+        // [zones T2] A re-run keeps the zones the YOLO step persisted (page-zones.ts) and feeds
+        // them to the title-block consumers below, so text regions / drawing number / room numbers
+        // never flip between the detected title block and the fixed corner by which job ran last.
+        const pageZones = storedPageZones(existingPage?.pageIntelligence);
+
         // Extract drawing number from title block
         let drawingNumber: string | null = null;
         try {
-          drawingNumber = extractDrawingNumber(textractData);
+          drawingNumber = extractDrawingNumber(textractData, null, pageZones);
         } catch (err) {
           logger.error(
             `[processing] Drawing number extraction FAILED for page ${pageNum}:`,
@@ -466,7 +472,7 @@ async function processProjectWithLease(
           summary: {},
         };
         try {
-          textAnnotationResult = detectTextAnnotations(textractData, csiCodes);
+          textAnnotationResult = detectTextAnnotations(textractData, csiCodes, undefined, pageZones);
           if (textAnnotationResult.annotations.length > 0) {
             logger.info(
               `[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`,
@@ -524,11 +530,12 @@ async function processProjectWithLease(
 
         // Classify text regions (OCR-based table/notes/spec detection)
         try {
-          const textRegions = classifyTextRegions(textractData, csiCodes);
+          const textRegions = classifyTextRegions(textractData, csiCodes, { zones: pageZones });
           if (textRegions.length > 0) {
             if (!pageIntelligence) pageIntelligence = {};
             pageIntelligence.textRegions = textRegions;
           }
+          if (pageZones) (pageIntelligence ??= {}).pageZones = pageZones; // computed key: re-add or the merge drops it
         } catch (err) {
           logger.error(
             `[processing] Text region classification FAILED for page ${pageNum}:`,

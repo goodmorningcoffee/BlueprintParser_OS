@@ -12,6 +12,7 @@
 import { runHeuristicEngine, type HeuristicRule } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
+import { computePageZones } from "@/lib/page-zones";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -68,6 +69,10 @@ export function enrichPageAfterYolo(
   const updated: Record<string, unknown> = { ...existing };
   let pageChanged = false;
   const csiCodes = page.csiCodes ?? [];
+  // [zones T2] detector zones (src/lib/page-zones.ts): yolo_medium only, fixed-zone fallback
+  // otherwise; written only when they differ so an unchanged page is not rewritten.
+  const zones = computePageZones(yoloDets);
+  if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
 
   // Existing: re-run heuristic engine with YOLO data
   const inferences = runHeuristicEngine(opts.rules, {

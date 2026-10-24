@@ -317,3 +317,54 @@ describe("parseNotesFromRegion — Stage 4 Parser wrapper", () => {
     expect(grid?.rows[1].Value).toBe("ABOVE FLOOR");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// [zones T2] Title-block drop with detector zones (page-zones.ts)
+// ═══════════════════════════════════════════════════════════════════
+
+import { computePageZones } from "@/lib/page-zones";
+
+/** Six prose lines (no header, no numbering) in one column at the given origin. */
+function fixtureProseAt(x: number, y: number): TextractPageData {
+  const texts = [
+    "Contractor shall verify all existing conditions prior to",
+    "commencing work and shall notify the architect of any",
+    "discrepancies between the drawings and field conditions",
+    "before proceeding with the affected portion of the work",
+    "All materials shall be new and free from defects unless",
+    "noted otherwise on the drawings or in the specifications",
+  ];
+  return pageOf(texts.map((t, i) => makeLine(t, x, y + i * 0.03, 0.35, 0.02)));
+}
+
+describe("title-block drop — detector zones", () => {
+  // Fully inside the fixed {.45,.7,1,1} corner.
+  const inCorner = fixtureProseAt(0.5, 0.75);
+  // Top-left: outside the fixed corner.
+  const topLeft = fixtureProseAt(0.05, 0.05);
+  const rightStrip = computePageZones([{ name: "title_block", minX: 0.9, minY: 0, maxX: 1, maxY: 1, confidence: 0.9, modelName: "yolo_medium" }]);
+  const topLeftBlock = computePageZones([{ name: "title_block", minX: 0, minY: 0, maxX: 0.45, maxY: 0.3, confidence: 0.9, modelName: "yolo_medium" }]);
+
+  it("legacy: prose fully inside the fixed corner is dropped to paragraph @0.2; elsewhere it is paragraph @0.4", () => {
+    expect(classifyTextRegions(inCorner, []).map((r) => [r.type, r.confidence])).toEqual([["paragraph", 0.2]]);
+    expect(classifyTextRegions(topLeft, []).map((r) => [r.type, r.confidence])).toEqual([["paragraph", 0.4]]);
+  });
+
+  it("fixed-fallback zones (no title_block detected) are identical to the legacy rule", () => {
+    const fb = computePageZones([]);
+    expect(classifyTextRegions(inCorner, [], { zones: fb })).toEqual(classifyTextRegions(inCorner, []));
+    expect(classifyTextRegions(topLeft, [], { zones: fb })).toEqual(classifyTextRegions(topLeft, []));
+  });
+
+  it("detected title block on the right strip: the corner prose is NOT in the title block any more", () => {
+    expect(classifyTextRegions(inCorner, [], { zones: rightStrip }).map((r) => [r.type, r.confidence]))
+      .toEqual([["paragraph", 0.4]]);
+  });
+
+  it("detected title block top-left: the top-left prose IS dropped, the corner prose is not", () => {
+    expect(classifyTextRegions(topLeft, [], { zones: topLeftBlock }).map((r) => [r.type, r.confidence]))
+      .toEqual([["paragraph", 0.2]]);
+    expect(classifyTextRegions(inCorner, [], { zones: topLeftBlock }).map((r) => [r.type, r.confidence]))
+      .toEqual([["paragraph", 0.4]]);
+  });
+});

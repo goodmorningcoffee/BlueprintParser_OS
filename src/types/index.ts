@@ -629,13 +629,13 @@ export interface PageIntelligence {
    *  Authoritative source for "is there a real table on this page" — filters
    *  the keyword-only false positives that classifiedTables alone produces. */
   ensembleRegions?: EnsembleRegion[];
-  // [refactor jul9 P2-A S1] autoTableProposals field purged — writers removed
-  // (yolo/reprocess Stage 2c), zero readers; old jsonb rows may still carry it.
+  /** [zones T2] detector zones (title block/drawings/tables/legends), fixed-zone fallback; absent without YOLO. */
+  pageZones?: import("@/lib/page-zones").PageZones;
+  // [refactor jul9 P2-A S1] autoTableProposals purged — writers removed, zero readers; old jsonb rows may carry it.
   parsedRegions?: ParsedRegion[];
-  /** Stage 4: user-dismissed textRegion IDs. Persisted per-page via the same
-   *  `/api/pages/intelligence` PATCH path. Preserved across Layer 1 reprocess
-   *  (reprocess only writes the computed fields, never this one). Consumed
-   *  by the NotesClassifier to suppress rejected regions from the card list. */
+  /** Stage 4: user-dismissed textRegion IDs. Persisted per-page via the same `/api/pages/intelligence`
+   *  PATCH path. Preserved across Layer 1 reprocess (reprocess only writes the computed fields, never
+   *  this one). Consumed by the NotesClassifier to suppress rejected regions from the card list. */
   rejectedTextRegionIds?: string[];
   csiSpatialMap?: {
     pageNumber: number;

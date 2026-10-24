@@ -10,12 +10,14 @@
  */
 
 import type { TextractPageData, CsiCode, TextAnnotationResult } from "@/types";
+import type { PageZones } from "@/lib/page-zones";
 import { runTextAnnotationPipeline } from "@/lib/detectors/orchestrator";
 
 export function detectTextAnnotations(
   data: TextractPageData,
   csiCodes?: CsiCode[],
   enabledDetectorIds?: string[],
+  pageZones?: PageZones, // [zones T2] persisted detector zones, when the caller has them
 ): TextAnnotationResult {
-  return runTextAnnotationPipeline({ data, csiCodes, enabledDetectorIds });
+  return runTextAnnotationPipeline({ data, csiCodes, enabledDetectorIds, pageZones });
 }

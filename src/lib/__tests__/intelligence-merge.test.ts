@@ -23,6 +23,12 @@ describe("carryNonComputedIntelligence", () => {
     expect(carried).not.toHaveProperty("yoloHeatmap");
   });
 
+  it("[zones T2] pageZones is a computed key: refreshed by the post-YOLO step, cleared on reprocess", () => {
+    expect(REPROCESS_COMPUTED_KEYS).toContain("pageZones");
+    const carried = carryNonComputedIntelligence({ pageZones: { stale: true }, parsedRegions: [] });
+    expect(carried).toEqual({ parsedRegions: [] });
+  });
+
   it("clears every computed key so the rebuild refreshes-or-drops them", () => {
     const allComputed = Object.fromEntries(
       REPROCESS_COMPUTED_KEYS.map((k) => [k, { stale: true }]),

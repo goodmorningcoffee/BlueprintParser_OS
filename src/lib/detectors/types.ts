@@ -12,6 +12,7 @@ import type {
   TextAnnotationType,
   CsiCode,
 } from "@/types";
+import type { PageZones } from "@/lib/page-zones";
 
 /** Context provided to all detectors by the orchestrator. */
 export interface DetectorContext {
@@ -25,7 +26,14 @@ export interface DetectorContext {
     maxX: number;
     maxY: number;
     confidence: number;
+    /** [zones T2] which model emitted it — page-zones.ts only trusts yolo_medium. */
+    modelName?: string;
   }[];
+  /**
+   * [zones T2] The page's persisted detector zones (`pageIntelligence.pageZones`), when the
+   * caller has them but not the raw YOLO detections (upload re-run, full reprocess).
+   */
+  pageZones?: PageZones;
   pageNumber?: number;
 }
 

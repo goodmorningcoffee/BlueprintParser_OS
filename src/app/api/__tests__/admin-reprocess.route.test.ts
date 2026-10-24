@@ -289,13 +289,18 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     const pi = row.pageIntelligence as Record<string, any>;
     // exact key-set pin: with this fixture the yolo sub-branch writes EXACTLY these
-    // three computed keys alongside the two carried user keys (observed 2026-07-08)
+    // four computed keys alongside the two carried user keys (observed 2026-07-08;
+    // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections)
     expect(Object.keys(pi).sort()).toEqual([
-      "classifiedRegions", "ensembleRegions", "parsedRegions", "someFutureKey", "yoloHeatmap",
+      "classifiedRegions", "ensembleRegions", "pageZones", "parsedRegions", "someFutureKey", "yoloHeatmap",
     ]);
     // G3 carry still holds WITH the yolo path active
     expect(pi.parsedRegions).toEqual(userParsedRegions);
     expect(pi.someFutureKey).toEqual({ keep: "me" });
+    // page zones: a text_box-only page has no title_block ⇒ the fixed-zone fallback, verbatim
+    expect(pi.pageZones).toEqual({
+      titleBlock: [0.45, 0.7, 1, 1], drawings: [], tables: [], legends: [], source: "fixed-fallback",
+    });
     // heatmap: the seeded text_box detection became a confident region
     expect(pi.yoloHeatmap.confidentRegions.length).toBeGreaterThan(0);
     expect(pi.yoloHeatmap.confidentRegions[0].classes).toEqual(["text_box"]);

@@ -31,6 +31,9 @@ export const REPROCESS_COMPUTED_KEYS = [
   // (U1-F1); both writers (yolo Stage 2c + reprocess Stage 2c) removed same commit.
   // Old rows keep the stored key as an unknown-key survivor: harmless dead data.
   "csiSpatialMap",
+  // [zones T2 2026-10-24] detector zones (src/lib/page-zones.ts), written by the post-YOLO
+  // enrichment and the intelligence reprocess; absent on pages without YOLO detections.
+  "pageZones",
 ] as const;
 
 /**

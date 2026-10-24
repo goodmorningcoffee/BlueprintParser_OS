@@ -1,5 +1,6 @@
-import type { TextractPageData, TextractWord } from "@/types";
+import type { BboxMinMax, TextractPageData, TextractWord } from "@/types";
 import { DEFAULT_TITLE_BLOCK_REGION } from "@/lib/spatial-constants";
+import type { PageZones } from "@/lib/page-zones";
 
 /**
  * Drawing number pattern — matches common architectural/engineering formats:
@@ -61,6 +62,18 @@ interface Candidate {
   text: string;
   score: number;
   strategy: "label-anchored" | "regex" | "yolo-validated";
+}
+
+/** [zones T2] MinMax tuple → the region shape this module has always used. */
+function regionFromBbox(bbox: BboxMinMax): TitleBlockRegion {
+  return { minX: bbox[0], minY: bbox[1], maxX: bbox[2], maxY: bbox[3] };
+}
+
+/** Strategies 1 (label-anchored) + 2 (regex) over the words inside `region`. */
+function searchCandidates(allWords: TextractWord[], region: TitleBlockRegion): Candidate[] {
+  const regionWords = allWords.filter(w => isInRegion(w, region));
+  if (regionWords.length === 0) return [];
+  return [...labelAnchoredSearch(regionWords), ...regexSearch(regionWords, allWords, region)];
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -359,35 +372,38 @@ function yoloValidate(
  *
  * @param textractData - OCR data with words and their bounding boxes
  * @param yoloTitleBlock - Optional YOLO-detected title block region (minX/minY/maxX/maxY normalized 0-1)
+ * @param zones - [zones T2] Optional page zones (`page-zones.ts`). When detector-sourced, the
+ *   DETECTED title block is the search region for strategies 1–2 (fixes left/top title blocks the
+ *   fixed corner never saw) and doubles as the validation region when `yoloTitleBlock` is absent.
+ *   Omitted or fixed-fallback ⇒ the legacy fixed `DEFAULT_TITLE_BLOCK_REGION`, unchanged.
  * @returns The best drawing number candidate, or null
  */
 export function extractDrawingNumber(
   textractData: TextractPageData,
   yoloTitleBlock?: TitleBlockRegion | null,
+  zones?: PageZones | null,
 ): string | null {
   if (!textractData?.words?.length) return null;
 
   const allWords = textractData.words;
 
-  // Determine the search region
-  const searchRegion = DEFAULT_TITLE_BLOCK;
+  // Strategies 1–2 run inside the DETECTED title block first (zones), then fall back to the fixed
+  // default corner when there is no detection or the detected box yields no candidate — a
+  // mis-detection must never cost a sheet number the legacy search would have found.
+  const detected = zones?.source === "detector" && zones.titleBlock ? regionFromBbox(zones.titleBlock) : null;
+  const validationRegion = yoloTitleBlock ?? detected;
 
-  // Get words in the default title block region
-  const regionWords = allWords.filter(w => isInRegion(w, searchRegion));
-  if (regionWords.length === 0) return null;
-
-  // Strategy 1: Label-anchored search (highest priority)
-  const labelCandidates = labelAnchoredSearch(regionWords);
-
-  // Strategy 2: Regex pattern match
-  const regexCandidates = regexSearch(regionWords, allWords, searchRegion);
-
-  // Merge all candidates
-  let allCandidates = [...labelCandidates, ...regexCandidates];
+  let allCandidates = detected ? searchCandidates(allWords, detected) : [];
+  if (allCandidates.length === 0) {
+    // Legacy path, unchanged: no words in the fixed corner ⇒ null
+    const regionWords = allWords.filter(w => isInRegion(w, DEFAULT_TITLE_BLOCK));
+    if (regionWords.length === 0) return null;
+    allCandidates = searchCandidates(allWords, DEFAULT_TITLE_BLOCK);
+  }
 
   // Strategy 3: YOLO validation (if available)
-  if (yoloTitleBlock) {
-    allCandidates = yoloValidate(allCandidates, yoloTitleBlock, allWords);
+  if (validationRegion) {
+    allCandidates = yoloValidate(allCandidates, validationRegion, allWords);
   }
 
   if (allCandidates.length === 0) return null;

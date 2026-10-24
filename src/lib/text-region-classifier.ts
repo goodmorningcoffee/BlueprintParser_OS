@@ -83,6 +83,8 @@ import {
 } from "@/lib/specnote-parser/shared";
 import { bindNumberedGrid } from "@/lib/specnote-parser/bind-numbered";
 import { bindKeyValueGrid } from "@/lib/specnote-parser/bind-key-value";
+import { zoneOf, type PageZones } from "@/lib/page-zones";
+import { ltwh2minmax } from "@/lib/bbox-utils";
 export { parseNotesFromRegion, type ParsedNotesGrid } from "@/lib/specnote-parser/parse-notes";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -347,12 +349,12 @@ interface ClassifyDecision {
   decisionTrace: string[];
 }
 
-function classifyRegion(a: RegionAnalysis): ClassifyDecision {
+function classifyRegion(a: RegionAnalysis, zones?: PageZones): ClassifyDecision {
   const trace: string[] = [];
 
-  // Title-block drop — if region falls entirely inside the default title-block
-  // zone and has no strong content, treat as unknown/paragraph to filter it.
-  if (isInsideTitleBlock(a.bbox) && a.numberedCount === 0 && !a.headerText) {
+  // Title-block drop — if region falls inside the title-block zone (detected, else the fixed
+  // default) and has no strong content, treat as unknown/paragraph to filter it.
+  if (isInsideTitleBlock(a.bbox, zones) && a.numberedCount === 0 && !a.headerText) {
     trace.push("In title-block zone with no structural content → paragraph");
     return { type: "paragraph", confidence: 0.2, decisionTrace: trace };
   }
@@ -432,7 +434,13 @@ function classifyRegion(a: RegionAnalysis): ClassifyDecision {
   return { type: "unknown", confidence: 0.2, decisionTrace: trace };
 }
 
-function isInsideTitleBlock(bbox: BboxLTWH): boolean {
+/**
+ * [zones T2] With DETECTED zones (`zones.source === "detector"`) a region is in the title block
+ * when ≥ 70 % of it lies inside the detected box (`page-zones.ts`). Without zones, or with the
+ * fixed fallback, the legacy rule applies unchanged: fully inside `DEFAULT_TITLE_BLOCK_REGION`.
+ */
+function isInsideTitleBlock(bbox: BboxLTWH, zones?: PageZones): boolean {
+  if (zones?.source === "detector") return zoneOf(zones, ltwh2minmax(bbox)) === "title_block";
   const z = DEFAULT_TITLE_BLOCK_REGION;
   const left = bbox[0];
   const top = bbox[1];
@@ -516,6 +524,8 @@ export interface ClassifyTextRegionsOptions {
   onDebug?: (bundle: ClassifierDebugBundle) => void;
   /** Optional page number for inclusion in debug bundle. */
   pageNumber?: number;
+  /** [zones T2] Detector zones for the title-block drop. Omitted or fixed-fallback ⇒ legacy fixed zone. */
+  zones?: PageZones;
 }
 
 /**
@@ -569,7 +579,7 @@ export function classifyTextRegions(
 
   // ─── Stages E + F: Analyze + classify each merged region ─
   const analyses: RegionAnalysis[] = mergedComponents.map(analyzeRegion);
-  const decisions = analyses.map(classifyRegion);
+  const decisions = analyses.map((a) => classifyRegion(a, opts?.zones));
 
   const regions: TextRegion[] = [];
   for (let i = 0; i < analyses.length; i++) {
