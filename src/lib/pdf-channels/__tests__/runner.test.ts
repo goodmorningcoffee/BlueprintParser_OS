@@ -49,13 +49,13 @@ describe("parseChannelsOutput", () => {
 });
 
 describe("channelsTimeoutMs", () => {
-  it("defaults to 60 s; parses digits; clamps to 10 min; junk and < 1 s fall back", () => {
-    expect(DEFAULT_CHANNELS_TIMEOUT_MS).toBe(60_000);
-    expect(channelsTimeoutMs({})).toBe(60_000);
+  it("defaults to 300 s; parses digits; clamps to 10 min; junk and < 1 s fall back", () => {
+    expect(DEFAULT_CHANNELS_TIMEOUT_MS).toBe(300_000);
+    expect(channelsTimeoutMs({})).toBe(300_000);
     expect(channelsTimeoutMs({ PDF_CHANNELS_TIMEOUT_MS: "90000" })).toBe(90_000);
     expect(channelsTimeoutMs({ PDF_CHANNELS_TIMEOUT_MS: "99999999" })).toBe(600_000);
-    expect(channelsTimeoutMs({ PDF_CHANNELS_TIMEOUT_MS: "abc" })).toBe(60_000);
-    expect(channelsTimeoutMs({ PDF_CHANNELS_TIMEOUT_MS: "500" })).toBe(60_000);
+    expect(channelsTimeoutMs({ PDF_CHANNELS_TIMEOUT_MS: "abc" })).toBe(300_000);
+    expect(channelsTimeoutMs({ PDF_CHANNELS_TIMEOUT_MS: "500" })).toBe(300_000);
   });
 });
 

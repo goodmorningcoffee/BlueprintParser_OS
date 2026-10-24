@@ -13,13 +13,15 @@ import { join } from "path";
 import { logger } from "@/lib/logger";
 import type { PdfChannelsResult } from "./types";
 
-export const DEFAULT_CHANNELS_TIMEOUT_MS = 60_000;
+// [census F2] 300 s: measured 2026-10-24 on 29 real sets (646 pages) at 0.42 s/page, a 115-page set
+// took 61.6 s; the census runs beside the page loop, so the budget never delays an upload.
+export const DEFAULT_CHANNELS_TIMEOUT_MS = 300_000;
 const MAX_CHANNELS_TIMEOUT_MS = 600_000;
 /** Head-room between the script's own total budget and the hard kill. */
 const BUDGET_MARGIN_MS = 5_000;
 const KILL_GRACE_MS = 3_000;
 
-/** PDF_CHANNELS_TIMEOUT_MS → 1 s..10 min; anything unparseable is the 60 s default. */
+/** PDF_CHANNELS_TIMEOUT_MS → 1 s..10 min; anything unparseable is the 300 s default. */
 export function channelsTimeoutMs(env: Record<string, string | undefined> = process.env): number {
   const raw = env.PDF_CHANNELS_TIMEOUT_MS?.trim();
   if (!raw || !/^\d+$/.test(raw)) return DEFAULT_CHANNELS_TIMEOUT_MS;

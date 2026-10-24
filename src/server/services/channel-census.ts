@@ -3,7 +3,7 @@
 // Started ONCE per upload run from lib/processing.ts, after original.pdf is in memory, BESIDE the
 // page loop (not before it — a dense set took 42 s of one core, and every upload used to wait for
 // it): runs scripts/pdf_channels.py over the whole PDF (lib/pdf-channels/runner.ts,
-// PDF_CHANNELS_TIMEOUT_MS, default 60 s), merges the project summary into
+// PDF_CHANNELS_TIMEOUT_MS, default 300 s), merges the project summary into
 // projectIntelligence.channels (one key, jsonb `||`, so every other key survives) and resolves to
 // pageNumber → record. processing.ts awaits it AFTER the page loop and BEFORE project analysis (so
 // that read-modify-write sees the key and carries it as non-computed), then persistUploadChannels

@@ -37,7 +37,7 @@ cap applies (measured on a 2M-stroke page: 29 s, 592 MB RSS), so a page whose de
 path-painting operators in those streams, stopped past maxPaths, flagged "estimated": true (same
 page: 0.5 s read + 0.25 s scan, ~64 MB). A shared form drawn many times is counted once there.
 Why bboxlog: measured 2026-10-24 on a generated 200k-stroke sheet, bboxlog 2.1 s / +54 MB peak
-RSS vs get_cdrawings() 1.2 s / +300 MB. The census runs inside the upload process, before the
+RSS vs get_cdrawings() 1.2 s / +300 MB. The census runs inside the upload process, beside the
 page loop, on the same task, so memory wins over the second.
 
 kind (VECTOR_MIN = 50 paths, so a title-block frame alone is not "vector"):

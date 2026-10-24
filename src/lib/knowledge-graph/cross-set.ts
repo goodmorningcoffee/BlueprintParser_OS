@@ -228,7 +228,7 @@ const revisionEligible = (p: CrossSetPageKey) => p.contentTokens >= DEDUP_THRESH
 
 /**
  * The compute itself, one yield per sheet bucket and per YIELD_EVERY comparisons. Both runners drain
- * it and then call `finish`; nothing is observable until then.
+ * it and then call `collect`; nothing is observable until then.
  */
 function startCrossSetLinks(input: readonly CrossSetProjectKeys[], opts: CrossSetComputeOptions) {
   const projects = sortByAge(input);
@@ -314,7 +314,7 @@ function startCrossSetLinks(input: readonly CrossSetProjectKeys[], opts: CrossSe
     }
   }
 
-  function finish(): CrossSetLinks {
+  function collect(): CrossSetLinks {
     // 3. copy_of — the exact-copy report, oldest project first so B is always the newer one.
     const projectLinks: CrossSetProjectLink[] = crossProjectReport(projects.map((p) => ({ project: p.publicId, keys: p.pages.map((pg) => pg.textKey) })))
       .filter((pair) => pair.copy)
@@ -332,14 +332,14 @@ function startCrossSetLinks(input: readonly CrossSetProjectKeys[], opts: CrossSe
     };
   }
 
-  return { steps: steps(), finish };
+  return { steps: steps(), collect };
 }
 
 /** Links over reduced projects, in one synchronous pass. Input order does not matter: projects are sorted by age here. */
 export function computeCrossSetLinks(input: readonly CrossSetProjectKeys[], opts: CrossSetComputeOptions = {}): CrossSetLinks {
   const run = startCrossSetLinks(input, opts);
   while (!run.steps.next().done) { /* drain */ }
-  return run.finish();
+  return run.collect();
 }
 
 const giveEventLoopATurn = (): Promise<void> =>
@@ -354,7 +354,7 @@ export async function computeCrossSetLinksAsync(input: readonly CrossSetProjectK
   const run = startCrossSetLinks(input, opts);
   const turn = opts.yieldFn ?? giveEventLoopATurn;
   while (!run.steps.next().done) await turn();
-  return run.finish();
+  return run.collect();
 }
 
 /** Convenience for callers that hold whole projects (the measurement script, tests). */
