@@ -292,10 +292,12 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     // four computed keys alongside the two carried user keys (observed 2026-07-08;
     // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections;
     // +evidence [evidence T4 2026-10-24] — written whenever the page has OCR;
-    // +regionsV2 [regions v2 2026-10-24] — the shadow detector-first classifier, same trigger)
+    // +regionsV2 [regions v2 2026-10-24] — the shadow detector-first classifier, same trigger;
+    // +shapes [tag-mapping v2 2026-10-24] — the shape-ensemble summary, same trigger; empty here)
     expect(Object.keys(pi).sort()).toEqual([
-      "classifiedRegions", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "regionsV2", "someFutureKey", "yoloHeatmap",
+      "classifiedRegions", "ensembleRegions", "evidence", "pageZones", "parsedRegions", "regionsV2", "shapes", "someFutureKey", "yoloHeatmap",
     ]);
+    expect(pi.shapes).toMatchObject({ v: 1, shapes: [] });
     // evidence: the yolo_medium text_box is a layout box, never a yolo_text word box → no holes
     expect(pi.evidence).toMatchObject({ v: 1, zonesSource: "fixed-fallback", channels: { yoloText: false, layout: true } });
     expect(pi.evidence.counts.holes).toBe(0);
@@ -323,6 +325,57 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     expect(pi.ensembleRegions.length).toBeGreaterThan(0);
     expect(pi.ensembleRegions[0].reasoning).toContain("parsed-region");
     expect(pi.ensembleRegions[0].reasoning).toContain("yolo-heatmap");
+  }, 30000);
+
+  // [tag-mapping v2 2026-10-24] projects processed before the shape ensemble get `shapes` per page
+  // and the project's `tagFamilies` from scope=intelligence alone (no YOLO re-load), via the same
+  // helpers yolo/load uses (yolo-post-enrichment.ts computePageShapes, tag-families-write.ts).
+  it("tag-mapping v2: intelligence writes page `shapes` + project `tagFamilies`; stale shapes on a YOLO-less page are cleared", async () => {
+    const { company, project } = await createWorld();
+    const admin = await createUser(company.id, { role: "admin" });
+    await db.update(projects).set({ projectIntelligence: { yoloTags: { keep: true } } as any }).where(eq(projects.id, project.id));
+    const xs = [0.1, 0.2, 0.3];
+    const word = (text: string, x: number) => ({ text, confidence: 99, bbox: [x + 0.005, 0.105, 0.004, 0.003] as [number, number, number, number] });
+    const words = xs.map((x, i) => word(`D-10${i + 1}`, x));
+    const page1 = await createPage(project.id, 1, {
+      textractData: { lines: [], words } as any,
+      rawText: "D-101 D-102 D-103",
+      // one small classical bubble → proves pages.keynotes reaches the ensemble
+      keynotes: [{ shape: "circle", text: "W", bbox: [0.5, 0.5, 0.5 + 40 / 10800, 0.5 + 40 / 10800] }] as any,
+    });
+    // page 2: no YOLO, a stale (valid) shapes summary that WOULD form a family if it survived
+    const staleShape = (x: number, t: string) => ({ b: [x, 0.3, x + 0.01, 0.31], c: "hexagon", s: "y", k: 0.9, t, ts: "x", kd: "t", z: "drawings" });
+    const page2 = await createPage(project.id, 2, {
+      textractData: richTextract, rawText: "",
+      pageIntelligence: { shapes: { v: 1, computedAt: "2026-01-01T00:00:00.000Z", counts: {}, drops: {}, truncated: 0, shapes: [staleShape(0.1, "T-1"), staleShape(0.2, "T-2"), staleShape(0.3, "T-3")] } } as any,
+    });
+    await db.insert(annotations).values(xs.map((x) => ({
+      name: "circle", minX: x, minY: 0.1, maxX: x + 0.014, maxY: 0.114, pageNumber: 1,
+      threshold: 0.5, source: "yolo", projectId: project.id,
+      data: { confidence: 0.9, modelName: "yolo_primitive" } as any,
+    })));
+
+    asUser(admin);
+    const lines = await drain(await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" })));
+    expect(lines.at(-1)).toMatchObject({ type: "done", updated: 2 });
+
+    const [p1] = await db.select().from(pages).where(eq(pages.id, page1.id));
+    const shapes = (p1.pageIntelligence as Record<string, any>).shapes;
+    expect(shapes).toMatchObject({ v: 1, counts: { yolo: 3, classical: 1 } });
+    expect(shapes.shapes.map((x: { c: string; s: string; t: string | null }) => [x.c, x.s, x.t]).sort()).toEqual([
+      ["circle", "c", "W"], ["circle", "y", "D-101"], ["circle", "y", "D-102"], ["circle", "y", "D-103"],
+    ]);
+    const [p2] = await db.select().from(pages).where(eq(pages.id, page2.id));
+    expect(p2.pageIntelligence as Record<string, unknown>).not.toHaveProperty("shapes"); // computed key, cleared
+
+    const [proj] = await db.select().from(projects).where(eq(projects.id, project.id));
+    const pi = proj.projectIntelligence as Record<string, any>;
+    expect(pi.yoloTags).toEqual({ keep: true }); // user key survives both project writes
+    expect(pi.tagFamilies).toMatchObject({ v: 1, pagesScanned: 1 });
+    expect(pi.tagFamilies.families).toHaveLength(1);
+    expect(pi.tagFamilies.families[0]).toMatchObject({
+      id: "circle:D-999", cls: "circle", instances: 3, pages: [1], values: ["D-101", "D-102", "D-103"],
+    });
   }, 30000);
 
   it("L3-2: intelligence WITHOUT debug=1 does NOT write the classifier debug bundle", async () => {

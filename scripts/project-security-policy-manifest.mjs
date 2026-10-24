@@ -783,6 +783,13 @@ export const INTERNAL_MUTATION_SINKS = [
     "writeSummary",
     "atomic-project-write",
   ],
+  // [tag-mapping v2 2026-10-24] Tag families: merge ONE key, projectIntelligence.tagFamilies, in one
+  // tx under the caller's capability — yolo/load (its durable lease) and the intelligence reprocess.
+  [
+    "src/server/services/tag-families-write.ts",
+    "writeProjectTagFamilies",
+    "atomic-project-write",
+  ],
   ["src/lib/llm/stream.ts", "streamChatResponse", "atomic-or-no-persist"],
   [
     "src/lib/services/chat/scoped.ts",

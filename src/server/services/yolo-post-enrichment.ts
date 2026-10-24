@@ -12,10 +12,10 @@
 import { runHeuristicEngine, type HeuristicRule } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
-import { computePageZones } from "@/lib/page-zones";
+import { computePageZones, type PageZones } from "@/lib/page-zones";
 import { buildEvidenceSummary, sameEvidence } from "@/lib/evidence";
 import { classifyRegionsV2, type RegionsV2 } from "@/lib/region-classifier-v2";
-import { buildShapeEnsemble, sameShapeEnsemble, storedShapeEnsemble, summarizeShapeEnsemble } from "@/lib/shape-ensemble";
+import { buildShapeEnsemble, sameShapeEnsemble, storedShapeEnsemble, summarizeShapeEnsemble, type ShapeEnsembleSummary } from "@/lib/shape-ensemble";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -83,6 +83,32 @@ export function stableStringify(value: unknown): string {
 }
 const sameJson = (a: unknown, b: unknown): boolean => stableStringify(a) === stableStringify(b);
 
+export interface PageShapesInput {
+  yoloDets: readonly PostYoloDetection[];
+  /** `pages.keynotes` — the classical shape-parse arm (null/absent → YOLO-only). */
+  keynotes?: readonly KeynoteShapeData[] | null;
+  /** `pages.textractData.words` — the validator read. */
+  words?: TextractPageData["words"] | null;
+  zones: PageZones;
+  /** The page's fresh `regionsV2` — its table regions drop shapes that are table cells. */
+  regionsV2?: RegionsV2 | null;
+  sheetNumbers?: readonly (string | null | undefined)[] | null;
+}
+
+/** [tag-mapping v2] The page's `shapes` summary — ONE definition shared by the post-YOLO
+ *  enrichment (below) and the intelligence reprocess (services/reprocess.ts). Throws on bad input;
+ *  callers guard it so a failure never drops the page's other enrichment. */
+export function computePageShapes(input: PageShapesInput): ShapeEnsembleSummary {
+  return summarizeShapeEnsemble(buildShapeEnsemble({
+    yolo: input.yoloDets.map((d) => ({ name: d.name, bbox: [d.minX, d.minY, d.maxX, d.maxY], confidence: d.confidence, modelName: d.modelName })),
+    classical: (input.keynotes ?? []).map((k) => ({ shape: k.shape, text: k.text ?? "", bbox: k.bbox })),
+    words: input.words ?? null,
+    zones: input.zones,
+    tableBoxes: input.regionsV2?.regions.filter((r) => r.kind === "table").map((r) => r.bbox) ?? null,
+    sheetNumbers: input.sheetNumbers ?? null,
+  }));
+}
+
 /** → the page's next pageIntelligence (a spread of the existing one) and whether it changed. */
 export function enrichPageAfterYolo(
   page: PostYoloPage,
@@ -121,16 +147,10 @@ export function enrichPageAfterYolo(
   // shapes inside detected tables / title blocks dropped. Persisted compactly as `shapes`
   // (server-owned, services/pages.ts); written only when it differs, like the zones.
   try {
-    const regionsV2 = updated.regionsV2 as RegionsV2 | undefined;
-    const ensemble = buildShapeEnsemble({
-      yolo: yoloDets.map((d) => ({ name: d.name, bbox: [d.minX, d.minY, d.maxX, d.maxY], confidence: d.confidence, modelName: d.modelName })),
-      classical: (page.keynotes ?? []).map((k) => ({ shape: k.shape, text: k.text ?? "", bbox: k.bbox })),
-      words: page.textractData?.words ?? null,
-      zones,
-      tableBoxes: regionsV2?.regions.filter((r) => r.kind === "table").map((r) => r.bbox) ?? null,
-      sheetNumbers: opts.sheetNumbers ?? null,
+    const shapes = computePageShapes({
+      yoloDets, keynotes: page.keynotes, words: page.textractData?.words, zones,
+      regionsV2: updated.regionsV2 as RegionsV2 | undefined, sheetNumbers: opts.sheetNumbers,
     });
-    const shapes = summarizeShapeEnsemble(ensemble);
     if (!sameShapeEnsemble(shapes, storedShapeEnsemble(existing))) { updated.shapes = shapes; pageChanged = true; }
   } catch (err) {
     logger.error(`[yolo-post-enrichment] Shape ensemble FAILED for page ${page.pageNumber}:`, err);

@@ -40,6 +40,10 @@ export const REPROCESS_COMPUTED_KEYS = [
   // [regions v2 2026-10-24] shadow detector-first region classifier (src/lib/region-classifier-v2),
   // written beside the legacy keys by the same two writers; absent on pages without YOLO detections.
   "regionsV2",
+  // [tag-mapping v2 2026-10-24] shape-ensemble summary (src/lib/shape-ensemble), written by the same
+  // two writers on pages with YOLO detections — cleared here so a page that lost its detections does
+  // not keep feeding stale shapes into the project's tag families.
+  "shapes",
 ] as const;
 
 /**

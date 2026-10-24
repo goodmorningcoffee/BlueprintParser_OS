@@ -29,7 +29,7 @@ import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { computePageZones, storedPageZones, type PageZoneDetection, type PageZones } from "@/lib/page-zones";
 import { buildEvidenceSummary } from "@/lib/evidence";
-import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
+import { classifyRegionsV2, type RegionsV2 } from "@/lib/region-classifier-v2";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
@@ -61,6 +61,8 @@ import { assertProjectWritable } from "@/server/api/access";
 // [fix 2026-10-21] shape-parse (compute-then-swap + Lambda fan-out) and the shared NDJSON/debug stream.
 import { reprocessProjectShapeParse } from "./reprocess-shape-parse";
 import { reprocessEvidenceScope } from "./reprocess-evidence";
+import { computePageShapes } from "./yolo-post-enrichment";
+import { writeProjectTagFamilies } from "./tag-families-write";
 import { reprocessGraphScope } from "./reprocess-graph";
 import { refreshProjectGraph } from "./project-graph";
 import { reprocessTilesScope } from "./reprocess-tiles";
@@ -493,6 +495,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               csiCodes: pages.csiCodes,
               textAnnotations: pages.textAnnotations,
               storedIntelligence: pages.pageIntelligence,
+              keynotes: pages.keynotes,
             })
             .from(pages)
             .where(eq(pages.projectId, project.id))
@@ -611,6 +614,10 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                 } catch (err) {
                   logger.error(`[reprocess-intel] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
                 }
+                try { // [tag-mapping v2] shape ensemble → `shapes`, the post-YOLO enrichment's own helper
+                  pageIntelligence.shapes = computePageShapes({ yoloDets: pageYolo, keynotes: page.keynotes, words: textractData.words, zones: pageZones ?? computePageZones(pageYolo),
+                    regionsV2: pageIntelligence.regionsV2 as RegionsV2 | undefined, sheetNumbers: projectPages.map((p) => p.drawingNumber) });
+                } catch (err) { logger.error(`[reprocess-intel] Shape ensemble failed for page ${page.pageNumber}:`, err); }
                 try {
                   const regions = classifyPageRegions({
                     pageNumber: page.pageNumber,
@@ -715,6 +722,8 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             if (updatedPages % 5 === 0) send({ type: "progress", updated: updatedPages, total: totalPages, project: project.name });
           }
 
+          // [tag-mapping v2] project tag families from the fresh `shapes` (yolo/load's writer) — before the graph reads them.
+          await writeProjectTagFamilies(writeCapability, project.id).catch((err) => logger.error(`[reprocess-intel] Tag families failed for ${project.name}:`, err));
           // Project-level analysis
           try {
             const allProcessedPages = await db

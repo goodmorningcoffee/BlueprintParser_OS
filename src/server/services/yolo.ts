@@ -76,8 +76,7 @@ import {
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { assertDemoYoloTargetReadOnly } from "@/server/services/yolo-demo-target";
 import { enrichPageAfterYolo } from "./yolo-post-enrichment";
-import { tagFamiliesFromStoredPages } from "@/lib/shape-ensemble";
-import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
+import { writeProjectTagFamilies } from "./tag-families-write";
 
 // yolo/load's OWN S3 client (legacy constructed one; kept verbatim)
 const loadS3Client = new S3Client({
@@ -823,15 +822,9 @@ export async function yoloLoad(
             `[YOLO-LOAD] Post-YOLO heuristic engine ran on ${projectPages.length} pages`,
           );
           // [tag-mapping v2] project tag families from the pages' shape summaries →
-          // projects.projectIntelligence.tagFamilies (other keys untouched; read by tag mapping
-          // and the knowledge graph via storedTagFamilies).
-          const tagFamilies = tagFamiliesFromStoredPages(shapePages);
-          await withProjectWrite(writeCapability, project.id, async (tx) => {
-            const [current] = await tx.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
-            await tx.update(projects)
-              .set({ projectIntelligence: mergeProjectIntelligence(current?.pi, { tagFamilies }) })
-              .where(eq(projects.id, project.id));
-          });
+          // projects.projectIntelligence.tagFamilies — the writer shared with the intelligence
+          // reprocess (tag-families-write.ts).
+          const tagFamilies = await writeProjectTagFamilies(writeCapability, project.id, shapePages);
           logger.info(`[YOLO-LOAD] Tag families: ${tagFamilies.families.length} over ${tagFamilies.pagesScanned} pages`);
         } catch (err) {
           logger.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
