@@ -23,6 +23,7 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { csiCodesForLlm } from "@/lib/csi-utils";
 import { detectTagPatterns } from "@/lib/tag-patterns";
 import { logger } from "@/lib/logger";
+import { projectGraphForLlm } from "@/server/services/project-graph";
 import type { ClientAnnotation, TextractPageData } from "@/types";
 import {
   assertProjectWriteCapability,
@@ -356,13 +357,16 @@ async function execGetCsiSpatialMap(pageNumber: number, ctx: ToolContext) {
 }
 
 async function execGetCrossReferences(pageNumber: number | undefined, ctx: ToolContext) {
+  // [graph T8] the knowledge graph's RESOLVED view (page numbers, unresolved queue) rides beside the
+  // raw regex refs; `knowledgeGraph` is null for a project with no graph yet (never a failure).
+  const knowledgeGraph = await projectGraphForLlm(ctx.projectId, pageNumber).catch(() => null);
   if (pageNumber) {
     const [page] = await db
       .select({ pageIntelligence: pages.pageIntelligence })
       .from(pages)
       .where(and(eq(pages.projectId, ctx.projectId), eq(pages.pageNumber, pageNumber)))
       .limit(1);
-    return { pageNumber, crossRefs: page?.pageIntelligence?.crossRefs || [] };
+    return { pageNumber, crossRefs: page?.pageIntelligence?.crossRefs || [], knowledgeGraph };
   }
 
   // Full project graph
@@ -373,6 +377,7 @@ async function execGetCrossReferences(pageNumber: number | undefined, ctx: ToolC
     .limit(1);
   return {
     refGraph: project?.projectIntelligence?.refGraph || { edges: [], hubs: [], leaves: [] },
+    knowledgeGraph,
   };
 }
 

@@ -10,7 +10,7 @@
 // the UI. An auto-included stage can be unticked; the plan then carries a "leaves … stale" warning.
 // Ordering is fixed by the DAG, never by click order.
 
-export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles";
+export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph";
 
 export type StageId =
   | "thumbnails"
@@ -23,6 +23,7 @@ export type StageId =
   | "full"
   | "shape-parse"
   | "intelligence"
+  | "graph"
   | "evidence"
   | "tiles"
   | "re-ocr";
@@ -187,7 +188,18 @@ export const STAGES: readonly StageDef[] = [
     cost: "DB + local CPU; classifier debug also writes S3 bundles",
     kind: "reprocess",
     scope: "intelligence",
-    overlap: "Includes project analysis and summaries — nothing further needs to run after it.",
+    overlap: "Includes project analysis, summaries and the knowledge graph — nothing further needs to run after it.",
+    pulls: [],
+  },
+  {
+    // [graph T8 2026-10-24] services/reprocess-graph.ts — reads stored rows only.
+    id: "graph",
+    label: "Knowledge graph",
+    writes: "S3 graph/knowledge-graph.v1.json + .index.json under the project's data prefix; projects.project_intelligence.knowledgeGraph (counts + resolution summary only)",
+    cost: "DB reads (one OCR read per page) + local CPU; two S3 PUTs per project; no SageMaker, no Textract",
+    kind: "reprocess",
+    scope: "graph",
+    overlap: "Intelligence rebuilds it too — on its own this is the fast backfill for projects uploaded before the graph existed, and the refresh after title-block or duplicate changes.",
     pulls: [],
   },
   {

@@ -61,6 +61,8 @@ import { assertProjectWritable } from "@/server/api/access";
 // [fix 2026-10-21] shape-parse (compute-then-swap + Lambda fan-out) and the shared NDJSON/debug stream.
 import { reprocessProjectShapeParse } from "./reprocess-shape-parse";
 import { reprocessEvidenceScope } from "./reprocess-evidence";
+import { reprocessGraphScope } from "./reprocess-graph";
+import { refreshProjectGraph } from "./project-graph";
 import { reprocessTilesScope } from "./reprocess-tiles";
 import { readTilesSetting } from "./tiles-setting";
 import { createReprocessStream } from "./reprocess-stream";
@@ -459,6 +461,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         return;
       }
 
+      if (scope === "graph") {
+        // [graph T8 2026-10-24] knowledge graph only — loop + per-project guard live in reprocess-graph.ts.
+        send({ type: "done", ...(await reprocessGraphScope({ projects: allProjects, withLease: withReprocessLease, stream: out })) });
+        out.close();
+        return;
+      }
+
       if (scope === "tiles") {
         // [tiles T9 2026-10-24] Loop + per-project guard live in reprocess-tiles.ts (zero line headroom here).
         await reprocessTilesScope({ projects: allProjects, withReprocessLease, stream: out, levels: (await readTilesSetting()).levels, isRootAdmin: session.user.isRootAdmin });
@@ -747,6 +756,9 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
           } catch (err) {
             logger.error(`[reprocess-intel] Summary computation failed for ${project.name}:`, err);
           }
+          // [graph T8] knowledge graph (services/project-graph.ts) — never throws.
+          const graph = await refreshProjectGraph(project.id, writeCapability);
+          send({ type: "project-graph", project: project.name, ok: graph.ok, references: graph.summary?.references, reason: graph.reason });
           });
           } catch (err) {
             // Per-project guard — see the page-names scope for why (S8 / TILE_015 C1).

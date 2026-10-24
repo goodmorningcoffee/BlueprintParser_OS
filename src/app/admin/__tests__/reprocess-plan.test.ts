@@ -24,8 +24,11 @@ describe("stage DAG", () => {
   it("is in pipeline order, ids are unique, and every pull edge points at a runnable stage", () => {
     expect(ids([...STAGES])).toEqual([
       "thumbnails", "page-names", "yolo-run", "yolo-load", "yolo-restamp", "purge-yolo", "dedupe",
-      "full", "shape-parse", "intelligence", "evidence", "tiles", "re-ocr",
+      "full", "shape-parse", "intelligence", "graph", "evidence", "tiles", "re-ocr",
     ]);
+    // [graph T8] knowledge graph: a plain reprocess scope after intelligence, pulls nothing, pulled by nothing.
+    expect(stageDef("graph")).toMatchObject({ kind: "reprocess", scope: "graph", pulls: [] });
+    expect(STAGES.some((s) => s.pulls.some((p) => p.stage === "graph"))).toBe(false);
     expect(new Set(STAGES.map((s) => s.id)).size).toBe(STAGES.length);
     for (const s of STAGES) {
       for (const p of s.pulls) expect(isRunnable(stageDef(p.stage))).toBe(true);
