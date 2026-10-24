@@ -6,6 +6,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { usePageGraphLinks } from "@/queries/useProjectGraph";
+import CrossSetLinksSection from "@/components/viewer/CrossSetLinksSection";
 import type { GraphLink, UnresolvedReference } from "@/lib/knowledge-graph/summary";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
 
@@ -422,6 +423,8 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
             </Section>
           </>
         )}
+        {/* [cross-set F3] the same sheet in the company's other sets — cross-project links, own section component */}
+        <CrossSetLinksSection pageNumber={pageNumber} expanded={expandedSections["crossSet"] ?? false} onToggle={() => toggleSection("crossSet")} />
       </div>
     </div>
   );

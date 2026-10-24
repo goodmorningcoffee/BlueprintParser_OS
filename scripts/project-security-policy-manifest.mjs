@@ -783,6 +783,14 @@ export const INTERNAL_MUTATION_SINKS = [
     "writeSummary",
     "atomic-project-write",
   ],
+  // [cross-set F3 2026-10-24] Cross-set links: merge ONE key, projectIntelligence.crossSetLinks (publicIds
+  // + counts; the links are an S3 object under the project's data prefix), under the caller's
+  // capability — upload end (lib/processing.ts) and scope=cross-set (under the reprocess lease).
+  [
+    "src/server/services/cross-set-links.ts",
+    "writeCrossSetSummary",
+    "atomic-project-write",
+  ],
   // [tag-mapping v2 2026-10-24] Tag families: merge ONE key, projectIntelligence.tagFamilies, in one
   // tx under the caller's capability — yolo/load (its durable lease) and the intelligence reprocess.
   [

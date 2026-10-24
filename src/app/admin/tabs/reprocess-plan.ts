@@ -10,7 +10,7 @@
 // the UI. An auto-included stage can be unticked; the plan then carries a "leaves … stale" warning.
 // Ordering is fixed by the DAG, never by click order.
 
-export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph";
+export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph" | "cross-set";
 
 export type StageId =
   | "thumbnails"
@@ -24,6 +24,7 @@ export type StageId =
   | "shape-parse"
   | "intelligence"
   | "graph"
+  | "cross-set"
   | "evidence"
   | "tiles"
   | "re-ocr";
@@ -200,6 +201,17 @@ export const STAGES: readonly StageDef[] = [
     kind: "reprocess",
     scope: "graph",
     overlap: "Intelligence rebuilds it too — on its own this is the fast backfill for projects uploaded before the graph existed, and the refresh after title-block or duplicate changes.",
+    pulls: [],
+  },
+  {
+    // [cross-set F3 2026-10-24] services/reprocess-cross-set.ts — ONE company-wide compute, then each selected project's slice.
+    id: "cross-set",
+    label: "Cross-set links",
+    writes: "S3 graph/cross-set.v1.json under each selected project's data prefix; projects.project_intelligence.crossSetLinks (linked project ids + counts only)",
+    cost: "DB reads of every non-demo project's stored text in the company (one project at a time) + local CPU; one S3 PUT per selected project; no SageMaker, no Textract",
+    kind: "reprocess",
+    scope: "cross-set",
+    overlap: "Compares the WHOLE company whatever is selected; selection only limits which projects' link files are rewritten. Upload end refreshes the new project's own file (companies up to 40 sets); after hiding duplicates or renaming sheets, run this.",
     pulls: [],
   },
   {

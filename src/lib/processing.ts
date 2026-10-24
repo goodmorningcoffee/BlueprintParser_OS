@@ -40,6 +40,7 @@ import {
   computeProjectSummaries,
 } from "@/lib/project-analysis";
 import { refreshProjectGraph } from "@/server/services/project-graph";
+import { refreshProjectCrossSetLinks } from "@/server/services/cross-set-links";
 import type { CsiCode, TextAnnotationResult, StagingFile } from "@/types";
 import { spawn } from "child_process";
 import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
@@ -782,7 +783,7 @@ async function processProjectWithLease(
     } catch (err) {
       logger.error("[processing] Project summary computation failed:", err);
     }
-    await refreshProjectGraph(project.id, writeCapability); // [graph T8] never throws
+    await refreshProjectGraph(project.id, writeCapability).then(() => refreshProjectCrossSetLinks(project.id, writeCapability)); // [graph T8] [cross-set F3] neither throws
 
     // Update project status
     const processingTime = Math.round((Date.now() - startTime) / 1000);

@@ -80,6 +80,8 @@ export const queryKeys = {
   // [graph T8 2026-10-24] knowledge-graph reference index, GET /api/projects/[id]/graph once per open.
   projectGraph: {
     index: (publicId: string) => ["project", publicId, "knowledgeGraph", "index"] as const,
+    // [cross-set F3 2026-10-24] GET /api/projects/[id]/cross-set (every page, names resolved server-side).
+    crossSet: (publicId: string) => ["project", publicId, "knowledgeGraph", "crossSet"] as const,
   },
   // [bucketfill P2] pageGeometry — extracted PDF vector linework, one entry per project/page.
   // Derived locally from the open pdf.js document (see lib/pdf-document-registry.ts), never
