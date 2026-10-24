@@ -189,19 +189,15 @@ export interface QtoLineItem {
     pageNumber: number;
     bbox: [number, number, number, number];
     confidence: number;
-    /** Phase 2: optional tier + dropReason preserved for per-instance audit
-     *  review in the ReviewStep expander. Absent on pre-Phase-2 data. */
+    /** Phase 2: optional tier + dropReason for per-instance audit review. Absent on pre-Phase-2 data. */
     confidenceTier?: "high" | "medium" | "low";
-    dropReason?:
-      | "outside_scope"
-      | "pattern_mismatch"
-      | "inside_title_block"
-      | "inside_table"
-      | "outside_drawings";
+    dropReason?: "outside_scope" | "pattern_mismatch" | "inside_title_block" | "inside_table" | "outside_drawings";
   }[];
   pages: number[];
   flags: QtoFlag[];
   notes: string;
+  /** [tag-mapping v2] schedule qty vs counted instances (src/lib/tag-mapping/certificate.ts). */
+  certificate?: import("@/lib/tag-mapping/certificate").CompletenessCertificate;
 }
 
 export type QtoFlag =
@@ -835,10 +831,11 @@ export interface ProjectIntelligence {
   disciplines?: DisciplineBreakdown[];
   refGraph?: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] };
   csiGraph?: unknown; // CsiNetworkGraph — imported from csi-graph.ts at usage sites
-  // [refactor jul9 P2-A S2] pageCount field purged — writer (analyzeProject)
-  // removed, zero readers; old jsonb rows may still carry a stale value.
+  // [refactor jul9 P2-A S2] pageCount purged — no writer, no readers; old jsonb rows may carry it.
   summaries?: ProjectSummaries;
   yoloTags?: YoloTag[];
+  /** [tag-mapping v2] shape+text families (src/lib/shape-ensemble/families.ts), written by yolo/load. */
+  tagFamilies?: import("@/lib/shape-ensemble").TagFamiliesSummary;
 }
 
 // ─── Project Summaries (chunking support) ────────────────────

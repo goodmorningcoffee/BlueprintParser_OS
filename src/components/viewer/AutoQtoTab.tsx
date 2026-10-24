@@ -28,8 +28,9 @@ import {
   readPageIntelligence,
   usePageIntelligenceByPage,
 } from "@/queries/usePageWindow";
-import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
-import type { ScoredMatch } from "@/lib/tag-mapping";
+import type { QtoWorkflow, QtoLineItem, QtoItemType } from "@/types";
+import { certificateLabel, type ScoredMatch } from "@/lib/tag-mapping";
+import { qtoLineItemFlags, scheduleColumnRoles, lineItemCertificate } from "@/lib/auto-qto/line-item-flags";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
@@ -1351,19 +1352,8 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
           dropReason: i.dropReason,
         });
 
-        const computeFlags = (instances: ScoredMatch[]): QtoFlag[] => {
-          const flags: QtoFlag[] = [];
-          if (instances.length === 0) flags.push("not-found");
-          const mediumCount = instances.filter((i) => i.confidenceTier === "medium").length;
-          const lowCount = instances.filter((i) => i.confidenceTier === "low").length;
-          // Fallback for pre-Phase-2 instances missing tier: use confidence
-          const fuzzyCount = instances.filter((i) =>
-            i.confidenceTier === undefined && i.confidence < 1.0
-          ).length;
-          if (mediumCount > 0) flags.push("medium-confidence");
-          if (lowCount > 0 || fuzzyCount > 0) flags.push("low-confidence");
-          return flags;
-        };
+        // [tag-mapping v2] flags + completeness certificate live in lib/auto-qto/line-item-flags.ts.
+        const computeFlags = qtoLineItemFlags;
 
         if (input.isYoloOnly) {
           // Type 1 — single line item keyed by yolo class
@@ -1380,6 +1370,7 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
           }];
         } else {
           // Types 2, 3, 4, 5 — per-tag line items
+          const roles = scheduleColumnRoles(input.schedule!);
           lineItems = input.tags.map((tag) => {
             const instances = results[tag] || [];
             const scheduleRow = (input.schedule!.rows as Record<string, string>[]).find(
@@ -1389,14 +1380,16 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
             for (const h of input.schedule!.headers) {
               if (h !== input.schedule!.tagColumn) specs[h] = scheduleRow?.[h] || "";
             }
+            const certificate = lineItemCertificate(tag, scheduleRow, roles, instances);
             return {
               tag,
               specs,
               autoQuantity: instances.length,
               instances: instances.map(buildInstance),
               pages: [...new Set(instances.map((i) => i.pageNumber))].sort((a, b) => a - b),
-              flags: computeFlags(instances),
+              flags: computeFlags(instances, certificate),
               notes: "",
+              ...(certificate ? { certificate } : {}),
             };
           });
         }
@@ -1686,6 +1679,12 @@ function ReviewStep({ workflow, updateWorkflowStep, navigatePage }: {
                     </span>
                   );
                 })()}
+                {certificateLabel(li.certificate) && (
+                  <span
+                    className={`text-[8px] px-1 py-0.5 rounded shrink-0 ${li.certificate!.verdict === "MATCH" ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}
+                    title={`Completeness certificate: schedule quantity ${li.certificate!.expected} vs ${li.certificate!.found} counted (${li.certificate!.verdict})`}
+                  >{certificateLabel(li.certificate)}</span>
+                )}
               </div>
             </div>
           );

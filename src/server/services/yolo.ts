@@ -76,6 +76,8 @@ import {
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { assertDemoYoloTargetReadOnly } from "@/server/services/yolo-demo-target";
 import { enrichPageAfterYolo } from "./yolo-post-enrichment";
+import { tagFamiliesFromStoredPages } from "@/lib/shape-ensemble";
+import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
 
 // yolo/load's OWN S3 client (legacy constructed one; kept verbatim)
 const loadS3Client = new S3Client({
@@ -665,6 +667,7 @@ export async function yoloLoad(
               id: pages.id,
               pageNumber: pages.pageNumber,
               rawText: pages.rawText,
+              drawingNumber: pages.drawingNumber,
               pageIntelligence: pages.pageIntelligence,
               csiCodes: pages.csiCodes,
               // [regions v2 T5 fix] textractData is NOT selected here: every page of the project in
@@ -731,10 +734,15 @@ export async function yoloLoad(
             });
           }
 
+          // [tag-mapping v2] drawing numbers for the shape ensemble's detail callouts; the pages'
+          // (next) intelligence feeds the project's tag families after the loop.
+          const sheetNumbers = projectPages.map((p) => p.drawingNumber);
+          const shapePages: Array<{ pageNumber: number; pageIntelligence: unknown }> = [];
+
           // Run heuristics + composite classifier per page with YOLO data
           for (const page of projectPages) {
             const yoloDets = yoloByPage.get(page.pageNumber);
-            if (!yoloDets?.length) continue;
+            if (!yoloDets?.length) { shapePages.push({ pageNumber: page.pageNumber, pageIntelligence: page.pageIntelligence }); continue; }
 
             // [regions v2 T5 fix] ONE page at a time, and only the two keys the shadow classifier
             // reads (`words`, `tables`; never `lines`), so memory is bounded by a single page.
@@ -742,6 +750,7 @@ export async function yoloLoad(
               .select({
                 words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`,
                 tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'`,
+                keynotes: pages.keynotes,
               })
               .from(pages)
               .where(eq(pages.id, page.id));
@@ -758,10 +767,13 @@ export async function yoloLoad(
                 pageIntelligence: page.pageIntelligence,
                 csiCodes: page.csiCodes,
                 textractData,
+                keynotes: ocr?.keynotes ?? null,
               },
               yoloDets,
-              { rules, heatmapEnabled, ensembleEnabled, ensembleConfig },
+              { rules, heatmapEnabled, ensembleEnabled, ensembleConfig, sheetNumbers },
             );
+            if (pageChanged) shapePages.push({ pageNumber: page.pageNumber, pageIntelligence: updated });
+            else shapePages.push({ pageNumber: page.pageNumber, pageIntelligence: page.pageIntelligence });
 
             // Merge YOLO CSI codes from model class config into page-level csiCodes.
             // [refactor jul23 P4.1 U9] Unified onto mergeCsiCodes (was a hand-rolled
@@ -810,6 +822,17 @@ export async function yoloLoad(
           logger.info(
             `[YOLO-LOAD] Post-YOLO heuristic engine ran on ${projectPages.length} pages`,
           );
+          // [tag-mapping v2] project tag families from the pages' shape summaries →
+          // projects.projectIntelligence.tagFamilies (other keys untouched; read by tag mapping
+          // and the knowledge graph via storedTagFamilies).
+          const tagFamilies = tagFamiliesFromStoredPages(shapePages);
+          await withProjectWrite(writeCapability, project.id, async (tx) => {
+            const [current] = await tx.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
+            await tx.update(projects)
+              .set({ projectIntelligence: mergeProjectIntelligence(current?.pi, { tagFamilies }) })
+              .where(eq(projects.id, project.id));
+          });
+          logger.info(`[YOLO-LOAD] Tag families: ${tagFamilies.families.length} over ${tagFamilies.pagesScanned} pages`);
         } catch (err) {
           logger.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
         }
