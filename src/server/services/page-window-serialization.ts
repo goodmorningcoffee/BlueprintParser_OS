@@ -16,6 +16,8 @@ const PAGE_WINDOW_OMITTED_INTELLIGENCE_KEYS = [
   "regionsV2",
   // [clf 2a 2026-10-24] per-proposal features + contributions; the panel reads projectIntelligence.proposals.
   "classifierProposals",
+  // [clf 1] the user's labels carry feature snapshots; the panel reads verdicts from the summary.
+  "proposalVerdicts",
 ] as const;
 
 /**

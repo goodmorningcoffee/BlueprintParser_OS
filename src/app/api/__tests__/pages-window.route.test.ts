@@ -75,7 +75,7 @@ describe("serializePageWindowIntelligence", () => {
     expect(serialized).not.toHaveProperty("shapes"); // [viewer trim F1] server-only readers
     expect(serialized).not.toHaveProperty("regionsV2");
     expect(serialized).not.toHaveProperty("classifierProposals"); // [clf 2a] features + contributions are server / admin reads
-    expect(serialized).toHaveProperty("proposalVerdicts"); // the user's own labels stay visible
+    expect(serialized).not.toHaveProperty("proposalVerdicts"); // [clf 1] feature snapshots; the panel reads the summary
     expect(serialized).toMatchObject({
       ensembleRegions: source.ensembleRegions,
       parsedRegions: source.parsedRegions,
@@ -331,7 +331,6 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
       rejectedTextRegionIds: source.rejectedTextRegionIds,
       classification: source.classification,
       unknownFutureKey: source.unknownFutureKey,
-      proposalVerdicts: source.proposalVerdicts, // [clf 2a] user labels pass through; classifierProposals does not
     });
     expect(byPage[1]).not.toHaveProperty("classifiedRegions");
     expect(byPage[1]).not.toHaveProperty("yoloHeatmap");
