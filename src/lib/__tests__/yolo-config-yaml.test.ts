@@ -19,6 +19,19 @@ describe("yoloRunConfigYaml max_detections", () => {
     expect(maxDet(yoloRunConfigYaml(undefined, "yolo_text"))).toBe(6000);
   });
 
+  it("the DEPLOYED yolo_text config (text_box + text_box_2, all 216 bundles) gets 6000", () => {
+    const deployed = { classes: ["text_box", "text_box_2"], confidence: 0.25, imageSize: 1280 };
+    expect(maxDet(yoloRunConfigYaml(deployed, "yolo_text"))).toBe(6000);
+    // numbered text classes count as text even when the name does not say so
+    expect(maxDet(yoloRunConfigYaml(deployed, "words_v3"))).toBe(6000);
+    expect(isTextOnlyModel(["text_box", "text_box_2"], "yolo_text")).toBe(true);
+    // the name is checked first: a text model keeps 6000 whatever class it adds next
+    expect(isTextOnlyModel(["text_box", "stamp"], "yolo_text")).toBe(true);
+    // a mixed non-text model is unaffected
+    expect(isTextOnlyModel(["text_box", "text_box_2", "title_block"], "yolo_medium")).toBe(false);
+    expect(isTextOnlyModel(["text_boxes"], "m")).toBe(false);
+  });
+
   it("an explicit maxDetections wins", () => {
     expect(maxDet(yoloRunConfigYaml({ classes: ["text_box"], maxDetections: 1500 }, "yolo_text"))).toBe(1500);
     expect(maxDet(yoloRunConfigYaml({ classes: ["door"], maxDetections: 9000 }, "m"))).toBe(9000);

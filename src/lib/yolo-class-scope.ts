@@ -12,8 +12,11 @@
  * a user rule names its classes on purpose.
  *
  * ⚠ Scoping is by model NAME, matching the deployed registry (yolo_medium, yolo_primitive). A model
- * registered under another name loses these built-in signals until it is listed here.
+ * registered under another name loses these built-in signals until it is listed here — so the first
+ * drop per (class, model) pair is logged once per process; yolo_text's `text_box` is the expected one.
  */
+
+import { logger } from "@/lib/logger";
 
 export const LAYOUT_CLASS_MODELS: Readonly<Record<string, readonly string[]>> = {
   text_box: ["yolo_medium"],
@@ -21,11 +24,22 @@ export const LAYOUT_CLASS_MODELS: Readonly<Record<string, readonly string[]>> = 
   horizontal_area: ["yolo_primitive"],
 };
 
+const loggedDrops = new Set<string>();
+
 /** True when a built-in consumer may count this detection under its class name. */
 export function inLayoutScope(det: { name: string; modelName?: string | null }): boolean {
   const allowed = LAYOUT_CLASS_MODELS[det.name];
   if (!allowed || det.modelName == null) return true;
-  return allowed.includes(det.modelName);
+  if (allowed.includes(det.modelName)) return true;
+  const pair = `${det.name}@${det.modelName}`;
+  if (!loggedDrops.has(pair)) {
+    loggedDrops.add(pair);
+    logger.info(
+      `[yolo-class-scope] built-in consumers ignore "${det.name}" from model "${det.modelName}" ` +
+        `(scoped to ${allowed.join(", ")}); a renamed layout model must be added to LAYOUT_CLASS_MODELS`,
+    );
+  }
+  return false;
 }
 
 export function scopeLayoutDetections<T extends { name: string; modelName?: string | null }>(
