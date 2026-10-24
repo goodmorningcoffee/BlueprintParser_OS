@@ -98,7 +98,7 @@ describe.skipIf(!dbUp)("admin/llm/preview (LP)", () => {
     const { company, admin, author } = await makeWorld();
     const proj = await createProject(company.id, author.id);
     const evidence = buildEvidenceSummary({
-      textract: { lines: [], words: [], tables: [{ bbox: [0.1, 0.1, 0.2, 0.1], rowCount: 3, colCount: 2, cells: [] }] },
+      textract: { words: [], tables: [{ bbox: [0.1, 0.1, 0.2, 0.1], rowCount: 3, colCount: 2, cells: [] }] },
     });
     await createPage(proj.id, 1, { pageIntelligence: { evidence } as never });
     asUser(admin);
