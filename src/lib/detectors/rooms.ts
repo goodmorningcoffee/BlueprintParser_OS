@@ -4,13 +4,15 @@
  * Detects room numbers, named rooms, and area/zone designations.
  */
 
-import type { TextAnnotation } from "@/types";
+import type { TextAnnotation, TextractWord } from "@/types";
 import {
   isAdjacent,
   slidingWindow,
   makeAnnotation,
   avgConf,
 } from "@/lib/ocr-utils";
+import { computePageZones, zoneOf } from "@/lib/page-zones";
+import { ltwh2minmax } from "@/lib/bbox-utils";
 import type { DetectorContext, TextDetector } from "./types";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -39,17 +41,28 @@ const RE_AREA_DESIGNATION = /^(?:ZONE|AREA|PHASE|WING)\s+([A-Z\d]+)$/i;
 // Detector
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * [zones T2] "Is this word in the title block?" — the DETECTED title block when the context
+ * carries YOLO detections with one (`page-zones.ts`, ≥ 70 % containment); otherwise the legacy
+ * rule, unchanged: word centre in the bottom 15 % of the sheet.
+ */
+function titleBlockTest(ctx: DetectorContext): (w: TextractWord) => boolean {
+  const zones = ctx.yoloDetections?.length ? computePageZones(ctx.yoloDetections) : null;
+  if (zones?.source === "detector") return (w) => zoneOf(zones, ltwh2minmax(w.bbox)) === "title_block";
+  return (w) => w.bbox[1] + w.bbox[3] / 2 >= 0.85;
+}
+
 function detect(ctx: DetectorContext): TextAnnotation[] {
   const { words } = ctx;
   const results: TextAnnotation[] = [];
+  const inTitleBlock = titleBlockTest(ctx);
 
   for (let i = 0; i < words.length; i++) {
     const txt = words[i].text;
     const upper = txt.toUpperCase();
-    const yCenter = words[i].bbox[1] + words[i].bbox[3] / 2;
 
-    // Room numbers: 3-4 digit numbers NOT in title block region (bottom 15%)
-    if (RE_ROOM_NUMBER.test(upper) && yCenter < 0.85) {
+    // Room numbers: 3-4 digit numbers NOT in the title block (detected zone, else bottom 15%)
+    if (RE_ROOM_NUMBER.test(upper) && !inTitleBlock(words[i])) {
       results.push(makeAnnotation("room-number", "rooms",
         [words[i]], [i], words[i].confidence * 0.75,
         { meta: { roomNumber: upper } }));

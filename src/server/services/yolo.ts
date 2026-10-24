@@ -57,6 +57,7 @@ import { getToggles } from "@/lib/toggles";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
+import { computePageZones } from "@/lib/page-zones";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -752,6 +753,8 @@ export async function yoloLoad(
             >;
             const updated: Record<string, unknown> = { ...existing };
             let pageChanged = false;
+            // [zones T2] detector zones (src/lib/page-zones.ts); fixed-zone fallback when no title_block.
+            updated.pageZones = computePageZones(yoloDets); pageChanged = true;
 
             // Existing: re-run heuristic engine with YOLO data
             const inferences = runHeuristicEngine(rules, {

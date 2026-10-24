@@ -27,6 +27,7 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
+import { computePageZones, type PageZoneDetection, type PageZones } from "@/lib/page-zones";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
@@ -265,23 +266,22 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             titleBlockAnns = allYoloAnns.filter(ann => targetClasses.has(ann.name));
           }
 
-          // Build lookup: pageNumber → best title_block bbox (bottom-right if multiple)
-          const titleBlockByPage = new Map<number, { minX: number; minY: number; maxX: number; maxY: number }>();
+          // [zones T2] pageNumber → zones built from the configured title-block class(es).
+          // page-zones picks the box (ties → bottom-right, the pick this loop used to make by
+          // hand) and extractDrawingNumber searches INSIDE it instead of the fixed corner.
+          const detsByPage = new Map<number, PageZoneDetection[]>();
           for (const ann of titleBlockAnns) {
-            const existing = titleBlockByPage.get(ann.pageNumber);
-            if (!existing || (ann.minX + ann.minY > existing.minX + existing.minY)) {
-              titleBlockByPage.set(ann.pageNumber, {
-                minX: ann.minX, minY: ann.minY,
-                maxX: ann.maxX, maxY: ann.maxY,
-              });
-            }
+            if (!detsByPage.has(ann.pageNumber)) detsByPage.set(ann.pageNumber, []);
+            detsByPage.get(ann.pageNumber)!.push({ ...ann, name: "title_block" });
           }
+          const zonesByPage = new Map<number, PageZones>();
+          for (const [pageNumber, dets] of detsByPage) zonesByPage.set(pageNumber, computePageZones(dets));
 
           send({
             type: "project",
             name: project.name,
             pages: projectPages.length,
-            yoloTitleBlocks: titleBlockByPage.size,
+            yoloTitleBlocks: zonesByPage.size,
           });
 
           for (const page of projectPages) {
@@ -290,8 +290,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             const textractData = page.textractData as TextractPageData;
 
             try {
-              const yoloTitleBlock = titleBlockByPage.get(page.pageNumber) || null;
-              const newDrawingNumber = extractDrawingNumber(textractData, yoloTitleBlock);
+              const newDrawingNumber = extractDrawingNumber(textractData, null, zonesByPage.get(page.pageNumber) ?? null);
               // [fix 2026-10-21] Auto names are `drawingNumber || "Page N"`; anything else was typed by a user (page rename) — keep it.
               const manualName = page.name !== null && page.name !== page.drawingNumber && page.name !== `Page ${page.pageNumber}`;
               const newName = manualName ? page.name! : newDrawingNumber || `Page ${page.pageNumber}`;
@@ -522,11 +521,18 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                 pageIntelligence = { ...pageIntelligence, ...intel };
               }
 
+              // [zones T2] detector zones once per page: persisted, and fed to the classifier's
+              // title-block drop. Absent (no YOLO) ⇒ the classifier keeps its fixed zone.
+              const pageYolo = yoloByPage.get(page.pageNumber);
+              const pageZones = pageYolo?.length ? computePageZones(pageYolo) : undefined;
+              if (pageZones) pageIntelligence.pageZones = pageZones;
+
               // Text region classification (with optional debug bundle to S3)
               const debugWrites: Promise<void>[] = [];
               const textRegions = classifyTextRegions(textractData, csiCodes, {
                 debug: debugClassifier,
                 pageNumber: page.pageNumber,
+                zones: pageZones,
                 onDebug: (bundle) => {
                   debugWrites.push(
                     writeClassifierDebugBundle(project.dataUrl, page.pageNumber, bundle),
@@ -536,7 +542,6 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               if (textRegions.length > 0) pageIntelligence.textRegions = textRegions;
 
               // Heuristic engine — YOLO-aware if annotations exist on this page
-              const pageYolo = yoloByPage.get(page.pageNumber);
               const inferences = runHeuristicEngine(rules, {
                 rawText: page.rawText || "",
                 yoloDetections: pageYolo,
