@@ -127,6 +127,11 @@ export interface TagFamilyInput {
   /** Members as (page, text) pairs — matched to tag nodes by normalised text. */
   members: Array<{ page: number; text: string; bbox?: BboxLTWH }>;
   confidence?: number;
+  /** Family pattern ("D-999": digits → 9). With `pages`, every tag node on those pages whose text
+   *  fits the pattern joins the family — how the stored tag-mapping families (which keep only
+   *  sample values, not every member) are linked. */
+  pattern?: string;
+  pages?: number[];
 }
 
 export interface TagFamilyNode extends GraphNodeBase {

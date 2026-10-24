@@ -32,6 +32,7 @@
 // Input shape: everything that members can edit (crossRefs, parsedRegions, regionsV2, annotations)
 // is shape-checked in pageInputFromStored, so one malformed entry drops that entry, not the graph.
 
+import { patternRegex } from "@/lib/shape-ensemble/families";
 import type { BboxLTWH } from "@/types";
 import {
   isCalloutDetailNumber,
@@ -489,6 +490,15 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     for (const m of family.members) {
       const tag = tagNodes.get(`tag:${m.page}:${tagKey(m.text)}`);
       if (tag) g.plain("is_a", tag.id, id, family.confidence ?? 0.5, prov("tag-families", m.page, m.bbox, m.text));
+    }
+    if (family.pattern && family.pages?.length) {
+      const fits = new RegExp(patternRegex(family.pattern), "i"); // literal + \d{n} only: escaped, no backtracking
+      const onPages = new Set(family.pages);
+      for (const tag of tagNodes.values()) {
+        if (onPages.has(tag.page) && fits.test(tagKey(tag.text))) {
+          g.plain("is_a", tag.id, id, family.confidence ?? 0.5, prov("tag-families", tag.page, undefined, tag.text));
+        }
+      }
     }
   }
 

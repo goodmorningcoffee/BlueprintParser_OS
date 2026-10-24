@@ -248,6 +248,16 @@ describe("buildKnowledgeGraph — tables, tags, keynotes, CSI, revisions, famili
     expect(graph.edges.filter((e) => e.type === "is_a")).toHaveLength(1);
   });
 
+  it("[wave3 merge] a stored family (pattern + pages) links every fitting tag on its pages, and only those", () => {
+    const g = buildKnowledgeGraph({ publicId: "p2", pages, tagFamilies: [
+      { key: "circle:D-99", label: "circle D-99", members: [], pattern: "d-99", pages: [2] },
+      { key: "circle:E9", label: "circle E9", members: [], pattern: "E9", pages: [9] },
+    ] }, { now: NOW });
+    const isA = g.edges.filter((e) => e.type === "is_a");
+    expect(isA.map((e) => [e.from, e.to])).toEqual([["tag:2:D-01", "tag_family:circle:D-99"]]); // EF-1 does not fit; page 9 has no tags
+    expect(g.nodes.find((n) => n.id === "tag_family:circle:E9")).toBeTruthy();
+  });
+
   it("a reference to a sheet number shared by two pages resolves to the visible one", () => {
     const g = buildKnowledgeGraph({ publicId: "p", pages: [
       page(1, "G-001", { crossRefs: [{ sourceText: "SEE SHEET A-101", targetDrawing: "A-101", refType: "sheet", bbox: bbox(0, 0), confidence: 0.8 }] }),

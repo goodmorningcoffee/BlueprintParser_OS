@@ -22,6 +22,7 @@ import { db } from "@/lib/db";
 import { pages, projects } from "@/lib/db/schema";
 import { logger } from "@/lib/logger";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
+import { storedTagFamilies } from "@/lib/shape-ensemble/families";
 import {
   buildKnowledgeGraph,
   graphIndex,
@@ -91,7 +92,14 @@ const dbDeps: ProjectGraphDeps = {
     const arr = (v: unknown) => (Array.isArray(v) ? (v as Array<{ text: string; bbox: BboxLTWH }>) : null);
     return { lines: arr(row.lines), words: arr(row.words) };
   },
-  loadTagFamilies: async () => undefined,
+  async loadTagFamilies(projectId) {
+    // [wave3 merge] the tag-mapping track's families (projectIntelligence.tagFamilies, written at YOLO load).
+    const [row] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    const stored = storedTagFamilies(row?.pi);
+    return stored?.families.map((f) => ({
+      key: f.id, label: `${f.cls} ${f.pattern}`, members: [], pattern: f.pattern, pages: f.pages, confidence: 0.5,
+    }));
+  },
   putObject: (key, body) => uploadToS3(key, Buffer.from(body, "utf8"), "application/json", "private, no-store"),
   async getObject(key) {
     try {
