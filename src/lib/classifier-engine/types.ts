@@ -128,22 +128,45 @@ export interface ClassifierRecipe {
   note?: string;
 }
 
+/**
+ * One signal's patch. Keyed in `RecipePatch.signals` by the FEATURE key ("detect.<id>" / "<classId>.<id>",
+ * the same key `features` and fitted overlays use) or, legacy, by the bare signal id (then it applies to
+ * every head that has a signal of that id).
+ * [track 3 builder, additive] `spec` and `note` let the builder edit a built-in signal's parameters
+ * (term weights, divisions, classes) in place, keeping its id, so stored features stay comparable.
+ */
+export type SignalPatch = Partial<Pick<WeightedSignal, "weight" | "role" | "enabled" | "label" | "note" | "spec">>;
+
+export interface RecipePatch {
+  version: number;
+  enabled?: boolean;
+  detectThreshold?: number;
+  nameThreshold?: number;
+  minMargin?: number;
+  signals?: Record<string, SignalPatch>;
+  classBias?: Record<string, number>;
+  addedSignals?: Array<{ classId: string | null; signal: WeightedSignal }>;
+  addedClasses?: ClassifierClass[];
+  /**
+   * Disabled in this company: "detect.<sid>" / "<classId>.<sid>" (one signal), "class:<classId>" (one class),
+   * or a bare id (legacy: every signal of that id and the class of that id).
+   */
+  removed?: string[];
+  // ── additive (track 3 builder): optional, absent on older overlays ──
+  /** Detect head bias override. */
+  detectBias?: number;
+  /** classId → per-class nameP threshold override. */
+  classThreshold?: Record<string, number>;
+  /** Whole-value overrides of the built-in's scope / candidate sources. */
+  scope?: ClassifierScope;
+  candidates?: CandidateSource[];
+}
+
 /** Per-company edits on top of the built-ins: whole custom recipes plus sparse patches of built-ins. */
 export interface ClassifierOverlay {
   custom: ClassifierRecipe[];
-  /** recipeId → patch. Signal patches are by id; `removed` lists ids disabled in this company. */
-  patches: Record<string, {
-    version: number;
-    enabled?: boolean;
-    detectThreshold?: number;
-    nameThreshold?: number;
-    minMargin?: number;
-    signals?: Record<string, Partial<Pick<WeightedSignal, "weight" | "role" | "enabled" | "label">>>;
-    classBias?: Record<string, number>;
-    addedSignals?: Array<{ classId: string | null; signal: WeightedSignal }>;
-    addedClasses?: ClassifierClass[];
-    removed?: string[];
-  }>;
+  /** recipeId → patch. */
+  patches: Record<string, RecipePatch>;
   updatedAt?: string;
   updatedBy?: number;
 }
