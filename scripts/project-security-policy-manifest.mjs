@@ -761,6 +761,13 @@ export const INTERNAL_MUTATION_SINKS = [
     "replaceShapeParseAnnotations",
     "atomic-project-write",
   ],
+  // [tiles T9 2026-10-24] Reprocess "Tile images": merge the manifest pointer into
+  // pageIntelligence.tiles (one page per tx) under the admin-reprocess lease.
+  [
+    "src/server/services/reprocess-tiles.ts",
+    "persistPageTiles",
+    "atomic-project-write",
+  ],
   ["src/lib/llm/stream.ts", "streamChatResponse", "atomic-or-no-persist"],
   [
     "src/lib/services/chat/scoped.ts",

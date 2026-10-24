@@ -53,6 +53,9 @@ import { replaceShapeParseAnnotations } from "@/server/services/shape-parse-pers
 
 // [2026-10-23] company pageConcurrency → else PAGE_CONCURRENCY env (upload compute preset, 1..32) → else 8.
 import { resolvePageConcurrency } from "@/lib/upload-compute";
+import { tilePageSafely } from "@/lib/tiles/tiler";
+import type { TilesRecord } from "@/lib/tiles/keys";
+import { readTilesSetting } from "@/server/services/tiles-setting";
 
 /** Run async tasks with a concurrency limit. */
 async function mapConcurrent<T, R>(
@@ -357,6 +360,7 @@ async function processProjectWithLease(
     // resolver call per project run — no per-page I/O added. Its own PK select (the
     // :246 config select above is try-scoped/narrowed, so we do not contort it).
     const csiCtx = await getCompanyCsiContext(project.companyId);
+    const tiles = await readTilesSetting(); // [tiles T9] root switch + level list, once per run; never throws
 
     logger.info(
       `[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`,
@@ -392,6 +396,7 @@ async function processProjectWithLease(
 
         // Store page image + thumbnail to S3 for instant client-side rendering
         const pageKey = String(pageNum).padStart(4, "0");
+        let tilesRecord: TilesRecord | null = null;
         try {
           await uploadToS3(
             `${project.dataUrl}/pages/page_${pageKey}.png`,
@@ -407,6 +412,8 @@ async function processProjectWithLease(
             "image/png",
             "public, max-age=31536000, immutable",
           );
+          // [tiles T9] tile pyramid beside the raster (root switch); a failure is one warning, never a failed page.
+          if (tiles.enabled) tilesRecord = await tilePageSafely({ dataUrl: project.dataUrl, pageNumber: pageNum, png: pngBuffer, levels: tiles.levels });
         } catch (err) {
           logger.warn(`[processing] Page ${pageNum} image upload failed:`, err);
         }
@@ -542,6 +549,8 @@ async function processProjectWithLease(
             err,
           );
         }
+
+        if (tilesRecord) (pageIntelligence ??= {}).tiles = tilesRecord; // [tiles T9] manifest pointer; NOT a computed key
 
         // Run heuristic engine (text-only mode — no YOLO data during initial processing)
         try {

@@ -31,7 +31,8 @@ describe("stage DAG", () => {
       for (const p of s.pulls) expect(isRunnable(stageDef(p.stage))).toBe(true);
     }
     expect(stageDef("evidence").kind).toBe("placeholder");
-    expect(stageDef("tiles").kind).toBe("placeholder");
+    expect(stageDef("tiles").kind).toBe("reprocess"); // [tiles T9] was a placeholder until 2026-10-24
+    expect(stageDef("tiles").scope).toBe("tiles");
     expect(stageDef("re-ocr").kind).toBe("unavailable");
     expect(stageDef("yolo-run").handoffTab).toBe("ai-models");
     expect(stageDef("yolo-restamp").handoffTab).toBe("csi");
@@ -89,6 +90,18 @@ describe("resolvePlan", () => {
     expect(ids(dedupe.run)).toEqual(["dedupe", "intelligence"]);
     expect(dedupe.confirmPhrase).toBe("DEDUPE");
     expect(resolvePlan(set<StageId>("dedupe", "purge-yolo"), new Set(), true).confirmPhrase).toBe("DELETE");
+  });
+
+  it("[tiles T9] tile images runs alone, pulls nothing, is pulled by nothing, and becomes one scope=tiles request", () => {
+    const alone = resolvePlan(set<StageId>("tiles"), new Set(), false);
+    expect(ids(alone.run)).toEqual(["tiles"]);
+    expect(alone.confirmPhrase).toBeNull();
+    expect(ids(resolvePlan(set<StageId>("thumbnails", "intelligence", "tiles"), new Set(), false).run)).toEqual(["thumbnails", "intelligence", "tiles"]);
+    expect(ids(resolvePlan(set<StageId>("thumbnails", "full"), new Set(), false).run)).not.toContain("tiles");
+    expect(buildRunSteps(alone, { projectIds: ["p1"], companyId: 3 }, { clearPageCsi: false })).toEqual([
+      { kind: "reprocess", id: "tiles", label: "Tile images", scope: "tiles", projectIds: ["p1"] },
+    ]);
+    expect([...presetTicks("tiles", false)]).toEqual(["tiles"]);
   });
 
   it("non-runnable ticks (handoff / placeholder / unavailable) are dropped", () => {

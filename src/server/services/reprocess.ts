@@ -58,6 +58,8 @@ import { logger } from "@/lib/logger";
 import { assertProjectWritable } from "@/server/api/access";
 // [fix 2026-10-21] shape-parse (compute-then-swap + Lambda fan-out) and the shared NDJSON/debug stream.
 import { reprocessProjectShapeParse } from "./reprocess-shape-parse";
+import { reprocessTilesScope } from "./reprocess-tiles";
+import { readTilesSetting } from "./tiles-setting";
 import { createReprocessStream } from "./reprocess-stream";
 import { loadProjectYoloCsiCodes, withYoloCsiCodes } from "./reprocess-yolo-csi";
 import {
@@ -443,6 +445,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         }
 
         send({ type: "done", ...counts() });
+        out.close();
+        return;
+      }
+
+      if (scope === "tiles") {
+        // [tiles T9 2026-10-24] Loop + per-project guard live in reprocess-tiles.ts (zero line headroom here).
+        await reprocessTilesScope({ projects: allProjects, withReprocessLease, stream: out, levels: (await readTilesSetting()).levels });
         out.close();
         return;
       }
