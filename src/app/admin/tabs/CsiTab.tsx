@@ -11,6 +11,8 @@ import {
   type CsiV2Config,
 } from "@/lib/csi-v2-config";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
+import OpenReprocessLink from "./OpenReprocessLink";
+import type { ReprocessPreset } from "./reprocess-plan";
 
 // [csi-v2 S6] The v2 tagger has exactly two settings (PLAN §7). The pre-v2 tier weights and the
 // three tagger sliders (keyword overlap, min word matches, max tags per annotation) are gone: the
@@ -20,12 +22,11 @@ type CsiConfig = CsiV2Config;
 const DEFAULTS: CsiConfig = { ...DEFAULT_CSI_V2_CONFIG };
 
 interface CsiTabProps {
-  reprocessing: boolean;
-  reprocessLog: string[];
-  onReprocess: () => void;
+  /** [2026-10-24] The "Reprocess CSI Detection" button became a link into the Reprocess tab. */
+  onOpenReprocess: (preset: ReprocessPreset) => void;
 }
 
-export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiTabProps) {
+export default function CsiTab({ onOpenReprocess }: CsiTabProps) {
   const [config, setConfig] = useState<CsiConfig>(DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -349,6 +350,8 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
                         >
                           {reprocessingCsi ? "Reprocessing..." : "Reprocess YOLO Tags"}
                         </button>
+                        {/* [2026-10-24] Re-stamping leaves pages.csi_codes untouched — the Reprocess tab's "After YOLO load" rebuilds them. */}
+                        <OpenReprocessLink preset="after-yolo" onOpen={onOpenReprocess} note="Then:" />
                       </div>
                     </div>
                   )}
@@ -374,23 +377,8 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
         >
           Reset to Defaults
         </button>
-        <button
-          onClick={onReprocess}
-          disabled={reprocessing}
-          className="px-4 py-2 text-sm rounded border border-orange-400/40 text-orange-400 hover:bg-orange-400/10 disabled:opacity-50"
-        >
-          {reprocessing ? "Reprocessing..." : "Reprocess CSI Detection"}
-        </button>
+        <OpenReprocessLink preset="detectors-changed" onOpen={onOpenReprocess} note="Re-detect CSI codes:" />
       </div>
-
-      {/* Reprocess log */}
-      {reprocessLog.length > 0 && (
-        <div className="border border-[var(--border)] rounded p-3 max-h-40 overflow-y-auto bg-[var(--surface)]">
-          {reprocessLog.map((line, i) => (
-            <div key={i} className="text-xs text-[var(--muted)] font-mono">{line}</div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

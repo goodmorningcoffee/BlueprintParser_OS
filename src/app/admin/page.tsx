@@ -23,12 +23,12 @@ import AiRbacTab from "./tabs/AiRbacTab";
 import SettingsTab from "./tabs/SettingsTab";
 import LogsTab from "./tabs/LogsTab";
 import PipelineTab from "./tabs/PipelineTab";
+import ReprocessTab from "./tabs/ReprocessTab";
+import type { ReprocessPreset } from "./tabs/reprocess-plan";
 import { fetchYoloStatus, type YoloStatusLoad } from "./tabs/yolo-status-load";
 import LlmContextTab from "./tabs/LlmContextTab";
 import DataToolsTab from "./tabs/DataToolsTab";
-import ReprocessDebugToggle from "./ReprocessDebugToggle";
 import RootTwoFactorGate from "./RootTwoFactorGate";
-import { runReprocess } from "./reprocess-client";
 
 interface ProjectItem {
   id: string;
@@ -36,6 +36,9 @@ interface ProjectItem {
   numPages: number | null;
   status: string;
   isDemo: boolean;
+  /** Root sees every company's projects (listProjects); the Reprocess tab marks foreign ones as skipped. */
+  companyId?: number;
+  companyName?: string;
 }
 
 interface ModelItem {
@@ -85,9 +88,11 @@ export default function AdminPage() {
   const pollKey = (pid: string, mid: number) => `${pid}:${mid}`;
   const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: true });
   const [togglePassword, setTogglePassword] = useState("");
-  const [reprocessing, setReprocessing] = useState(false);
-  const [reprocessLog, setReprocessLog] = useState<string[]>([]);
-  const [reprocessDebug, setReprocessDebug] = useState(false);
+  // [2026-10-24] Reprocess state (running / log / Debug toggle) moved into tabs/ReprocessTab.tsx;
+  // other tabs hand over a preset through openReprocess instead of running their own requests.
+  // `n` makes a repeated click on the same preset re-apply it; the tab stays mounted once visited so a
+  // running plan's console survives a tab switch (the old page-level log did too).
+  const [reprocessPreset, setReprocessPreset] = useState<{ preset: ReprocessPreset; n: number } | null>(null);
   const [toggleError, setToggleError] = useState("");
   const [newTogglePass, setNewTogglePass] = useState("");
   const [currentTogglePass, setCurrentTogglePass] = useState("");
@@ -528,27 +533,6 @@ export default function AdminPage() {
     }
   }
 
-  // [fix 2026-10-21] Every event type is rendered now (reprocess-client.ts); `keepLog` lets a
-  // chained run (full → intelligence) append to the same console. Log capped at 5000 lines.
-  async function reprocessAll(scope?: string, projectIds?: string[], keepLog = false) {
-    setReprocessing(true);
-    if (!keepLog) setReprocessLog([`Starting reprocess...${reprocessDebug ? " (debug on)" : ""}`]);
-    try {
-      await runReprocess({ scope, projectIds, debug: reprocessDebug }, (line) =>
-        setReprocessLog((prev) => [...prev, line].slice(-5000)));
-    } catch (err) {
-      setReprocessLog((prev) => [...prev, `Failed: ${err instanceof Error ? err.message : "unknown"}`]);
-    } finally {
-      setReprocessing(false);
-    }
-  }
-  // CSI + text annotations rewrite pages.csiCodes, which page intelligence is derived from —
-  // so the "full" buttons chain the intelligence pass instead of leaving it stale.
-  const reprocessFullThenIntelligence = async () => {
-    await reprocessAll();
-    await reprocessAll("intelligence", undefined, true);
-  };
-
   async function changePassword() {
     setMessage("");
     const res = await fetch("/api/admin/password", {
@@ -579,6 +563,15 @@ export default function AdminPage() {
     setActiveTab(tab);
     window.history.replaceState(null, "", `?tab=${tab}`);
   }, []);
+
+  const openReprocess = useCallback((preset: ReprocessPreset) => {
+    setReprocessPreset((prev) => ({ preset, n: (prev?.n ?? 0) + 1 }));
+    handleTabChange("reprocess");
+  }, [handleTabChange]);
+  const [reprocessSeen, setReprocessSeen] = useState(activeTab === "reprocess");
+  useEffect(() => {
+    if (activeTab === "reprocess") setReprocessSeen(true);
+  }, [activeTab]);
 
   // Handlers passed to tab components
   const handleRefreshDemo = useCallback(async () => {
@@ -654,10 +647,6 @@ export default function AdminPage() {
           isRootAdmin={session?.user?.isRootAdmin}
         />
 
-        {["projects", "pipeline", "text-annotations", "csi", "heuristics", "page-intelligence"].includes(activeTab) && (
-          <ReprocessDebugToggle checked={reprocessDebug} onChange={setReprocessDebug} />
-        )}
-
         {activeTab === "overview" && (
           <OverviewTab
             invites={invites}
@@ -665,6 +654,7 @@ export default function AdminPage() {
             showInvites={showInvites}
             onMarkSeen={markInvitesSeen}
             isRootAdmin={session?.user?.isRootAdmin || false}
+            onOpenReprocess={openReprocess}
           />
         )}
 
@@ -673,9 +663,6 @@ export default function AdminPage() {
             projects={projects}
             onToggleDemo={toggleDemo}
             onRefreshDemo={handleRefreshDemo}
-            reprocessing={reprocessing}
-            reprocessLog={reprocessLog}
-            onReprocess={() => reprocessAll()}
             setMessage={setMessage}
           />
         )}
@@ -709,50 +696,31 @@ export default function AdminPage() {
         )}
 
         {activeTab === "pipeline" && (
-          <PipelineTab
-            reprocessing={reprocessing}
-            reprocessLog={reprocessLog}
-            onReprocess={reprocessAll}
-            projects={projects}
-            isRootAdmin={session?.user?.isRootAdmin === true}
-          />
+          <PipelineTab onOpenReprocess={openReprocess} isRootAdmin={session?.user?.isRootAdmin === true} />
+        )}
+
+        {reprocessSeen && (
+          <div hidden={activeTab !== "reprocess"}>
+            <ReprocessTab
+              projects={projects}
+              isRootAdmin={session?.user?.isRootAdmin === true}
+              presetRequest={reprocessPreset}
+              onOpenTab={handleTabChange}
+            />
+          </div>
         )}
 
         {activeTab === "llm-context" && (
           <LlmContextTab projects={projects} />
         )}
 
-        {activeTab === "text-annotations" && (
-          <TextAnnotationsTab
-            reprocessing={reprocessing}
-            reprocessLog={reprocessLog}
-            onReprocess={reprocessFullThenIntelligence}
-          />
-        )}
+        {activeTab === "text-annotations" && <TextAnnotationsTab onOpenReprocess={openReprocess} />}
 
-        {activeTab === "csi" && (
-          <CsiTab
-            reprocessing={reprocessing}
-            reprocessLog={reprocessLog}
-            onReprocess={reprocessFullThenIntelligence}
-          />
-        )}
+        {activeTab === "csi" && <CsiTab onOpenReprocess={openReprocess} />}
 
-        {activeTab === "heuristics" && (
-          <HeuristicsTab
-            reprocessing={reprocessing}
-            reprocessLog={reprocessLog}
-            onReprocess={() => reprocessAll("intelligence")}
-          />
-        )}
+        {activeTab === "heuristics" && <HeuristicsTab onOpenReprocess={openReprocess} />}
 
-        {activeTab === "page-intelligence" && (
-          <PageIntelligenceTab
-            reprocessing={reprocessing}
-            reprocessLog={reprocessLog}
-            onReprocess={reprocessFullThenIntelligence}
-          />
-        )}
+        {activeTab === "page-intelligence" && <PageIntelligenceTab onOpenReprocess={openReprocess} />}
 
         {activeTab === "table-parse" && (
           <TableParseTab />
@@ -783,7 +751,7 @@ export default function AdminPage() {
           />
         )}
 
-        {activeTab === "data-tools" && <DataToolsTab isRootAdmin={session?.user?.isRootAdmin === true} />}
+        {activeTab === "data-tools" && <DataToolsTab isRootAdmin={session?.user?.isRootAdmin === true} onOpenReprocess={openReprocess} />}
         {activeTab === "settings" && (
           <SettingsTab isRootAdmin={session?.user?.isRootAdmin === true} />
         )}

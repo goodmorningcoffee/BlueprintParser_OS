@@ -15,9 +15,12 @@ export type ReprocessEvent = Record<string, unknown>;
  * click event here (`onClick={onReprocess}`), producing ?scope=[object Object]. Anything that is
  * not a non-empty string now means "no scope" (= full), which is what those buttons meant.
  */
-export function reprocessUrl(scope: unknown, debug: boolean): string {
+export function reprocessUrl(scope: unknown, debug: boolean, classifierDebug = false): string {
   const params = new URLSearchParams();
   if (typeof scope === "string" && scope.length > 0) params.set("scope", scope);
+  // [2026-10-24 Reprocess tab] debug=1 = the Page Intelligence tab's old "Classifier debug" (Stage A–F
+  // bundles written to S3 by the intelligence branch); distinct from trace=1, which only streams lines.
+  if (classifierDebug) params.set("debug", "1");
   if (debug) params.set("trace", "1");
   const qs = params.toString();
   return qs ? `/api/admin/reprocess?${qs}` : "/api/admin/reprocess";
@@ -80,10 +83,10 @@ export function formatReprocessEvent(e: ReprocessEvent): string | null {
 
 /** Run one reprocess request and feed every rendered line to `onLine`. Throws on network failure. */
 export async function runReprocess(
-  opts: { scope?: unknown; projectIds?: string[]; debug: boolean },
+  opts: { scope?: unknown; projectIds?: string[]; debug: boolean; classifierDebug?: boolean },
   onLine: (line: string) => void,
 ): Promise<void> {
-  const res = await fetch(reprocessUrl(opts.scope, opts.debug), {
+  const res = await fetch(reprocessUrl(opts.scope, opts.debug, opts.classifierDebug === true), {
     method: "POST",
     ...(opts.projectIds
       ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectIds: opts.projectIds }) }

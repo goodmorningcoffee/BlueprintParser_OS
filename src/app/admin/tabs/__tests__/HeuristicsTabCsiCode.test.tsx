@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe("HeuristicsTab output CSI code", () => {
   it("keeps typed text as-is, normalizes on blur, and saves the normalized code", async () => {
-    render(<HeuristicsTab reprocessing={false} reprocessLog={[]} onReprocess={() => {}} />);
+    render(<HeuristicsTab onOpenReprocess={() => {}} />);
     fireEvent.click(await screen.findByText("▼ Edit"));
     const input = screen.getByPlaceholderText("e.g. 08 11 16") as HTMLInputElement;
 

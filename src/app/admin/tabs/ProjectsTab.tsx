@@ -14,9 +14,6 @@ interface ProjectsTabProps {
   projects: ProjectItem[];
   onToggleDemo: (projectId: string, isDemo: boolean) => void;
   onRefreshDemo: () => Promise<string>;
-  reprocessing: boolean;
-  reprocessLog: string[];
-  onReprocess: () => void;
   setMessage: (msg: string) => void;
 }
 
@@ -33,7 +30,7 @@ const DEMO_FEATURES = [
 ];
 
 export default function ProjectsTab({
-  projects, onToggleDemo, onRefreshDemo, reprocessing, reprocessLog, onReprocess, setMessage,
+  projects, onToggleDemo, onRefreshDemo, setMessage,
 }: ProjectsTabProps) {
   const [demoConfig, setDemoConfig] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);

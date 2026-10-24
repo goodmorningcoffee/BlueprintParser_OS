@@ -3,13 +3,12 @@
 import { useState, useEffect } from "react";
 import CsiSpatialGridPicker from "./CsiSpatialGridPicker";
 import UploadComputePicker from "./UploadComputePicker";
-import { reprocessAllConfirmText, reprocessScopeNote, useReprocessScope } from "./reprocess-scope";
+import OpenReprocessLink from "./OpenReprocessLink";
+import type { ReprocessPreset } from "./reprocess-plan";
 
 interface PipelineTabProps {
-  reprocessing: boolean;
-  reprocessLog: string[];
-  onReprocess: (scope?: string, projectIds?: string[]) => void;
-  projects: Array<{ id: string; name: string; status: string }>;
+  /** [2026-10-24] The Reprocess section (scope picker + 5 scopes + log) moved to the Reprocess tab; this tab keeps config. */
+  onOpenReprocess: (preset: ReprocessPreset) => void;
   isRootAdmin?: boolean;
 }
 
@@ -74,23 +73,10 @@ const ALWAYS_ON_STEPS = [
   "Project Analysis + Summaries",
 ];
 
-const REPROCESS_SCOPES = [
-  { id: "full", label: "Full (CSI + Text Annotations)", description: "Re-detect CSI codes and text annotations on all pages (YOLO-class CSI codes are kept). Run Intelligence afterwards to refresh page intelligence." },
-  { id: "intelligence", label: "Intelligence (Heuristics + Tables)", description: "Re-run page analysis, heuristics, table classification, summaries" },
-  { id: "page-names", label: "Page Names", description: "Re-extract drawing numbers (optionally using YOLO title blocks)" },
-  { id: "thumbnails", label: "Regenerate Thumbnails", description: "Re-rasterize 72 DPI thumbnails for all pages and upload them to private S3" },
-  { id: "shape-parse", label: "Shape Parse (Keynotes)", description: "Detect circles, diamonds, hexagons with text on all pages (uses Lambda if available)" },
-];
-
-export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, projects, isRootAdmin = false }: PipelineTabProps) {
+export default function PipelineTab({ onOpenReprocess, isRootAdmin = false }: PipelineTabProps) {
   const [config, setConfig] = useState<PipelineConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
-  // Reprocess controls
-  const [reprocessScope, setReprocessScope] = useState("intelligence");
-  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
-  const [selectAll, setSelectAll] = useState(true);
 
   // Load pipeline config
   useEffect(() => {
@@ -127,20 +113,6 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
     } finally {
       setSaving(false);
     }
-  };
-
-  const completedProjects = projects.filter((p) => p.status === "completed");
-  const serverScope = useReprocessScope();
-
-  const handleReprocess = async () => {
-    // [2026-10-23] "All" runs on the SERVER's scope (own company, non-demo, any status), not this list:
-    // re-count it and say so before starting.
-    if (selectAll) {
-      const fresh = await serverScope.reload();
-      const label = REPROCESS_SCOPES.find((s) => s.id === reprocessScope)?.label || "Reprocess";
-      if (!window.confirm(reprocessAllConfirmText(label, fresh.scope, fresh.error, completedProjects.length, isRootAdmin))) return;
-    }
-    onReprocess(reprocessScope, selectAll ? undefined : [...selectedProjects]);
   };
 
   if (loading) {
@@ -428,98 +400,17 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
         </div>
       </section>
 
-      {/* Reprocess */}
+      {/* Reprocess — moved to its own tab */}
       <section>
         <h3 className="text-sm font-semibold mb-1">Reprocess</h3>
-        <p className="text-xs text-[var(--muted)] mb-3">Re-run pipeline steps on existing projects.</p>
-
-        <div className="space-y-3">
-          {/* Scope selector */}
-          <div>
-            <label className="text-[10px] text-[var(--muted)] uppercase tracking-wide block mb-1">Scope</label>
-            <div className="space-y-1">
-              {REPROCESS_SCOPES.map((scope) => (
-                <button
-                  key={scope.id}
-                  onClick={() => setReprocessScope(scope.id)}
-                  className={`w-full text-left px-3 py-1.5 rounded border text-xs transition-colors ${
-                    reprocessScope === scope.id
-                      ? "border-[var(--accent)]/40 bg-[var(--accent)]/10 text-[var(--fg)]"
-                      : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
-                  }`}
-                >
-                  <div className="font-medium">{scope.label}</div>
-                  <div className="text-[10px] text-[var(--muted)]">{scope.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Project selector */}
-          <div>
-            <label className="text-[10px] text-[var(--muted)] uppercase tracking-wide block mb-1">Projects</label>
-            <div className="flex items-center gap-2 mb-2">
-              <button
-                onClick={() => setSelectAll(true)}
-                className={`text-xs px-3 py-1 rounded border ${
-                  selectAll ? "border-[var(--accent)]/40 bg-[var(--accent)]/10" : "border-[var(--border)] text-[var(--muted)]"
-                }`}
-              >
-                All ({serverScope.scope ? serverScope.scope.projects : "…"})
-              </button>
-              <button
-                onClick={() => setSelectAll(false)}
-                className={`text-xs px-3 py-1 rounded border ${
-                  !selectAll ? "border-[var(--accent)]/40 bg-[var(--accent)]/10" : "border-[var(--border)] text-[var(--muted)]"
-                }`}
-              >
-                Select...
-              </button>
-            </div>
-            <div className="text-[10px] text-[var(--muted)] mb-2" data-testid="reprocess-scope-note">
-              {reprocessScopeNote(serverScope.scope, serverScope.error, completedProjects.length, isRootAdmin)}
-            </div>
-            {!selectAll && (
-              <div className="max-h-32 overflow-y-auto space-y-0.5 border border-[var(--border)] rounded p-2">
-                {completedProjects.map((p) => (
-                  <label key={p.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-[var(--surface-hover)] rounded px-1 py-0.5">
-                    <input
-                      type="checkbox"
-                      checked={selectedProjects.has(p.id)}
-                      onChange={() => {
-                        setSelectedProjects((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(p.id)) next.delete(p.id);
-                          else next.add(p.id);
-                          return next;
-                        });
-                      }}
-                      className="rounded"
-                    />
-                    <span className="text-[var(--fg)]">{p.name}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Run button */}
-          <button
-            disabled={reprocessing || (!selectAll && selectedProjects.size === 0)}
-            onClick={handleReprocess}
-            className="w-full py-2 rounded bg-[var(--accent)] text-white text-xs font-medium disabled:opacity-40 hover:opacity-90"
-          >
-            {reprocessing ? "Reprocessing..." : `Run ${REPROCESS_SCOPES.find((s) => s.id === reprocessScope)?.label || "Reprocess"}`}
-          </button>
-
-          {/* Reprocess log */}
-          {reprocessLog.length > 0 && (
-            <div className="bg-[var(--bg)] border border-[var(--border)] rounded p-2 max-h-40 overflow-y-auto">
-              {reprocessLog.map((line, i) => (
-                <div key={i} className="text-[10px] text-[var(--muted)] font-mono">{line}</div>
-              ))}
-            </div>
-          )}
+        <p className="text-xs text-[var(--muted)] mb-2">
+          Re-running pipeline steps on existing projects (full, intelligence, page names, thumbnails, shape parse) lives in the
+          Reprocess tab: one scope picker, a stage checklist that adds the stages your change makes stale, a preview and one log.
+          Changing the CSI grid above still needs an intelligence re-run there.
+        </p>
+        <div className="flex flex-col gap-1">
+          <OpenReprocessLink preset="full-refresh" onOpen={onOpenReprocess} />
+          <OpenReprocessLink preset="rules-changed" onOpen={onOpenReprocess} note="After changing the CSI grid:" />
         </div>
       </section>
 

@@ -10,6 +10,7 @@ import AiModelsTab from "@/app/admin/tabs/AiModelsTab";
 import UsersTab from "@/app/admin/tabs/UsersTab";
 import SettingsTab from "@/app/admin/tabs/SettingsTab";
 import PipelineTab from "@/app/admin/tabs/PipelineTab";
+import ReprocessTab from "@/app/admin/tabs/ReprocessTab";
 import LlmContextTab from "@/app/admin/tabs/LlmContextTab";
 import TextAnnotationsTab from "@/app/admin/tabs/TextAnnotationsTab";
 import CsiTab from "@/app/admin/tabs/CsiTab";
@@ -129,6 +130,7 @@ export default function DemoAdminPage() {
               showInvites={false}
               onMarkSeen={noopAsync}
               isRootAdmin={true}
+              onOpenReprocess={noop}
             />
           )}
 
@@ -137,9 +139,6 @@ export default function DemoAdminPage() {
               projects={projects}
               onToggleDemo={noopAsync}
               onRefreshDemo={noopAsyncStr}
-              reprocessing={false}
-              reprocessLog={[]}
-              onReprocess={noopAsync}
               setMessage={noop}
             />
           )}
@@ -171,13 +170,10 @@ export default function DemoAdminPage() {
             />
           )}
 
-          {activeTab === "pipeline" && (
-            <PipelineTab
-              reprocessing={false}
-              reprocessLog={[]}
-              onReprocess={noopAsync}
-              projects={projects}
-            />
+          {activeTab === "pipeline" && <PipelineTab onOpenReprocess={noop} />}
+
+          {activeTab === "reprocess" && (
+            <ReprocessTab projects={projects} isRootAdmin={true} presetRequest={null} onOpenTab={handleTabChange} />
           )}
 
           {activeTab === "llm-context" && (
@@ -185,35 +181,19 @@ export default function DemoAdminPage() {
           )}
 
           {activeTab === "text-annotations" && (
-            <TextAnnotationsTab
-              reprocessing={false}
-              reprocessLog={[]}
-              onReprocess={noopAsync}
-            />
+            <TextAnnotationsTab onOpenReprocess={noop} />
           )}
 
           {activeTab === "csi" && (
-            <CsiTab
-              reprocessing={false}
-              reprocessLog={[]}
-              onReprocess={noopAsync}
-            />
+            <CsiTab onOpenReprocess={noop} />
           )}
 
           {activeTab === "heuristics" && (
-            <HeuristicsTab
-              reprocessing={false}
-              reprocessLog={[]}
-              onReprocess={noopAsync}
-            />
+            <HeuristicsTab onOpenReprocess={noop} />
           )}
 
           {activeTab === "page-intelligence" && (
-            <PageIntelligenceTab
-              reprocessing={false}
-              reprocessLog={[]}
-              onReprocess={noopAsync}
-            />
+            <PageIntelligenceTab onOpenReprocess={noop} />
           )}
 
           {activeTab === "ai-rbac" && <AiRbacTab />}
