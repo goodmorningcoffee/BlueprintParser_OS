@@ -57,6 +57,7 @@ export const companies = pgTable("companies", {
   emailDomain: varchar("email_domain", { length: 255 }).notNull(),
   subscription: integer("subscription").default(0).notNull(),
   pipelineConfig: jsonb("pipeline_config").$type<{
+    classifiers?: import("@/lib/classifier-engine/types").ClassifierOverlay; // [clf 2a] per-company recipe overlay
     textAnnotation?: {
       enabledDetectors?: string[];
     };

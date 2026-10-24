@@ -813,6 +813,21 @@ export const INTERNAL_MUTATION_SINKS = [
     "writeProjectTagFamilies",
     "atomic-project-write",
   ],
+  // [classifier engine 2a 2026-10-24] Classifier proposals: merge ONE key, projectIntelligence.proposals
+  // (the compact list), in one tx under the caller's capability — yolo/load, the intelligence reprocess
+  // and scope=classifiers.
+  [
+    "src/server/services/classifier-proposals-write.ts",
+    "writeProjectProposals",
+    "atomic-project-write",
+  ],
+  // [classifier engine 2a 2026-10-24] Reprocess "Classifiers" stage (admin-reprocess lease): jsonb-merge
+  // ONE key, pageIntelligence.classifierProposals, per changed page under the caller's capability.
+  [
+    "src/server/services/reprocess-classifiers.ts",
+    "reprocessClassifiersScope",
+    "atomic-project-write",
+  ],
   ["src/lib/llm/stream.ts", "streamChatResponse", "atomic-or-no-persist"],
   [
     "src/lib/services/chat/scoped.ts",

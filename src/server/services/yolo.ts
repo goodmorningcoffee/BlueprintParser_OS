@@ -76,6 +76,7 @@ import {
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { assertDemoYoloTargetReadOnly } from "@/server/services/yolo-demo-target";
 import { enrichPageAfterYolo } from "./yolo-post-enrichment";
+import { classifierRecipesFor, writeProjectProposals } from "./classifier-proposals-write";
 import { writeProjectTagFamilies } from "./tag-families-write";
 
 // yolo/load's OWN S3 client (legacy constructed one; kept verbatim)
@@ -684,6 +685,7 @@ export async function yoloLoad(
           let heatmapEnabled = true;
           let ensembleEnabled = true;
           let ensembleConfig: ReturnType<typeof resolvePipelineToggles>["ensembleConfig"];
+          let classifierOverlay: unknown; // [clf 2a] companies.pipeline_config.classifiers
           try {
             const [company] = await db
               .select({ pipelineConfig: companies.pipelineConfig })
@@ -696,11 +698,13 @@ export async function yoloLoad(
             heatmapEnabled = !toggles.disabledSteps.has("yolo-heatmap");
             ensembleEnabled = !toggles.disabledSteps.has("ensemble");
             ensembleConfig = toggles.ensembleConfig;
+            classifierOverlay = company?.pipelineConfig?.classifiers;
           } catch {
             /* use defaults */
           }
 
           const rules = getEffectiveRules(companyHeuristics);
+          const classifierRecipes = classifierRecipesFor(classifierOverlay);
 
           // Group YOLO detections by page. Include modelName so the composite
           // region classifier can detect cross-model drawings agreement.
@@ -767,9 +771,10 @@ export async function yoloLoad(
                 csiCodes: page.csiCodes,
                 textractData,
                 keynotes: ocr?.keynotes ?? null,
+                drawingNumber: page.drawingNumber,
               },
               yoloDets,
-              { rules, heatmapEnabled, ensembleEnabled, ensembleConfig, sheetNumbers },
+              { rules, heatmapEnabled, ensembleEnabled, ensembleConfig, sheetNumbers, classifierRecipes },
             );
             if (pageChanged) shapePages.push({ pageNumber: page.pageNumber, pageIntelligence: updated });
             else shapePages.push({ pageNumber: page.pageNumber, pageIntelligence: page.pageIntelligence });
@@ -826,6 +831,10 @@ export async function yoloLoad(
           // reprocess (tag-families-write.ts).
           const tagFamilies = await writeProjectTagFamilies(writeCapability, project.id, shapePages);
           logger.info(`[YOLO-LOAD] Tag families: ${tagFamilies.families.length} over ${tagFamilies.pagesScanned} pages`);
+          // [clf 2a] projects.projectIntelligence.proposals from the pages' fresh classifierProposals (same
+          // in-memory pages as the tag families; verdicts are read from the stored intelligence they carry).
+          const proposals = await writeProjectProposals(writeCapability, project.id, shapePages);
+          logger.info(`[YOLO-LOAD] Classifier proposals: ${proposals.total}${proposals.truncated ? " (truncated)" : ""}`);
         } catch (err) {
           logger.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
         }

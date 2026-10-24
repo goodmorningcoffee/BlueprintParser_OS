@@ -10,7 +10,7 @@
 // the UI. An auto-included stage can be unticked; the plan then carries a "leaves … stale" warning.
 // Ordering is fixed by the DAG, never by click order.
 
-export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph" | "channels" | "cross-set";
+export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles" | "graph" | "channels" | "cross-set" | "classifiers";
 
 export type StageId =
   | "thumbnails"
@@ -23,6 +23,7 @@ export type StageId =
   | "full"
   | "shape-parse"
   | "intelligence"
+  | "classifiers"
   | "graph"
   | "cross-set"
   | "evidence"
@@ -194,6 +195,17 @@ export const STAGES: readonly StageDef[] = [
     pulls: [],
   },
   {
+    // [classifier engine 2a 2026-10-24] services/reprocess-classifiers.ts — the recipe engine over stored rows only.
+    id: "classifiers",
+    label: "Classifiers",
+    writes: "pageIntelligence.classifierProposals (recipe proposals with features + contributions; verdicts untouched); projects.project_intelligence.proposals (compact list)",
+    cost: "DB reads (one OCR read per page) + local CPU (CSI tagging of each table's words); no SageMaker, no Textract, no YOLO",
+    kind: "reprocess",
+    scope: "classifiers",
+    overlap: "YOLO load and Intelligence rebuild it too — on its own this is the re-run after editing a recipe (built-in or the company overlay), without re-running the heuristics or the region classifier.",
+    pulls: [],
+  },
+  {
     // [graph T8 2026-10-24] services/reprocess-graph.ts — reads stored rows only.
     id: "graph",
     label: "Knowledge graph",
@@ -277,7 +289,8 @@ export type ReprocessPreset =
   | "thumbnails"
   | "shape-parse"
   | "tiles"
-  | "channels";
+  | "channels"
+  | "classifiers";
 
 export interface PresetDef {
   id: ReprocessPreset;
@@ -298,6 +311,7 @@ export const PRESETS: readonly PresetDef[] = [
   { id: "clean-yolo", label: "Clean YOLO + rebuild", stages: ["purge-yolo"], rootOnly: true, replaces: "AI Models › Purge All (then Full + Intelligence)" },
   { id: "thumbnails", label: "Thumbnails", stages: ["thumbnails"], replaces: "Pipeline › Regenerate Thumbnails" },
   { id: "shape-parse", label: "Shape parse", stages: ["shape-parse"], replaces: "Pipeline › Shape Parse (Keynotes)" },
+  { id: "classifiers", label: "Classifiers", stages: ["classifiers"], replaces: "nothing — new with the classifier engine [clf 2a]" },
   { id: "tiles", label: "Tile images", stages: ["tiles"], rootOnly: true, replaces: "nothing — new 2026-10-24 (backfills the tile pyramid for projects uploaded before it)" },
   { id: "channels", label: "PDF channels", stages: ["channels"], rootOnly: true, replaces: "nothing — new 2026-10-24 (backfills the upload channel census for projects uploaded before it)" },
 ];

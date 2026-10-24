@@ -197,10 +197,11 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     const existing = (pageRow.pageIntelligence || {}) as Record<string, unknown>;
     // duplicateOf (admin Data tools), evidence (src/lib/evidence), tiles (the tile-pyramid record,
     // lib/tiles/keys.ts), shapes (src/lib/shape-ensemble) and channels (the upload PDF channel census,
-    // lib/pdf-channels — [census F2 2026-10-24]) are server-owned: a client patch can neither set nor clear them.
+    // lib/pdf-channels — [census F2 2026-10-24]) and classifierProposals (the classifier engine's computed
+    // proposals, [clf 2a]) are server-owned: a client patch can neither set nor clear them.
     const merged: Record<string, unknown> = {
       ...existing, ...intelligence, duplicateOf: existing.duplicateOf, evidence: existing.evidence, tiles: existing.tiles,
-      shapes: existing.shapes, channels: existing.channels,
+      shapes: existing.shapes, channels: existing.channels, classifierProposals: existing.classifierProposals,
     };
 
     // CSI merge: collect csiTags from parsedRegions and merge into the page-level csiCodes.

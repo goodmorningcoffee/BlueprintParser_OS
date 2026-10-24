@@ -15,6 +15,9 @@ import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones, type PageZones } from "@/lib/page-zones";
 import { buildEvidenceSummary, sameEvidence } from "@/lib/evidence";
 import { classifyRegionsV2, type RegionsV2 } from "@/lib/region-classifier-v2";
+import type { ClassifierRecipe } from "@/lib/classifier-engine";
+import { computeClassifierProposals } from "./classifier-proposals-write";
+import { storedChannelKind } from "./reprocess-classifiers";
 import { buildShapeEnsemble, sameShapeEnsemble, storedShapeEnsemble, summarizeShapeEnsemble, type ShapeEnsembleSummary } from "@/lib/shape-ensemble";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
@@ -60,6 +63,8 @@ export interface PostYoloPage {
   /** `pages.keynotes` — the classical shape-parse results, the second arm of the shape ensemble
    *  [tag-mapping v2] (optional; null/absent → YOLO-only ensemble). */
   keynotes?: readonly KeynoteShapeData[] | null;
+  /** `pages.drawingNumber` — the sheet number (discipline prefix) for the classifier engine [clf 2a]. */
+  drawingNumber?: string | null;
 }
 
 export interface PostYoloOptions {
@@ -69,6 +74,8 @@ export interface PostYoloOptions {
   ensembleConfig?: Partial<EnsembleConfig>;
   /** The project's drawing numbers — detail-callout recognition in the shape ensemble [tag-mapping v2]. */
   sheetNumbers?: readonly (string | null | undefined)[];
+  /** [clf 2a] The company's effective classifier recipes (built-ins + overlay); absent → built-ins. */
+  classifierRecipes?: readonly ClassifierRecipe[];
 }
 
 /** JSON with object keys sorted at every depth: Postgres reorders jsonb keys, so a stored record
@@ -141,6 +148,17 @@ export function enrichPageAfterYolo(
     if (!sameJson(regionsV2, existing.regionsV2)) { updated.regionsV2 = regionsV2; pageChanged = true; }
   } catch (err) {
     logger.error(`[YOLO-LOAD] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
+  }
+  // [classifier engine 2a 2026-10-24] recipes over the fresh regionsV2 (src/lib/classifier-engine) →
+  // `classifierProposals` (computed, server-owned; verdicts live apart in `proposalVerdicts`).
+  // computeClassifierProposals never throws; written only when it differs, like the zones.
+  {
+    const proposals = computeClassifierProposals({
+      pageNumber: page.pageNumber, detections: yoloDets, zones, textractData: page.textractData, csiCodes,
+      regionsV2: updated.regionsV2 as RegionsV2 | undefined, parsedRegions: existing.parsedRegions as Array<{ bbox?: number[] }> | undefined,
+      drawingNumber: page.drawingNumber, channelKind: storedChannelKind(existing), keynotes: page.keynotes,
+    }, opts.classifierRecipes);
+    if (proposals && !sameJson(proposals, existing.classifierProposals)) { updated.classifierProposals = proposals; pageChanged = true; }
   }
   // [tag-mapping v2 2026-10-24] shape ensemble (src/lib/shape-ensemble): yolo_primitive tag shapes
   // fused with the classical shape-parse results, text from the crop read validated by Textract,

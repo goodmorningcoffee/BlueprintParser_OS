@@ -627,6 +627,7 @@ export interface PageIntelligence {
   ensembleRegions?: EnsembleRegion[];
   /** [zones T2] detector zones (title block/drawings/tables/legends), fixed-zone fallback; absent without YOLO. */
   pageZones?: import("@/lib/page-zones").PageZones;
+  classifierProposals?: import("@/lib/classifier-engine/types").PageClassifierProposals; proposalVerdicts?: import("@/lib/classifier-engine/types").PageProposalVerdicts; // [clf 2a] computed proposals (server-owned) + the user's verdicts (verdict route only)
   // [refactor jul9 P2-A S1] autoTableProposals purged — writers removed, zero readers; old jsonb rows may carry it.
   parsedRegions?: ParsedRegion[];
   /** Stage 4: user-dismissed textRegion IDs. Persisted per-page via the same `/api/pages/intelligence`
@@ -831,7 +832,7 @@ export interface ProjectIntelligence {
   disciplines?: DisciplineBreakdown[];
   refGraph?: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] };
   csiGraph?: unknown; // CsiNetworkGraph — imported from csi-graph.ts at usage sites
-  // [refactor jul9 P2-A S2] pageCount purged — no writer, no readers; old jsonb rows may carry it.
+  proposals?: import("@/lib/classifier-engine/types").ProjectProposalSummary; // [clf 2a] compact proposals list (pageCount was purged jul9)
   summaries?: ProjectSummaries;
   yoloTags?: YoloTag[];
   /** [tag-mapping v2] shape+text families (src/lib/shape-ensemble/families.ts), written by yolo/load. */

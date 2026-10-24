@@ -194,6 +194,13 @@ export interface ClassifierProposal {
   nameWhy: SignalContribution[];
   /** Every evaluated signal value, keyed "detect.<id>" / "<classId>.<id>", for refits. */
   features: Record<string, number>;
+  // ── additive (2a engine): optional, absent on older records ──
+  /** Which candidate source produced the box ("parsed-regions" = a committed region scored for labels, never new). */
+  source?: CandidateSource["type"];
+  /** The region v2 id when the candidate came from regions-v2 (joins labels and the legacy className). */
+  regionId?: string;
+  /** The winning class's legacy ClassifiedTable category, when it declares one. */
+  legacyCategory?: string;
 }
 
 /** `pageIntelligence.classifierProposals` (computed; refreshed by reprocess; server-owned). */

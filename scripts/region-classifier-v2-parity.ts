@@ -24,16 +24,13 @@
  *     "schedule (other)" both map to "unclassified"); text boxes also compare the fallback bucket.
  * Projects are reported as "set N"; no OCR text is printed.
  */
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { BboxMinMax, CsiCode, TextractWord } from "@/types";
-import { classifyRegionsV2, type RegionDetection, type RegionV2 } from "@/lib/region-classifier-v2";
+import type { BboxMinMax } from "@/types";
+import { classifyRegionsV2, type RegionV2 } from "@/lib/region-classifier-v2";
 import { area, cover, inter, iou } from "@/lib/region-classifier-v2/geometry";
+import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage, modelOf, readSample } from "./lib/corpus-v2-marks"; // [clf 2a] loader shared with classifier-measure.ts
 
-interface Mark {
-  channel: string; label: string; bbox: BboxMinMax; center: [number, number]; confidence?: number;
-  provenance?: string; text?: string | null; meta?: { modelName?: string; division?: string } | null;
-}
 interface Ref {
   set: number; page: number; kind: string; bbox: BboxMinMax; tb_share: number; rc_s: number; rc_cls: string;
   rc2_cls: string; rc2_fallback: string | null; rc_kept?: boolean; det_conf: number;
@@ -41,17 +38,15 @@ interface Ref {
 
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; };
-const CORPUS = opt("corpus") ?? "/workspaces/projects/gitignore/corpus_v2";
-const RESEARCH = opt("research") ?? "/workspaces/projects/gitignore/projects/master_plan_2026-10-24/research/regions";
+const CORPUS = opt("corpus") ?? DEFAULT_CORPUS;
+const RESEARCH = opt("research") ?? DEFAULT_RESEARCH;
 const DEFAULT_SETS = [16, 15, 19, 20, 148];
 const sets = args.includes("--all") ? null : new Set((opt("sets") ?? DEFAULT_SETS.join(",")).split(",").map(Number));
 
-const modelOf = (m: Mark): string => m.meta?.modelName ?? (m.provenance ?? "").split(":")[0].split(".").pop() ?? "";
-const minMaxToLtwh = (b: BboxMinMax): [number, number, number, number] => [b[0], b[1], b[2] - b[0], b[3] - b[1]];
 const near = (a: BboxMinMax, b: BboxMinMax) => a.every((v, i) => Math.abs(v - b[i]) < 1e-4);
 const normCls = (c: string) => (c === "table (unclassified)" || c === "schedule (other)" || c === "text (unclassified)" ? "unclassified" : c);
 
-const sample = JSON.parse(readFileSync(join(RESEARCH, "sample.json"), "utf8")) as Array<{ pid: string; set: number; page: number; run: string }>;
+const sample = readSample(RESEARCH);
 const refs = new Map<string, Ref[]>();
 for (const line of readFileSync(join(RESEARCH, "candidates.jsonl"), "utf8").split("\n")) {
   if (!line) continue;
@@ -71,19 +66,9 @@ const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1
 
 for (const s of sample) {
   if (sets && !sets.has(s.set)) continue;
-  const base = join(CORPUS, "data", "runs", s.pid, "pages", `page_${String(s.page).padStart(4, "0")}`);
-  if (!existsSync(`${base}.marks.json`)) continue;
-  let marks = JSON.parse(readFileSync(`${base}.marks.json`, "utf8")) as Mark[];
-  if (existsSync(`${base}.ytext.json`)) marks = marks.concat(JSON.parse(readFileSync(`${base}.ytext.json`, "utf8")) as Mark[]);
-  const yolo = marks.filter((m) => m.channel === "yolo");
-  const detections: RegionDetection[] = yolo.map((m) => ({
-    name: m.label, minX: m.bbox[0], minY: m.bbox[1], maxX: m.bbox[2], maxY: m.bbox[3], confidence: m.confidence ?? 0, modelName: modelOf(m),
-  }));
-  const words: TextractWord[] = marks.filter((m) => m.channel === "ocr").map((m) => ({ text: m.text ?? m.label ?? "", confidence: 99, bbox: minMaxToLtwh(m.bbox) }));
-  const csiCodes: CsiCode[] = marks.filter((m) => m.channel === "csi").map((m) => ({
-    code: m.label, description: "", trade: "", division: m.meta?.division ?? m.label,
-    triggers: [{ text: "", tier: 1 as const, bbox: minMaxToLtwh(m.bbox) }],
-  }));
+  const loaded = loadPage(s, CORPUS);
+  if (!loaded) continue;
+  const { yolo, detections, words, csiCodes } = loaded;
   const out = classifyRegionsV2({ pageNumber: s.page, detections, textractData: { words }, csiCodes });
   tally.pages++;
   const ps = tally.perSet.get(s.set) ?? { pages: 0, tables: 0, keepAgree: 0, clsAgree: 0, clsCompared: 0 };

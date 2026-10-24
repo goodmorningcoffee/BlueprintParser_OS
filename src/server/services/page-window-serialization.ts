@@ -14,6 +14,8 @@ const PAGE_WINDOW_OMITTED_INTELLIGENCE_KEYS = [
   // knowledge graph); shapes alone runs to ~45 KB on a dense page.
   "shapes",
   "regionsV2",
+  // [clf 2a 2026-10-24] per-proposal features + contributions; the panel reads projectIntelligence.proposals.
+  "classifierProposals",
 ] as const;
 
 /**

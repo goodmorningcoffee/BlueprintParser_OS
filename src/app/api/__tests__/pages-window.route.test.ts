@@ -51,6 +51,8 @@ function s4PageIntelligenceFixture() {
     evidence: { v: 1, holes: [{ bbox: [0.1, 0.1, 0.2, 0.2], conf: 0.5, zone: "notes" }] },
     shapes: { v: 1, shapes: [{ c: "circle", t: "D1" }] },
     regionsV2: { v: 1, regions: [{ kind: "table", bbox: [0.1, 0.1, 0.2, 0.2] }] },
+    classifierProposals: { engineVersion: "clf/0.1", recipes: {}, proposals: [] },
+    proposalVerdicts: { "schedules.v1:p1:x": { verdict: "accept" } },
     ensembleRegions: [{ id: "ensemble-1", category: "door-schedule", tableProbability: 0.94 }],
     parsedRegions: [{ id: "user-region", type: "schedule", data: { rows: [{ Mark: "D1" }] } }],
     rejectedTextRegionIds: ["user-rejected-1"],
@@ -72,6 +74,8 @@ describe("serializePageWindowIntelligence", () => {
     expect(serialized).not.toHaveProperty("evidence"); // [evidence T4] server-only (up to 500 holes/page)
     expect(serialized).not.toHaveProperty("shapes"); // [viewer trim F1] server-only readers
     expect(serialized).not.toHaveProperty("regionsV2");
+    expect(serialized).not.toHaveProperty("classifierProposals"); // [clf 2a] features + contributions are server / admin reads
+    expect(serialized).toHaveProperty("proposalVerdicts"); // the user's own labels stay visible
     expect(serialized).toMatchObject({
       ensembleRegions: source.ensembleRegions,
       parsedRegions: source.parsedRegions,
@@ -327,6 +331,7 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
       rejectedTextRegionIds: source.rejectedTextRegionIds,
       classification: source.classification,
       unknownFutureKey: source.unknownFutureKey,
+      proposalVerdicts: source.proposalVerdicts, // [clf 2a] user labels pass through; classifierProposals does not
     });
     expect(byPage[1]).not.toHaveProperty("classifiedRegions");
     expect(byPage[1]).not.toHaveProperty("yoloHeatmap");

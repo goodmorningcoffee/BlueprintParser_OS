@@ -13,6 +13,7 @@ import {
   type PostYoloDetection,
   stableStringify,
 } from "@/server/services/yolo-post-enrichment";
+import { BUILT_IN_RECIPES } from "@/lib/classifier-engine";
 
 const DOORS: CsiCode = { code: "08 11 16", description: "Aluminum Doors and Frames", trade: "Openings", division: "08 00 00" };
 
@@ -218,5 +219,36 @@ describe("enrichPageAfterYolo — shape ensemble [tag-mapping v2]", () => {
     const shapes = updated.shapes as { shapes: Array<{ t: string | null }>; counts: { classical: number } };
     expect(shapes.counts.classical).toBe(0);
     expect(shapes.shapes.map((s) => s.t)).toEqual([null]);
+  });
+});
+
+describe("[clf 2a] classifier engine after classifyRegionsV2", () => {
+  const w = (text: string, x: number, y: number, h = 0.012) => ({ text, confidence: 99, bbox: [x, y, text.length * 0.007, h] as [number, number, number, number] });
+  const words = [w("DOOR", 0.52, 0.19, 0.018), w("SCHEDULE", 0.57, 0.19, 0.018), ...["DOOR", "NO", "FRAME", "HDWR", "RATING", "SIZE"].map((t, i) => w(t, 0.51 + i * 0.07, 0.22))];
+  for (let r = 0; r < 8; r++) words.push(w(`10${r}`, 0.51, 0.25 + r * 0.02), w("HM", 0.58, 0.25 + r * 0.02), w("WD", 0.65, 0.25 + r * 0.02), w("PR", 0.72, 0.25 + r * 0.02));
+  const dets: PostYoloDetection[] = [{ name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 }];
+  const page = (pageIntelligence: Record<string, unknown>) => ({ pageNumber: 7, rawText: "DOOR SCHEDULE", pageIntelligence, csiCodes: null, textractData: { words }, drawingNumber: "A-601" });
+
+  it("writes classifierProposals (computed) beside regionsV2, leaves proposalVerdicts alone, and skips the write when unchanged", () => {
+    const first = enrichPageAfterYolo(page({ proposalVerdicts: { keep: { verdict: "accept" } } }), dets, opts([]));
+    expect(first.pageChanged).toBe(true);
+    const stored = first.updated.classifierProposals as { engineVersion: string; proposals: Array<{ recipeId: string; classId: string | null; displayName: string }> };
+    expect(stored.engineVersion).toBe("clf/0.1");
+    expect(stored.proposals).toHaveLength(1);
+    expect(stored.proposals[0]).toMatchObject({ recipeId: "schedules.v1", classId: "door", displayName: "Door schedule" });
+    expect(first.updated.proposalVerdicts).toEqual({ keep: { verdict: "accept" } });
+    expect(first.updated.classifiedTables).toBeUndefined(); // legacy path untouched (no textRegions on this page)
+    // same page again, with everything it just wrote: the record is byte-stable, so the sameJson guard keeps it
+    // (the legacy composite / heatmap steps still flag the page; they always did)
+    const second = enrichPageAfterYolo(page(first.updated), dets, opts([]));
+    expect(stableStringify(second.updated.classifierProposals)).toBe(stableStringify(stored));
+  });
+
+  it("a recipe that throws is contained — the page keeps its other enrichment and the other recipes' proposals", () => {
+    const broken = { ...BUILT_IN_RECIPES[0], id: "broken", scope: { sheetNumberPattern: "(" } };
+    const out = enrichPageAfterYolo(page({}), dets, { ...opts([]), classifierRecipes: [broken, BUILT_IN_RECIPES[0]] });
+    expect(out.pageChanged).toBe(true);
+    expect(out.updated.regionsV2).toBeDefined();
+    expect((out.updated.classifierProposals as { proposals: Array<{ recipeId: string }> }).proposals.map((p) => p.recipeId)).toEqual(["schedules.v1"]);
   });
 });

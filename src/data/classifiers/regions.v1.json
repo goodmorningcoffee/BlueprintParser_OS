@@ -1,0 +1,728 @@
+{
+ "id": "regions.v1",
+ "name": "Legends / notes / keynotes",
+ "version": 1,
+ "enabled": true,
+ "unit": "region",
+ "target": "text-region",
+ "_how": "Port of region v2's text classes (region-classes.v2.json `text`): the same keyword weights, now as one words signal per class over the box (saturation 3, weight 5 \u2192 a 5-point phrase alone clears the bar) plus the title line, the CSI division share and the title-block priors. Detect reuses region v2's structure score. Falls back to 'text (unclassified)' with the derived title.",
+ "candidates": [
+  {
+   "type": "regions-v2",
+   "kinds": [
+    "legend",
+    "notes",
+    "keynotes"
+   ]
+  }
+ ],
+ "scope": {
+  "excludeTitleBlock": true,
+  "minWords": 3
+ },
+ "detect": {
+  "bias": -1.0,
+  "threshold": 0.5,
+  "signals": [
+   {
+    "id": "structure",
+    "label": "region v2 structure score",
+    "spec": {
+     "type": "structure",
+     "feature": "structureScore"
+    },
+    "weight": 4.0,
+    "role": "score",
+    "enabled": true
+   }
+  ]
+ },
+ "classes": [
+  {
+   "id": "keynotes",
+   "name": "keynotes",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "keynote-table",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "KEYNOTES": 4,
+       "KEYNOTE": 3.5,
+       "KEY NOTES": 4,
+       "KEYED NOTES": 4,
+       "KEYED": 2,
+       "KEY": 0.5,
+       "NOTES": 0.3
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "KEYNOTES": 4,
+       "KEYNOTE": 3.5,
+       "KEY NOTES": 4,
+       "KEYED NOTES": 4,
+       "KEYED": 2,
+       "KEY": 0.5,
+       "NOTES": 0.3
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "symbol-legend",
+   "name": "symbol legend",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "symbol-legend",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "SYMBOL LEGEND": 4.5,
+       "LEGEND": 3,
+       "SYMBOLS": 2.5,
+       "SYMBOL": 2,
+       "DENOTES": 1.5,
+       "INDICATES": 1,
+       "DESCRIPTION": 0.7,
+       "EXISTING TO REMAIN": 1,
+       "NEW WALL": 1,
+       "PARTITION": 0.3,
+       "DEVICE": 0.3
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "SYMBOL LEGEND": 4.5,
+       "LEGEND": 3,
+       "SYMBOLS": 2.5,
+       "SYMBOL": 2,
+       "DENOTES": 1.5,
+       "INDICATES": 1,
+       "DESCRIPTION": 0.7,
+       "EXISTING TO REMAIN": 1,
+       "NEW WALL": 1,
+       "PARTITION": 0.3,
+       "DEVICE": 0.3
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "abbreviations",
+   "name": "abbreviations",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "general-notes",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "ABBREVIATIONS": 4.5,
+       "ABBREVIATION": 4.5,
+       "ABBR": 3,
+       "A.F.F.": 0.5,
+       "AFF": 0.5,
+       "CLG": 0.3,
+       "GYP": 0.3,
+       "O.C.": 0.3,
+       "N.I.C.": 0.5,
+       "NIC": 0.5,
+       "V.I.F.": 0.3,
+       "N.T.S.": 0.4,
+       "EQ": 0.2,
+       "EXIST": 0.2,
+       "ALUM": 0.3,
+       "CONC": 0.3
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "ABBREVIATIONS": 4.5,
+       "ABBREVIATION": 4.5,
+       "ABBR": 3,
+       "A.F.F.": 0.5,
+       "AFF": 0.5,
+       "CLG": 0.3,
+       "GYP": 0.3,
+       "O.C.": 0.3,
+       "N.I.C.": 0.5,
+       "NIC": 0.5,
+       "V.I.F.": 0.3,
+       "N.T.S.": 0.4,
+       "EQ": 0.2,
+       "EXIST": 0.2,
+       "ALUM": 0.3,
+       "CONC": 0.3
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "general-notes",
+   "name": "general notes",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "general-notes",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "GENERAL NOTES": 5,
+       "GENERAL": 1.5,
+       "SHALL": 0.7,
+       "CONTRACTOR": 0.7,
+       "COMPLY": 0.7,
+       "ACCORDANCE": 0.5,
+       "VERIFY": 0.5,
+       "PRIOR": 0.4,
+       "RESPONSIBLE": 0.6,
+       "NOTIFY": 0.6,
+       "APPLICABLE": 0.5,
+       "OWNER": 0.4,
+       "ARCHITECT": 0.4,
+       "DO NOT SCALE": 2,
+       "SUBMIT": 0.5,
+       "SHOP DRAWINGS": 1,
+       "CONTRACT DOCUMENTS": 1
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "GENERAL NOTES": 5,
+       "GENERAL": 1.5,
+       "SHALL": 0.7,
+       "CONTRACTOR": 0.7,
+       "COMPLY": 0.7,
+       "ACCORDANCE": 0.5,
+       "VERIFY": 0.5,
+       "PRIOR": 0.4,
+       "RESPONSIBLE": 0.6,
+       "NOTIFY": 0.6,
+       "APPLICABLE": 0.5,
+       "OWNER": 0.4,
+       "ARCHITECT": 0.4,
+       "DO NOT SCALE": 2,
+       "SUBMIT": 0.5,
+       "SHOP DRAWINGS": 1,
+       "CONTRACT DOCUMENTS": 1
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "csiDiv",
+     "label": "CSI division share",
+     "spec": {
+      "type": "csi",
+      "where": "box",
+      "measure": "share",
+      "minCodes": 2,
+      "divisions": [
+       "01"
+      ]
+     },
+     "weight": 1.5,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "titleBlock",
+     "label": "title block says",
+     "spec": {
+      "type": "words",
+      "where": "titleBlock",
+      "terms": {
+       "GENERAL": 1.0
+      },
+      "saturation": 1.0
+     },
+     "weight": 1.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "sheet-coded-notes",
+   "name": "sheet / coded notes",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "general-notes",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "SHEET NOTES": 5,
+       "PLAN NOTES": 4,
+       "DRAWING NOTES": 4,
+       "CODED NOTES": 5,
+       "CONSTRUCTION NOTES": 4,
+       "FLOOR PLAN NOTES": 4,
+       "NOTES": 1,
+       "NOTE": 0.8,
+       "REFER": 0.4,
+       "TYP": 0.3,
+       "TYP.": 0.3,
+       "TYPICAL": 0.3,
+       "PROVIDE": 0.4,
+       "INSTALL": 0.4,
+       "SEE": 0.2
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "SHEET NOTES": 5,
+       "PLAN NOTES": 4,
+       "DRAWING NOTES": 4,
+       "CODED NOTES": 5,
+       "CONSTRUCTION NOTES": 4,
+       "FLOOR PLAN NOTES": 4,
+       "NOTES": 1,
+       "NOTE": 0.8,
+       "REFER": 0.4,
+       "TYP": 0.3,
+       "TYP.": 0.3,
+       "TYPICAL": 0.3,
+       "PROVIDE": 0.4,
+       "INSTALL": 0.4,
+       "SEE": 0.2
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "demolition-notes",
+   "name": "demolition notes",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "general-notes",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "DEMOLITION NOTES": 5,
+       "DEMOLITION": 2,
+       "DEMO": 1.5,
+       "REMOVE": 1,
+       "REMOVED": 1,
+       "REMOVAL": 1,
+       "EXISTING TO REMAIN": 1.5,
+       "SALVAGE": 1,
+       "PATCH": 0.7,
+       "DEBRIS": 1,
+       "DISPOSAL": 1,
+       "PROTECT": 0.5,
+       "CAPPED": 0.7,
+       "RELOCATE": 0.7
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "DEMOLITION NOTES": 5,
+       "DEMOLITION": 2,
+       "DEMO": 1.5,
+       "REMOVE": 1,
+       "REMOVED": 1,
+       "REMOVAL": 1,
+       "EXISTING TO REMAIN": 1.5,
+       "SALVAGE": 1,
+       "PATCH": 0.7,
+       "DEBRIS": 1,
+       "DISPOSAL": 1,
+       "PROTECT": 0.5,
+       "CAPPED": 0.7,
+       "RELOCATE": 0.7
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "csiDiv",
+     "label": "CSI division share",
+     "spec": {
+      "type": "csi",
+      "where": "box",
+      "measure": "share",
+      "minCodes": 2,
+      "divisions": [
+       "02"
+      ]
+     },
+     "weight": 1.5,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "titleBlock",
+     "label": "title block says",
+     "spec": {
+      "type": "words",
+      "where": "titleBlock",
+      "terms": {
+       "DEMOLITION": 1.0,
+       "DEMO": 1.0
+      },
+      "saturation": 1.0
+     },
+     "weight": 1.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "code-life-safety-notes",
+   "name": "code / life-safety notes",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "general-notes",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "LIFE SAFETY": 4,
+       "CODE": 1,
+       "CODES": 1,
+       "BUILDING CODE": 3,
+       "EGRESS": 2,
+       "OCCUPANCY": 2,
+       "OCCUPANT LOAD": 3,
+       "OCCUPANT": 1.5,
+       "SPRINKLER": 1,
+       "SPRINKLERED": 1.5,
+       "FIRE RATED": 1.5,
+       "FIRE": 0.5,
+       "RATED": 0.4,
+       "EXIT": 1,
+       "ACCESSIBILITY": 1,
+       "ADA": 1,
+       "IBC": 2,
+       "NFPA": 2,
+       "CONSTRUCTION CLASSIFICATION": 3,
+       "ZONING": 2,
+       "SMOKE": 0.6,
+       "ALARM": 0.6,
+       "TRAVEL DISTANCE": 3
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "LIFE SAFETY": 4,
+       "CODE": 1,
+       "CODES": 1,
+       "BUILDING CODE": 3,
+       "EGRESS": 2,
+       "OCCUPANCY": 2,
+       "OCCUPANT LOAD": 3,
+       "OCCUPANT": 1.5,
+       "SPRINKLER": 1,
+       "SPRINKLERED": 1.5,
+       "FIRE RATED": 1.5,
+       "FIRE": 0.5,
+       "RATED": 0.4,
+       "EXIT": 1,
+       "ACCESSIBILITY": 1,
+       "ADA": 1,
+       "IBC": 2,
+       "NFPA": 2,
+       "CONSTRUCTION CLASSIFICATION": 3,
+       "ZONING": 2,
+       "SMOKE": 0.6,
+       "ALARM": 0.6,
+       "TRAVEL DISTANCE": 3
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "csiDiv",
+     "label": "CSI division share",
+     "spec": {
+      "type": "csi",
+      "where": "box",
+      "measure": "share",
+      "minCodes": 2,
+      "divisions": [
+       "21",
+       "28"
+      ]
+     },
+     "weight": 1.5,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "titleBlock",
+     "label": "title block says",
+     "spec": {
+      "type": "words",
+      "where": "titleBlock",
+      "terms": {
+       "LIFE SAFETY": 1.0,
+       "CODE": 1.0,
+       "EGRESS": 1.0
+      },
+      "saturation": 1.0
+     },
+     "weight": 1.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "structural-notes",
+   "name": "structural notes",
+   "group": "text",
+   "bias": -3.0,
+   "legacyCategory": "general-notes",
+   "signals": [
+    {
+     "id": "words",
+     "label": "class keywords inside the box",
+     "spec": {
+      "type": "words",
+      "where": "box",
+      "terms": {
+       "STRUCTURAL NOTES": 5,
+       "STRUCTURAL": 1,
+       "CONCRETE": 0.8,
+       "REINFORCING": 1.2,
+       "REBAR": 1.2,
+       "PSI": 1,
+       "KSI": 1.5,
+       "ASTM": 0.8,
+       "ACI": 1.5,
+       "AISC": 1.5,
+       "STEEL": 0.6,
+       "BEAM": 0.6,
+       "COLUMN": 0.5,
+       "FOOTING": 1,
+       "FOUNDATION": 0.8,
+       "LOADS": 0.8,
+       "PSF": 1.2,
+       "WELD": 1,
+       "BOLTS": 0.7,
+       "DEFLECTION": 1,
+       "SHORING": 1,
+       "UNDERPINNING": 1.5,
+       "LINTEL": 0.7,
+       "JOIST": 0.8,
+       "JOISTS": 0.8
+      },
+      "saturation": 3.0
+     },
+     "weight": 5.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "header",
+     "label": "class keywords in the title line",
+     "spec": {
+      "type": "words",
+      "where": "header",
+      "terms": {
+       "STRUCTURAL NOTES": 5,
+       "STRUCTURAL": 1,
+       "CONCRETE": 0.8,
+       "REINFORCING": 1.2,
+       "REBAR": 1.2,
+       "PSI": 1,
+       "KSI": 1.5,
+       "ASTM": 0.8,
+       "ACI": 1.5,
+       "AISC": 1.5,
+       "STEEL": 0.6,
+       "BEAM": 0.6,
+       "COLUMN": 0.5,
+       "FOOTING": 1,
+       "FOUNDATION": 0.8,
+       "LOADS": 0.8,
+       "PSF": 1.2,
+       "WELD": 1,
+       "BOLTS": 0.7,
+       "DEFLECTION": 1,
+       "SHORING": 1,
+       "UNDERPINNING": 1.5,
+       "LINTEL": 0.7,
+       "JOIST": 0.8,
+       "JOISTS": 0.8
+      },
+      "saturation": 3.0
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "csiDiv",
+     "label": "CSI division share",
+     "spec": {
+      "type": "csi",
+      "where": "box",
+      "measure": "share",
+      "minCodes": 2,
+      "divisions": [
+       "03",
+       "04",
+       "05"
+      ]
+     },
+     "weight": 1.5,
+     "role": "score",
+     "enabled": true
+    },
+    {
+     "id": "titleBlock",
+     "label": "title block says",
+     "spec": {
+      "type": "words",
+      "where": "titleBlock",
+      "terms": {
+       "STRUCTURAL": 1.0
+      },
+      "saturation": 1.0
+     },
+     "weight": 1.0,
+     "role": "score",
+     "enabled": true
+    }
+   ]
+  }
+ ],
+ "nameThreshold": 0.5,
+ "minMargin": 0.05,
+ "deriveName": true,
+ "fallbackClassName": "text (unclassified)"
+}

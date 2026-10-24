@@ -68,6 +68,8 @@ import { reprocessCrossSetScope } from "./reprocess-cross-set";
 import { refreshProjectGraph } from "./project-graph";
 import { reprocessTilesScope } from "./reprocess-tiles";
 import { reprocessChannelsScope } from "./reprocess-channels";
+import { reprocessClassifiersScope } from "./reprocess-classifiers"; // [clf 2a]
+import { classifierRecipesFor, computeClassifierProposals, writeProjectProposals } from "./classifier-proposals-write";
 import { readTilesSetting } from "./tiles-setting";
 import { createReprocessStream } from "./reprocess-stream";
 import { loadProjectYoloCsiCodes, withYoloCsiCodes } from "./reprocess-yolo-csi";
@@ -493,6 +495,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         return;
       }
 
+      if (scope === "classifiers") { // [clf 2a] engine only, no YOLO — loop + per-project guard live in reprocess-classifiers.ts.
+        await reprocessClassifiersScope({ projects: allProjects, withReprocessLease, stream: out, overlay: company?.pipelineConfig?.classifiers });
+        out.close(); return;
+      }
+
       if (scope === "intelligence") {
         // Intelligence-only reprocess: re-run page analysis + project analysis on existing data.
         // Pulls existing YOLO annotations from the `annotations` table (no SageMaker
@@ -533,10 +540,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             .where(
               and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo")),
             );
-          const yoloByPage = new Map<
-            number,
-            Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number; modelName?: string }>
-          >();
+          const yoloByPage = new Map<number, Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number; modelName?: string }>>();
           for (const a of yoloAnns) {
             if (!yoloByPage.has(a.pageNumber)) yoloByPage.set(a.pageNumber, []);
             const data = a.data as { confidence?: number; modelName?: string } | null;
@@ -559,6 +563,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
           });
 
           const rules = getEffectiveRules(companyHeuristics);
+          const clfRecipes = classifierRecipesFor(company?.pipelineConfig?.classifiers); // [clf 2a]
 
           for (const page of projectPages) {
             totalPages++;
@@ -625,11 +630,11 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               if (pageYolo && pageYolo.length > 0) {
                 // [regions v2 2026-10-24] SHADOW detector-first classifier — mirrors yolo-post-enrichment.ts;
                 // `regionsV2` is persisted beside the legacy keys, read by nothing yet.
-                try {
-                  pageIntelligence.regionsV2 = classifyRegionsV2({ pageNumber: page.pageNumber, detections: pageYolo, zones: pageZones, textractData, csiCodes });
-                } catch (err) {
-                  logger.error(`[reprocess-intel] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
-                }
+                try { pageIntelligence.regionsV2 = classifyRegionsV2({ pageNumber: page.pageNumber, detections: pageYolo, zones: pageZones, textractData, csiCodes }); }
+                catch (err) { logger.error(`[reprocess-intel] classifyRegionsV2 failed for page ${page.pageNumber}:`, err); }
+                // [clf 2a] recipe proposals over the fresh regionsV2 — mirrors yolo-post-enrichment.ts; never throws (undefined = key dropped).
+                pageIntelligence.classifierProposals = computeClassifierProposals({ pageNumber: page.pageNumber, detections: pageYolo, zones: pageZones, textractData, csiCodes, regionsV2: pageIntelligence.regionsV2 as RegionsV2 | undefined,
+                  parsedRegions: (page.storedIntelligence as { parsedRegions?: Array<{ bbox?: number[] }> } | null)?.parsedRegions, drawingNumber: page.drawingNumber, keynotes: page.keynotes }, clfRecipes);
                 try { // [tag-mapping v2] shape ensemble → `shapes`, the post-YOLO enrichment's own helper
                   pageIntelligence.shapes = computePageShapes({ yoloDets: pageYolo, keynotes: page.keynotes, words: textractData.words, zones: pageZones ?? computePageZones(pageYolo),
                     regionsV2: pageIntelligence.regionsV2 as RegionsV2 | undefined, sheetNumbers: projectPages.map((p) => p.drawingNumber) });
@@ -637,11 +642,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                 try {
                   const regions = classifyPageRegions({
                     pageNumber: page.pageNumber,
-                    yoloAnnotations: pageYolo.map((d) => ({
-                      name: d.name,
-                      bbox: [d.minX, d.minY, d.maxX, d.maxY],
-                      modelName: d.modelName,
-                    })),
+                    yoloAnnotations: pageYolo.map((d) => ({ name: d.name, bbox: [d.minX, d.minY, d.maxX, d.maxY], modelName: d.modelName })),
                     textRegions: textRegions as Parameters<typeof classifyPageRegions>[0]["textRegions"],
                     parsedRegions: (page.storedIntelligence as any)?.parsedRegions,
                     legacyClassifiedTables: pageIntelligence.classifiedTables as ClassifiedTable[] | undefined,
@@ -740,6 +741,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
           // [tag-mapping v2] project tag families from the fresh `shapes` (yolo/load's writer) — before the graph reads them.
           await writeProjectTagFamilies(writeCapability, project.id).catch((err) => logger.error(`[reprocess-intel] Tag families failed for ${project.name}:`, err));
+          await writeProjectProposals(writeCapability, project.id).catch((err) => logger.error(`[reprocess-intel] Classifier proposals failed for ${project.name}:`, err)); // [clf 2a]
           // Project-level analysis
           try {
             const allProcessedPages = await db

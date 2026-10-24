@@ -24,8 +24,13 @@ describe("stage DAG", () => {
   it("is in pipeline order, ids are unique, and every pull edge points at a runnable stage", () => {
     expect(ids([...STAGES])).toEqual([
       "thumbnails", "page-names", "yolo-run", "yolo-load", "yolo-restamp", "purge-yolo", "dedupe",
-      "full", "shape-parse", "intelligence", "graph", "cross-set", "evidence", "tiles", "channels", "re-ocr",
+      "full", "shape-parse", "intelligence", "classifiers", "graph", "cross-set", "evidence", "tiles", "channels", "re-ocr",
     ]);
+    // [clf 2a] classifier engine: a plain reprocess scope right after intelligence (it reads regionsV2), pulls nothing, pulled by nothing.
+    expect(stageDef("classifiers")).toMatchObject({ kind: "reprocess", scope: "classifiers", pulls: [] });
+    expect(stageDef("classifiers").rootOnly).toBeUndefined();
+    expect(STAGES.some((s) => s.pulls.some((p) => p.stage === "classifiers"))).toBe(false);
+    expect(ids(resolvePlan(set<StageId>("classifiers", "intelligence"), new Set(), false).run)).toEqual(["intelligence", "classifiers"]);
     // [cross-set F3] company-wide links: a plain reprocess scope after the graph, pulls nothing, pulled by nothing.
     expect(stageDef("cross-set")).toMatchObject({ kind: "reprocess", scope: "cross-set", pulls: [] });
     expect(STAGES.some((s) => s.pulls.some((p) => p.stage === "cross-set"))).toBe(false);

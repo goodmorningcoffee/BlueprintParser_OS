@@ -27,6 +27,8 @@ describe("carryNonComputedIntelligence", () => {
     expect(REPROCESS_COMPUTED_KEYS).toContain("pageZones");
     expect(REPROCESS_COMPUTED_KEYS).toContain("regionsV2"); // [regions v2 2026-10-24] shadow classifier output
     expect(REPROCESS_COMPUTED_KEYS).toContain("shapes"); // [tag-mapping v2 2026-10-24] shape-ensemble summary
+    expect(REPROCESS_COMPUTED_KEYS).toContain("classifierProposals"); // [clf 2a] recipe proposals
+    expect(REPROCESS_COMPUTED_KEYS).not.toContain("proposalVerdicts"); // [clf 2a] user labels survive every reprocess
     const carried = carryNonComputedIntelligence({ pageZones: { stale: true }, parsedRegions: [] });
     expect(carried).toEqual({ parsedRegions: [] });
   });

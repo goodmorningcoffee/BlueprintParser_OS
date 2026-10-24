@@ -44,6 +44,9 @@ export const REPROCESS_COMPUTED_KEYS = [
   // two writers on pages with YOLO detections — cleared here so a page that lost its detections does
   // not keep feeding stale shapes into the project's tag families.
   "shapes",
+  // [classifier engine 2a 2026-10-24] recipe proposals (src/lib/classifier-engine), written by the same two
+  // writers and the `classifiers` scope. `proposalVerdicts` is NOT here: user labels, never touched by reprocess.
+  "classifierProposals",
   // NOT here, deliberately: `tiles` (reprocess-tiles.ts) and `channels` ([census F2 2026-10-24] upload
   // PDF channel census, reprocess-channels.ts) — server-owned keys that only the upload and their own
   // stages write; the intelligence reprocess never rebuilds them, so clearing them here would lose them.
