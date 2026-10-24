@@ -21,7 +21,7 @@ function rng(seed: number): () => number {
 
 const sig = (id: string, weight: number, role: "score" | "required" | "veto" = "score") => ({ id, label: id, spec: { type: "sheet" }, weight, role, enabled: true });
 const toy = (): ClassifierRecipe => validateRecipe({
-  id: "toy.v1", name: "Toy", version: 3, target: "schedule", unit: "region", candidates: [], scope: {},
+  id: "toy.v1", name: "Toy", version: 3, target: "schedule", unit: "region", candidates: [{ type: "parsed-regions" }], scope: {},
   detect: { bias: -1, threshold: 0.5, signals: [sig("a", 1), sig("b", 1)] },
   classes: [
     { id: "door", name: "Door", group: "arch", bias: -2, signals: [sig("header", 2), sig("cols", 1)] },
