@@ -402,10 +402,10 @@ export default function AutoParseTab({
           )}
 
           {autoDetectedTables.length > 0 && (
-            <div className="space-y-1">
-              <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">
-                Detected on This Page (draw BB to parse)
-              </div>
+            <details className="space-y-1">
+              <summary className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 cursor-pointer">
+                Keyword detections (legacy) on this page ({autoDetectedTables.length})
+              </summary>
               {autoDetectedTables.map((t: any, i: number) => (
                 <div
                   key={i}
@@ -418,7 +418,7 @@ export default function AutoParseTab({
                   )}
                 </div>
               ))}
-            </div>
+            </details>
           )}
 
           {existingParsed.length > 0 && (

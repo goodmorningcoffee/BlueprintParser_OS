@@ -37,6 +37,7 @@ import { CLUSTER_Y_TOLERANCE_FACTOR } from "@/lib/spatial-constants";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import ParseRegionLayer from "./ParseRegionLayer";
 import ParsedTableCellOverlay from "./ParsedTableCellOverlay";
+import ProposalFocusLayer, { ProposalDimGroup } from "./ProposalFocusLayer";
 
 interface CacheEntry {
   bitmap: ImageBitmap;
@@ -584,16 +585,19 @@ export default memo(function PDFPage({
         height={pageSize.height}
         cssScale={cssScale}
       />
-      <AnnotationOverlay
-        width={pageSize.width}
-        height={pageSize.height}
-        cssScale={cssScale}
-      />
+      <ProposalDimGroup pageNumber={pageNumber}>
+        <AnnotationOverlay
+          width={pageSize.width}
+          height={pageSize.height}
+          cssScale={cssScale}
+        />
+      </ProposalDimGroup>
       <ParsedTableCellOverlay
         width={pageSize.width}
         height={pageSize.height}
         cssScale={cssScale}
       />
+      <ProposalFocusLayer pageNumber={pageNumber} />
     </div>
   );
 })

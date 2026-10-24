@@ -11,6 +11,7 @@ import {
   seedCsiGraphFromBootstrap,
 } from "@/queries/useCsiGraph";
 import { publishBootstrapPageWindow } from "@/queries/usePageWindow";
+import { clearProposalsProject, seedProposalsFromBootstrap } from "@/queries/useProposals";
 import {
   deriveProjectCatalogs,
   seedProjectCatalogsCache,
@@ -189,6 +190,8 @@ function adoptProject(
     projectIntelligenceWithoutYoloTags,
   );
   if (!canPublish()) return false;
+  seedProposalsFromBootstrap(queryClient, publicId, projectIntelligenceWithoutYoloTags);
+  if (!canPublish()) return false;
   seedSummariesCache(queryClient, publicId, data.summaries);
   if (!canPublish()) return false;
   seedChatCache(queryClient, publicId, options.demo ? undefined : data.chatMessages);
@@ -314,6 +317,8 @@ async function runProjectOpen(
       clearYoloTagsProject(queryClient, cleanupPublicId);
       if (!ownsRecord(queryClient, record)) return { status: "superseded" };
       clearCsiGraphProject(queryClient, cleanupPublicId);
+      if (!ownsRecord(queryClient, record)) return { status: "superseded" };
+      clearProposalsProject(queryClient, cleanupPublicId);
       if (!ownsRecord(queryClient, record)) return { status: "superseded" };
       // [bucketfill P2] Extracted vector geometry is the heaviest per-page payload after Textract
       // (~2.4 MB/page, 4 retained). Synchronous, unlike its Textract sibling: it is derived from
