@@ -30,6 +30,7 @@ import { extractKeynotes } from "@/lib/keynotes";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
+import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import {
@@ -343,9 +344,8 @@ async function processProjectWithLease(
       pageConcurrency = resolvePageConcurrency((company?.pipelineConfig?.pipeline as any)?.pageConcurrency);
       csiSpatialGrid = (company?.pipelineConfig?.pipeline as any)
         ?.csiSpatialGrid;
-      disabledSteps = new Set<string>(
-        (company?.pipelineConfig as any)?.disabledSteps || [],
-      );
+      // [fix 2026-10-24 T1a] top level, else the legacy nested copy the Pipeline tab used to save.
+      disabledSteps = resolvePipelineToggles(company?.pipelineConfig).disabledSteps;
     } catch {
       /* ignore — use built-in defaults */
     }

@@ -19,8 +19,8 @@
  *   +0.15 OCR text-region type present    +0.15 required CSI divisions present
  *   +0.10 YOLO booster class              +0.05 booster keyword
  * — caps at `Math.min(score, 0.99)`, and the caller drops anything below the rule's own
- * `minConfidence`, which is 0.5 for six of the nine BUILT_IN_RULES and 0.4 for the other
- * three. Because rules are
+ * `minConfidence`, which is 0.5 for three of the five BUILT_IN_RULES and 0.4 for the other
+ * two. Because rules are
  * user-authored JSON, ADDING A SCORING TERM OR NUDGING A WEIGHT SILENTLY SHIFTS THE FIRING
  * THRESHOLD OF EVERY BUILT-IN AND CUSTOM RULE AT ONCE. Re-tune `minConfidence` in the same
  * change, or the ladder and the threshold drift apart with nothing to detect it — there are
@@ -45,6 +45,7 @@ import { migrateRule, type LegacyHeuristicRule } from "@/lib/heuristic-rule-migr
 import { migrateTextRegions } from "@/lib/text-region-migrate";
 import { isWholeWordMatch } from "@/lib/text-match-utils";
 import { csiDedupeKey } from "@/lib/csi-utils";
+import { scopeLayoutDetections } from "@/lib/yolo-class-scope";
 
 // ═══════════════════════════════════════════════════════════════════
 // Rule Types
@@ -108,11 +109,32 @@ interface YoloDetection {
   maxX: number;
   maxY: number;
   confidence: number;
+  modelName?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Built-in Rules
 // ═══════════════════════════════════════════════════════════════════
+
+/**
+ * [fix 2026-10-24 T1a] RETIRED built-ins: door-schedule, finish-schedule, material-schedule and
+ * table-confidence-boost all REQUIRED YOLO class "table"; the model emits "tables", so they never
+ * fired. Measured name-fixed over the corpus they would fire on 174/179 table pages and were right
+ * 0/12, and `heuristicInferences` is present on 0 pages in 216 exports — nothing depends on them.
+ * The Heuristics tab saves every rule it shows, so companies hold stored copies (source
+ * "built-in"); `getEffectiveRules` and the admin GET drop those. A CUSTOM rule may reuse an id.
+ */
+export const RETIRED_BUILT_IN_RULE_IDS: ReadonlySet<string> = new Set([
+  "door-schedule",
+  "finish-schedule",
+  "material-schedule",
+  "table-confidence-boost",
+]);
+
+/** Company rules minus stored copies of retired built-ins (custom rules always survive). */
+export function withoutRetiredBuiltIns<T extends { id: string; source?: string }>(rules: readonly T[]): T[] {
+  return rules.filter((r) => !(r.source === "built-in" && RETIRED_BUILT_IN_RULE_IDS.has(r.id)));
+}
 
 export const BUILT_IN_RULES: HeuristicRule[] = [
   {
@@ -132,40 +154,6 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     ],
     textRegionType: "notes-key-value",
     outputLabel: "keynote-table",
-    minConfidence: 0.5,
-  },
-  {
-    id: "door-schedule",
-    name: "Door Schedule Detection",
-    source: "built-in",
-    enabled: true,
-    yoloRequired: ["table"],
-    yoloBoosters: ["grid", "horizontal_area"],
-    yoloAvailabilityMode: "require",
-    textKeywordsRequired: ["DOOR", "SCHEDULE"],
-    textKeywordsBoosters: [],
-    textKeywordsMode: "all-required",
-    overlapRequired: true,
-    textRegionType: "schedule-table",
-    outputLabel: "door-schedule",
-    outputCsiCode: "08 11 16",
-    minConfidence: 0.5,
-  },
-  {
-    id: "finish-schedule",
-    name: "Finish Schedule Detection",
-    source: "built-in",
-    enabled: true,
-    yoloRequired: ["table"],
-    yoloBoosters: ["grid", "horizontal_area"],
-    yoloAvailabilityMode: "require",
-    textKeywordsRequired: ["FINISH", "SCHEDULE"],
-    textKeywordsBoosters: [],
-    textKeywordsMode: "all-required",
-    overlapRequired: true,
-    textRegionType: "schedule-table",
-    outputLabel: "finish-schedule",
-    outputCsiCode: "09 00 00",
     minConfidence: 0.5,
   },
   {
@@ -201,40 +189,6 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     overlapRequired: false,
     textRegionType: "notes-numbered",
     outputLabel: "general-notes",
-    minConfidence: 0.4,
-  },
-  {
-    id: "material-schedule",
-    name: "Material Schedule Detection",
-    source: "built-in",
-    enabled: true,
-    yoloRequired: ["table"],
-    yoloBoosters: ["grid", "horizontal_area"],
-    yoloAvailabilityMode: "require",
-    textKeywordsRequired: ["SCHEDULE"],
-    textKeywordsBoosters: [],
-    textKeywordsMode: "any-required",
-    overlapRequired: true,
-    textRegionType: "schedule-table",
-    outputLabel: "material-schedule",
-    minConfidence: 0.5,
-  },
-  {
-    id: "table-confidence-boost",
-    name: "Multi-Model Table Confidence",
-    source: "built-in",
-    enabled: true,
-    yoloRequired: ["table"],
-    yoloBoosters: ["horizontal_area"],
-    yoloAvailabilityMode: "require",
-    textKeywordsRequired: [],
-    textKeywordsBoosters: [],
-    textKeywordsMode: "any-required",
-    overlapRequired: false,
-    spatialConditions: [
-      { operator: "overlaps", classA: "table", classB: "horizontal_area" },
-    ],
-    outputLabel: "confirmed-table",
     minConfidence: 0.4,
   },
   {
@@ -460,7 +414,7 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
       // non-empty that boost has already fired or the rule returned early — so this +0.15
       // never adds information the score does not already carry.
       // Left in place deliberately: the evidence string below is persisted into the
-      // `pageIntelligence` jsonb of historical rows, and `minConfidence` on all nine
+      // `pageIntelligence` jsonb of historical rows, and `minConfidence` on all
       // BUILT_IN_RULES is tuned against observed scores. Retiring it is an owner call.
       if (rule.overlapRequired && ctx.yoloDetections) {
         if (rule.yoloRequired.some(cls => yoloByClass.has(cls))) {
@@ -538,8 +492,8 @@ export function getEffectiveRules(
     return BUILT_IN_RULES.filter(r => r.enabled);
   }
 
-  // Normalize legacy-shape rules before merging
-  const migrated = companyHeuristics.map(migrateRule);
+  // Normalize legacy-shape rules before merging; stored copies of retired built-ins are dropped.
+  const migrated = withoutRetiredBuiltIns(companyHeuristics.map(migrateRule));
 
   // Company config overrides built-in rules by ID
   const configById = new Map(migrated.map(r => [r.id, r]));
@@ -585,10 +539,17 @@ export function runHeuristicEngine(
     textRegions: migrateTextRegions(ctx.textRegions),
   };
   const inferences: HeuristicInference[] = [];
+  // [fix 2026-10-24 T1a] BUILT-IN rules read each layout class from the model that defines it
+  // (lib/yolo-class-scope.ts): yolo_text's per-word `text_box` used to fire general-notes' booster
+  // on any page with text. Custom rules see every detection, as before.
+  const builtInCtx: PageContext = normalizedCtx.yoloDetections
+    ? { ...normalizedCtx, yoloDetections: scopeLayoutDetections(normalizedCtx.yoloDetections) }
+    : normalizedCtx;
 
   for (const rule of rules) {
     try {
-      const yoloMissing = !normalizedCtx.yoloDetections && rule.yoloRequired.length > 0;
+      const ruleCtx = rule.source === "built-in" ? builtInCtx : normalizedCtx;
+      const yoloMissing = !ruleCtx.yoloDetections && rule.yoloRequired.length > 0;
       let score: number;
       let evidence: string[];
 
@@ -601,7 +562,7 @@ export function runHeuristicEngine(
           yoloRequired: [],
           yoloBoosters: [...rule.yoloBoosters, ...rule.yoloRequired],
         };
-        const result = scoreRule(promoted, normalizedCtx);
+        const result = scoreRule(promoted, ruleCtx);
         if (result.score === 0) continue;
         if (mode === "degrade") {
           score = result.score * 0.6;
@@ -614,7 +575,7 @@ export function runHeuristicEngine(
           evidence = result.evidence;
         }
       } else {
-        const result = scoreRule(rule, normalizedCtx);
+        const result = scoreRule(rule, ruleCtx);
         score = result.score;
         evidence = result.evidence;
       }
@@ -623,9 +584,9 @@ export function runHeuristicEngine(
 
       // Find approximate bbox from the most relevant YOLO detection
       let bbox: BboxLTWH | undefined;
-      if (normalizedCtx.yoloDetections && rule.yoloRequired.length > 0) {
+      if (ruleCtx.yoloDetections && rule.yoloRequired.length > 0) {
         const relevantClass = rule.yoloRequired[0];
-        const det = normalizedCtx.yoloDetections.find(d => d.name === relevantClass);
+        const det = ruleCtx.yoloDetections.find(d => d.name === relevantClass);
         if (det) {
           bbox = [det.minX, det.minY, det.maxX - det.minX, det.maxY - det.minY];
         }
@@ -633,10 +594,10 @@ export function runHeuristicEngine(
 
       // Infer CSI tags
       let csiTags: CsiCode[] | undefined;
-      if (rule.outputCsiCode && normalizedCtx.csiCodes) {
+      if (rule.outputCsiCode && ruleCtx.csiCodes) {
         // [csi-v2 S6] csiDedupeKey: a rule's "08 11 16" now matches the legacy stored "081116" too.
         const want = csiDedupeKey(rule.outputCsiCode);
-        const match = normalizedCtx.csiCodes.find(c => csiDedupeKey(c.code) === want);
+        const match = ruleCtx.csiCodes.find(c => csiDedupeKey(c.code) === want);
         if (match) csiTags = [match];
       }
 

@@ -271,11 +271,13 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
       pageIntelligence: { parsedRegions: userParsedRegions, someFutureKey: { keep: "me" } } as any,
     });
     // a HEATMAP_CLASSES-member YOLO annotation → yoloByPage non-empty → the composite/
-    // heatmap/ensemble sub-branch (dead in every other test) actually executes
+    // heatmap/ensemble sub-branch (dead in every other test) actually executes.
+    // [fix 2026-10-24 T1a] the heatmap reads text_box from yolo_medium only (lib/yolo-class-scope.ts;
+    // yolo_text's per-word text_box flooded it), so the layout box carries that model's name.
     await db.insert(annotations).values({
       name: "text_box", minX: 0.1, minY: 0.1, maxX: 0.4, maxY: 0.3, pageNumber: 1,
       threshold: 0.5, source: "yolo", projectId: project.id,
-      data: { confidence: 0.9, modelName: "yolo-test" } as any,
+      data: { confidence: 0.9, modelName: "yolo_medium" } as any,
     });
 
     asUser(admin);

@@ -11,18 +11,46 @@ export interface YoloRunModelConfig {
   classes?: string[];
 }
 
-export function yoloRunConfigYaml(config: YoloRunModelConfig | null | undefined): string {
+/** Ultralytics `max_det` when the model config sets none. */
+export const DEFAULT_MAX_DETECTIONS = 2000;
+/**
+ * [fix 2026-10-24 T1a] Text-only models (every class a text class — yolo_text emits only
+ * `text_box`) find one box per word cluster; at 2000 the yolo_text run saturated on 71 corpus
+ * pages, silently dropping the rest of the page. The cap travels in this file, so raising it
+ * needs no YOLO image rebuild. An explicit `maxDetections` in the model config always wins.
+ */
+export const TEXT_MODEL_MAX_DETECTIONS = 6000;
+const TEXT_CLASSES = new Set(["text_box", "text"]);
+
+/**
+ * A model is text-only when its declared classes are all text classes; a model registered with
+ * no class list falls back to its name (`yolo_text`, `text_v2`, …).
+ */
+export function isTextOnlyModel(classes: readonly string[], modelName?: string): boolean {
+  if (classes.length > 0) return classes.every((c) => TEXT_CLASSES.has(c));
+  return /(^|[_-])text($|[_-])/iu.test(modelName ?? "");
+}
+
+export function defaultMaxDetections(classes: readonly string[], modelName?: string): number {
+  return isTextOnlyModel(classes, modelName) ? TEXT_MODEL_MAX_DETECTIONS : DEFAULT_MAX_DETECTIONS;
+}
+
+export function yoloRunConfigYaml(
+  config: YoloRunModelConfig | null | undefined,
+  modelName?: string,
+): string {
   const conf = config?.confidence ?? 0.1;
   const iouVal = config?.iou ?? 0.6;
   const imgSize = config?.imageSize ?? 1280;
   const classList = config?.classes ?? [];
+  const maxDet = config?.maxDetections ?? defaultMaxDetections(classList, modelName);
   return `model_file: model.pt
 confidence_threshold: ${conf}
 iou_threshold: ${iouVal}
 image_size: ${imgSize}
 device: auto
 half_precision: true
-max_detections: ${config?.maxDetections ?? 2000}
+max_detections: ${maxDet}
 save_annotated: false
 classes:
 ${classList.map((c: string) => `  - ${c}`).join("\n")}

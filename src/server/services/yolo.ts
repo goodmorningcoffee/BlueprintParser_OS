@@ -54,13 +54,9 @@ import { recordAbuseEvent } from "@/lib/admin-logs/record-abuse";
 import { sendAlertEmail } from "@/lib/email";
 import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
-import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
-import { classifyTables } from "@/lib/table-classifier";
-import { classifyPageRegions } from "@/lib/composite-classifier";
-import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
-import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
-import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
-import type { ClassifiedTable, CsiCode } from "@/types";
+import { getEffectiveRules } from "@/lib/heuristic-engine";
+import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
+import type { CsiCode } from "@/types";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import {
@@ -79,14 +75,7 @@ import {
 } from "@/server/api/project-write-capability";
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { assertDemoYoloTargetReadOnly } from "@/server/services/yolo-demo-target";
-
-/** YOLO classes aggregated by Layer 2 heatmap. Generic multi-class density —
- *  not notes-specific; used by LLM context + Stage 2b ensemble reducer. */
-const HEATMAP_CLASSES = [
-  "text_box",
-  "vertical_area",
-  "horizontal_area",
-] as const;
+import { enrichPageAfterYolo } from "./yolo-post-enrichment";
 
 // yolo/load's OWN S3 client (legacy constructed one; kept verbatim)
 const loadS3Client = new S3Client({
@@ -263,7 +252,7 @@ export async function yoloRun(
       }
 
       // Regenerate config.yaml from DB config so admin changes take effect (lib/yolo-config-yaml; TWIN in models.ts).
-      const configYaml = yoloRunConfigYaml(model.config);
+      const configYaml = yoloRunConfigYaml(model.config, model.name);
       await uploadToS3(
         `${model.s3Path}/config.yaml`,
         Buffer.from(configYaml),
@@ -690,7 +679,7 @@ export async function yoloLoad(
           let companyHeuristics: any[] | undefined;
           let heatmapEnabled = true;
           let ensembleEnabled = true;
-          let ensembleConfig: any;
+          let ensembleConfig: ReturnType<typeof resolvePipelineToggles>["ensembleConfig"];
           try {
             const [company] = await db
               .select({ pipelineConfig: companies.pipelineConfig })
@@ -698,12 +687,11 @@ export async function yoloLoad(
               .where(eq(companies.id, project.companyId))
               .limit(1);
             companyHeuristics = company?.pipelineConfig?.heuristics;
-            const disabledSteps = new Set(
-              company?.pipelineConfig?.disabledSteps ?? [],
-            );
-            heatmapEnabled = !disabledSteps.has("yolo-heatmap");
-            ensembleEnabled = !disabledSteps.has("ensemble");
-            ensembleConfig = company?.pipelineConfig?.ensemble?.config;
+            // [fix 2026-10-24 T1a] top level, else the Pipeline tab's legacy nested copy.
+            const toggles = resolvePipelineToggles(company?.pipelineConfig);
+            heatmapEnabled = !toggles.disabledSteps.has("yolo-heatmap");
+            ensembleEnabled = !toggles.disabledSteps.has("ensemble");
+            ensembleConfig = toggles.ensembleConfig;
           } catch {
             /* use defaults */
           }
@@ -746,136 +734,18 @@ export async function yoloLoad(
             const yoloDets = yoloByPage.get(page.pageNumber);
             if (!yoloDets?.length) continue;
 
-            const existing = (page.pageIntelligence || {}) as Record<
-              string,
-              unknown
-            >;
-            const updated: Record<string, unknown> = { ...existing };
-            let pageChanged = false;
-
-            // Existing: re-run heuristic engine with YOLO data
-            const inferences = runHeuristicEngine(rules, {
-              rawText: page.rawText || "",
-              yoloDetections: yoloDets,
-              textRegions: existing.textRegions as unknown,
-              csiCodes: existing.csiCodes as unknown,
-              pageNumber: page.pageNumber,
-            } as Parameters<typeof runHeuristicEngine>[1]);
-
-            if (inferences.length > 0) {
-              updated.heuristicInferences = inferences;
-              pageChanged = true;
-
-              // Reclassify tables (OCR-keyword classifier) with YOLO-enriched heuristics
-              const textRegions =
-                (existing.textRegions as unknown[] | undefined) ?? [];
-              if (textRegions.length > 0) {
-                const classified = classifyTables({
-                  textRegions: textRegions as Parameters<
-                    typeof classifyTables
-                  >[0]["textRegions"],
-                  heuristicInferences: inferences,
-                  csiCodes: existing.csiCodes as Parameters<
-                    typeof classifyTables
-                  >[0]["csiCodes"],
-                  pageNumber: page.pageNumber,
-                });
-                if (classified.length > 0)
-                  updated.classifiedTables = classified;
-              }
-            }
-
-            // NEW (QTO SHIP 1): composite region classifier — Layer 1 of the QTO
-            // rebuild. Combines yolo class signals with OCR header keywords to
-            // produce exclusion (tables, title_block) and inclusion (drawings)
-            // zones. Runs regardless of heuristic inferences because a page can
-            // have a tables bbox without any heuristic rule firing.
-            try {
-              const regions = classifyPageRegions({
+            // [fix 2026-10-24 T1a] heuristics → tables → composite → heatmap → ensemble live in
+            // yolo-post-enrichment.ts (unit-tested); it gets the page's REAL csiCodes.
+            const { updated, pageChanged } = enrichPageAfterYolo(
+              {
                 pageNumber: page.pageNumber,
-                yoloAnnotations: yoloDets.map((d) => ({
-                  name: d.name,
-                  bbox: [d.minX, d.minY, d.maxX, d.maxY],
-                  modelName: d.modelName,
-                })),
-                textRegions: existing.textRegions as Parameters<
-                  typeof classifyPageRegions
-                >[0]["textRegions"],
-                parsedRegions: existing.parsedRegions as Parameters<
-                  typeof classifyPageRegions
-                >[0]["parsedRegions"],
-                legacyClassifiedTables: (updated.classifiedTables ??
-                  existing.classifiedTables) as ClassifiedTable[] | undefined,
-              });
-              const hasRegions =
-                regions.tables.length > 0 ||
-                regions.titleBlocks.length > 0 ||
-                regions.drawings.length > 0;
-              if (hasRegions) {
-                updated.classifiedRegions = regions;
-                pageChanged = true;
-              }
-            } catch (err) {
-              logger.error(
-                `[YOLO-LOAD] classifyPageRegions failed for page ${page.pageNumber}:`,
-                err,
-              );
-            }
-
-            // Stage 2a Layer 2: YOLO density heatmap — aggregates text_box +
-            // vertical_area + horizontal_area into confident-region bboxes.
-            // Universal spatial signal consumed by LLM context + Stage 2b ensemble.
-            // Gated on pipelineConfig.heatmap.
-            if (heatmapEnabled) {
-              try {
-                const heatmap = computeYoloHeatmap(page.pageNumber, yoloDets, {
-                  classes: [...HEATMAP_CLASSES],
-                });
-                if (
-                  heatmap.confidentRegions.length > 0 ||
-                  Object.values(heatmap.classContributions).some((v) => v > 0)
-                ) {
-                  updated.yoloHeatmap = heatmap;
-                  pageChanged = true;
-                }
-              } catch (err) {
-                logger.error(
-                  `[YOLO-LOAD] computeYoloHeatmap failed for page ${page.pageNumber}:`,
-                  err,
-                );
-              }
-            }
-
-            // Stage 2b: ensemble reducer — cross-signal agreement; suppresses
-            // keyword-only false positives (the 2026-04-22 door-schedule screenshot bug).
-            if (ensembleEnabled) {
-              try {
-                const votes = collectAllVotes({
-                  classifiedTables: updated.classifiedTables as
-                    ClassifiedTable[] | undefined,
-                  classifiedRegionsTables: (updated.classifiedRegions as any)
-                    ?.tables,
-                  yoloHeatmap: updated.yoloHeatmap as any,
-                  parsedRegions: (existing.parsedRegions as any) ?? undefined,
-                });
-                if (votes.length > 0) {
-                  const ensembleRegions = reduceRegionVotes(
-                    page.pageNumber,
-                    votes,
-                    ensembleConfig,
-                  );
-                  if (ensembleRegions.length > 0) {
-                    updated.ensembleRegions = ensembleRegions;
-                    pageChanged = true;
-                  }
-                }
-              } catch (err) {
-                logger.error(
-                  `[YOLO-LOAD] ensemble reducer failed for page ${page.pageNumber}:`,
-                  err,
-                );
-              }
-            }
+                rawText: page.rawText,
+                pageIntelligence: page.pageIntelligence,
+                csiCodes: page.csiCodes,
+              },
+              yoloDets,
+              { rules, heatmapEnabled, ensembleEnabled, ensembleConfig },
+            );
 
             // Merge YOLO CSI codes from model class config into page-level csiCodes.
             // [refactor jul23 P4.1 U9] Unified onto mergeCsiCodes (was a hand-rolled

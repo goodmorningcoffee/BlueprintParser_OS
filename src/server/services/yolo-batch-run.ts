@@ -214,7 +214,7 @@ export async function yoloRunBatch(body: YoloRunBatchBody, session: AuthSession)
   };
   if (candidates.length === 0) throw firstRefusal();
 
-  await uploadToS3(`${model.s3Path}/config.yaml`, Buffer.from(yoloRunConfigYaml(model.config)), "text/yaml");
+  await uploadToS3(`${model.s3Path}/config.yaml`, Buffer.from(yoloRunConfigYaml(model.config, model.name)), "text/yaml");
 
   candidates.sort((a, b) => a.project.id - b.project.id);
   const jobName = await withRunLeases(candidates, model.id, (c, err) => refuse(c.project.publicId, err), async (held) => {
