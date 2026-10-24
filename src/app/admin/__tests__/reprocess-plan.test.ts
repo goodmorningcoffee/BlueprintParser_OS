@@ -24,7 +24,7 @@ describe("stage DAG", () => {
   it("is in pipeline order, ids are unique, and every pull edge points at a runnable stage", () => {
     expect(ids([...STAGES])).toEqual([
       "thumbnails", "page-names", "yolo-run", "yolo-load", "yolo-restamp", "purge-yolo", "dedupe",
-      "full", "shape-parse", "intelligence", "graph", "evidence", "tiles", "re-ocr",
+      "full", "shape-parse", "intelligence", "graph", "evidence", "tiles", "channels", "re-ocr",
     ]);
     // [graph T8] knowledge graph: a plain reprocess scope after intelligence, pulls nothing, pulled by nothing.
     expect(stageDef("graph")).toMatchObject({ kind: "reprocess", scope: "graph", pulls: [] });
@@ -110,6 +110,22 @@ describe("resolvePlan", () => {
     expect(ids(resolvePlan(set<StageId>("tiles"), new Set(), false).run)).toEqual([]);
     expect(PRESETS.find((p) => p.id === "tiles")?.rootOnly).toBe(true);
     expect(presetTicks("tiles", false).size).toBe(0);
+  });
+
+  it("[census F2 2026-10-24] PDF channels is ROOT-ONLY (python on the web task), runs alone, pulls nothing, is pulled by nothing, and becomes one scope=channels request", () => {
+    expect(stageDef("channels")).toMatchObject({ kind: "reprocess", scope: "channels", rootOnly: true, pulls: [] });
+    expect(STAGES.some((s) => s.pulls.some((p) => p.stage === "channels"))).toBe(false);
+    const alone = resolvePlan(set<StageId>("channels"), new Set(), true);
+    expect(ids(alone.run)).toEqual(["channels"]);
+    expect(alone.confirmPhrase).toBeNull();
+    expect(ids(resolvePlan(set<StageId>("channels", "intelligence", "tiles"), new Set(), true).run)).toEqual(["intelligence", "tiles", "channels"]);
+    expect(buildRunSteps(alone, { projectIds: ["p1"], companyId: 3 }, { clearPageCsi: false })).toEqual([
+      { kind: "reprocess", id: "channels", label: "PDF channels", scope: "channels", projectIds: ["p1"] },
+    ]);
+    expect([...presetTicks("channels", true)]).toEqual(["channels"]);
+    expect(ids(resolvePlan(set<StageId>("channels"), new Set(), false).run)).toEqual([]);
+    expect(PRESETS.find((p) => p.id === "channels")?.rootOnly).toBe(true);
+    expect(presetTicks("channels", false).size).toBe(0);
   });
 
   it("non-runnable ticks (handoff / unavailable; no placeholders left after evidence + tiles) are dropped", () => {

@@ -66,6 +66,7 @@ import { writeProjectTagFamilies } from "./tag-families-write";
 import { reprocessGraphScope } from "./reprocess-graph";
 import { refreshProjectGraph } from "./project-graph";
 import { reprocessTilesScope } from "./reprocess-tiles";
+import { reprocessChannelsScope } from "./reprocess-channels";
 import { readTilesSetting } from "./tiles-setting";
 import { createReprocessStream } from "./reprocess-stream";
 import { loadProjectYoloCsiCodes, withYoloCsiCodes } from "./reprocess-yolo-csi";
@@ -473,6 +474,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       if (scope === "tiles") {
         // [tiles T9 2026-10-24] Loop + per-project guard live in reprocess-tiles.ts (zero line headroom here).
         await reprocessTilesScope({ projects: allProjects, withReprocessLease, stream: out, levels: (await readTilesSetting()).levels, isRootAdmin: session.user.isRootAdmin });
+        out.close();
+        return;
+      }
+
+      if (scope === "channels") {
+        // [census F2 2026-10-24] PDF channel census — loop + per-project guard live in reprocess-channels.ts.
+        await reprocessChannelsScope({ projects: allProjects, withReprocessLease, stream: out, isRootAdmin: session.user.isRootAdmin });
         out.close();
         return;
       }

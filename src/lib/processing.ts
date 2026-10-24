@@ -58,6 +58,7 @@ import { resolvePageConcurrency } from "@/lib/upload-compute";
 import { tilePageSafely } from "@/lib/tiles/tiler";
 import type { TilesRecord } from "@/lib/tiles/keys";
 import { readTilesSetting } from "@/server/services/tiles-setting";
+import { censusProjectChannels, persistUploadChannels } from "@/server/services/channel-census";
 
 /** Run async tasks with a concurrency limit. */
 async function mapConcurrent<T, R>(
@@ -363,6 +364,7 @@ async function processProjectWithLease(
     // :246 config select above is try-scoped/narrowed, so we do not contort it).
     const csiCtx = await getCompanyCsiContext(project.companyId);
     const tiles = await readTilesSetting(); // [tiles T9] root switch + level list, once per run; never throws
+    const census = censusProjectChannels(project.id, pdfBuffer, writeCapability, numPages); // [census F2] runs BESIDE the page loop, awaited after it; never rejects
 
     logger.info(
       `[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`,
@@ -722,6 +724,7 @@ async function processProjectWithLease(
         }
       }
     });
+    await persistUploadChannels(writeCapability, project.id, await census); // [census F2] before project analysis (its RMW must see the key); never throws
 
     // ─── Project-level analysis (after all pages processed) ───
     try {

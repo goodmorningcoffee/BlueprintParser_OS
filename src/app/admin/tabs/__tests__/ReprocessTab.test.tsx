@@ -191,6 +191,7 @@ describe("ReprocessTab", () => {
     expect(box("evidence").disabled).toBe(false); // [evidence T4] runnable, not root-only
     expect(box("tiles").disabled).toBe(true); // [tiles T9 fix round] a real stage, but root-only: python on the web task
     expect(within(stage("tiles")).queryByText("coming soon")).toBeNull();
+    expect(box("channels").disabled).toBe(true); // [census F2] root-only: python on the web task
     expect(box("re-ocr").disabled).toBe(true);
     expect(within(stage("evidence")).queryByText("coming soon")).toBeNull();
     expect(within(stage("re-ocr")).getByText("not available")).toBeTruthy();
