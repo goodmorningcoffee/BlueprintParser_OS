@@ -164,7 +164,8 @@ export default function ProposedTablesSection() {
   const parseThis = (item: ProposalSummaryItem) => {
     focusItem(item);
     transitionTableParseTab("auto");
-    acceptTableParseRegion(item.bbox);
+    // A fresh array each click, so re-queueing after a removal is not mistaken for a repeat.
+    acceptTableParseRegion([...item.bbox] as typeof item.bbox);
     if (!isDemo && item.verdict === undefined) void verdict(item, "accept");
   };
 

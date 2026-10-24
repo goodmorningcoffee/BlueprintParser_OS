@@ -24,6 +24,7 @@ import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 import type { DetectCsiAndPersist } from "./table-operation-types";
 
 type ProposedRegion = [number, number, number, number]; // [minX, minY, maxX, maxY]
+const NO_REGIONS: ProposedRegion[] = [];
 
 /**
  * Debug mode toggle for the table-parse pipeline. When ON, the API returns
@@ -120,26 +121,24 @@ export default function AutoParseTab({
   // persisted (pageIntelligence stays clean for the LLM).
   const [autoParseMethodResults, setAutoParseMethodResults] = useState<any[] | null>(null);
 
-  // Multi-BB: accumulate proposed regions before processing
-  const [proposedRegions, setProposedRegions] = useState<ProposedRegion[]>([]);
-  const lastRegionRef = useRef<string | null>(null);
+  // Multi-BB queue, ONE page: the API parses every region on the page sent, so others stay hidden.
+  const [regionQueue, setProposedRegions] = useState<ProposedRegion[]>([]);
+  const [regionQueuePage, setRegionQueuePage] = useState<number | null>(null);
+  const proposedRegions = regionQueuePage === pageNumber ? regionQueue : NO_REGIONS;
+  const lastRegionRef = useRef<unknown>(null);
 
-  // Capture drawn region into proposed list (instead of auto-parsing)
+  // Capture each newly accepted region (identity guard: no re-add on tab/page re-runs; equal boxes
+  // dedupe). It stays in the parse owner: clearing it here could erase a newer same-page B.
   useEffect(() => {
-    if (tableParseRegion && tableParseTab === "auto") {
-      const key = tableParseRegion.join(",");
-      if (key !== lastRegionRef.current) {
-        lastRegionRef.current = key;
-        setProposedRegions((prev) => [...prev, tableParseRegion as ProposedRegion]);
-        // Keep the latest region in the parse owner. Clearing it from this passive effect could
-        // erase a newer same-page B; the next draw overwrites it and the key guard prevents repeats.
-      }
-    }
-  }, [tableParseRegion, tableParseTab]);
+    if (!tableParseRegion || tableParseTab !== "auto" || tableParseRegion === lastRegionRef.current) return;
+    lastRegionRef.current = tableParseRegion;
+    const region = [...tableParseRegion] as ProposedRegion;
+    const base = regionQueuePage === pageNumber ? regionQueue : NO_REGIONS;
+    setProposedRegions(base.some((r) => r.join(",") === region.join(",")) ? base : [...base, region]);
+    setRegionQueuePage(pageNumber);
+  }, [tableParseRegion, tableParseTab, pageNumber, regionQueuePage, regionQueue]);
 
-  const removeProposedRegion = (index: number) => {
-    setProposedRegions((prev) => prev.filter((_, i) => i !== index));
-  };
+  const removeProposedRegion = (index: number) => setProposedRegions(proposedRegions.filter((_, i) => i !== index));
 
   const processRegions = useCallback(
     async () => {
@@ -616,6 +615,7 @@ export default function AutoParseTab({
               // Go back to idle with the existing region so user can reparse
               if (tableParseRegion) {
                 setProposedRegions([tableParseRegion]);
+                setRegionQueuePage(pageNumber);
               }
               setAutoParseMethodInfo(null);
               setAutoParseMethodResults(null);
