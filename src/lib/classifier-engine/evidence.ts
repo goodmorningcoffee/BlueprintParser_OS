@@ -19,6 +19,7 @@ import { tokenize, type TokenCounts } from "@/lib/region-classifier-v2/l2-score"
 import { extractDisciplinePrefix } from "@/lib/page-utils";
 import type { CandidateSource, DerivedName, SignalScope } from "./types";
 import { deriveName } from "./derive-name";
+import { migrateTextRegionType } from "@/lib/text-region-migrate";
 
 /** One CSI code as the box tagger / page triggers yield it. */
 export interface CsiCodeLike { code: string; division: string }
@@ -44,6 +45,13 @@ export interface ClassifierPageInput {
   /** `pages.keynotes` — classical shape-parse shapes (optional second source for "shapes" signals). */
   keynotes?: readonly KeynoteShapeData[] | null;
   tagger?: BoxTagger | null;
+  // ── additive (2b heuristic port): optional page-level inputs of the legacy heuristic rules ──
+  /** `pages.rawText` — read by "text" signals (absent → the OCR words joined). */
+  rawText?: string | null;
+  /** `pageIntelligence.textRegions` — read by "text-region" signals (legacy type names migrated). */
+  textRegions?: ReadonlyArray<{ type?: string | null }> | null;
+  /** Whether YOLO ran on this page (yolo `noDetections`). Absent → `detections.length > 0`. */
+  yoloAvailable?: boolean;
 }
 
 export interface EvWord { up: string; bbox: BboxMinMax; c: [number, number]; h: number; raw: TextractWord }
@@ -70,6 +78,12 @@ export interface PageEvidence {
   scopes: { page: BandText; titleBlock: BandText; sheetTitle: BandText };
   tagger: BoxTagger | null;
   boxCsiCache: Map<string, BoxCsi>;
+  // ── additive (2b) ──
+  rawText: string;
+  textRegionTypes: Set<string>;
+  /** Every code of `pages.csiCodes` once; division = the code's first two digits (whitespace stripped). */
+  pageCodes: CsiCodeLike[];
+  yoloAvailable: boolean;
 }
 
 export interface BoxCsi { codes: CsiCodeLike[]; source: "tagger" | "page" }
@@ -181,8 +195,10 @@ export function buildPageEvidence(input: ClassifierPageInput): PageEvidence {
   const tbRows = groupRows(tbWords).flat().sort((a, b) => b.h - a.h).slice(0, 3);
   const pageCsi: PageEvidence["pageCsi"] = [];
   for (const code of input.csiCodes ?? []) {
+    // [2b fix] tolerate malformed stored rows (null entry, non-array triggers): one bad code must not throw the page.
+    if (!code || !Array.isArray(code.triggers)) continue;
     const division = (code.division || code.code || "").slice(0, 2);
-    for (const t of code.triggers ?? []) {
+    for (const t of code.triggers) {
       if (t?.bbox) pageCsi.push({ c: center(ltwhToMinMax(t.bbox)), code: { code: code.code, division } });
     }
   }
@@ -197,6 +213,10 @@ export function buildPageEvidence(input: ClassifierPageInput): PageEvidence {
     scopes: { page: bandOf(words), titleBlock: bandOf(tbWords), sheetTitle: bandOf(tbRows.flatMap((l) => l.words)) },
     tagger: input.tagger ?? null,
     boxCsiCache: new Map(),
+    rawText: typeof input.rawText === "string" ? input.rawText : words.map((w) => w.raw.text).join(" "),
+    textRegionTypes: new Set((input.textRegions ?? []).flatMap((r) => (r && typeof r.type === "string" ? [migrateTextRegionType(r.type) ?? r.type] : []))),
+    pageCodes: (input.csiCodes ?? []).flatMap((c) => (c && typeof c.code === "string" ? [{ code: c.code, division: c.code.substring(0, 2).replace(/\s/g, "") }] : [])),
+    yoloAvailable: input.yoloAvailable ?? input.detections.length > 0,
   };
 }
 

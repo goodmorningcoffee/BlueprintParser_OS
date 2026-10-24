@@ -9,9 +9,11 @@
 
 import schedulesRaw from "@/data/classifiers/schedules.v1.json";
 import regionsRaw from "@/data/classifiers/regions.v1.json";
-import type { ClassifierClass, ClassifierOverlay, ClassifierRecipe, SignalRole, SignalSpec, WeightedSignal } from "./types";
+import heuristicsRaw from "@/data/classifiers/heuristics.v1.json";
+import type { ClassifierClass, ClassifierOverlay, ClassifierRecipe, HeuristicRecipeOutput, SignalRole, SignalSpec, WeightedSignal } from "./types";
 
-const SPEC_TYPES = new Set<SignalSpec["type"]>(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel"]);
+const SPEC_TYPES = new Set<SignalSpec["type"]>(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel", "text", "text-region", "yolo-spatial"]);
+const AVAILABILITY = new Set<HeuristicRecipeOutput["yoloAvailabilityMode"]>(["require", "degrade", "ignore"]);
 const ROLES = new Set<SignalRole>(["score", "required", "veto"]);
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const fail = (label: string, msg: string): never => { throw new Error(`classifier recipe ${label}: ${msg}`); };
@@ -65,6 +67,10 @@ export function validateRecipe(v: unknown, source: "built-in" | "custom"): Class
   }
   const detect = r.detect as Record<string, unknown>;
   const cids = new Set<string>();
+  const h = r.heuristic;
+  if (h !== undefined && (!isRecord(h) || typeof h.minConfidence !== "number" || !AVAILABILITY.has(h.yoloAvailabilityMode as HeuristicRecipeOutput["yoloAvailabilityMode"]))) {
+    fail(label, "heuristic needs minConfidence and yoloAvailabilityMode require | degrade | ignore");
+  }
   return {
     id: r.id as string, name: r.name as string, version: r.version as number, enabled: r.enabled !== false, source,
     unit: r.unit as ClassifierRecipe["unit"], target: r.target as string,
@@ -73,6 +79,10 @@ export function validateRecipe(v: unknown, source: "built-in" | "custom"): Class
     classes: (r.classes as unknown[]).map((c) => validateClass(c, label, cids)),
     nameThreshold: r.nameThreshold as number, minMargin: r.minMargin as number, deriveName: r.deriveName !== false,
     fallbackClassName: r.fallbackClassName as string, ...(typeof r.note === "string" ? { note: r.note } : {}),
+    ...(isRecord(h) ? { heuristic: {
+      minConfidence: h.minConfidence as number, yoloAvailabilityMode: h.yoloAvailabilityMode as HeuristicRecipeOutput["yoloAvailabilityMode"],
+      ...(typeof h.outputCsiCode === "string" ? { outputCsiCode: h.outputCsiCode } : {}), ...(typeof h.bboxClass === "string" ? { bboxClass: h.bboxClass } : {}),
+    } } : {}),
   };
 }
 
@@ -86,6 +96,13 @@ export function hashRecipes(recipes: readonly ClassifierRecipe[]): string {
 
 export const BUILT_IN_RECIPES: readonly ClassifierRecipe[] = [validateRecipe(schedulesRaw, "built-in"), validateRecipe(regionsRaw, "built-in")];
 export const BUILT_IN_RECIPES_HASH = hashRecipes(BUILT_IN_RECIPES);
+
+/**
+ * [2b] The legacy heuristic engine's live built-in rules as page-unit recipes (src/lib/heuristic-port). NOT in
+ * BUILT_IN_RECIPES: their output is `pageIntelligence.heuristicInferences` (through the port's adapter), not
+ * classifier proposals, so they never reach the proposals panel.
+ */
+export const HEURISTIC_RECIPES: readonly ClassifierRecipe[] = (heuristicsRaw as unknown[]).map((r) => validateRecipe(r, "built-in"));
 
 /** Loose shape check of a stored overlay (jsonb, so nothing is guaranteed). */
 export function isClassifierOverlay(v: unknown): v is ClassifierOverlay {

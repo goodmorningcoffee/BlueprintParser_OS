@@ -1,4 +1,4 @@
-// Post-YOLO per-page enrichment for yolo/load (services/yolo.ts `yoloLoad`): heuristic engine →
+// Post-YOLO per-page enrichment for yolo/load (services/yolo.ts `yoloLoad`): heuristic recipes [2b port] →
 // table reclassification → composite region classifier → density heatmap → ensemble reducer.
 // [fix 2026-10-24 T1a] Extracted VERBATIM from the yoloLoad page loop so it can be unit-tested
 // (the loop was untestable, which is how the defect below shipped), with three wiring fixes:
@@ -9,7 +9,7 @@
 //   3. the ensemble override arrives through lib/pipeline-toggles.ts (caller-resolved).
 // Pure: no DB, no I/O — the caller merges YOLO class-config CSI codes and persists.
 
-import { runHeuristicEngine, type HeuristicRule } from "@/lib/heuristic-engine";
+import { runHeuristicRecipes } from "@/lib/heuristic-port";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones, type PageZones } from "@/lib/page-zones";
@@ -68,7 +68,8 @@ export interface PostYoloPage {
 }
 
 export interface PostYoloOptions {
-  rules: HeuristicRule[];
+  /** [2b] The company's heuristic recipes (lib/heuristic-port `getEffectiveHeuristicRecipes`). */
+  rules: readonly ClassifierRecipe[];
   heatmapEnabled: boolean;
   ensembleEnabled: boolean;
   ensembleConfig?: Partial<EnsembleConfig>;
@@ -174,32 +175,40 @@ export function enrichPageAfterYolo(
     logger.error(`[yolo-post-enrichment] Shape ensemble FAILED for page ${page.pageNumber}:`, err);
   }
 
-  // Existing: re-run heuristic engine with YOLO data
-  const inferences = runHeuristicEngine(opts.rules, {
-    rawText: page.rawText || "",
-    yoloDetections: yoloDets,
-    textRegions: existing.textRegions as unknown,
-    csiCodes,
-    pageNumber: page.pageNumber,
-  } as Parameters<typeof runHeuristicEngine>[1]);
-
-  if (inferences.length > 0) {
-    updated.heuristicInferences = inferences;
-    pageChanged = true;
-
-    // Reclassify tables (OCR-keyword classifier) with YOLO-enriched heuristics
-    const textRegions = (existing.textRegions as unknown[] | undefined) ?? [];
-    if (textRegions.length > 0) {
-      const classified = classifyTables({
-        textRegions: textRegions as Parameters<
-          typeof classifyTables
-        >[0]["textRegions"],
+  // Re-run the heuristic recipes with YOLO data, then reclassify tables (OCR-keyword classifier).
+  // [2b fix 2026-10-24] Both keys are recomputed on EVERY page, as the intelligence reprocess does
+  // (both are REPROCESS_COMPUTED_KEYS): a page that now fires no rule loses its stale
+  // `heuristicInferences`, and its `classifiedTables` are rebuilt without them (removed when empty).
+  // Before, a zero-firing page kept both from the previous run — the D7 keywords gate made ~1.2k
+  // corpus pages newly zero-firing. Guarded: a throw leaves both keys as stored, the page's other
+  // enrichment still runs.
+  try {
+    const inferences = runHeuristicRecipes(opts.rules, {
+      rawText: page.rawText || "",
+      yoloDetections: yoloDets,
+      textRegions: existing.textRegions,
+      csiCodes,
+      pageNumber: page.pageNumber,
+    });
+    const textRegions = Array.isArray(existing.textRegions) ? existing.textRegions : [];
+    const classified = textRegions.length > 0
+      ? classifyTables({
+        textRegions: textRegions as Parameters<typeof classifyTables>[0]["textRegions"],
         heuristicInferences: inferences,
         csiCodes,
         pageNumber: page.pageNumber,
-      });
-      if (classified.length > 0) updated.classifiedTables = classified;
-    }
+      })
+      : null; // no OCR regions: classifiedTables is left as stored (nothing to rebuild it from)
+    const setOrClear = (key: string, value: unknown[] | null) => {
+      if (value === null) return;
+      if (value.length > 0) {
+        if (!sameJson(value, existing[key])) { updated[key] = value; pageChanged = true; }
+      } else if (key in updated) { delete updated[key]; pageChanged = true; }
+    };
+    setOrClear("heuristicInferences", inferences);
+    setOrClear("classifiedTables", classified);
+  } catch (err) {
+    logger.error(`[YOLO-LOAD] heuristic recipes / table reclassification failed for page ${page.pageNumber}:`, err);
   }
 
   // NEW (QTO SHIP 1): composite region classifier — Layer 1 of the QTO

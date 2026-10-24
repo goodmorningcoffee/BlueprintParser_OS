@@ -7,7 +7,10 @@
 import type { BboxMinMax } from "@/types";
 import { ZONE_CONTAINMENT_THRESHOLD, containmentRatio } from "@/lib/page-zones";
 import { area, cover, inside, inter, overlapSmaller } from "@/lib/region-classifier-v2/geometry";
+import { isWholeWordMatch } from "@/lib/text-match-utils";
+import { migrateTextRegionType } from "@/lib/text-region-migrate";
 import { scopeText, type CandidateEvidence, type PageEvidence } from "./evidence";
+import { yoloSpatialHolds } from "./spatial";
 import type { SignalSpec } from "./types";
 
 export interface SignalValue { value: number; detail?: string }
@@ -44,14 +47,15 @@ function wordsSignal(spec: Extract<SignalSpec, { type: "words" }>, cand: Candida
 }
 
 function csiSignal(spec: Extract<SignalSpec, { type: "csi" }>, cand: CandidateEvidence, page: PageEvidence): SignalValue {
-  const codes = spec.where === "page" ? page.pageCsi.map((m) => m.code) : cand.csi.codes;
+  const codes = spec.where === "pageCodes" ? page.pageCodes : spec.where === "page" ? page.pageCsi.map((m) => m.code) : cand.csi.codes;
   const divs = new Set((spec.divisions ?? []).map((d) => d.slice(0, 2)));
   const prefixes = (spec.sectionPrefixes ?? []).map(digits).filter(Boolean);
   const matching = codes.filter((c) => divs.has((c.division || c.code).slice(0, 2)) || prefixes.some((p) => digits(c.code).startsWith(p)));
   const minCodes = spec.minCodes ?? 1;
-  const src = spec.where === "page" ? "page" : cand.csi.source === "tagger" ? "box" : "box (page triggers)";
+  const src = spec.where === "box" ? (cand.csi.source === "tagger" ? "box" : "box (page triggers)") : "page";
   if (!codes.length || codes.length < minCodes || !matching.length) return { value: 0, detail: codes.length ? `${src}: 0 of ${codes.length} codes match` : undefined };
   const what = [...(spec.divisions ?? []).map((d) => `Div ${d}`), ...(spec.sectionPrefixes ?? [])].join("/");
+  if (spec.measure === "presence") return { value: 1, detail: `${src}: ${matching.length} ${what} codes` };
   if (spec.measure === "count") return { value: r3(Math.min(3, matching.length) / 3), detail: `${src}: ${matching.length} ${what} codes` };
   return { value: r3(matching.length / codes.length), detail: `${src}: ${pct(matching.length / codes.length)} of ${codes.length} codes are ${what}` };
 }
@@ -68,12 +72,14 @@ function sheetSignal(spec: Extract<SignalSpec, { type: "sheet" }>, page: PageEvi
 }
 
 function yoloSignal(spec: Extract<SignalSpec, { type: "yolo" }>, cand: CandidateEvidence, page: PageEvidence): SignalValue {
+  if (!page.yoloAvailable && spec.noDetections !== undefined) return { value: clamp01(spec.noDetections), detail: "YOLO did not run" };
+  const anyClass = spec.classes.includes("*");
   const classes = new Set(spec.classes);
   const S = cand.bbox;
   const w = S[2] - S[0];
   const h = S[3] - S[1];
   const near: BboxMinMax = [S[0] - w, S[1] - h, S[2] + w, S[3] + h];
-  const dets = page.detections.filter((d) => classes.has(d.name)
+  const dets = page.detections.filter((d) => (anyClass || classes.has(d.name))
     && (!spec.model || d.modelName === spec.model) && d.confidence >= (spec.minConfidence ?? 0)
     && (spec.where === "page" || (spec.where === "inside" ? inside(d.c, S) : spec.where === "near" ? inside(d.c, near) && !inside(d.c, S) : inter(d.bbox, S) > 0)));
   if (!dets.length) return { value: 0 };
@@ -128,6 +134,20 @@ function zoneSignal(spec: Extract<SignalSpec, { type: "zone" }>, cand: Candidate
   return best >= min ? { value: 1, detail: `${pct(best)} inside ${spec.zone}` } : { value: 0 };
 }
 
+function textSignal(spec: Extract<SignalSpec, { type: "text" }>, page: PageEvidence): SignalValue {
+  // Empty / non-string terms never match (as in the legacy engine, so an "all" list holding one cannot pass).
+  const terms = Array.isArray(spec.terms) ? spec.terms : [];
+  if (!terms.length) return { value: 0 };
+  const hits = terms.filter((t) => typeof t === "string" && isWholeWordMatch(page.rawText, t));
+  const ok = spec.mode === "all" ? hits.length === terms.length : hits.length > 0;
+  return ok ? { value: 1, detail: `page text: ${hits.slice(0, 5).join(", ")}` } : { value: 0 };
+}
+
+function textRegionSignal(spec: Extract<SignalSpec, { type: "text-region" }>, page: PageEvidence): SignalValue {
+  const hit = (spec.regionTypes ?? []).map((t) => migrateTextRegionType(t) ?? t).find((t) => page.textRegionTypes.has(t));
+  return hit ? { value: 1, detail: `OCR region ${hit}` } : { value: 0 };
+}
+
 export function evaluateSignal(spec: SignalSpec, cand: CandidateEvidence, page: PageEvidence): SignalValue {
   switch (spec.type) {
     case "words": return wordsSignal(spec, cand, page);
@@ -138,6 +158,9 @@ export function evaluateSignal(spec: SignalSpec, cand: CandidateEvidence, page: 
     case "textract-table": return textractSignal(spec, cand, page);
     case "shapes": return shapesSignal(spec, cand, page);
     case "zone": return zoneSignal(spec, cand, page);
+    case "text": return textSignal(spec, page);
+    case "text-region": return textRegionSignal(spec, page);
+    case "yolo-spatial": return yoloSpatialHolds(spec, page.detections) ? { value: 1, detail: `${spec.classA} ${spec.operator} ${spec.classB}` } : { value: 0 };
     case "channel": return page.channelKind && spec.pageKinds.includes(page.channelKind) ? { value: 1, detail: `page kind ${page.channelKind}` } : { value: 0 };
     default: return { value: 0, detail: `unknown signal type ${(spec as { type?: string }).type ?? "?"}` };
   }

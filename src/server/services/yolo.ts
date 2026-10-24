@@ -54,7 +54,7 @@ import { recordAbuseEvent } from "@/lib/admin-logs/record-abuse";
 import { sendAlertEmail } from "@/lib/email";
 import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
-import { getEffectiveRules } from "@/lib/heuristic-engine";
+import { getEffectiveHeuristicRecipes } from "@/lib/heuristic-port";
 import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
 import type { CsiCode, TextractPageData } from "@/types";
 import { mergeCsiCodes } from "@/lib/csi-utils";
@@ -703,7 +703,7 @@ export async function yoloLoad(
             /* use defaults */
           }
 
-          const rules = getEffectiveRules(companyHeuristics);
+          const rules = getEffectiveHeuristicRecipes(companyHeuristics); // [2b] heuristic port
           const classifierRecipes = classifierRecipesFor(classifierOverlay);
 
           // Group YOLO detections by page. Include modelName so the composite
