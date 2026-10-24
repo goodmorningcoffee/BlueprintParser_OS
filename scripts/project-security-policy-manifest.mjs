@@ -512,6 +512,22 @@ export const MUTATION_SURFACES = [
     "shared-guard",
     [["src/server/services/pages.ts", "recomputePageCsi"]],
   ),
+  // [classifier-builder 2026-10-24] Proposal verdicts: one user label per stored classifier proposal,
+  // features snapshotted server-side; demo refused for every role by assertProjectWritable.
+  mutation(
+    "proposal-verdict-record",
+    "/api/projects/[id]/proposals/verdict",
+    "POST",
+    "shared-guard",
+    [["src/server/services/proposal-verdicts.ts", "recordProposalVerdict"]],
+  ),
+  mutation(
+    "proposal-verdict-delete",
+    "/api/projects/[id]/proposals/verdict",
+    "DELETE",
+    "shared-guard",
+    [["src/server/services/proposal-verdicts.ts", "deleteProposalVerdict"]],
+  ),
   mutation("region-promote", "/api/regions/promote", "POST", "shared-guard", [
     ["src/server/services/regions.ts", "promoteRegion"],
   ]),

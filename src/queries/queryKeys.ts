@@ -77,6 +77,10 @@ export const queryKeys = {
   csiGraph: {
     all: (publicId: string) => ["project", publicId, "csiGraph"] as const,
   },
+  // [classifier-builder 2026-10-24] projectIntelligence.proposals (compact list), bootstrap-seeded like csiGraph.
+  proposals: {
+    all: (publicId: string) => ["project", publicId, "proposals"] as const,
+  },
   // [graph T8 2026-10-24] knowledge-graph reference index, GET /api/projects/[id]/graph once per open.
   projectGraph: {
     index: (publicId: string) => ["project", publicId, "knowledgeGraph", "index"] as const,

@@ -30,6 +30,7 @@ import { updatePageIntelligenceForPage, usePageIntelligenceByPage } from "@/quer
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
+import ProposedTablesSection from "./ProposedTablesSection";
 import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
@@ -721,6 +722,7 @@ export default function TableParsePanel() {
         )}
 
         {/* ════════ TAB: Auto Parse ════════ */}
+        {tableParseTab === "auto" && <ProposedTablesSection />}
         {tableParseTab === "auto" && (
           <AutoParseTab
             autoDetectedTables={autoDetectedTables}
