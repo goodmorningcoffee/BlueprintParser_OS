@@ -13,6 +13,7 @@ import { runHeuristicEngine, type HeuristicRule } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones } from "@/lib/page-zones";
+import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -22,6 +23,7 @@ import type {
   ClassifiedTable,
   CsiCode,
   ParsedRegion,
+  TextractPageData,
   YoloHeatmap,
 } from "@/types";
 import { logger } from "@/lib/logger";
@@ -50,6 +52,8 @@ export interface PostYoloPage {
   pageIntelligence: unknown;
   /** `pages.csiCodes` — the page's CSI codes. NOT pageIntelligence (it has no csiCodes key). */
   csiCodes: CsiCode[] | null;
+  /** `pages.textractData` — words + Textract tables for the shadow region classifier v2 (optional). */
+  textractData?: TextractPageData | null;
 }
 
 export interface PostYoloOptions {
@@ -73,6 +77,18 @@ export function enrichPageAfterYolo(
   // otherwise; written only when they differ so an unchanged page is not rewritten.
   const zones = computePageZones(yoloDets);
   if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
+
+  // [regions v2 2026-10-24] SHADOW: detector-first region classifier (src/lib/region-classifier-v2).
+  // Persisted as `regionsV2` beside the legacy keys; nothing reads it yet and `classifiedTables`
+  // below is unchanged. Written only when it differs, like the zones.
+  try {
+    const regionsV2 = classifyRegionsV2({
+      pageNumber: page.pageNumber, detections: yoloDets, zones, textractData: page.textractData, csiCodes,
+    });
+    if (JSON.stringify(regionsV2) !== JSON.stringify(existing.regionsV2)) { updated.regionsV2 = regionsV2; pageChanged = true; }
+  } catch (err) {
+    logger.error(`[YOLO-LOAD] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
+  }
 
   // Existing: re-run heuristic engine with YOLO data
   const inferences = runHeuristicEngine(opts.rules, {

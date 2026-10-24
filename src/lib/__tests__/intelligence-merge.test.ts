@@ -25,6 +25,7 @@ describe("carryNonComputedIntelligence", () => {
 
   it("[zones T2] pageZones is a computed key: refreshed by the post-YOLO step, cleared on reprocess", () => {
     expect(REPROCESS_COMPUTED_KEYS).toContain("pageZones");
+    expect(REPROCESS_COMPUTED_KEYS).toContain("regionsV2"); // [regions v2 2026-10-24] shadow classifier output
     const carried = carryNonComputedIntelligence({ pageZones: { stale: true }, parsedRegions: [] });
     expect(carried).toEqual({ parsedRegions: [] });
   });

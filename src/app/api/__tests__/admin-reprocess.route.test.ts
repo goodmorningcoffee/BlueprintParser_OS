@@ -290,10 +290,15 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const pi = row.pageIntelligence as Record<string, any>;
     // exact key-set pin: with this fixture the yolo sub-branch writes EXACTLY these
     // four computed keys alongside the two carried user keys (observed 2026-07-08;
-    // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections)
+    // +pageZones [zones T2 2026-10-24] — written whenever the page has YOLO detections;
+    // +regionsV2 [regions v2 2026-10-24] — the shadow detector-first classifier, same trigger)
     expect(Object.keys(pi).sort()).toEqual([
-      "classifiedRegions", "ensembleRegions", "pageZones", "parsedRegions", "someFutureKey", "yoloHeatmap",
+      "classifiedRegions", "ensembleRegions", "pageZones", "parsedRegions", "regionsV2", "someFutureKey", "yoloHeatmap",
     ]);
+    // regions v2: the yolo_medium text_box is a notes anchor; richTextract puts 8 words inside it,
+    // so the fallback checklist calls it a "short label" (≤ 9 words) and drops it as a page label —
+    // the record still carries the stats.
+    expect(pi.regionsV2).toMatchObject({ version: "rc-v2/0.1", regions: [], stats: { rawTextBoxes: 1, labelsDropped: 1 } });
     // G3 carry still holds WITH the yolo path active
     expect(pi.parsedRegions).toEqual(userParsedRegions);
     expect(pi.someFutureKey).toEqual({ keep: "me" });

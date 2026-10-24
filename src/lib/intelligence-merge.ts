@@ -34,6 +34,9 @@ export const REPROCESS_COMPUTED_KEYS = [
   // [zones T2 2026-10-24] detector zones (src/lib/page-zones.ts), written by the post-YOLO
   // enrichment and the intelligence reprocess; absent on pages without YOLO detections.
   "pageZones",
+  // [regions v2 2026-10-24] shadow detector-first region classifier (src/lib/region-classifier-v2),
+  // written beside the legacy keys by the same two writers; absent on pages without YOLO detections.
+  "regionsV2",
 ] as const;
 
 /**

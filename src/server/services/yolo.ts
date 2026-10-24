@@ -56,7 +56,7 @@ import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
 import { getEffectiveRules } from "@/lib/heuristic-engine";
 import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
-import type { CsiCode } from "@/types";
+import type { CsiCode, TextractPageData } from "@/types";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import {
@@ -667,6 +667,7 @@ export async function yoloLoad(
               rawText: pages.rawText,
               pageIntelligence: pages.pageIntelligence,
               csiCodes: pages.csiCodes,
+              textractData: pages.textractData, // [regions v2] OCR words + Textract tables for the shadow classifier
             })
             .from(pages)
             .where(eq(pages.projectId, project.id));
@@ -742,6 +743,7 @@ export async function yoloLoad(
                 rawText: page.rawText,
                 pageIntelligence: page.pageIntelligence,
                 csiCodes: page.csiCodes,
+                textractData: page.textractData as TextractPageData | null,
               },
               yoloDets,
               { rules, heatmapEnabled, ensembleEnabled, ensembleConfig },

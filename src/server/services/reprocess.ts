@@ -28,6 +28,7 @@ import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { computePageZones, storedPageZones, type PageZoneDetection, type PageZones } from "@/lib/page-zones";
+import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
@@ -573,6 +574,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               // Mirrors the per-page enrichment loop in services/yolo.ts `yoloLoad`, so the
               // intelligence reprocess keeps classifiedRegions in sync with the current YOLO state.
               if (pageYolo && pageYolo.length > 0) {
+                // [regions v2 2026-10-24] SHADOW detector-first classifier — mirrors yolo-post-enrichment.ts;
+                // `regionsV2` is persisted beside the legacy keys, read by nothing yet.
+                try {
+                  pageIntelligence.regionsV2 = classifyRegionsV2({ pageNumber: page.pageNumber, detections: pageYolo, zones: pageZones, textractData, csiCodes });
+                } catch (err) {
+                  logger.error(`[reprocess-intel] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
+                }
                 try {
                   const regions = classifyPageRegions({
                     pageNumber: page.pageNumber,
