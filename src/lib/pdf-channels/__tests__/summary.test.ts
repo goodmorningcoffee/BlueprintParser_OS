@@ -30,6 +30,9 @@ describe("pageChannelsRecord", () => {
       formXObjects: 1, annots: 0, links: 0, widthPt: 2592, heightPt: 1728, rotation: 0,
     });
     expect(pageChannelsRecord(page(3, "vector", { capped: true, vectorPaths: 200000 }))).toMatchObject({ capped: true, vectorPaths: 200000 });
+    // [census F2 2026-10-24] a page past maxContentBytes reports an operator-scan count
+    expect(pageChannelsRecord(page(3, "vector", { estimated: true }))).toMatchObject({ estimated: true, vectorPaths: 12345 });
+    expect(pageChannelsRecord(page(3, "vector"))).not.toHaveProperty("estimated");
   });
   it("a failed or kind-less page has no record; junk counts become 0", () => {
     expect(pageChannelsRecord({ pageNumber: 2, error: "budget" })).toBeNull();
@@ -75,5 +78,7 @@ describe("storedPageChannels + channelsLine", () => {
     expect(channelsLine({ ...pageChannelsRecord(page(1, "vector"))!, vectorPaths: 200000, capped: true })).toBe(
       "PDF layer: text ✓ · ≥200,000 vector paths · 0 images · vector",
     );
+    expect(channelsLine({ ...pageChannelsRecord(page(1, "vector"))!, estimated: true })).toBe("PDF layer: text ✓ · ~12,345 vector paths · 0 images · vector");
+    expect(channelsLine({ ...pageChannelsRecord(page(1, "vector"))!, vectorPaths: 200000, capped: true, estimated: true })).toContain("≥200,000");
   });
 });

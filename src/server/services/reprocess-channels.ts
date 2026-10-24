@@ -9,24 +9,29 @@
 // .channels) and merges each page's record at pageIntelligence.channels with a jsonb merge
 // (`existing || {channels}`) so every other key — user-owned or computed — is untouched. Only page
 // ROWS are written (a permanently deleted page has none). A page the census could not read keeps
-// what it had. ROOT ONLY, like tiles: the script is python on the 2 vCPU / 4 GB WEB task (a
-// 200k-path sheet costs ~2 s and ~50 MB; a large set can take a minute of that CPU).
+// what it had; a census whose page count differs from the project's numPages writes no page record
+// (alignedPageRecords — numbering would not line up). ROOT ONLY, like tiles: the script is python
+// on the 2 vCPU / 4 GB WEB task (a 200k-path sheet costs ~2 s and ~50 MB; a page past 8 MB of
+// content skips bboxlog, so a 2M-path sheet is ~5 s / ~175 MB; a large set can take a minute).
 // Counters: updated (records written) · skipped (rows without a record) — per project.
 
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { logger } from "@/lib/logger";
-import { CHANNELS_INTELLIGENCE_KEY, type PageChannelsRecord } from "@/lib/pdf-channels";
 import { downloadFromS3 } from "@/lib/s3";
-import { withProjectWrite, type ProjectWriteCapability } from "@/server/api/project-write-capability";
-import { runCensus, type ChannelCensusDeps } from "./channel-census";
+import type { ProjectWriteCapability } from "@/server/api/project-write-capability";
+import { alignedPageRecords, persistPageChannels, runCensus, type ChannelCensusDeps } from "./channel-census";
 import type { ReprocessStream } from "./reprocess-stream";
+
+export { persistPageChannels } from "./channel-census";
 
 export interface ChannelsReprocessProject {
   id: number;
   name: string;
   dataUrl: string;
+  /** Ghostscript's count at upload; a census that disagrees writes no page records. */
+  numPages?: number | null;
 }
 
 export interface ChannelsReprocessCounters {
@@ -36,24 +41,6 @@ export interface ChannelsReprocessCounters {
 }
 
 export const CHANNELS_ROOT_ONLY_MESSAGE = "PDF channels is root-only (it runs python on the web task)";
-
-/** Every page record of one project, merged into pageIntelligence (null → {}) in ONE tx under the lease. */
-export async function persistPageChannels(
-  capability: ProjectWriteCapability,
-  projectId: number,
-  rows: ReadonlyArray<{ id: number; record: PageChannelsRecord }>,
-): Promise<void> {
-  if (rows.length === 0) return;
-  await withProjectWrite(capability, projectId, async (tx) => {
-    for (const { id, record } of rows) {
-      const patch = JSON.stringify({ [CHANNELS_INTELLIGENCE_KEY]: record });
-      await tx
-        .update(pages)
-        .set({ pageIntelligence: sql`coalesce(${pages.pageIntelligence}, '{}'::jsonb) || ${patch}::jsonb` })
-        .where(eq(pages.id, id));
-    }
-  });
-}
 
 export async function reprocessChannelsScope(args: {
   projects: readonly ChannelsReprocessProject[];
@@ -82,9 +69,10 @@ export async function reprocessChannelsScope(args: {
       await args.withReprocessLease(project.id, async (capability) => {
         send({ type: "project", name: project.name, pages: rows.length });
         const pdf = await downloadFromS3(`${project.dataUrl}/original.pdf`);
-        const { pages: records, summary } = await runCensus(project.id, pdf, capability, args.census);
+        const { pages: censused, summary, result } = await runCensus(project.id, pdf, capability, args.census);
+        const records = alignedPageRecords(project.id, result, censused, project.numPages); // [census F2] null on a page-count mismatch
         const writes = rows.flatMap((r) => {
-          const record = records.get(r.pageNumber);
+          const record = records?.get(r.pageNumber);
           return record ? [{ id: r.id, record }] : [];
         });
         await persistPageChannels(capability, project.id, writes);
@@ -92,7 +80,8 @@ export async function reprocessChannelsScope(args: {
         c.updated += writes.length;
         c.skipped += rows.length - writes.length;
         if (writes.length < rows.length) {
-          send({ type: "warning", project: project.name, message: `channels not written for ${rows.length - writes.length} page(s) the census could not read` });
+          const why = records ? "the census could not read" : `of a ${result.pageCount}-page census (the project has ${project.numPages})`;
+          send({ type: "warning", project: project.name, message: `channels not written for ${rows.length - writes.length} page(s) ${why}` });
         }
         debug("project.channels", { project: project.name, kinds: summary.kinds, truncated: summary.truncated, failedPages: summary.failedPages });
         send({ type: "progress", updated: c.updated, skipped: c.skipped, total: c.total, project: project.name, kinds: summary.kinds });

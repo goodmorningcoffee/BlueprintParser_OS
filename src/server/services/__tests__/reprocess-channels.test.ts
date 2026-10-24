@@ -120,6 +120,31 @@ describe.skipIf(!dbUp)("reprocessChannelsScope", () => {
     expect(events.at(-1)).toEqual({ type: "done", updated: 1, skipped: 0, total: 1 });
   });
 
+  it("[census F2 2026-10-24] a census whose page count differs from numPages writes the summary, no page record, one warning", async () => {
+    const { project } = await createWorld({ numPages: 2 });
+    const p1 = await createPage(project.id, 1, { pageIntelligence: { keep: 1 } as never });
+    const p2 = await createPage(project.id, 2);
+    const run = vi.fn(async (_pdf: Buffer) => result([pageOk(1, "vector"), pageOk(2, "vector"), pageOk(3, "scanned")]));
+    const { stream, events } = fakeStream();
+
+    const c = await reprocessChannelsScope({
+      projects: [project],
+      withReprocessLease: (id, op) => op(assertProjectWritable({ ...project, id })),
+      stream,
+      isRootAdmin: true,
+      census: { run },
+    });
+
+    expect(c).toEqual({ updated: 0, skipped: 2, total: 2 });
+    expect(await intelligenceOf(p1.id)).toEqual({ keep: 1 });
+    expect(await intelligenceOf(p2.id)).toBeNull();
+    expect(events.filter((e) => e.type === "warning")).toEqual([
+      { type: "warning", project: project.name, message: "channels not written for 2 page(s) of a 3-page census (the project has 2)" },
+    ]);
+    const [proj] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
+    expect((proj.pi as Record<string, unknown>).channels).toMatchObject({ pages: 3 });
+  });
+
   it("non-root: one error line, done, nothing downloaded or censused", async () => {
     const { project } = await createWorld({ numPages: 1 });
     await createPage(project.id, 1);

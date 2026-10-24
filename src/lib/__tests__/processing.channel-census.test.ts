@@ -1,8 +1,8 @@
 // @vitest-environment node
-// [census F2 2026-10-24] processProject runs the upload channel census ONCE per run, before the page
-// loop, and attaches pageIntelligence.channels per page the way the tiles record is attached; the
-// project summary lands at projectIntelligence.channels and survives the later project-analysis
-// merge. FAIL-SOFT: a census that throws is one warning — the upload completes and pages carry no
+// [census F2 2026-10-24] processProject runs the upload channel census ONCE per run, BESIDE the page
+// loop (pages never wait for it), awaits it after the loop and merges pageIntelligence.channels into
+// each page row; the project summary lands at projectIntelligence.channels and survives the later
+// project-analysis merge. A census whose page count differs from numPages writes no page record. FAIL-SOFT: a census that throws is one warning — the upload completes and pages carry no
 // channels key. Mocks: the same true edges as processing.f4-intelligence-carry.test.ts plus the
 // python runner (scripts/test_pdf_channels.py covers the script itself).
 import { beforeEach, describe, expect, inject, it, vi } from "vitest";
@@ -27,9 +27,10 @@ vi.mock("@/lib/pdf-rasterize", async (importOriginal) => ({
   rasterizePage: rasterMocks.rasterizePage,
   getPdfPageCount: rasterMocks.getPdfPageCount,
 }));
+const textractMocks = vi.hoisted(() => ({ analyzePageImageWithFallback: vi.fn(async () => ({ lines: [], words: [] })) }));
 vi.mock("@/lib/textract", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  analyzePageImageWithFallback: vi.fn(async () => ({ lines: [], words: [] })),
+  analyzePageImageWithFallback: textractMocks.analyzePageImageWithFallback,
 }));
 vi.mock("@/lib/keynotes", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -103,6 +104,54 @@ describe.skipIf(!dbUp)("processProject — channel census", () => {
     const [proj] = await db.select({ pi: projects.projectIntelligence, status: projects.status }).from(projects).where(eq(projects.id, project.id));
     expect(proj.status).toBe("completed");
     expect((proj.pi as Record<string, unknown> | null)?.channels).toBeUndefined();
+    warn.mockRestore();
+  }, 30000);
+});
+
+describe.skipIf(!dbUp)("processProject — channel census runs beside the page loop [census F2 2026-10-24]", () => {
+  it("the census can finish AFTER every page was OCR'd and its records still land (the loop never waited for it)", async () => {
+    // Resolves only once both pages reached OCR: with the old await-before-the-loop this deadlocks,
+    // the census gives up after 5 s and no page carries channels.
+    censusMocks.runPdfChannelsOnBuffer.mockImplementation(
+      () =>
+        new Promise<PdfChannelsResult>((resolve, reject) => {
+          const started = Date.now();
+          const tick = setInterval(() => {
+            if (textractMocks.analyzePageImageWithFallback.mock.calls.length >= 2) {
+              clearInterval(tick);
+              resolve(census);
+            } else if (Date.now() - started > 5000) {
+              clearInterval(tick);
+              reject(new Error("the page loop waited for the census"));
+            }
+          }, 10);
+        }),
+    );
+    const { project } = await createWorld();
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    const rows = await db.select({ n: pages.pageNumber, pi: pages.pageIntelligence }).from(pages).where(eq(pages.projectId, project.id)).orderBy(pages.pageNumber);
+    expect((rows[0].pi as Record<string, unknown>).channels).toMatchObject({ kind: "vector", vectorPaths: 999 });
+    const [proj] = await db.select({ pi: projects.projectIntelligence, status: projects.status }).from(projects).where(eq(projects.id, project.id));
+    expect(proj.status).toBe("completed");
+    expect((proj.pi as Record<string, unknown>).channels).toMatchObject({ pages: 2, failedPages: 1 });
+  }, 30000);
+
+  it("a census whose page count differs from Ghostscript's numPages writes the summary but no page record (one warning)", async () => {
+    censusMocks.runPdfChannelsOnBuffer.mockResolvedValue({ ...census, pageCount: 3, pages: [...census.pages, { ...census.pages[0], pageNumber: 3 }] });
+    const warn = vi.spyOn(logger, "warn");
+    const { project } = await createWorld();
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    const rows = await db.select({ pi: pages.pageIntelligence }).from(pages).where(eq(pages.projectId, project.id));
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => (r.pi as Record<string, unknown> | null)?.channels === undefined)).toBe(true);
+    const mismatch = warn.mock.calls.filter((c) => typeof c[0] === "string" && c[0].includes("census saw 3 pages, the project has 2"));
+    expect(mismatch).toHaveLength(1);
+    const [proj] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
+    expect((proj.pi as Record<string, unknown>).channels).toMatchObject({ pages: 3 });
     warn.mockRestore();
   }, 30000);
 });

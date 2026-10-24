@@ -139,10 +139,10 @@ def test_rotation_and_slow_flag(tmp_path):
 def test_one_failing_page_does_not_kill_the_run(five_kinds, monkeypatch):
     real = pdf_channels.census_page
 
-    def flaky(page, max_paths):
+    def flaky(page, *args):
         if page.number == 1:
             raise RuntimeError("boom")
-        return real(page, max_paths)
+        return real(page, *args)
 
     monkeypatch.setattr(pdf_channels, "census_page", flaky)
     out = pdf_channels.run({"pdfPath": str(five_kinds)})
@@ -164,3 +164,50 @@ def test_bad_input_is_a_clean_error():
     assert proc.returncode == 1 and out == {"status": "error", "error": "bad_input", "message": out["message"]}
     code, out = run({})
     assert code == 1 and out["error"] == "bad_input"
+
+
+def test_big_content_skips_bboxlog_and_estimates(tmp_path, monkeypatch):
+    """[census F2 2026-10-24] past maxContentBytes the page is never handed to get_bboxlog (its
+    memory is unbounded); paint operators are counted instead, stopped past maxPaths."""
+    doc = fitz.open()
+    add_lines(doc.new_page(), 3000)
+    path = tmp_path / "big.pdf"
+    doc.save(path)
+
+    def no_bboxlog(self):
+        raise AssertionError("get_bboxlog must not run over maxContentBytes")
+
+    code, exact = run({"pdfPath": str(path)})
+    assert code == 0 and exact["pages"][0]["vectorPaths"] == 3000 and "estimated" not in exact["pages"][0]
+    code, out = run({"pdfPath": str(path), "maxContentBytes": 1000})
+    (pg,) = out["pages"]
+    assert pg["vectorPaths"] == 3000 and pg["estimated"] is True and "capped" not in pg and pg["kind"] == "vector"
+    code, out = run({"pdfPath": str(path), "maxContentBytes": 1000, "maxPaths": 500})
+    (pg,) = out["pages"]
+    assert pg["vectorPaths"] == 500 and pg["capped"] is True and pg["estimated"] is True
+    monkeypatch.setattr(fitz.Page, "get_bboxlog", no_bboxlog)
+    out = pdf_channels.run({"pdfPath": str(path), "maxContentBytes": 1000})
+    assert out["pages"][0]["vectorPaths"] == 3000 and out["pages"][0]["estimated"] is True
+
+
+def test_paint_operator_scan_counts_only_paints():
+    data = b"q 1 0 0 1 0 0 cm 0 0 m 1 1 l S 0 0 5 5 re f* 0 0 m 2 2 l h B\n0 0 9 9 re W n (S f) Tj /Fm0 Do Q"
+    assert sum(1 for _ in pdf_channels.PAINT_OP.finditer(data)) == 3
+
+
+def test_budget_stops_before_a_page_that_cannot_finish(five_kinds, monkeypatch):
+    """[census F2 2026-10-24] elapsed + the slowest page so far past the budget → stop, so the Node
+    kill (budget + 5 s) never lands mid-page and loses the whole result."""
+    import time as _time
+
+    real = pdf_channels.census_page
+
+    def slow(page, *args):
+        _time.sleep(0.25)
+        return real(page, *args)
+
+    monkeypatch.setattr(pdf_channels, "census_page", slow)
+    out = pdf_channels.run({"pdfPath": str(five_kinds), "totalBudgetMs": 400})
+    assert out["truncated"] is True
+    assert "kind" in out["pages"][0]
+    assert out["pages"][1:] == [{"pageNumber": n, "error": "budget"} for n in range(2, 6)]

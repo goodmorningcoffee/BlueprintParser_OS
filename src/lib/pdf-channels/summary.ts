@@ -39,6 +39,7 @@ export function pageChannelsRecord(page: PdfChannelsPage): PageChannelsRecord | 
     rotation: num(page.rotation),
   };
   if (page.capped) record.capped = true;
+  if (page.estimated) record.estimated = true;
   return record;
 }
 
@@ -96,6 +97,6 @@ export function storedPageChannels(pageIntelligence: unknown): PageChannelsRecor
 /** "PDF layer: text ✓ · 12,345 vector paths · 2 images · vector" */
 export function channelsLine(record: PageChannelsRecord): string {
   const plural = (n: number, one: string) => `${n.toLocaleString("en-US")} ${one}${n === 1 ? "" : "s"}`;
-  const paths = `${record.capped ? "≥" : ""}${plural(record.vectorPaths, "vector path")}`;
+  const paths = `${record.capped ? "≥" : record.estimated ? "~" : ""}${plural(record.vectorPaths, "vector path")}`;
   return `PDF layer: text ${record.textChars > 0 ? "✓" : "✗"} · ${paths} · ${plural(record.images, "image")} · ${record.kind}`;
 }

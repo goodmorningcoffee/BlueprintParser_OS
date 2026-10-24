@@ -783,10 +783,10 @@ export const INTERNAL_MUTATION_SINKS = [
     "writeProjectChannels",
     "atomic-project-write",
   ],
-  // [census F2 2026-10-24] Reprocess "PDF channels": merge pageIntelligence.channels into every page
-  // row of one project (one tx) under the admin-reprocess lease.
+  // [census F2 2026-10-24] Upload (after the page loop) and Reprocess "PDF channels": merge
+  // pageIntelligence.channels into every page row of one project (one tx) under the caller's capability.
   [
-    "src/server/services/reprocess-channels.ts",
+    "src/server/services/channel-census.ts",
     "persistPageChannels",
     "atomic-project-write",
   ],

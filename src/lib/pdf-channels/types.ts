@@ -34,6 +34,8 @@ export interface PdfChannelsPage {
   fullPageImage?: boolean;
   vectorPaths?: number;
   capped?: boolean;
+  /** Content past maxContentBytes: vectorPaths is a paint-operator count, not bboxlog's. */
+  estimated?: boolean;
   formXObjects?: number;
   annots?: number;
   links?: number;
@@ -70,6 +72,9 @@ export interface PageChannelsRecord {
   vectorPaths: number;
   /** vectorPaths hit the script's maxPaths cap (the true count is higher). */
   capped?: boolean;
+  /** [census F2 2026-10-24] vectorPaths counted from the content streams' paint operators (a page
+   *  past the script's maxContentBytes skips bboxlog, whose memory is unbounded). */
+  estimated?: boolean;
   formXObjects: number;
   annots: number;
   links: number;
