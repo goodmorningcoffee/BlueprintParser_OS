@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 async function renderTab(): Promise<{ tau: HTMLInputElement; maxCodes: HTMLInputElement }> {
-  render(<CsiTab reprocessing={false} reprocessLog={[]} onReprocess={() => {}} />);
+  render(<CsiTab onOpenReprocess={() => {}} />);
   const tau = (await screen.findByRole("slider")) as HTMLInputElement;
   const maxCodes = screen.getByRole("spinbutton") as HTMLInputElement;
   return { tau, maxCodes };

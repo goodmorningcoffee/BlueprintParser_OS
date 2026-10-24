@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
+import OpenReprocessLink from "./OpenReprocessLink";
+import type { ReprocessPreset } from "./reprocess-plan";
 
 interface DetectorMeta {
   id: string;
@@ -13,9 +15,8 @@ interface DetectorMeta {
 }
 
 interface TextAnnotationsTabProps {
-  reprocessing: boolean;
-  reprocessLog: string[];
-  onReprocess: () => void;
+  /** [2026-10-24] The "Reprocess All Projects" button became a link into the Reprocess tab. */
+  onOpenReprocess: (preset: ReprocessPreset) => void;
 }
 
 const CATEGORY_STYLES: Record<string, { bg: string; text: string }> = {
@@ -24,11 +25,7 @@ const CATEGORY_STYLES: Record<string, { bg: string; text: string }> = {
   csi: { bg: "bg-orange-500/15", text: "text-orange-400" },
 };
 
-export default function TextAnnotationsTab({
-  reprocessing,
-  reprocessLog,
-  onReprocess,
-}: TextAnnotationsTabProps) {
+export default function TextAnnotationsTab({ onOpenReprocess }: TextAnnotationsTabProps) {
   const [detectors, setDetectors] = useState<DetectorMeta[]>([]);
   const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -201,24 +198,11 @@ export default function TextAnnotationsTab({
         </h2>
         <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
           <p className="text-xs text-[var(--muted)]">
-            Re-run text annotation detectors on all existing projects using the
+            Re-run text annotation detectors on existing projects using the
             current configuration above. Uses existing OCR data — no re-upload
             needed. User notes are preserved.
           </p>
-          <button
-            onClick={onReprocess}
-            disabled={reprocessing}
-            className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
-          >
-            {reprocessing ? "Reprocessing..." : "Reprocess All Projects"}
-          </button>
-          {reprocessLog.length > 0 && (
-            <div className="mt-2 max-h-40 overflow-y-auto bg-[var(--bg)] rounded p-2 text-xs font-mono text-[var(--muted)]">
-              {reprocessLog.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
-            </div>
-          )}
+          <OpenReprocessLink preset="detectors-changed" onOpen={onOpenReprocess} note="After saving:" />
         </div>
       </section>
     </div>

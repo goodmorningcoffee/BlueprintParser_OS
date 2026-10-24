@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { normalizeCsiCode, normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
+import OpenReprocessLink from "./OpenReprocessLink";
+import type { ReprocessPreset } from "./reprocess-plan";
 
 interface HeuristicRule {
   id: string;
@@ -49,12 +51,11 @@ interface PageNamingConfig {
 }
 
 interface HeuristicsTabProps {
-  reprocessing: boolean;
-  reprocessLog: string[];
-  onReprocess: () => void;
+  /** [2026-10-24] The "Reprocess All Projects" button (intelligence only) became a link into the Reprocess tab. */
+  onOpenReprocess: (preset: ReprocessPreset) => void;
 }
 
-export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess }: HeuristicsTabProps) {
+export default function HeuristicsTab({ onOpenReprocess }: HeuristicsTabProps) {
   const [rules, setRules] = useState<HeuristicRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -764,23 +765,8 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
         >
           {saving ? "Saving..." : "Save Rules"}
         </button>
-        <button
-          onClick={onReprocess}
-          disabled={reprocessing}
-          className="px-4 py-2 text-sm rounded border border-orange-400/40 text-orange-400 hover:bg-orange-400/10 disabled:opacity-50"
-        >
-          {reprocessing ? "Reprocessing..." : "Reprocess All Projects"}
-        </button>
+        <OpenReprocessLink preset="rules-changed" onOpen={onOpenReprocess} note="Apply saved rules:" />
       </div>
-
-      {/* Reprocess log */}
-      {reprocessLog.length > 0 && (
-        <div className="border border-[var(--border)] rounded p-3 max-h-40 overflow-y-auto bg-[var(--surface)]">
-          {reprocessLog.map((line, i) => (
-            <div key={i} className="text-xs text-[var(--muted)] font-mono">{line}</div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

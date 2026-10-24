@@ -13,14 +13,15 @@ import DataToolsDuplicates from "./DataToolsDuplicates";
 import DataToolsProjectDuplicates from "./DataToolsProjectDuplicates";
 import DataToolsAnnotationCleanup from "./DataToolsAnnotationCleanup";
 import DataToolsExport from "./DataToolsExport";
+import type { ReprocessPreset } from "./reprocess-plan";
 
-export default function DataToolsTab({ isRootAdmin }: { isRootAdmin: boolean }) {
+export default function DataToolsTab({ isRootAdmin, onOpenReprocess }: { isRootAdmin: boolean; onOpenReprocess: (preset: ReprocessPreset) => void }) {
   return (
     <div className="space-y-10">
       <DataToolsStuckJobs isRootAdmin={isRootAdmin} />
       <DataToolsDuplicates isRootAdmin={isRootAdmin} />
       {isRootAdmin && <DataToolsProjectDuplicates isRootAdmin={isRootAdmin} />}
-      <DataToolsAnnotationCleanup isRootAdmin={isRootAdmin} />
+      <DataToolsAnnotationCleanup isRootAdmin={isRootAdmin} onOpenReprocess={onOpenReprocess} />
       <DataToolsExport isRootAdmin={isRootAdmin} />
     </div>
   );

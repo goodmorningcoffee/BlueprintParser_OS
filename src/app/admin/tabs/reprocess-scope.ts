@@ -1,6 +1,6 @@
 "use client";
 
-// [2026-10-23] What Admin › Pipeline › Reprocess "All" really runs on. The server processes every
+// [2026-10-23] What Admin › Reprocess (then Pipeline › Reprocess) "All" really runs on. The server processes every
 // non-demo project of the caller's OWN company, whatever its status (services/reprocess.ts); this tab
 // lists COMPLETED projects — for a root admin across ALL companies — so the two counts differ (the
 // owner saw 216 listed and 128 processed). GET /api/admin/reprocess/scope returns the server's own

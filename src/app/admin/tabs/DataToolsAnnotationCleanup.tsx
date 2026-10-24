@@ -11,6 +11,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
+import OpenReprocessLink from "./OpenReprocessLink";
+import type { ReprocessPreset } from "./reprocess-plan";
 
 interface ScopeProject { publicId: string; name: string; companyId: number; annotations: number }
 interface SourceRow { source: string; count: number; userMade: boolean }
@@ -41,7 +43,7 @@ async function call<T>(url: string, method: string, body?: unknown): Promise<T> 
   return json as T;
 }
 
-export default function DataToolsAnnotationCleanup({ isRootAdmin }: { isRootAdmin: boolean }) {
+export default function DataToolsAnnotationCleanup({ isRootAdmin, onOpenReprocess }: { isRootAdmin: boolean; onOpenReprocess: (preset: ReprocessPreset) => void }) {
   const [companyId, setCompanyId] = useState("");
   const [companyOptions, setCompanyOptions] = useState<number[]>([]);
   const [projects, setProjects] = useState<ScopeProject[]>([]);
@@ -116,8 +118,10 @@ export default function DataToolsAnnotationCleanup({ isRootAdmin }: { isRootAdmi
         <h2 className="text-lg font-semibold">Annotation cleanup</h2>
         <p className="text-xs text-[var(--muted)]">
           Root only. Count changes nothing. Deleting cannot be undone. Demo projects are never touched.
-          After deleting YOLO or clearing page CSI, run Pipeline › Full reprocess to rebuild CSI codes.
+          After deleting YOLO or clearing page CSI, rebuild CSI codes and intelligence from the Reprocess tab (the
+          &ldquo;Delete YOLO annotations&rdquo; stage there does both in one plan).
         </p>
+        <OpenReprocessLink preset="clean-yolo" onOpen={onOpenReprocess} note="Same thing as one plan:" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -189,6 +193,7 @@ export default function DataToolsAnnotationCleanup({ isRootAdmin }: { isRootAdmi
             {shown.clearPageCsi ? ` and clear CSI codes on ${shown.pagesCsiCleared} page(s)` : ""}
             {" "}across {shown.projects.length} project(s){shown.dryRun ? "" : " — done"}. Sources: {shown.sources.join(", ") || "none"}.
           </div>
+          {!shown.dryRun && <OpenReprocessLink preset="detectors-changed" onOpen={onOpenReprocess} note="Then rebuild CSI codes + intelligence:" />}
           <div className="max-h-56 overflow-y-auto">
             {shown.projects.filter((p) => p.annotations > 0 || p.pagesCsiCleared > 0 || p.error).map((p) => (
               <div key={p.publicId}>

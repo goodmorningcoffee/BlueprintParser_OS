@@ -1,6 +1,6 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "table-parse" | "companies" | "usage" | "users" | "data-tools" | "settings" | "logs";
+export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "reprocess" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "table-parse" | "companies" | "usage" | "users" | "data-tools" | "settings" | "logs";
 
 const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boolean }[] = [
   { id: "overview", label: "Overview" },
@@ -8,6 +8,8 @@ const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boo
   { id: "ai-models", label: "AI Models" },
   { id: "ai-rbac", label: "AI RBAC", rootOnly: true },
   { id: "pipeline", label: "Pipeline" },
+  // [2026-10-24] The master Reprocess tab (tabs/ReprocessTab.tsx) — the one home of every re-run.
+  { id: "reprocess", label: "Reprocess" },
   { id: "llm-context", label: "LLM / Context" },
   { id: "text-annotations", label: "Text Annotations" },
   { id: "csi", label: "CSI Codes" },
