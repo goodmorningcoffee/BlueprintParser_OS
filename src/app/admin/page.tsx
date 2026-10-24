@@ -14,6 +14,7 @@ import AiModelsTab from "./tabs/AiModelsTab";
 import TextAnnotationsTab from "./tabs/TextAnnotationsTab";
 import CsiTab from "./tabs/CsiTab";
 import HeuristicsTab from "./tabs/HeuristicsTab";
+import ClassifiersTab from "./tabs/ClassifiersTab";
 import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
 import TableParseTab from "./tabs/TableParseTab";
 import UsersTab from "./tabs/UsersTab";
@@ -719,6 +720,8 @@ export default function AdminPage() {
         {activeTab === "csi" && <CsiTab onOpenReprocess={openReprocess} />}
 
         {activeTab === "heuristics" && <HeuristicsTab onOpenReprocess={openReprocess} />}
+
+        {activeTab === "classifiers" && <ClassifiersTab projects={projects} isRootAdmin={session?.user?.isRootAdmin === true} />}
 
         {activeTab === "page-intelligence" && <PageIntelligenceTab onOpenReprocess={openReprocess} />}
 

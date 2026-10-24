@@ -10,38 +10,47 @@
 import schedulesRaw from "@/data/classifiers/schedules.v1.json";
 import regionsRaw from "@/data/classifiers/regions.v1.json";
 import heuristicsRaw from "@/data/classifiers/heuristics.v1.json";
-import type { ClassifierClass, ClassifierOverlay, ClassifierRecipe, HeuristicRecipeOutput, SignalRole, SignalSpec, WeightedSignal } from "./types";
+import { CANDIDATE_TYPES, checkCandidates, checkScope, checkSpec } from "./spec-check";
+import type { CandidateSource, ClassifierClass, ClassifierOverlay, ClassifierRecipe, HeuristicRecipeOutput, RecipePatch, SignalPatch, SignalRole, SignalSpec, WeightedSignal } from "./types";
 
-const SPEC_TYPES = new Set<SignalSpec["type"]>(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel", "text", "text-region", "yolo-spatial"]);
+export { SPEC_TYPES, CANDIDATE_TYPES } from "./spec-check";
+export const ROLES = new Set<SignalRole>(["score", "required", "veto"]);
 const AVAILABILITY = new Set<HeuristicRecipeOutput["yoloAvailabilityMode"]>(["require", "degrade", "ignore"]);
-const ROLES = new Set<SignalRole>(["score", "required", "veto"]);
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isUnit = (v: unknown): v is number => isNum(v) && v >= 0 && v <= 1;
 const fail = (label: string, msg: string): never => { throw new Error(`classifier recipe ${label}: ${msg}`); };
 
-function validateSignal(v: unknown, label: string, seen: Set<string>): WeightedSignal {
+/** Field-level validation of one signal spec (spec-check.ts; throws the first problem with the signal named). */
+export function validateSpec(spec: unknown, label: string, id: string): SignalSpec {
+  const problems = checkSpec(spec, `signal "${id}"`);
+  if (problems.length) fail(label, problems[0]);
+  return spec as SignalSpec;
+}
+
+export function validateSignal(v: unknown, label: string, seen: Set<string>): WeightedSignal {
   if (!isRecord(v) || typeof v.id !== "string" || !v.id) fail(label, "signal needs an id");
   const s = v as Record<string, unknown>;
   const id = s.id as string;
   if (seen.has(id)) fail(label, `duplicate signal id "${id}"`);
   seen.add(id);
-  if (typeof s.weight !== "number" || !Number.isFinite(s.weight)) fail(label, `signal "${id}" weight must be a number`);
+  if (!isNum(s.weight)) fail(label, `signal "${id}" weight must be a number`);
   if (!ROLES.has(s.role as SignalRole)) fail(label, `signal "${id}" role must be score | required | veto`);
-  const spec = s.spec;
-  if (!isRecord(spec) || !SPEC_TYPES.has(spec.type as SignalSpec["type"])) throw new Error(`classifier recipe ${label}: signal "${id}" has an unknown spec type`);
-  if (spec.type === "words" && !isRecord(spec.terms)) throw new Error(`classifier recipe ${label}: signal "${id}" words spec needs terms`);
+  const spec = validateSpec(s.spec, label, id);
   return {
-    id, label: typeof s.label === "string" ? s.label : id, spec: spec as unknown as SignalSpec, weight: s.weight as number,
+    id, label: typeof s.label === "string" ? s.label : id, spec, weight: s.weight as number,
     role: s.role as SignalRole, enabled: s.enabled !== false, ...(typeof s.note === "string" ? { note: s.note } : {}),
   };
 }
 
-function validateClass(v: unknown, label: string, seen: Set<string>): ClassifierClass {
+export function validateClass(v: unknown, label: string, seen: Set<string>): ClassifierClass {
   if (!isRecord(v) || typeof v.id !== "string" || !v.id || typeof v.name !== "string") fail(label, "class needs id + name");
   const c = v as Record<string, unknown>;
   const id = c.id as string;
   if (seen.has(id)) fail(label, `duplicate class id "${id}"`);
   seen.add(id);
-  if (typeof c.bias !== "number") fail(label, `class "${id}" bias must be a number`);
+  if (!isNum(c.bias)) fail(label, `class "${id}" bias must be a number`);
+  if (c.threshold !== undefined && !isUnit(c.threshold)) fail(label, `class "${id}" threshold must be a number in [0, 1]`);
   if (!Array.isArray(c.signals)) fail(label, `class "${id}" needs signals[]`);
   const sids = new Set<string>();
   return {
@@ -59,12 +68,14 @@ export function validateRecipe(v: unknown, source: "built-in" | "custom"): Class
   const label = `"${r.id as string}"`;
   if (typeof r.name !== "string" || typeof r.version !== "number" || typeof r.target !== "string") fail(label, "needs name, numeric version and target");
   if (r.unit !== "region" && r.unit !== "page") fail(label, "unit must be region | page");
-  if (!Array.isArray(r.candidates) || !isRecord(r.scope) || !isRecord(r.detect) || !Array.isArray(r.detect.signals) || typeof r.detect.bias !== "number" || typeof r.detect.threshold !== "number") {
-    fail(label, "needs candidates[], scope, detect {bias, signals[], threshold}");
+  if (!Array.isArray(r.candidates) || !isRecord(r.scope) || !isRecord(r.detect) || !Array.isArray(r.detect.signals) || !isNum(r.detect.bias) || !isUnit(r.detect.threshold)) {
+    fail(label, "needs candidates[], scope, detect {bias, signals[], threshold in [0, 1]}");
   }
-  if (!Array.isArray(r.classes) || typeof r.nameThreshold !== "number" || typeof r.minMargin !== "number" || typeof r.fallbackClassName !== "string") {
-    fail(label, "needs classes[], nameThreshold, minMargin, fallbackClassName");
+  if (!Array.isArray(r.classes) || !isUnit(r.nameThreshold) || !isUnit(r.minMargin) || typeof r.fallbackClassName !== "string") {
+    fail(label, "needs classes[], nameThreshold and minMargin in [0, 1], fallbackClassName");
   }
+  const shape = [...checkScope(r.scope, "scope:"), ...checkCandidates(r.candidates, "", r.unit === "page")];
+  if (shape.length) fail(label, shape[0].trim());
   const detect = r.detect as Record<string, unknown>;
   const cids = new Set<string>();
   const h = r.heuristic;
@@ -111,19 +122,31 @@ export function isClassifierOverlay(v: unknown): v is ClassifierOverlay {
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-type RecipePatch = NonNullable<ClassifierOverlay["patches"][string]>;
+/** Feature key of a signal in a head: "detect.<id>" or "<classId>.<id>" (types.ts `SignalContribution.signalId`). */
+export const signalKey = (head: string, signalId: string): string => `${head}.${signalId}`;
+/** `removed` entry for a whole class. */
+export const classRemovalKey = (classId: string): string => `class:${classId}`;
 
-function patchSignals(signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>): WeightedSignal[] {
+/**
+ * One head's signals with the patch applied. A patch entry keyed by the feature key ("<head>.<id>") wins
+ * over a legacy bare-id entry; `removed` matches the feature key or the bare id. A patched `spec` that
+ * fails validation leaves the built-in spec in place.
+ */
+function patchSignals(head: string, signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>, label: string): WeightedSignal[] {
   const bySignal = isRecord(patch.signals) ? patch.signals : {};
-  return signals.filter((s) => !removed.has(s.id)).map((s) => {
-    const p = bySignal[s.id];
+  return signals.filter((s) => !removed.has(signalKey(head, s.id)) && !removed.has(s.id)).map((s) => {
+    const p = (bySignal[signalKey(head, s.id)] ?? bySignal[s.id]) as SignalPatch | undefined;
     if (!isRecord(p)) return s;
+    let spec = s.spec;
+    if (p.spec !== undefined) { try { spec = validateSpec(p.spec, label, s.id); } catch { /* keep the built-in spec */ } }
     return {
       ...s,
-      ...(typeof p.weight === "number" ? { weight: p.weight } : {}),
+      spec,
+      ...(typeof p.weight === "number" && Number.isFinite(p.weight) ? { weight: p.weight } : {}),
       ...(p.role && ROLES.has(p.role) ? { role: p.role } : {}),
       ...(typeof p.enabled === "boolean" ? { enabled: p.enabled } : {}),
       ...(typeof p.label === "string" ? { label: p.label } : {}),
+      ...(typeof p.note === "string" ? { note: p.note } : {}),
     };
   });
 }
@@ -134,29 +157,50 @@ function patchSignals(signals: WeightedSignal[], patch: RecipePatch, removed: Se
  * `addedSignals: {}`, `signals: "x"`, `classBias: null`); the caller also catches, so a patch can never
  * take the recipe (or the whole post-YOLO enrichment that runs it) down.
  */
-function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): ClassifierRecipe {
+export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): ClassifierRecipe {
+  const label = `"${r.id}" overlay`;
   const removed = new Set(Array.isArray(patch.removed) ? patch.removed.filter((id): id is string => typeof id === "string") : []);
   const classBias = isRecord(patch.classBias) ? patch.classBias : {};
+  const classThreshold = isRecord(patch.classThreshold) ? patch.classThreshold : {};
+  const classMeta = isRecord(patch.classMeta) ? patch.classMeta : {};
   const next = clone(r);
   if (typeof patch.version === "number") next.version = patch.version;
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+  if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name;
+  if (typeof patch.detectBias === "number" && Number.isFinite(patch.detectBias)) next.detect.bias = patch.detectBias;
   if (typeof patch.detectThreshold === "number") next.detect.threshold = patch.detectThreshold;
   if (typeof patch.nameThreshold === "number") next.nameThreshold = patch.nameThreshold;
   if (typeof patch.minMargin === "number") next.minMargin = patch.minMargin;
-  next.detect.signals = patchSignals(next.detect.signals, patch, removed);
-  next.classes = next.classes.filter((c) => !removed.has(c.id)).map((c) => ({
-    ...c, bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias, signals: patchSignals(c.signals, patch, removed),
-  }));
+  if (isRecord(patch.scope)) next.scope = clone(patch.scope) as ClassifierRecipe["scope"];
+  if (Array.isArray(patch.candidates)) {
+    const cands = patch.candidates.filter((c) => isRecord(c) && CANDIDATE_TYPES.has(c.type as CandidateSource["type"]));
+    if (cands.length) next.candidates = clone(cands) as CandidateSource[];
+  }
+  next.detect.signals = patchSignals("detect", next.detect.signals, patch, removed, label);
+  next.classes = next.classes.filter((c) => !removed.has(classRemovalKey(c.id)) && !removed.has(c.id)).map((c) => {
+    const meta = isRecord(classMeta[c.id]) ? (classMeta[c.id] as Record<string, unknown>) : {};
+    const out: ClassifierClass = {
+      ...c,
+      ...(typeof meta.name === "string" && meta.name.trim() ? { name: meta.name } : {}),
+      ...(typeof meta.group === "string" && meta.group.trim() ? { group: meta.group } : {}),
+      ...(typeof meta.legacyCategory === "string" && meta.legacyCategory.trim() ? { legacyCategory: meta.legacyCategory } : {}),
+      bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias,
+      ...(typeof classThreshold[c.id] === "number" ? { threshold: classThreshold[c.id] as number } : {}),
+      signals: patchSignals(c.id, c.signals, patch, removed, label),
+    };
+    if (meta.legacyCategory === null) delete out.legacyCategory;
+    return out;
+  });
   for (const add of Array.isArray(patch.addedSignals) ? patch.addedSignals : []) {
     try {
       if (!isRecord(add)) continue;
-      const sig = validateSignal(add.signal, `"${r.id}" overlay`, new Set());
-      if (add.classId === null) next.detect.signals.push(sig);
-      else next.classes.find((c) => c.id === add.classId)?.signals.push(sig);
+      const sig = validateSignal(add.signal, label, new Set());
+      const target = add.classId === null ? next.detect.signals : next.classes.find((c) => c.id === add.classId)?.signals;
+      if (target && !target.some((s) => s.id === sig.id)) target.push(sig);
     } catch { /* a malformed added signal is skipped, never fatal */ }
   }
   for (const add of Array.isArray(patch.addedClasses) ? patch.addedClasses : []) {
-    try { if (!next.classes.some((c) => c.id === (add as ClassifierClass).id)) next.classes.push(validateClass(add, `"${r.id}" overlay`, new Set())); } catch { /* skipped */ }
+    try { if (!next.classes.some((c) => c.id === (add as ClassifierClass).id)) next.classes.push(validateClass(add, label, new Set())); } catch { /* skipped */ }
   }
   return next;
 }

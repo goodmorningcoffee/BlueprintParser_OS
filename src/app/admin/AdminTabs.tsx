@@ -1,6 +1,6 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "reprocess" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "table-parse" | "companies" | "usage" | "users" | "data-tools" | "settings" | "logs";
+export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "reprocess" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "classifiers" | "page-intelligence" | "table-parse" | "companies" | "usage" | "users" | "data-tools" | "settings" | "logs";
 
 const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boolean }[] = [
   { id: "overview", label: "Overview" },
@@ -14,6 +14,8 @@ const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boo
   { id: "text-annotations", label: "Text Annotations" },
   { id: "csi", label: "CSI Codes" },
   { id: "heuristics", label: "Heuristics" },
+  // [classifier builder track 3 2026-10-24] Beside Heuristics (which stays — owner gate on the port).
+  { id: "classifiers", label: "Classifiers" },
   { id: "page-intelligence", label: "Page Intelligence" },
   { id: "table-parse", label: "Table Parsing" },
   { id: "companies", label: "Companies / Users", rootOnly: true },

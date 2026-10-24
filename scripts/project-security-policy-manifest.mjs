@@ -598,6 +598,15 @@ export const MUTATION_SURFACES = [
     "batch-non-demo",
     [["src/server/services/reprocess.ts", "reprocessProjects"]],
   ),
+  // [classifier builder track 3 2026-10-24] Admin › Classifiers "Run on project": ONE project of the
+  // caller's company through reprocessProjects (scope=classifiers) — its lease, demo exclusion and stream.
+  mutation(
+    "admin-classifiers-run",
+    "/api/admin/classifiers/run",
+    "POST",
+    "shared-guard",
+    [["src/server/services/classifier-builder.ts", "runClassifiersOnProject"]],
+  ),
   mutation(
     "admin-reprocess-csi",
     "/api/admin/models/reprocess-csi",

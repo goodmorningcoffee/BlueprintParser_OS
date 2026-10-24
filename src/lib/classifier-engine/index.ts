@@ -5,7 +5,10 @@
  */
 export { runClassifierEngine, isPageClassifierProposals, storedClassifierProposals, proposalId, type EngineRun } from "./engine";
 export { buildPageEvidence, buildCandidateEvidence, groupRows, type ClassifierPageInput, type BoxTagger, type CsiCodeLike } from "./evidence";
-export { BUILT_IN_RECIPES, BUILT_IN_RECIPES_HASH, HEURISTIC_RECIPES, effectiveRecipes, applyOverlay, validateRecipe, hashRecipes, isClassifierOverlay } from "./recipes";
+export { BUILT_IN_RECIPES, BUILT_IN_RECIPES_HASH, HEURISTIC_RECIPES, effectiveRecipes, applyOverlay, validateRecipe, validateSignal, validateClass, validateSpec, hashRecipes, isClassifierOverlay, signalKey, classRemovalKey } from "./recipes";
+export { buildRecipePatch, describePatch, resetSignal, resetClass, resetRecipe, validateOverlay, bumpOverlayVersions, mergeOverlay, headSignals, blankClass, blankRecipe, DETECT, type DiffLine, type HeadId, type OverlayValidation } from "./overlay-edit";
+export { checkSpec, checkScope, checkCandidates, SPEC_TYPES, CANDIDATE_TYPES } from "./spec-check";
+export { SIGNAL_TYPES, SIGNAL_SCOPES, SCOPE_HELP, DISCIPLINES, STRUCTURE_FEATURES, SHAPE_LABELS, ZONES, PAGE_KINDS, YOLO_WHERE, YOLO_MEASURES, CSI_MEASURES, CANDIDATE_SOURCE_TYPES, signalTypeSchema, staticCatalog, type SignalCatalog, type CatalogModel, type SignalTypeSchema, type ParamSchema, type ParamKind } from "./catalog";
 export { buildProjectProposalSummary, storedProposalVerdicts, type ProposalPage } from "./summary";
 export { deriveName, cleanTitle, CONFIDENT_NAME } from "./derive-name";
 export { evaluateSignal } from "./signals";
