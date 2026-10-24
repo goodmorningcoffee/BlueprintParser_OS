@@ -23,6 +23,7 @@ import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
 import { SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
 import { annotationLabelColor as classColor } from "@/lib/annotation-label-color";
+import { unsavedShapeKeynotesByPage } from "@/lib/shape-parse-unsaved";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -106,8 +107,12 @@ export default function DetectionPanel({
   }, [isRenderedLifecycleCurrent]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
-  const hasMultiPageKeynotes = useMemo(() => Object.keys(keynotes).length > 1, [keynotes]);
-  const totalKeynoteCount = useMemo(() => Object.values(keynotes).reduce((n, k) => n + (k?.length || 0), 0), [keynotes]);
+  // [fix 2026-10-24] The Save buttons offer only shapes not yet stored as shape-parse annotations
+  // (the server persists non-demo scans itself) — a repeat press no longer doubles the rows.
+  const unsavedKeynotes = useMemo(() => unsavedShapeKeynotesByPage(keynotes, annotations), [keynotes, annotations]);
+  const unsavedPageKeynotes = unsavedKeynotes[pageNumber] || [];
+  const hasMultiPageKeynotes = useMemo(() => Object.keys(unsavedKeynotes).length > 1, [unsavedKeynotes]);
+  const totalKeynoteCount = useMemo(() => Object.values(unsavedKeynotes).reduce((n, k) => n + k.length, 0), [unsavedKeynotes]);
 
   // Group detected shapes by type for the summary list
   const shapesByType = useMemo(() => {
@@ -919,8 +924,8 @@ export default function DetectionPanel({
             </div>
           </div>
 
-          {/* Save as annotations buttons */}
-          {pageKeynotes.length > 0 && (
+          {/* Save as annotations buttons — only while something on the page is unsaved */}
+          {unsavedPageKeynotes.length > 0 && (
             <div className="px-3 py-1.5 border-b border-[var(--border)] space-y-1">
               <button
                 disabled={shapeSaving}
@@ -942,7 +947,7 @@ export default function DetectionPanel({
                   shapeParse.setError(null);
                   setShapeSaveSuccess(null);
                   try {
-                    const annInputs = pageKeynotes.map((k) => ({
+                    const annInputs = unsavedPageKeynotes.map((k) => ({
                       pageNumber,
                       name: k.shape,
                       bbox: k.bbox,
@@ -959,9 +964,7 @@ export default function DetectionPanel({
                     const res = await fetch("/api/annotations", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      // Append-only save: no deleteSource/deletePageNumbers,
-                      // so multiple BB parses on the same page accumulate in
-                      // the DB instead of wiping prior saves.
+                      // Append-only (no deleteSource): only unsaved shapes are posted, so repeats never double rows.
                       body: JSON.stringify({
                         projectId: capturedPublicId,
                         annotations: annInputs,
@@ -974,10 +977,8 @@ export default function DetectionPanel({
                     const data = await res.json();
                     if (data.annotations) {
                       if (!canAdoptLifecycle()) return;
-                      // Append the newly-saved rows; prior shape-parse rows
-                      // stay untouched (server no longer deletes them). This handler historically
-                      // re-read live state AFTER its await, so keep that freshness with a functional
-                      // cache write rather than closing over the render-time annotations array.
+                      // Append the saved rows with a FUNCTIONAL write: this handler re-reads live
+                      // state after its await (a concurrent write survives), never the render-time array.
                       writeAnns(queryClient, capturedPublicId, (current) => [
                         ...current,
                         ...data.annotations,
@@ -1018,7 +1019,7 @@ export default function DetectionPanel({
                 }}
                 className={`w-full px-2 py-1 text-[10px] rounded border ${shapeSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : shapeSaveSuccess ? "border-green-500/60 text-green-300 bg-green-500/15" : "border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"}`}
               >
-                {shapeSaving ? "Saving..." : shapeSaveSuccess || `Save page ${pageNumber} (${pageKeynotes.length} shapes)`}
+                {shapeSaving ? "Saving..." : shapeSaveSuccess || `Save page ${pageNumber} (${unsavedPageKeynotes.length} shapes)`}
               </button>
               {hasMultiPageKeynotes && (
                 <button
@@ -1046,9 +1047,8 @@ export default function DetectionPanel({
                     try {
                       const allAnnotations: Array<{pageNumber: number; name: string; bbox: [number,number,number,number]; source: string; threshold: number; data: Record<string, unknown>}> = [];
                       const allPageNums: number[] = [];
-                      for (const [pn, shapes] of Object.entries(keynotes)) {
+                      for (const [pn, shapes] of Object.entries(unsavedKeynotes)) {
                         const pageNum = Number(pn);
-                        if (!shapes?.length) continue;
                         allPageNums.push(pageNum);
                         for (const k of shapes) {
                           allAnnotations.push({
@@ -1070,7 +1070,6 @@ export default function DetectionPanel({
                       const res = await fetch("/api/annotations", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        // Append-only — see single-page save comment above.
                         body: JSON.stringify({
                           projectId: capturedPublicId,
                           annotations: allAnnotations,

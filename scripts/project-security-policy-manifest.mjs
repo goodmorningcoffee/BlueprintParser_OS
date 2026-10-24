@@ -683,6 +683,13 @@ export const INTERNAL_MUTATION_SINKS = [
     "applyPlannedHides",
     "atomic-project-write",
   ],
+  // [2026-10-24] Project analysis + summaries refresh after a visible-page change (permanent
+  // delete, duplicate hide/restore): withProjectWrite on the projects row, then computeProjectSummaries.
+  [
+    "src/server/services/project-recompute.ts",
+    "recomputeProject",
+    "atomic-project-write",
+  ],
   [
     "src/lib/project-analysis.ts",
     "computeProjectSummaries",

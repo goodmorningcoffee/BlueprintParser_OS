@@ -349,10 +349,19 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             }
             const pageCount = project.numPages || await getPdfPageCount(pdfBuffer);
             send({ type: "project", name: project.name, pages: pageCount });
+            // [fix 2026-10-24 DOUBLE_BACK] A permanently deleted page (page-permanent-delete.ts) has
+            // no row: regenerating its PNGs would re-upload what that tool removed. A project with
+            // no page rows at all keeps the whole-PDF behaviour.
+            const pageRows = await db.select({ pageNumber: pages.pageNumber }).from(pages).where(eq(pages.projectId, project.id));
+            const withRow = new Set(pageRows.map((r) => r.pageNumber));
 
             // The durable `admin-reprocess:thumbnails` lease is also the asset gateway's
             // fail-closed read fence, so stable legacy keys cannot be observed mid-rebuild.
             for (let pg = 1; pg <= pageCount; pg++) {
+                if (withRow.size > 0 && !withRow.has(pg)) {
+                  debug("page.noRow", { project: project.name, page: pg });
+                  continue;
+                }
                 const pageKey = String(pg).padStart(4, "0");
                 try {
                   // Thumbnail at 72 DPI

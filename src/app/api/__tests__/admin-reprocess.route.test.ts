@@ -476,6 +476,25 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     }
   }, 30000);
 
+  it("[fix 2026-10-24 DOUBLE_BACK] scope=thumbnails: a page whose row is gone (permanently deleted) gets no PNGs; a project with no rows keeps the whole-PDF behaviour", async () => {
+    const { company, project } = await createWorld({ numPages: 3 });
+    await createPage(project.id, 1);
+    await createPage(project.id, 3); // page 2 was permanently deleted
+    const admin = await createUser(company.id, { role: "admin" });
+
+    asUser(admin);
+    const lines = await drain(await POST(makeReq("/api/admin/reprocess?scope=thumbnails", { method: "POST" })));
+
+    const keys = (s3Mocks.uploadToS3.mock.calls as unknown as string[][]).map((c) => c[0]).sort();
+    expect(keys).toEqual([
+      `${project.dataUrl}/pages/page_0001.png`,
+      `${project.dataUrl}/pages/page_0003.png`,
+      `${project.dataUrl}/thumbnails/page_0001.png`,
+      `${project.dataUrl}/thumbnails/page_0003.png`,
+    ]);
+    expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 2, skipped: 0, total: 2 });
+  }, 30000);
+
   it("scope=thumbnails: a durable project lease blocks publication across slow S3 work", async () => {
     const { company, project } = await createWorld({ numPages: 1 });
     await ageProjectForPublication(project.id);

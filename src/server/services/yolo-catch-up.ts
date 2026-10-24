@@ -1,7 +1,7 @@
 // [2026-10-21 owner: "have it just auto load so that after the model is run it auto loads"] Server-side
 // catch-up for YOLO jobs nobody was watching. The browser polls and auto-loads a job only while the
-// admin tab that started it stays open; when GET /api/admin/running-jobs (the admin page's load) finds
-// a still-'running' row, this asks SageMaker about it first:
+// admin tab that started it stays open; when GET /api/admin/running-jobs (the admin page's load, ROOT
+// sessions only since 2026-10-24 — load is root-only) finds a still-'running' row, this asks SageMaker about it first:
 //   • Completed → its results are loaded ONCE via yoloLoad (the yolo-load project lease keeps a
 //     concurrent browser load from doubling it; a load replaces that model's previous detections, so a
 //     repeat is harmless), and ONLY THEN is the row marked completed through updateRunningJob

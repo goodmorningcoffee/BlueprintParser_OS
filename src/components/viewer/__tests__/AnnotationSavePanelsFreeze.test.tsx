@@ -288,6 +288,38 @@ describe("DetectionPanel shape-save — guard, raw-fetch failure, and append+cle
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("[fix 2026-10-24] a page whose shapes are all stored as shape-parse annotations offers no Save", async () => {
+    // The server persists non-demo scans itself; the client Save must not double those rows.
+    const stored = annotation({ id: 9, name: "circle", source: "shape-parse", bbox: [0.10000001, 0.2, 0.3, 0.4] }); // float4 of the keynote bbox
+    seedAnnotations(qc, [survivor(), stored]);
+    seedPendingShape();
+    renderDetectionSaveSurface();
+
+    expect(screen.getByText("1 shape detected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Save page 1/ })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("[fix 2026-10-24] only the unsaved shapes of a page are offered and posted", async () => {
+    const stored = annotation({ id: 9, name: "circle", source: "shape-parse", bbox: [0.10000001, 0.2, 0.3, 0.4] });
+    seedAnnotations(qc, [survivor(), stored]);
+    const fresh: KeynoteShapeData = { shape: "hexagon", text: "H2", bbox: [0.5, 0.5, 0.6, 0.6] };
+    setKeynotesForPage(qc, "pid", 1, [pendingShape, fresh]);
+    const response = deferred<unknown>();
+    routeAnnotationPost(response.promise);
+    renderDetectionSaveSurface();
+
+    expect(screen.getByText("2 shapes detected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save page 1 (1 shapes)" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const posted = JSON.parse(String(init.body)).annotations;
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ pageNumber: 1, name: "hexagon", bbox: [0.5, 0.5, 0.6, 0.6], source: "shape-parse" });
+    response.resolve({ ok: true, json: async () => ({ annotations: [annotation({ id: 10, name: "hexagon", source: "shape-parse", bbox: [0.5, 0.5, 0.6, 0.6] })] }) });
+    await waitFor(() => expect(readSeededAnnotations(qc).map((row) => row.id)).toEqual([1, 9, 10]));
+  });
+
   it("is server-first, appends the returned annotation, then clears pending shapes", async () => {
     const initial = survivor();
     seedAnnotations(qc, [initial]);
