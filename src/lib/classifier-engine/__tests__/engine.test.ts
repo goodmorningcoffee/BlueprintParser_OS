@@ -31,7 +31,7 @@ describe("runClassifierEngine — built-in schedules recipe", () => {
     const run = runClassifierEngine(input, BUILT_IN_RECIPES);
     expect(run.errors).toEqual([]);
     expect(run.result.engineVersion).toBe("clf/0.1");
-    expect(run.result.recipes).toEqual({ "schedules.v1": 1, "regions.v1": 1 });
+    expect(run.result.recipes).toEqual({ "schedules.v1": BUILT_IN_RECIPES[0].version, "regions.v1": BUILT_IN_RECIPES[1].version });
     const [p] = run.result.proposals;
     expect(run.result.proposals).toHaveLength(1);
     expect(p.recipeId).toBe("schedules.v1");
@@ -49,7 +49,8 @@ describe("runClassifierEngine — built-in schedules recipe", () => {
     expect(p.detectWhy[0].signalId).toBe("detect.structure");
     expect(p.nameWhy.length).toBeLessThanOrEqual(8);
     expect(p.features["door.columns"]).toBeGreaterThan(0.5);
-    expect(p.features["door.csiSec"]).toBe(1);
+    // csiSec counts the matching box codes (3 = full): the fixture's tagger yields two 08 1x codes
+    expect(p.features["door.csiSec"]).toBeCloseTo(2 / 3, 3);
     expect(p.features["detect.structure"]).toBe(input.regionsV2!.regions[0].structureScore);
     // every class evaluated its signals, so a refit has the full row
     expect(Object.keys(p.features).filter((k) => k.startsWith("panel."))).not.toHaveLength(0);
