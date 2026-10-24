@@ -34,6 +34,8 @@ interface Row {
   set: number; pages: number; nodes: number; edges: number; bytes: number;
   refs: { total: number; resolved: number; unresolved: number; ambiguous: number; self: number; detailFound: number; detailMissing: number };
   byExtractor: Record<string, number>;
+  /** Per extractor: how many of the edges it saw are cross-sheet resolved / self / not resolved. */
+  byExtractorStatus: Record<string, { resolved: number; self: number; open: number }>;
   nodeTypes: Record<string, number>;
   edgeTypes: Record<string, number>;
   buildMs: number;
@@ -58,8 +60,17 @@ for (const set of picked) {
   const json = JSON.stringify(graph);
   const summary = summarizeGraph(graph, Buffer.byteLength(json));
   const byExtractor: Record<string, number> = {};
-  for (const e of graph.edges) if (e.type === "references") for (const p of e.provenance) byExtractor[p.extractor] = (byExtractor[p.extractor] ?? 0) + 1;
-  rows.push({ set, pages: pages.length, nodes: graph.nodes.length, edges: graph.edges.length, bytes: summary.bytes, refs: summary.references, byExtractor, nodeTypes: summary.nodes, edgeTypes: summary.edges, buildMs });
+  const byExtractorStatus: Row["byExtractorStatus"] = {};
+  for (const e of graph.edges) {
+    if (e.type !== "references") continue;
+    const seen = new Set(e.provenance.map((p) => p.extractor));
+    for (const x of seen) {
+      byExtractor[x] = (byExtractor[x] ?? 0) + 1;
+      const b = (byExtractorStatus[x] ??= { resolved: 0, self: 0, open: 0 });
+      if (e.self) b.self++; else if (e.status === "resolved") b.resolved++; else b.open++;
+    }
+  }
+  rows.push({ set, pages: pages.length, nodes: graph.nodes.length, edges: graph.edges.length, bytes: summary.bytes, refs: summary.references, byExtractor, byExtractorStatus, nodeTypes: summary.nodes, edgeTypes: summary.edges, buildMs });
 }
 
 const kb = (b: number) => `${(b / 1024).toFixed(0)} KB`;
@@ -68,9 +79,12 @@ for (const r of rows) {
   const ex = Object.entries(r.byExtractor).map(([k, v]) => `${k}=${v}`).join(" ");
   console.log(`${String(r.set).padStart(3)}  ${String(r.pages).padStart(5)}  ${String(r.nodes).padStart(5)}  ${String(r.edges).padStart(6)}  ${kb(r.bytes).padStart(8)}  ${String(r.refs.total).padStart(4)}  ${String(r.refs.resolved).padStart(8)}  ${String(r.refs.unresolved).padStart(10)}  ${String(r.refs.ambiguous).padStart(9)}  ${String(r.refs.self).padStart(4)}  ${String(`${r.refs.detailFound}/${r.refs.detailMissing}`).padStart(21)}  ${String(r.buildMs).padStart(3)}  ${ex}`);
 }
-const total = rows.reduce((a, r) => ({ total: a.total + r.refs.total, resolved: a.resolved + r.refs.resolved, unresolved: a.unresolved + r.refs.unresolved, ambiguous: a.ambiguous + r.refs.ambiguous }), { total: 0, resolved: 0, unresolved: 0, ambiguous: 0 });
+const total = rows.reduce((a, r) => ({ total: a.total + r.refs.total, resolved: a.resolved + r.refs.resolved, unresolved: a.unresolved + r.refs.unresolved, ambiguous: a.ambiguous + r.refs.ambiguous, self: a.self + r.refs.self }), { total: 0, resolved: 0, unresolved: 0, ambiguous: 0, self: 0 });
 const pct = (n: number) => (total.total ? `${((100 * n) / total.total).toFixed(1)}%` : "n/a");
-console.log(`\n${rows.length} sets · references ${total.total}: resolved ${total.resolved} (${pct(total.resolved)}) · unresolved ${total.unresolved} (${pct(total.unresolved)}) · ambiguous ${total.ambiguous} (${pct(total.ambiguous)})`);
+console.log(`\n${rows.length} sets · references ${total.total}: cross-sheet resolved ${total.resolved} (${pct(total.resolved)}) · unresolved ${total.unresolved} (${pct(total.unresolved)}) · ambiguous ${total.ambiguous} (${pct(total.ambiguous)}) · self ${total.self} (${pct(total.self)})`);
+const exTotals: Row["byExtractorStatus"] = {};
+for (const r of rows) for (const [k, v] of Object.entries(r.byExtractorStatus)) { const t = (exTotals[k] ??= { resolved: 0, self: 0, open: 0 }); t.resolved += v.resolved; t.self += v.self; t.open += v.open; }
+console.log(`by extractor (edges it saw: resolved/self/open): ${Object.entries(exTotals).map(([k, v]) => `${k}=${v.resolved}/${v.self}/${v.open}`).join(" ")}`);
 console.log(`bytes: max ${kb(Math.max(0, ...rows.map((r) => r.bytes)))} · median ${kb([...rows.map((r) => r.bytes)].sort((a, b) => a - b)[Math.floor(rows.length / 2)] ?? 0)}`);
 const nodeTotals: Record<string, number> = {};
 for (const r of rows) for (const [k, v] of Object.entries(r.nodeTypes)) nodeTotals[k] = (nodeTotals[k] ?? 0) + v;

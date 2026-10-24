@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildKnowledgeGraph,
+  CALLOUT_MAX_TEXT_HEIGHT,
   graphIndex,
   graphIndexObjectKey,
   graphLinesFromTextract,
@@ -14,8 +15,12 @@ import {
   isKnowledgeGraph,
   normaliseDetailNumber,
   normaliseSheetNumber,
+  isCalloutDetailNumber,
+  isCalloutSheetNumber,
   pageInputFromStored,
   parseDetailSlash,
+  REVISION_SAME_NUMBER_MAX_PAGES,
+  scheduleFamily,
   sheetNeighbourhood,
   storedGraphSummary,
   summarizeGraph,
@@ -49,6 +54,12 @@ describe("sheet numbers", () => {
     expect(parseDetailSlash("3/A-501")).toEqual({ detail: "3", sheet: "A-501" });
     expect(parseDetailSlash("A / A501.01")).toEqual({ detail: "A", sheet: "A501.01" });
     expect(parseDetailSlash("3/A")).toBeNull();
+  });
+  it("callout tokens are matched as printed: no case folding, no zero detail", () => {
+    for (const t of ["1", "12", "A", " 3 "]) expect(isCalloutDetailNumber(t)).toBe(true);
+    for (const t of ["a", "x", "r", "0", "00", "123", "AB", ""]) expect(isCalloutDetailNumber(t)).toBe(false);
+    for (const t of ["A-501", "FA001", "FP-107.00", "E 300"]) expect(isCalloutSheetNumber(t)).toBe(true);
+    for (const t of ["eoe2", "fa001", "F2x", "SEE"]) expect(isCalloutSheetNumber(t)).toBe(false);
   });
 });
 
@@ -144,9 +155,25 @@ describe("buildKnowledgeGraph — stacked callouts (\"3 over A-501\")", () => {
     expect(e[0].provenance[0]).toMatchObject({ extractor: "stacked-callout", page: 1 });
     expect(g.nodes.find((n) => n.id === "detail:2:3")).toMatchObject({ origin: "stacked-title" });
   });
+  it("rejects what the corpus QA queue was full of: lowercase letters, \"00\", lowercase sheets, a wide gap, title-sized text", () => {
+    const build = (ws: GraphPageInput["words"]) => refs(buildKnowledgeGraph({ publicId: "p", pages: [page(1, "A-100", { words: ws }), page(2, "FA-001"), page(3, "FP-107.00")] }, { now: NOW }).edges);
+    expect(build(words("a", "FA001"))).toHaveLength(0); // "a / FA001" resolved on set 82 before the fix
+    expect(build(words("r", "FA001"))).toHaveLength(0);
+    expect(build(words("00", "FP-107.00"))).toHaveLength(0); // detail "0" is not a detail
+    expect(build(words("x", "eoe2"))).toHaveLength(0);
+    expect(build(words("3", "FA001"))).toHaveLength(1); // the printed form still reads
+    // the same pair with the sheet number 1.2 text-heights below: not a bubble
+    expect(build([{ text: "3", bbox: bbox(0.5, 0.5, 0.01, 0.01) }, { text: "FA001", bbox: bbox(0.49, 0.522, 0.03, 0.01) }])).toHaveLength(0);
+    // title-sized text is a drawing title, not a bubble
+    const tall = CALLOUT_MAX_TEXT_HEIGHT * 1.5;
+    expect(build([{ text: "3", bbox: bbox(0.5, 0.5, 0.03, tall) }, { text: "FA001", bbox: bbox(0.49, 0.5 + tall + 0.005, 0.06, tall) }])).toHaveLength(0);
+    // heights that differ by more than 2x are two different things that happen to line up
+    expect(build([{ text: "3", bbox: bbox(0.5, 0.5, 0.01, 0.004) }, { text: "FA001", bbox: bbox(0.49, 0.505, 0.03, 0.012) }])).toHaveLength(0);
+  });
   it("graphWordsFromTextract keeps only the two token shapes; graphLinesFromTextract only title-shaped lines", () => {
     expect(graphWordsFromTextract([{ text: "3", bbox: bbox(0, 0) }, { text: "A-501", bbox: bbox(0, 0) }, { text: "WALL", bbox: bbox(0, 0) }])).toHaveLength(2);
     expect(graphWordsFromTextract([{ text: "WALL", bbox: bbox(0, 0) }])).toBeNull();
+    expect(graphWordsFromTextract([{ text: "a", bbox: bbox(0, 0) }, { text: "eoe2", bbox: bbox(0, 0) }, { text: "00", bbox: bbox(0, 0) }])).toBeNull();
     expect(graphLinesFromTextract([{ text: "3 WALL SECTION", bbox: bbox(0, 0) }, { text: "GENERAL NOTES", bbox: bbox(0, 0) }])).toHaveLength(1);
   });
 });
@@ -227,6 +254,117 @@ describe("buildKnowledgeGraph — tables, tags, keynotes, CSI, revisions, famili
       page(2, "A-101"), page(3, "A-101", { hidden: true, duplicateOf: 2 }),
     ] }, { now: NOW });
     expect(refs(g.edges)[0]).toMatchObject({ status: "resolved", to: "sheet:2", candidates: ["sheet:2", "sheet:3"] });
+  });
+});
+
+describe("fix round — resolution, revisions, schedule families, shapes", () => {
+  const ref = (target: string, text = `SEE SHEET ${target}`) => ({ sourceText: text, targetDrawing: target, refType: "sheet", bbox: bbox(0, 0), confidence: 0.8 });
+
+  it("a number carried by two VISIBLE pages is ambiguous, not a quiet link to the last one (set 193: A602 on pages 10 and 15)", () => {
+    const g = buildKnowledgeGraph({ publicId: "p", pages: [
+      page(1, "G-001", { crossRefs: [ref("A-602")] }),
+      page(10, "A602"), page(15, "A602"),
+    ] }, { now: NOW });
+    const [e] = refs(g.edges);
+    expect(e).toMatchObject({ status: "ambiguous", to: null, candidates: ["sheet:10", "sheet:15"] });
+    expect(summarizeGraph(g, 0).references).toMatchObject({ total: 1, resolved: 0, ambiguous: 1, self: 0 });
+    expect(graphIndex(g).unresolved).toEqual([expect.objectContaining({ fromPage: 1, status: "ambiguous", candidates: [10, 15] })]);
+  });
+
+  it("the source page among several candidates is a self reference, not a link to the other copy", () => {
+    const g = buildKnowledgeGraph({ publicId: "p", pages: [
+      page(10, "A602", { crossRefs: [ref("A602")] }), page(15, "A602"),
+    ] }, { now: NOW });
+    const [e] = refs(g.edges);
+    expect(e).toMatchObject({ status: "resolved", self: true, to: "sheet:10", candidates: ["sheet:10", "sheet:15"] });
+  });
+
+  it("self references are counted apart from cross-sheet resolution and never listed under Refers to", () => {
+    const g = buildKnowledgeGraph({ publicId: "p", pages: [
+      page(1, "A-100", { crossRefs: [ref("A-100"), ref("E-300")], textAnnotations: [{ type: "detail-ref", text: "5/A-100", bbox: bbox(0.5, 0.5), confidence: 88, meta: { detail: "5", sheet: "A-100" } }] }),
+      page(2, "E-300"),
+    ] }, { now: NOW });
+    const s = summarizeGraph(g, 0);
+    expect(s.references).toEqual({ total: 3, resolved: 1, unresolved: 0, ambiguous: 0, self: 2, detailFound: 0, detailMissing: 0 });
+    expect(s.sheets[0]).toMatchObject({ page: 1, out: 1, in: 0 });
+    const idx = graphIndex(g);
+    expect(idx.pages[1].refersTo.map((l) => l.sheet)).toEqual(["E-300"]);
+    expect(idx.pages[1].referencedBy).toEqual([]);
+    expect(idx.unresolved).toEqual([]);
+    // the edges themselves are kept (a self detail callout still defines its detail node)
+    expect(refs(g.edges).filter((e) => e.self)).toHaveLength(2);
+    expect(g.nodes.find((n) => n.id === "detail:1:5")).toBeTruthy();
+  });
+
+  it("same-number revision links stop at a small revision set; a misread on many pages gets none (set 82: Q143 × 49)", () => {
+    const rev = (n: number) => buildKnowledgeGraph({ publicId: "p", pages: Array.from({ length: n }, (_, i) => page(i + 1, "Q143")) }, { now: NOW }).edges.filter((e) => e.type === "revision_of");
+    expect(rev(2)).toHaveLength(1);
+    expect(rev(REVISION_SAME_NUMBER_MAX_PAGES)).toHaveLength(REVISION_SAME_NUMBER_MAX_PAGES - 1);
+    expect(rev(REVISION_SAME_NUMBER_MAX_PAGES + 1)).toHaveLength(0);
+    expect(rev(49)).toHaveLength(0);
+    // the admin duplicate mark is independent of the cap
+    const g = buildKnowledgeGraph({ publicId: "p", pages: [...Array.from({ length: 5 }, (_, i) => page(i + 1, "Q143")), page(6, "Q143", { duplicateOf: 1, hidden: true })] }, { now: NOW });
+    expect(g.edges.filter((e) => e.type === "revision_of")).toEqual([expect.objectContaining({ from: "sheet:6", to: "sheet:1", basis: "duplicate-mark" })]);
+  });
+
+  it("tags schedule only into tables of their own family: a door tag \"1\" ignores keynote row 1 and finish row 1", () => {
+    expect(scheduleFamily("door-schedule")).toBe("opening");
+    expect(scheduleFamily("window-schedule")).toBe("opening");
+    expect(scheduleFamily("equipment-schedule")).toBe("equipment");
+    expect(scheduleFamily("plumbing-schedule")).toBe("equipment");
+    expect(scheduleFamily("keynote-table")).toBe("keynote");
+    expect(scheduleFamily("schedule", true)).toBe("keynote");
+    expect(scheduleFamily("finish-schedule")).toBe("other");
+    expect(scheduleFamily("material-schedule")).toBe("other");
+    const table = (id: string, category: string, csi: string, rows: Array<Record<string, string>>, col = "MARK") => ({
+      id, type: "schedule", category, bbox: bbox(0.1, 0.1, 0.5, 0.3), csiTags: [{ code: csi, division: csi.slice(0, 2) }], data: { headers: Object.keys(rows[0]), rows, tagColumn: col },
+    });
+    const g = buildKnowledgeGraph({ publicId: "p", pages: [
+      page(1, "A-600", { parsedRegions: [
+        table("doors", "door-schedule", "08 11 13", [{ MARK: "1", TYPE: "HM" }]),
+        table("finish", "finish-schedule", "09 65 00", [{ MARK: "1", FLOOR: "VCT" }]),
+        table("equip", "equipment-schedule", "23 34 00", [{ MARK: "1", ITEM: "FAN" }, { MARK: "EF-1", ITEM: "FAN" }]),
+        { id: "kn", type: "keynote-table", category: "keynote-table", bbox: bbox(0.6, 0.1, 0.3, 0.3), data: { keynotes: [{ key: "1", description: "Patch" }] } },
+      ] }),
+      page(2, "A-101", {
+        textAnnotations: [{ type: "door-window-tag", text: "1", bbox: bbox(0.3, 0.3), confidence: 80 }, { type: "equipment-tag", text: "EF-1", bbox: bbox(0.7, 0.7), confidence: 80 }],
+        keynotes: [{ shape: "hexagon", text: "1", bbox: [0.4, 0.4, 0.42, 0.42] }],
+      }),
+    ] }, { now: NOW });
+    const to = (from: string) => g.edges.filter((e) => e.type === "scheduled_as" && e.from === from).map((e) => e.to).sort();
+    expect(to("tag:2:1")).toEqual(["table:1:pr:doors:row:0"]);
+    expect(to("tag:2:EF-1")).toEqual(["table:1:pr:equip:row:1"]);
+    expect(to("keynote:2:1")).toEqual(["table:1:pr:kn:row:0"]);
+    const propagated = g.edges.filter((e): e is HasCsiEdge => e.type === "has_csi" && e.from === "tag:2:1").map((e) => e.to);
+    expect(propagated).toEqual(["csi:08 11 13"]); // not 09 65 00, not 23 34 00
+  });
+
+  it("pageInputFromStored drops malformed member-edited entries instead of throwing", () => {
+    const input = pageInputFromStored({
+      pageNumber: 1, drawingNumber: "A-1",
+      pageIntelligence: {
+        crossRefs: [{ sourceText: "ok", targetDrawing: "A-2", refType: "sheet", bbox: "not-an-array" }, { targetDrawing: 42 }, null, "x"],
+        regionsV2: { regions: [{ id: "r1", kind: "table", className: "door schedule", bbox: [0, 0, 1, 1], nameScore: 0.8 }, { id: "r2", kind: "table", bbox: { l: 0 } }] },
+        parsedRegions: [{ id: "p1", bbox: [0, 0, 1], data: "rows" }, 7],
+        classifiedTables: [{ category: "door-schedule", bbox: [0, 0, 1, 1] }, { category: 3, bbox: [0, 0, 1, 1] }],
+        duplicateOf: { pageNumber: "2" },
+        classification: { discipline: ["A"] },
+      },
+      textAnnotations: { annotations: [{ type: "sheet-ref", text: "SEE A-2", bbox: [0, 0, 0.1, 0.1] }, { type: "sheet-ref", text: 5, bbox: [0, 0, 0.1, 0.1] }, { type: "equipment-tag", text: "EF-1" }] },
+      csiCodes: [{ code: "08 11 13", triggers: [{ text: "x", bbox: "bad" }] }, { description: "no code" }],
+      keynotes: [{ text: "K1", bbox: [0, 0, 1] }, { shape: "hexagon" }],
+    });
+    expect(input.crossRefs).toEqual([{ sourceText: "ok", targetDrawing: "A-2", refType: "sheet" }]);
+    expect(input.regionsV2?.regions.map((r) => r.id)).toEqual(["r1"]);
+    expect(input.parsedRegions).toEqual([{ id: "p1", data: null }]);
+    expect(input.classifiedTables).toHaveLength(1);
+    expect(input.duplicateOf).toBeNull();
+    expect(input.classification).toEqual({});
+    expect(input.textAnnotations).toHaveLength(1);
+    expect(input.csiCodes).toEqual([{ code: "08 11 13", triggers: [{ text: "x" }] }]);
+    expect(input.keynotes).toEqual([{ text: "K1" }]);
+    // and the builder takes it without throwing
+    expect(() => buildKnowledgeGraph({ publicId: "p", pages: [input, page(2, "A-2")] }, { now: NOW })).not.toThrow();
   });
 });
 

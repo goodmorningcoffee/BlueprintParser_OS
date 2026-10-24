@@ -5,7 +5,11 @@
 //   • sheet refs   pageIntelligence.crossRefs + textAnnotations sheet-ref / detail-ref + the stacked
 //                  "N over SHEET" callout read from Textract words → `references` edges, resolved to
 //                  the sheet node by normalised sheet number; unresolved / ambiguous ones stay as
-//                  edges with `to: null` (the QA queue), never dropped.
+//                  edges with `to: null` (the QA queue), never dropped. A number that several
+//                  VISIBLE pages carry is ambiguous (fix round: 162 of 512 "resolved" edges had more
+//                  than one candidate and went to an arbitrary page) unless the source page is one of
+//                  them, which is a self reference. Self references keep the edge but are counted
+//                  apart from cross-sheet resolution (summary.ts).
 //   • details      "N  TITLE" lines and stacked bubbles naming the sheet itself → detail nodes
 //                  (`defined_in` the sheet); a resolved detail ref whose detail has no title still
 //                  gets a node (origin "reference-target") so the edge has somewhere to point.
@@ -13,17 +17,25 @@
 //                  `inside` the sheet; schedule rows → table_row nodes; keynote legends → rows keyed
 //                  by the keynote key.
 //   • tags         door-window-tag / equipment-tag annotations → tag nodes `inside` the sheet,
-//                  `scheduled_as` the table_row whose tag column reads the same text (project-wide).
+//                  `scheduled_as` the table_row whose tag column reads the same text, in a schedule
+//                  of the SAME FAMILY (door tag ↔ door/window schedule, equipment tag ↔ equipment
+//                  schedule, keynote ↔ keynote legend) — project-wide within that family.
 //   • keynotes     shape-parse keynotes → keynote_code nodes `inside` the sheet, `scheduled_as` the
 //                  matching keynote-legend row.
 //   • CSI          pages.csi_codes → sheet `has_csi` {span}; parsedRegion csiTags → table has_csi
 //                  {span}; a tag scheduled in a table with CSI → tag has_csi {propagated, low trust}.
-//   • revisions    same sheet number on two pages, admin duplicate marks → `revision_of`.
+//   • revisions    same sheet number on 2–3 pages, admin duplicate marks → `revision_of`. A number
+//                  on more pages than that is a title-block misread (49 pages read "Q143" on one
+//                  set) and gets no same-number links.
 //   • tag families supplied through the typed hook (another track builds them) → tag_family + is_a.
+//
+// Input shape: everything that members can edit (crossRefs, parsedRegions, regionsV2, annotations)
+// is shape-checked in pageInputFromStored, so one malformed entry drops that entry, not the graph.
 
 import type { BboxLTWH } from "@/types";
 import {
-  isDetailNumberLike,
+  isCalloutDetailNumber,
+  isCalloutSheetNumber,
   isSheetNumberLike,
   normaliseDetailNumber,
   normaliseSheetNumber,
@@ -57,6 +69,13 @@ export const PROVENANCE_CAP = 6;
 export const TEXT_CAP = 80;
 export const ROWS_PER_TABLE_CAP = 500;
 export const TAG_TYPES: ReadonlySet<string> = new Set(["door-window-tag", "equipment-tag"]);
+/** Same sheet number on more pages than this is a misread, not a revision set. */
+export const REVISION_SAME_NUMBER_MAX_PAGES = 3;
+/** Stacked callout geometry: the sheet number sits at most this many text-heights below the number … */
+export const CALLOUT_MAX_GAP = 0.8;
+/** … both tokens are bubble text (normalised height), and their heights are within this ratio. */
+export const CALLOUT_MAX_TEXT_HEIGHT = 0.04;
+export const CALLOUT_MAX_HEIGHT_RATIO = 2;
 
 /** Numbered general notes start like this; a detail title does not. */
 const NOTE_STARTERS = new Set([
@@ -87,6 +106,18 @@ const sheetId = (page: number) => `sheet:${page}`;
 const detailId = (page: number, number: string) => `detail:${page}:${number}`;
 const csiId = (code: string) => `csi:${code}`;
 const tagKey = (text: string) => text.trim().toUpperCase().replace(/\s+/g, " ");
+
+/** Which kind of tag a schedule's rows answer to. "other" rows are indexed but never matched. */
+export type ScheduleFamily = "opening" | "equipment" | "keynote" | "other";
+export function scheduleFamily(category: string, hasKeynotes = false): ScheduleFamily {
+  const c = category.toLowerCase();
+  if (hasKeynotes || /keynote|legend|symbol/.test(c)) return "keynote";
+  if (/door|window|opening|glaz|hardware/.test(c)) return "opening";
+  if (/equip|mech|plumb|electr|light|fixture|panel|hvac|fan|pump|unit/.test(c)) return "equipment";
+  return "other";
+}
+const TAG_FAMILY: Record<string, ScheduleFamily> = { "door-window-tag": "opening", "equipment-tag": "equipment" };
+const rowKey = (family: ScheduleFamily, text: string) => `${family}|${tagKey(text)}`;
 
 interface RawRef {
   page: number;
@@ -163,7 +194,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     if (key) byKey.set(key, [...(byKey.get(key) ?? []), node]);
   }
 
-  // ── revision_of: same number on two pages; admin duplicate marks ─────────────────────────────
+  // ── revision_of: same number on 2–3 pages; admin duplicate marks ─────────────────────────────
   const revision = (from: SheetNode, to: SheetNode, basis: RevisionEdge["basis"], confidence: number, p: Provenance) => {
     const id = `revision_of:${from.id}->${to.id}`;
     const existing = g.edges.get(id) as RevisionEdge | undefined;
@@ -171,6 +202,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     g.edges.set(id, { id, type: "revision_of", from: from.id, to: to.id, basis, confidence, provenance: [p] });
   };
   for (const [, list] of byKey) {
+    if (list.length > REVISION_SAME_NUMBER_MAX_PAGES) continue; // a misread number, not a revision set
     for (let i = 1; i < list.length; i++) {
       revision(list[i], list[i - 1], "same-number", 0.6, prov("title-block", list[i].page, undefined, list[i].number ?? undefined));
     }
@@ -181,24 +213,30 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     if (canonical && self && canonical !== self) revision(self, canonical, "duplicate-mark", 0.9, prov("duplicateOf", page.pageNumber));
   }
 
-  // ── sheet lookup (exact → latest visible; prefix fallback A101 → A101.01) ────────────────────
+  // ── sheet lookup ─────────────────────────────────────────────────────────────────────────────
+  // Exact key first, then the prefix fallback (A101 → A101.01). In either pool, hidden pages
+  // yield to visible ones; ONE visible page resolves; several visible pages are ambiguous unless
+  // the source page is among them (a sheet naming its own number = self reference).
   const prefixIndex = new Map<string, SheetNode[]>();
   for (const [key, list] of byKey) {
     const dot = key.indexOf(".");
     if (dot > 0) { const base = key.slice(0, dot); prefixIndex.set(base, [...(prefixIndex.get(base) ?? []), ...list]); }
   }
-  const pickLatest = (list: SheetNode[]): SheetNode => {
+  type Lookup = { status: "resolved" | "ambiguous" | "unresolved"; sheet?: SheetNode; candidates: SheetNode[]; viaPrefix: boolean };
+  const pick = (list: SheetNode[], sourcePage: number, viaPrefix: boolean): Lookup => {
     const visible = list.filter((s) => !s.hidden);
     const pool = visible.length ? visible : list;
-    return pool[pool.length - 1];
+    if (pool.length === 1) return { status: "resolved", sheet: pool[0], candidates: list, viaPrefix };
+    const self = pool.find((s) => s.page === sourcePage);
+    if (self) return { status: "resolved", sheet: self, candidates: list, viaPrefix };
+    return { status: "ambiguous", candidates: list, viaPrefix };
   };
-  type Lookup = { status: "resolved" | "ambiguous" | "unresolved"; sheet?: SheetNode; candidates: SheetNode[]; viaPrefix: boolean };
-  const lookup = (targetKey: string): Lookup => {
+  const lookup = (targetKey: string, sourcePage: number): Lookup => {
     const exact = byKey.get(targetKey);
-    if (exact?.length) return { status: "resolved", sheet: pickLatest(exact), candidates: exact, viaPrefix: false };
+    if (exact?.length) return pick(exact, sourcePage, false);
     const prefixed = prefixIndex.get(targetKey) ?? [];
     const distinct = new Set(prefixed.map((s) => s.key));
-    if (distinct.size === 1) return { status: "resolved", sheet: pickLatest(prefixed), candidates: prefixed, viaPrefix: true };
+    if (distinct.size === 1) return pick(prefixed, sourcePage, true);
     if (distinct.size > 1) return { status: "ambiguous", candidates: prefixed, viaPrefix: true };
     return { status: "unresolved", candidates: [], viaPrefix: false };
   };
@@ -235,10 +273,11 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
       if (!node.label.includes(" ")) node.label = clip(`${number} ${title}`)!;
     }
 
-    // Stacked bubble: a detail number with a sheet number directly below, centres aligned.
+    // Stacked bubble: a printed detail number with a printed sheet number directly below, centres
+    // aligned, both bubble-sized, a bubble-sized gap between them.
     const words = page.words ?? [];
-    const numbers = words.filter((w) => isDetailNumberLike(w.text));
-    const sheetWords = words.filter((w) => isSheetNumberLike(w.text));
+    const numbers = words.filter((w) => isCalloutDetailNumber(w.text) && w.bbox[3] <= CALLOUT_MAX_TEXT_HEIGHT);
+    const sheetWords = words.filter((w) => isCalloutSheetNumber(w.text) && w.bbox[3] <= CALLOUT_MAX_TEXT_HEIGHT);
     if (numbers.length && sheetWords.length) {
       for (const n of numbers) {
         const [nl, nt, nw, nh] = n.bbox;
@@ -247,8 +286,9 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
         for (const s of sheetWords) {
           const [sl, st, sw, sh] = s.bbox;
           const h = Math.max(nh, sh);
+          if (h <= 0 || h > Math.min(nh, sh) * CALLOUT_MAX_HEIGHT_RATIO) continue;
           const gap = st - (nt + nh);
-          if (gap < -0.2 * h || gap > 1.5 * h) continue;
+          if (gap < -0.2 * h || gap > CALLOUT_MAX_GAP * h) continue;
           if (Math.abs(sl + sw / 2 - ncx) > Math.max(nw, sw) * 0.6) continue;
           if (!best || gap < best.gap) best = { w: s, gap };
         }
@@ -313,8 +353,8 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     });
   }
   for (const [id, edge] of merged) {
-    const found = lookup(edge.targetKey);
     const sourcePage = Number(edge.from.slice("sheet:".length));
+    const found = lookup(edge.targetKey, sourcePage);
     edge.seen = edge.extractors.size;
     if (found.status === "resolved" && found.sheet) {
       edge.status = "resolved";
@@ -351,7 +391,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     }
   }
 
-  // ── tables, rows, and the project-wide row index by tag ──────────────────────────────────────
+  // ── tables, rows, and the project-wide row index by (schedule family, tag) ───────────────────
   const rowsByTag = new Map<string, TableRowNode[]>();
   const tableCsi = new Map<string, string[]>();
   const addTable = (page: number, id: string, category: string, bbox: BboxLTWH, confidence: number, p: Provenance, sourceId?: string): TableNode => {
@@ -374,6 +414,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
       }
       const data = (r.data ?? null) as { rows?: unknown[]; tagColumn?: string | number | null; keynotes?: Array<{ key: string; description?: string }> } | null;
       const rows: Array<{ tag?: string; label: string }> = [];
+      const family = scheduleFamily(category, Array.isArray(data?.keynotes));
       if (Array.isArray(data?.rows)) {
         const col = typeof data?.tagColumn === "string" ? data.tagColumn : undefined;
         for (const row of data.rows.slice(0, ROWS_PER_TABLE_CAP)) {
@@ -389,7 +430,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
       rows.forEach((row, rowIndex) => {
         const rowNode = g.node<TableRowNode>({ id: `${id}:row:${rowIndex}`, type: "table_row", page: pn, tableId: id, rowIndex, label: clip(row.label) ?? "", provenance: [prov("parsedRegions", pn)], ...(row.tag ? { tag: row.tag } : {}) });
         g.plain("inside", rowNode.id, id, 0.9, prov("parsedRegions", pn));
-        if (row.tag) rowsByTag.set(tagKey(row.tag), [...(rowsByTag.get(tagKey(row.tag)) ?? []), rowNode]);
+        if (row.tag && family !== "other") rowsByTag.set(rowKey(family, row.tag), [...(rowsByTag.get(rowKey(family, row.tag)) ?? []), rowNode]);
       });
     });
     (page.classifiedTables ?? []).forEach((t, i) => addTable(pn, `table:${pn}:ct:${t.id ?? i}`, t.category, t.bbox, t.confidence ?? 0.5, prov("classifiedTables", pn, t.bbox, t.headerText), t.id));
@@ -401,8 +442,8 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
   }
 
   // ── tags and keynotes on drawings ────────────────────────────────────────────────────────────
-  const schedule = (from: string, text: string, p: Provenance, propagateCsi: boolean) => {
-    for (const row of rowsByTag.get(tagKey(text)) ?? []) {
+  const schedule = (from: string, family: ScheduleFamily, text: string, p: Provenance, propagateCsi: boolean) => {
+    for (const row of rowsByTag.get(rowKey(family, text)) ?? []) {
       g.plain("scheduled_as", from, row.id, 0.6, p);
       if (!propagateCsi) continue;
       for (const code of tableCsi.get(row.tableId) ?? []) g.csi(from, code, "propagated", 0.3, prov("parsedRegions", row.page));
@@ -422,7 +463,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
         node = g.node<TagNode>({ id, type: "tag", page: pn, label: key, text: key, tagType: a.type, count: 1, provenance: [p] });
         tagNodes.set(id, node);
         g.plain("inside", id, sheetId(pn), 0.8, p);
-        schedule(id, key, p, true);
+        schedule(id, TAG_FAMILY[a.type] ?? "other", key, p, true);
       }
       for (const c of a.csiTags ?? []) { if (c.code) { csiNode(c.code, c.description, c.division); g.csi(id, c.code, "span", 0.6, p); } }
     }
@@ -437,7 +478,7 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
       if (existing && existing.type === "keynote_code") { existing.count++; addProv(existing.provenance, p); seen.set(id, existing.count); continue; }
       g.node({ id, type: "keynote_code", page: pn, label: code, code, shape: k.shape, count: 1, provenance: [p] });
       g.plain("inside", id, sheetId(pn), 0.8, p);
-      schedule(id, code, p, false);
+      schedule(id, "keynote", code, p, false);
     }
   }
 
@@ -458,7 +499,19 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
   };
 }
 
-/** Narrow a stored pageIntelligence / row set to the builder's page input. Tolerant of old rows. */
+// ── shape guards over member-editable jsonb ──────────────────────────────────────────────────────
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isStr = (v: unknown): v is string => typeof v === "string";
+const isBbox4 = (v: unknown): v is [number, number, number, number] => Array.isArray(v) && v.length === 4 && v.every(isNum);
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const objs = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter(isObj) : []);
+const codeTags = (v: unknown) => objs(v).filter((t) => isStr(t.code)) as unknown as Array<{ code: string; description?: string; division?: string }>;
+const orNull = <T,>(list: T[]): T[] | null => (list.length ? list : null);
+
+interface StoredAnnotation { type: string; text: string; bbox: BboxLTWH; confidence?: number; meta?: Record<string, unknown>; csiTags?: ReturnType<typeof codeTags> }
+
+/** Narrow a stored pageIntelligence / row set to the builder's page input. Tolerant of old rows and
+ *  of malformed member edits: an entry with the wrong shape is dropped, never thrown on. */
 export function pageInputFromStored(row: {
   pageNumber: number;
   name?: string | null;
@@ -470,38 +523,69 @@ export function pageInputFromStored(row: {
   lines?: GraphPageInput["lines"];
   words?: GraphPageInput["words"];
 }): GraphPageInput {
-  const pi = (row.pageIntelligence && typeof row.pageIntelligence === "object" ? row.pageIntelligence : {}) as Record<string, unknown>;
-  const dup = pi.duplicateOf as { pageNumber?: number; hiddenAt?: string } | undefined;
-  const ta = row.textAnnotations as { annotations?: GraphPageInput["textAnnotations"] } | null | undefined;
-  const arr = <T,>(v: unknown): T[] | null => (Array.isArray(v) ? (v as T[]) : null);
+  const pi = isObj(row.pageIntelligence) ? row.pageIntelligence : {};
+  const dup = isObj(pi.duplicateOf) ? pi.duplicateOf : undefined;
+  const cls = isObj(pi.classification) ? pi.classification : undefined;
+  const annotations = isObj(row.textAnnotations) ? row.textAnnotations.annotations : undefined;
+  const v2 = isObj(pi.regionsV2) ? pi.regionsV2 : undefined;
+  const textAnnotations: StoredAnnotation[] = objs(annotations)
+    .filter((a) => isStr(a.type) && (a.type === "sheet-ref" || a.type === "detail-ref" || TAG_TYPES.has(a.type)) && isStr(a.text) && isBbox4(a.bbox))
+    .map((a) => ({
+      type: a.type as string, text: a.text as string, bbox: a.bbox as BboxLTWH,
+      ...(isNum(a.confidence) ? { confidence: a.confidence } : {}), ...(isObj(a.meta) ? { meta: a.meta } : {}),
+      ...(Array.isArray(a.csiTags) ? { csiTags: codeTags(a.csiTags) } : {}),
+    }));
   return {
     pageNumber: row.pageNumber,
     name: row.name ?? null,
     drawingNumber: row.drawingNumber,
     hidden: Boolean(dup?.hiddenAt),
-    duplicateOf: typeof dup?.pageNumber === "number" ? dup.pageNumber : null,
-    classification: (pi.classification as GraphPageInput["classification"]) ?? null,
-    crossRefs: arr(pi.crossRefs),
-    textAnnotations: (ta?.annotations ?? null)?.filter((a) => a.type === "sheet-ref" || a.type === "detail-ref" || TAG_TYPES.has(a.type)) ?? null,
-    csiCodes: arr(row.csiCodes),
-    classifiedTables: arr(pi.classifiedTables),
-    regionsV2: (pi.regionsV2 as GraphPageInput["regionsV2"]) ?? null,
-    parsedRegions: arr(pi.parsedRegions),
-    keynotes: arr(row.keynotes),
+    duplicateOf: isNum(dup?.pageNumber) ? dup.pageNumber : null,
+    classification: cls
+      ? { ...(isStr(cls.discipline) ? { discipline: cls.discipline } : {}), ...(isStr(cls.disciplinePrefix) ? { disciplinePrefix: cls.disciplinePrefix } : {}), ...(isStr(cls.subType) ? { subType: cls.subType } : {}) }
+      : null,
+    crossRefs: orNull(objs(pi.crossRefs).filter((r) => isStr(r.targetDrawing)).map((r) => ({
+      sourceText: isStr(r.sourceText) ? r.sourceText : "", targetDrawing: r.targetDrawing as string, refType: isStr(r.refType) ? r.refType : "sheet",
+      ...(isStr(r.detail) ? { detail: r.detail } : {}), ...(isBbox4(r.bbox) ? { bbox: r.bbox } : {}), ...(isNum(r.confidence) ? { confidence: r.confidence } : {}),
+    }))),
+    textAnnotations: orNull(textAnnotations),
+    csiCodes: orNull(objs(row.csiCodes).filter((c) => isStr(c.code)).map((c) => ({
+      code: c.code as string, ...(isStr(c.description) ? { description: c.description } : {}), ...(isStr(c.division) ? { division: c.division } : {}),
+      ...(isNum(c.confidence) ? { confidence: c.confidence } : {}),
+      ...(Array.isArray(c.triggers) ? { triggers: objs(c.triggers).map((t) => ({ ...(isStr(t.text) ? { text: t.text } : {}), ...(isBbox4(t.bbox) ? { bbox: t.bbox } : {}) })) } : {}),
+    }))),
+    classifiedTables: orNull(objs(pi.classifiedTables).filter((t) => isStr(t.category) && isBbox4(t.bbox)).map((t) => ({
+      ...(isStr(t.id) ? { id: t.id } : {}), category: t.category as string, bbox: t.bbox as BboxLTWH,
+      ...(isNum(t.confidence) ? { confidence: t.confidence } : {}), ...(isStr(t.headerText) ? { headerText: t.headerText } : {}),
+    }))),
+    regionsV2: v2 && Array.isArray(v2.regions)
+      ? { regions: objs(v2.regions).filter((r) => isStr(r.id) && isStr(r.kind) && isBbox4(r.bbox)).map((r) => ({
+          id: r.id as string, kind: r.kind as string, className: isStr(r.className) ? r.className : "UNCLASSIFIED",
+          bbox: r.bbox as [number, number, number, number], nameScore: isNum(r.nameScore) ? r.nameScore : 0.5,
+        })) }
+      : null,
+    parsedRegions: orNull(objs(pi.parsedRegions).map((r) => ({
+      ...(isStr(r.id) ? { id: r.id } : {}), ...(isStr(r.type) ? { type: r.type } : {}), ...(isStr(r.category) ? { category: r.category } : {}),
+      ...(isBbox4(r.bbox) ? { bbox: r.bbox } : {}), ...(Array.isArray(r.csiTags) ? { csiTags: codeTags(r.csiTags) } : {}),
+      data: isObj(r.data) ? (r.data as NonNullable<GraphPageInput["parsedRegions"]>[number]["data"]) : null,
+    }))),
+    keynotes: orNull(objs(row.keynotes).filter((k) => isStr(k.text)).map((k) => ({
+      text: k.text as string, ...(isStr(k.shape) ? { shape: k.shape } : {}), ...(isBbox4(k.bbox) ? { bbox: k.bbox } : {}),
+    }))),
     lines: row.lines ?? null,
     words: row.words ?? null,
   };
 }
 
-/** The Textract words the builder reads: detail-number and sheet-number shaped only. */
+/** The Textract words the builder reads: callout-shaped detail numbers and sheet numbers only. */
 export function graphWordsFromTextract(words: Array<{ text: string; bbox: BboxLTWH; confidence?: number }> | null | undefined): GraphPageInput["words"] {
   if (!words?.length) return null;
-  const out = words.filter((w) => isDetailNumberLike(w.text) || isSheetNumberLike(w.text)).map((w) => ({ text: w.text, bbox: w.bbox }));
+  const out = words.filter((w) => isStr(w.text) && isBbox4(w.bbox) && (isCalloutDetailNumber(w.text) || isCalloutSheetNumber(w.text))).map((w) => ({ text: w.text, bbox: w.bbox }));
   return out.length ? out : null;
 }
 
 export function graphLinesFromTextract(lines: Array<{ text: string; bbox: BboxLTWH }> | null | undefined): GraphPageInput["lines"] {
   if (!lines?.length) return null;
-  const out = lines.filter((l) => RE_DETAIL_TITLE.test(l.text.trim().toUpperCase())).map((l) => ({ text: l.text, bbox: l.bbox }));
+  const out = lines.filter((l) => isStr(l.text) && isBbox4(l.bbox) && RE_DETAIL_TITLE.test(l.text.trim().toUpperCase())).map((l) => ({ text: l.text, bbox: l.bbox }));
   return out.length ? out : null;
 }

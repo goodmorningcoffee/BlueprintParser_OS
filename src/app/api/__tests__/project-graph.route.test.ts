@@ -3,7 +3,7 @@
 // replaced by an in-memory map: POST /api/admin/reprocess?scope=graph writes the graph + index under
 // keys DERIVED from projects.data_url and ONLY the `knowledgeGraph` key into project_intelligence
 // (user keys byte-identical); GET /api/projects/[id]/graph serves the index to a member, 404s a
-// stranger, and reports built:false for a project with no graph.
+// stranger, reports built:false for a project with no graph, and keeps view=full for admins.
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -78,8 +78,11 @@ describe.skipIf(!dbUp)("knowledge graph: scope=graph + GET /api/projects/[id]/gr
     const pageView = (await readJson(await get(project.publicId, "?view=page&page=2"))).body;
     expect(pageView).toMatchObject({ built: true, page: 2 });
     expect(pageView.referencedBy).toHaveLength(1);
-    expect(pageView.neighbourhood.nodes.map((n: any) => n.id).sort()).toEqual(["detail:2:3", `project:${project.publicId}`, "sheet:1", "sheet:2"]);
+    expect(pageView.neighbourhood).toBeUndefined(); // served from the index: no full-graph read per request
 
+    // the full graph (13.5 MB on the largest measured set) is admin / root only
+    expect((await get(project.publicId, "?view=full")).status).toBe(403);
+    asUser(admin);
     const full = (await readJson(await get(project.publicId, "?view=full"))).body;
     expect(full.graph.edges.filter((e: any) => e.type === "references")).toHaveLength(2);
 

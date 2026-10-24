@@ -2,11 +2,16 @@
 export * from "./types";
 export {
   buildKnowledgeGraph,
+  CALLOUT_MAX_GAP,
+  CALLOUT_MAX_TEXT_HEIGHT,
   graphLinesFromTextract,
   graphWordsFromTextract,
   pageInputFromStored,
   PROVENANCE_CAP,
+  REVISION_SAME_NUMBER_MAX_PAGES,
   ROWS_PER_TABLE_CAP,
+  scheduleFamily,
+  type ScheduleFamily,
   TAG_TYPES,
   TEXT_CAP,
 } from "./build";
@@ -27,6 +32,8 @@ export {
   type UnresolvedReference,
 } from "./summary";
 export {
+  isCalloutDetailNumber,
+  isCalloutSheetNumber,
   isDetailNumberLike,
   isSheetNumberLike,
   normaliseDetailNumber,

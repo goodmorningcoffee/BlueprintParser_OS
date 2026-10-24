@@ -32,7 +32,6 @@ import {
   isKnowledgeGraph,
   KNOWLEDGE_GRAPH_INTELLIGENCE_KEY,
   pageInputFromStored,
-  sheetNeighbourhood,
   storedGraphSummary,
   summarizeGraph,
   type GraphIndex,
@@ -41,7 +40,7 @@ import {
   type KnowledgeGraph,
   type TagFamilyInput,
 } from "@/lib/knowledge-graph";
-import type { ProjectAccessRow } from "@/lib/api-utils";
+import type { AuthSession, ProjectAccessRow } from "@/lib/api-utils";
 import type { BboxLTWH } from "@/types";
 import { ApiError } from "@/server/api/envelope";
 import { type ProjectWriteCapability, withProjectWrite } from "@/server/api/project-write-capability";
@@ -204,18 +203,23 @@ export interface GraphQuery {
   page?: number;
 }
 
+const isAdminSession = (session: AuthSession | null): boolean =>
+  Boolean(session?.user && (session.user.role === "admin" || session.user.isRootAdmin));
+
 /**
  * GET /api/projects/[id]/graph — read-only (auth:{project}).
  *   default / view=index  the reference index + the stored summary (one fetch per project open)
- *   view=page&page=N      one page's refers-to / referenced-by + its neighbourhood in the full graph
- *   view=full             the whole graph (large; admin tooling and exports)
+ *   view=page&page=N      one page's refers-to / referenced-by, read from the index (no full-graph load)
+ *   view=full             the whole graph (13.5 MB on the largest measured set) — company admin or
+ *                         root only, so a member cannot make the server parse it on every call
  * `built:false` when the project has no graph yet (uploaded before this track, or not reprocessed).
  */
-export async function getProjectGraph(project: ProjectAccessRow, query: GraphQuery, deps: ProjectGraphDeps = dbDeps): Promise<unknown> {
+export async function getProjectGraph(project: ProjectAccessRow, query: GraphQuery, session: AuthSession | null, deps: ProjectGraphDeps = dbDeps): Promise<unknown> {
   if (!project.dataUrl) return { built: false, reason: "no-data-url" };
   const [row] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id)).limit(1);
   const summary = storedGraphSummary(row?.pi);
   if (query.view === "full") {
+    if (!isAdminSession(session)) throw new ApiError("FORBIDDEN", "view=full is for company admins");
     const graph = await readProjectGraph(project.dataUrl, deps);
     return graph ? { built: true, summary, graph } : { built: false };
   }
@@ -224,9 +228,7 @@ export async function getProjectGraph(project: ProjectAccessRow, query: GraphQue
   if (query.view === "page") {
     if (typeof query.page !== "number") throw new ApiError("VALIDATION", "page is required for view=page");
     const entry = index.pages[query.page] ?? { refersTo: [], referencedBy: [] };
-    const graph = await readProjectGraph(project.dataUrl, deps);
-    const neighbourhood = graph ? sheetNeighbourhood(graph, query.page) : null;
-    return { built: true, computedAt: index.computedAt, page: query.page, ...entry, neighbourhood };
+    return { built: true, computedAt: index.computedAt, page: query.page, ...entry };
   }
   return { built: true, summary, index };
 }

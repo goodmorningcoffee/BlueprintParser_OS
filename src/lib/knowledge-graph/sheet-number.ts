@@ -50,3 +50,20 @@ export function parseDetailSlash(text: string): { detail: string; sheet: string 
   const detail = normaliseDetailNumber(match[1]);
   return detail ? { detail, sheet: match[2] } : null;
 }
+
+// ── stacked-callout token shapes (fix round, finding 3) ──────────────────────────────────────────
+// The bubble reader used the case-folding predicates above, so "a", "x", "r" and "00" passed as
+// detail numbers and "eoe2" as a sheet number; 268 of 371 unresolved references came from it. A
+// printed callout is upper-case as written and its detail number is 1–99 or one capital letter.
+const RE_CALLOUT_DETAIL = /^([1-9]\d?|[A-Z])$/;
+const RE_CALLOUT_SHEET = /^[A-Z]{1,3}[\s\-_]?\d{1,4}(?:\.\d{1,2})?$/;
+
+/** A detail number as PRINTED in a callout bubble: "1"–"99" or one upper-case letter (no case folding, no "0"). */
+export function isCalloutDetailNumber(text: string): boolean {
+  return RE_CALLOUT_DETAIL.test(text.trim());
+}
+
+/** A sheet number as PRINTED under a callout bubble: upper-case letters as written ("eoe2" fails). */
+export function isCalloutSheetNumber(text: string): boolean {
+  return RE_CALLOUT_SHEET.test(text.trim());
+}

@@ -41,8 +41,11 @@ export interface GraphSummary {
   bytes: number;
   nodes: Record<string, number>;
   edges: Record<string, number>;
+  /** total = resolved + unresolved + ambiguous + self. `resolved` is CROSS-SHEET only: a page naming
+   *  its own sheet number is counted under `self` (fix round: 67 of 512 were self and inflated the
+   *  rate from 50.4% to 58.0%). detailFound / detailMissing cover cross-sheet resolved detail refs. */
   references: { total: number; resolved: number; unresolved: number; ambiguous: number; self: number; detailFound: number; detailMissing: number };
-  /** Per-sheet degree over `references` edges (out = refs from the page, in = resolved refs to it). */
+  /** Per-sheet degree over cross-sheet `references` edges (out = refs from the page, in = resolved refs to it). */
   sheets: Array<{ page: number; number: string | null; out: number; in: number; unresolved: number }>;
   /** Most-cited unresolved targets, for the QA queue header. */
   unresolvedTop: Array<{ target: string; count: number }>;
@@ -61,8 +64,8 @@ export function summarizeGraph(graph: KnowledgeGraph, bytes: number): GraphSumma
   for (const e of graph.edges) {
     if (e.type !== "references") continue;
     refs.total++;
+    if (e.self) { refs.self++; continue; }
     refs[e.status]++;
-    if (e.self) refs.self++;
     if (e.kind === "detail" && e.status === "resolved") refs[e.detailFound ? "detailFound" : "detailMissing"]++;
     const from = sheets.get(e.from);
     if (from) { from.out++; if (e.status !== "resolved") from.unresolved++; }
@@ -138,7 +141,7 @@ export function graphIndex(graph: KnowledgeGraph): GraphIndex {
   const pageOf = (id: string) => Number(id.slice("sheet:".length));
   for (const n of graph.nodes) if (n.type === "sheet") entry(n.page);
   for (const e of graph.edges) {
-    if (e.type !== "references") continue;
+    if (e.type !== "references" || e.self) continue; // self references are not links between pages
     const fromPage = pageOf(e.from);
     const fromSheet = (nodeById.get(e.from) as SheetNode | undefined)?.number ?? null;
     const targetId = targetSheetId(e, nodeById);
