@@ -64,6 +64,7 @@ import { reprocessEvidenceScope } from "./reprocess-evidence";
 import { computePageShapes } from "./yolo-post-enrichment";
 import { writeProjectTagFamilies } from "./tag-families-write";
 import { reprocessGraphScope } from "./reprocess-graph";
+import { reprocessCrossSetScope } from "./reprocess-cross-set";
 import { refreshProjectGraph } from "./project-graph";
 import { reprocessTilesScope } from "./reprocess-tiles";
 import { reprocessChannelsScope } from "./reprocess-channels";
@@ -467,6 +468,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       if (scope === "graph") {
         // [graph T8 2026-10-24] knowledge graph only — loop + per-project guard live in reprocess-graph.ts.
         send({ type: "done", ...(await reprocessGraphScope({ projects: allProjects, withLease: withReprocessLease, stream: out })) });
+        out.close();
+        return;
+      }
+
+      if (scope === "cross-set") {
+        // [cross-set F3 2026-10-24] company-wide cross-set links — compute + per-project guard live in reprocess-cross-set.ts.
+        send({ type: "done", ...(await reprocessCrossSetScope({ companyId: session.user.companyId, projects: allProjects, withLease: withReprocessLease, stream: out })) });
         out.close();
         return;
       }

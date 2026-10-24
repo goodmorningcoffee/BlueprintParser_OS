@@ -836,6 +836,8 @@ export interface ProjectIntelligence {
   yoloTags?: YoloTag[];
   /** [tag-mapping v2] shape+text families (src/lib/shape-ensemble/families.ts), written by yolo/load. */
   tagFamilies?: import("@/lib/shape-ensemble").TagFamiliesSummary;
+  /** [cross-set F3 2026-10-24] cross-set link summary: publicIds + counts only (links live in S3, lib/knowledge-graph/cross-set.ts). */
+  crossSetLinks?: import("@/lib/knowledge-graph/cross-set").CrossSetSummary;
 }
 
 // ─── Project Summaries (chunking support) ────────────────────

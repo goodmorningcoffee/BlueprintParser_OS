@@ -53,7 +53,7 @@ import {
   takeoffItems,
   takeoffGroups,
 } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { processProject } from "@/lib/processing";
 import { headS3Object } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
@@ -63,6 +63,7 @@ import { deleteProjectFully } from "@/lib/project-delete";
 import { visiblePageCount, visiblePageCountsByProject } from "@/server/services/project-page-counts";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { publicProjectIntelligence } from "@/lib/knowledge-graph";
 import { ApiError, notFound } from "@/server/api/envelope";
 import {
   isCanonicalProjectPath,
@@ -314,7 +315,8 @@ export async function getDemoProject(idParam: string): Promise<Response> {
     numPages: project.numPages,
     status: project.status,
     summaries,
-    projectIntelligence: pi || null,
+    // [cross-set F3 2026-10-24] never the private sets' publicIds (written while the row was private)
+    projectIntelligence: pi ? publicProjectIntelligence(pi) : null,
     demoConfig,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
@@ -400,15 +402,14 @@ export async function updateProject(
   if (body.name !== undefined) updates.name = body.name;
   if (body.address !== undefined) updates.address = body.address;
 
-  // Merge into projectIntelligence (preserving existing data)
+  // Merge into projectIntelligence in SQL (`||` of the two keys), so a key another writer merged
+  // between this read and this write — the cross-set summary — is kept, not overwritten.
   if (body.classCsiOverrides !== undefined || body.yoloTags !== undefined) {
-    const existingPi =
-      (project.projectIntelligence as Record<string, unknown>) || {};
-    const merged = { ...existingPi };
+    const patch: Record<string, unknown> = {};
     if (body.classCsiOverrides !== undefined)
-      merged.classCsiOverrides = body.classCsiOverrides;
-    if (body.yoloTags !== undefined) merged.yoloTags = body.yoloTags;
-    updates.projectIntelligence = merged;
+      patch.classCsiOverrides = body.classCsiOverrides;
+    if (body.yoloTags !== undefined) patch.yoloTags = body.yoloTags;
+    updates.projectIntelligence = sql`coalesce(${projects.projectIntelligence}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
   }
 
   updates.updatedAt = new Date();

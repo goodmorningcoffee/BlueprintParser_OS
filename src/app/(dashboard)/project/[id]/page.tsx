@@ -49,6 +49,11 @@ export default function ProjectPage() {
       if (activeOpenRef.current !== handle || result.status === "superseded") return;
       if (result.status === "opened") {
         setProject(result.project);
+        // [cross-set F3 2026-10-24] ?page=N — the landing page of a cross-project link ("Same sheet in
+        // other sets"). Read from the URL at open time (not a `load` dependency, so it never re-opens the
+        // project) and applied through the sanctioned page command.
+        const landing = Number(new URLSearchParams(window.location.search).get("page"));
+        if (Number.isInteger(landing) && landing > 0) navigateViewerPage(landing);
       } else {
         setError(result.error.message);
       }

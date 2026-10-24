@@ -117,6 +117,17 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     expect(company.id).toBe(project.companyId);
   });
 
+  it("200 strips projectIntelligence.crossSetLinks: a demo never names the company's private sets", async () => {
+    // [cross-set F3 2026-10-24] publishing flips the same row, so a summary written while private is still there
+    const PI = { summaries: { keep: true }, crossSetLinks: { v: 1, computedAt: "2026-10-24T00:00:00.000Z", linkedProjects: [{ publicId: "private-set-id", twins: 1, revisions: 0, copy: null }] } };
+    const { project } = await createDemoProject({}, { projectIntelligence: PI as never });
+    signedOut();
+    const res = await readJson(await runDemo(project.publicId));
+    expect(res.status).toBe(200);
+    expect(res.body.projectIntelligence).toEqual({ summaries: { keep: true } });
+    expect(JSON.stringify(res.body)).not.toContain("private-set-id");
+  });
+
   it("200 demoConfig fallback: company without pipelineConfig.demo → {}; null projectIntelligence → summaries null", async () => {
     const { project } = await createDemoProject(); // no pipelineConfig, no projectIntelligence
     signedOut();

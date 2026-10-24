@@ -15,6 +15,7 @@ vi.mock("@/stores/viewerCommands", () => ({ navigateViewerPage: (n: number) => s
 vi.mock("@/stores/uiStore", () => ({ useUiStore: (sel: (s: { togglePageIntelPanel: () => void }) => unknown) => sel({ togglePageIntelPanel: vi.fn() }) }));
 vi.mock("@/queries/usePageWindow", () => ({ usePageIntelligenceForPage: () => ({ classification: { discipline: "Architectural", disciplinePrefix: "A", confidence: 0.9 } }) }));
 vi.mock("@/queries/useProjectGraph", () => ({ usePageGraphLinks: () => graphState.value }));
+vi.mock("@/queries/useCrossSetLinks", () => ({ usePageCrossSetLinks: () => ({ built: false, links: [], projects: [] }) })); // [cross-set F3] its own section, tested in CrossSetLinksSection.test.tsx
 
 import PageIntelligencePanel from "@/components/viewer/PageIntelligencePanel";
 

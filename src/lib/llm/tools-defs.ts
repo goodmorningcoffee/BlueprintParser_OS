@@ -98,7 +98,7 @@ export const BP_TOOLS: ToolDefinition[] = [
   },
   {
     name: "getCrossReferences",
-    description: "Get sheet-to-sheet reference graph. Returns edges (which pages reference which), hub pages (referenced by 3+ other pages), and leaf pages, plus `knowledgeGraph`: references RESOLVED to page numbers (refersTo / referencedBy for a page; resolution counts + the unresolved queue for the project). Use for 'what references A-501?' or 'what are the key hub pages?' Omit pageNumber for full project graph.",
+    description: "Get sheet-to-sheet reference graph. Returns edges (which pages reference which), hub pages (referenced by 3+ other pages), and leaf pages, plus `knowledgeGraph`: references RESOLVED to page numbers (refersTo / referencedBy for a page; resolution counts + the unresolved queue for the project). With pageNumber also `crossSet`: the same sheet in the company's OTHER sets (twin_of = identical text, revision_of = same sheet number with matching content; target project id + page). Use for 'what references A-501?' or 'what are the key hub pages?' Omit pageNumber for full project graph.",
     input_schema: {
       type: "object",
       properties: {

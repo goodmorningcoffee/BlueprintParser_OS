@@ -24,6 +24,7 @@ import { csiCodesForLlm } from "@/lib/csi-utils";
 import { detectTagPatterns } from "@/lib/tag-patterns";
 import { logger } from "@/lib/logger";
 import { projectGraphForLlm } from "@/server/services/project-graph";
+import { crossSetLinksForLlm } from "@/server/services/cross-set-links";
 import type { ClientAnnotation, TextractPageData } from "@/types";
 import {
   assertProjectWriteCapability,
@@ -366,7 +367,9 @@ async function execGetCrossReferences(pageNumber: number | undefined, ctx: ToolC
       .from(pages)
       .where(and(eq(pages.projectId, ctx.projectId), eq(pages.pageNumber, pageNumber)))
       .limit(1);
-    return { pageNumber, crossRefs: page?.pageIntelligence?.crossRefs || [], knowledgeGraph };
+    // [cross-set F3] the same sheet in the company's other sets (twin_of / revision_of by target project id); null without a pass.
+    const crossSet = await crossSetLinksForLlm(ctx.projectId, pageNumber).catch(() => null);
+    return { pageNumber, crossRefs: page?.pageIntelligence?.crossRefs || [], knowledgeGraph, crossSet };
   }
 
   // Full project graph
