@@ -28,7 +28,7 @@ import { logger } from "@/lib/logger";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { visiblePage } from "@/lib/page-dedup/visibility";
 import {
-  computeCrossSetLinks,
+  computeCrossSetLinksAsync,
   CROSS_SET_INTELLIGENCE_KEY,
   crossSetObjectKey,
   crossSetSummary,
@@ -161,10 +161,12 @@ export async function computeCompanyCrossSet(
     keys.push(reduceCrossSetProject({ publicId: project.publicId, createdAt: project.createdAt, pages: rows }));
     opts.onProject?.(keys.length, eligible.length, project);
   }
-  const result = computeCrossSetLinks(keys, { now: opts.now });
+  // The yielding runner: this runs inside a request (scope=cross-set, the upload end) on the web
+  // process, and a large company is minutes of CPU — never one unbroken block, or the health check fails.
+  const result = await computeCrossSetLinksAsync(keys, { now: opts.now });
   const d = result.dropped;
-  if (d.stockTexts || d.oversizedBuckets || d.truncatedBuckets) {
-    logger.info(`[cross-set] company ${companyId}: dropped stock texts ${d.stockTexts}, oversized buckets ${d.oversizedBuckets}, truncated buckets ${d.truncatedBuckets} (${d.comparisons} comparisons)`);
+  if (d.stockTexts || d.stockSheets || d.oversizedBuckets || d.truncatedBuckets) {
+    logger.info(`[cross-set] company ${companyId}: dropped stock texts ${d.stockTexts}, stock sheets ${d.stockSheets}, oversized buckets ${d.oversizedBuckets}, truncated buckets ${d.truncatedBuckets} (${d.comparisons} comparisons)`);
   }
   return { projects: eligible, result };
 }

@@ -44,7 +44,7 @@ export async function reprocessCrossSetScope(opts: {
   const persist = opts.persist ?? ((wc, project, result) => persistProjectCrossSet(wc, project, result));
   const c: CrossSetScopeCounts = {
     updated: 0, skipped: 0, errors: 0, total: 0, companyProjects: 0, pages: 0,
-    links: { twin: 0, revision: 0, copy: 0 }, dropped: { stockTexts: 0, oversizedBuckets: 0, truncatedBuckets: 0, comparisons: 0 },
+    links: { twin: 0, revision: 0, copy: 0 }, dropped: { stockTexts: 0, stockSheets: 0, oversizedBuckets: 0, truncatedBuckets: 0, comparisons: 0 },
   };
 
   // 1. One company-wide compute (reads only). A failure here fails the whole stage: nothing was written.

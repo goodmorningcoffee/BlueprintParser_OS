@@ -120,7 +120,7 @@ const label = (e: { project: string; page: number; sheet: string | null }) =>
 
 console.log(`${keys.length} sets · ${pagesRead} pages read · ${result.pages} comparable (visible, non-blank) · read ${readMs} ms · compute ${computeMs} ms`);
 console.log(`links: twin_of ${twins.length} · revision_of ${revisions.length} (floor ${revisionMin}) · copy_of ${result.projectLinks.length}`);
-console.log(`dropped: stock texts ${result.dropped.stockTexts} · oversized buckets ${result.dropped.oversizedBuckets} · truncated buckets ${result.dropped.truncatedBuckets} · comparisons ${result.dropped.comparisons}`);
+console.log(`dropped: stock texts ${result.dropped.stockTexts} · stock sheets ${result.dropped.stockSheets} · oversized buckets ${result.dropped.oversizedBuckets} · truncated buckets ${result.dropped.truncatedBuckets} · comparisons ${result.dropped.comparisons}`);
 const projectPairs = new Set(result.links.map((l) => `${l.from.project}|${l.to.project}`));
 console.log(`set pairs with ≥1 page link: ${projectPairs.size} · sets with any link: ${new Set(result.links.flatMap((l) => [l.from.project, l.to.project])).size}`);
 console.log(`same-number cross-set pairs: ${sameNumberPairs} · identical text ${identicalPairs} · content-score histogram (0.0–0.1 … 0.9–1.0): ${hist.join(" ")}`);

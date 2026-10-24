@@ -53,6 +53,10 @@ describe.skipIf(!dbUp)("cross-set links: scope=cross-set + GET /api/projects/[id
       await createPage(p.id, n, { drawingNumber: "A-101", rawText: text(1) });
       await createPage(p.id, n + 1, { drawingNumber: "A-102", rawText: text(100 + p.id) });
     }
+    // A-103: identical text in both sets, but the older set's copy is a HIDDEN duplicate (lib/page-dedup
+    // visibility, `duplicateOf.hiddenAt`) — the SQL edge must drop it, so page 6 of the newer set links nowhere.
+    await createPage(older.id, 3, { drawingNumber: "A-103", rawText: text(3), pageIntelligence: { duplicateOf: { pageNumber: 1, hiddenAt: new Date().toISOString() } } as any });
+    await createPage(newer.id, 6, { drawingNumber: "A-103", rawText: text(3) });
     const userKeys = { classCsiOverrides: { door: "08 11 13" }, someFutureKey: true };
     await db.update(projects).set({ projectIntelligence: userKeys as any }).where(eq(projects.id, newer.id));
 
@@ -77,6 +81,8 @@ describe.skipIf(!dbUp)("cross-set links: scope=cross-set + GET /api/projects/[id
     expect(body.built).toBe(true);
     expect(body.pages["4"]).toEqual([{ kind: "twin_of", project: { publicId: older.publicId, name: older.name }, page: 1, sheet: "A-101", confidence: 1, direction: "older" }]);
     expect(body.pages["5"]).toBeUndefined(); // A-102: different content → no link on the number alone
+    expect(body.pages["6"]).toBeUndefined(); // A-103: the older copy is hidden → not linked
+    expect(JSON.stringify([...s3.values()].map(String))).not.toContain('"page":3');
     const one = (await readJson(await get(older.publicId, "?page=1"))).body;
     expect(one).toMatchObject({ built: true, page: 1 });
     expect(one.links[0]).toMatchObject({ project: { publicId: newer.publicId }, direction: "newer" });
