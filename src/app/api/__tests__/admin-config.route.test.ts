@@ -263,6 +263,34 @@ describe.skipIf(!dbUp)("admin/pipeline (PIPE)", () => {
     }
     expect((await rowOf(company.id)).pc?.pipeline).toEqual({ csiSpatialGrid: { rows: 1, cols: 1 } });
   });
+
+  // [fix 2026-10-24 T1a] the tab sends disabledSteps/ensemble inside `pipeline`; their readers read
+  // the TOP level. PUT hoists them; GET folds them back so the tab sees what is in force.
+  it("PIPE-6 disabledSteps/ensemble hoisted to the top level on PUT, folded back on GET", async () => {
+    const { company, admin } = await makeWorld();
+    asUser(admin);
+    const sent = {
+      disabledSteps: ["ensemble"],
+      ensemble: { config: { minDistinctVotes: 3 } },
+      csiSpatialGrid: { rows: 3, cols: 3 },
+    };
+    const r = await put(pipePUT, "/api/admin/pipeline", { pipeline: sent });
+    expect(r.status).toBe(200);
+    const after = await rowOf(company.id);
+    expect(after.pc?.pipeline).toEqual({ csiSpatialGrid: { rows: 3, cols: 3 } });
+    expect(after.pc?.disabledSteps).toEqual(["ensemble"]);
+    expect(after.pc?.ensemble).toEqual({ config: { minDistinctVotes: 3 } });
+    expect(after.pc?.__sentinel).toEqual(SEED.__sentinel); // siblings still survive
+    const g = await get(pipeGET, "/api/admin/pipeline");
+    expect(g.body).toEqual({ pipeline: sent });
+  });
+
+  it("PIPE-7 a company that saved BEFORE the fix (nested toggles) still reads them on GET", async () => {
+    const { admin } = await makeWorld({ pipeline: { disabledSteps: ["yolo-heatmap"], pageConcurrency: 2 } });
+    asUser(admin);
+    const g = await get(pipeGET, "/api/admin/pipeline");
+    expect(g.body).toEqual({ pipeline: { disabledSteps: ["yolo-heatmap"], pageConcurrency: 2 } });
+  });
 });
 
 // ── llm/config — key `llm` ───────────────────────────────────────────────────
@@ -620,6 +648,18 @@ describe.skipIf(!dbUp)("admin/heuristics/config (HEU)", () => {
     const row = await rowOf(company.id);
     expect(row.pc?.heuristics).toEqual([]);
     expect(row.pc?.pageNaming).toEqual(SEED.pageNaming); // null is falsy → conditional skip
+  });
+
+  // [fix 2026-10-24 T1a] four built-ins that required YOLO class "table" were retired; the tab
+  // had saved copies of every built-in, which must not come back as overrides.
+  it("HEU-7 admin read hides stored copies of RETIRED built-ins; custom rules keep any id", async () => {
+    const stale = { id: "door-schedule", name: "Door Schedule Detection", source: "built-in" };
+    const mine = { id: "material-schedule", name: "My rule", source: "custom" };
+    const live = { id: "general-notes", name: "General Notes Detection", source: "built-in" };
+    const { admin } = await makeWorld({ heuristics: [stale, mine, live] });
+    asUser(admin);
+    const g = await get(heuGET, "/api/admin/heuristics/config");
+    expect(g.body.companyOverrides).toEqual([mine, live]);
   });
 
   // [S037 DETECTOR closers] The B1 shared-DETECTOR sample audit (heuristics = the P3 pick)

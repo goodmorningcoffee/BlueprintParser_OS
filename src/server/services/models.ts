@@ -228,9 +228,10 @@ export async function registerModel(
   // Generate and upload config.yaml to S3. TWIN of the template in services/yolo.ts `yoloRun`,
   // which REGENERATES this file at run time from model.config. The two differ in exactly two
   // fields, deliberately: yoloRun emits `image_size: ${imgSize}` and
-  // `max_detections: ${model.config?.maxDetections ?? 2000}`, this registration-time template
-  // hardcodes 1280 / 2000. Those hardcoded values ARE yoloRun's own `??` defaults, so a model
-  // with no imageSize/maxDetections override yields identical YAML either way — and registerModel
+  // `max_detections: ${model.config?.maxDetections ?? <default>}`, this registration-time template
+  // hardcodes 1280 / 2000. Those hardcoded values ARE yoloRun's own `??` defaults (except a
+  // text-only model, whose run-time default is 6000 — lib/yolo-config-yaml.ts; every run rewrites
+  // this file first), so a model with no imageSize/maxDetections override otherwise yields identical YAML — and registerModel
   // accepts neither field in its body. Every other line is byte-identical: keep it that way.
   const configYaml = `model_file: model.pt
 confidence_threshold: ${conf}

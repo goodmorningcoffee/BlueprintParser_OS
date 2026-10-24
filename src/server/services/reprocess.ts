@@ -42,6 +42,8 @@ import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
 import { carryNonComputedIntelligence, mergeProjectIntelligence } from "@/lib/intelligence-merge";
 import type { ClassifiedTable } from "@/types";
 import type { AuthSession } from "@/lib/api-utils";
+import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
+import { scopeLayoutDetections } from "@/lib/yolo-class-scope";
 
 /** YOLO classes aggregated by Layer 2 heatmap. Matches the "Notes agreement"
  *  recipe (text_box + vertical_area + horizontal_area) from the 4-layer plan
@@ -165,10 +167,10 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       // [refactor jul9 P2-A S1] Stage 2c (auto-table-detector → autoTableProposals)
       // removed here: the STORED key had zero readers repo-wide (U1-F1); the
       // auto-detect-tables route computes proposals on demand from ensembleRegions.
-      const disabledSteps = new Set(company?.pipelineConfig?.disabledSteps ?? []);
+      // [fix 2026-10-24 T1a] one shared accessor: top level, else the tab's legacy nested copy.
+      const { disabledSteps, ensembleConfig } = resolvePipelineToggles(company?.pipelineConfig);
       const heatmapEnabled = !disabledSteps.has("yolo-heatmap");
       const ensembleEnabled = !disabledSteps.has("ensemble");
-      const ensembleConfig = company?.pipelineConfig?.ensemble?.config;
 
       send({ type: "start", projects: allProjects.length });
       debug("run.start", { projects: allProjects.length, selected: selectedProjectIds?.length ?? null, disabledSteps: [...disabledSteps] });
@@ -580,7 +582,9 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                 // and (Stage 2b) the ensemble reducer. Gated on pipelineConfig.heatmap.
                 if (heatmapEnabled) {
                   try {
-                    const heatmap = computeYoloHeatmap(page.pageNumber, pageYolo, {
+                    // [fix 2026-10-24 T1a] layout classes from their own model (yolo_text's
+                    // per-word text_box would flood the density) — lib/yolo-class-scope.ts.
+                    const heatmap = computeYoloHeatmap(page.pageNumber, scopeLayoutDetections(pageYolo), {
                       classes: [...HEATMAP_CLASSES],
                     });
                     if (heatmap.confidentRegions.length > 0
@@ -613,7 +617,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                     parsedRegions: (page.storedIntelligence as any)?.parsedRegions,
                   });
                   if (votes.length > 0) {
-                    const ensembleRegions = reduceRegionVotes(page.pageNumber, votes, ensembleConfig as any);
+                    const ensembleRegions = reduceRegionVotes(page.pageNumber, votes, ensembleConfig);
                     if (ensembleRegions.length > 0) {
                       pageIntelligence.ensembleRegions = ensembleRegions;
                     }

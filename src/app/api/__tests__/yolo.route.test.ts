@@ -174,6 +174,7 @@ import {
   processingJobs,
   pages as pagesTable,
   annotations as annotationsTable,
+  companies as companiesTable,
 } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { logger } from "@/lib/logger";
@@ -1099,6 +1100,46 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
       w.project.id,
       expect.anything(),
     );
+  });
+
+  // [fix 2026-10-24 T1a] The post-YOLO pass used to hand the engine + table classifier
+  // `pageIntelligence.csiCodes` — a key that does not exist — so CSI-division rules never fired.
+  it("[fix 2026-10-24] post-YOLO pass hands the heuristic engine and table classifier the page's csiCodes", async () => {
+    const w = await loadWorld();
+    const doors = { code: "08 11 16", description: "Aluminum Doors and Frames", trade: "Openings", division: "08 00 00" };
+    await createPage(w.project.id, 1, {
+      rawText: "text",
+      csiCodes: [doors] as never,
+      pageIntelligence: { textRegions: [{ t: 1 }] } as never,
+    });
+    asUser(w.admin);
+    seedS3Results([detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET])]);
+    h.runHeuristicEngine.mockReturnValue([{ rule: "r1" }]);
+    const { status } = await readJson(
+      await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }),
+    );
+    expect(status).toBe(200);
+    expect(h.runHeuristicEngine.mock.calls[0][1].csiCodes).toEqual([doors]);
+    expect(h.classifyTables.mock.calls[0][0].csiCodes).toEqual([doors]);
+  });
+
+  // [fix 2026-10-24 T1a] Pipeline-tab toggles saved before the fix sit at pipeline.disabledSteps.
+  it("[fix 2026-10-24] legacy nested pipeline.disabledSteps turns the heatmap and ensemble off", async () => {
+    const w = await loadWorld();
+    await db
+      .update(companiesTable)
+      .set({ pipelineConfig: { pipeline: { disabledSteps: ["yolo-heatmap", "ensemble"] } } })
+      .where(eq(companiesTable.id, w.company.id));
+    await createPage(w.project.id, 1, { rawText: "text" });
+    asUser(w.admin);
+    seedS3Results([detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET])]);
+    const { status } = await readJson(
+      await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }),
+    );
+    expect(status).toBe(200);
+    expect(h.runHeuristicEngine).toHaveBeenCalled(); // the pass ran
+    expect(h.computeYoloHeatmap).not.toHaveBeenCalled();
+    expect(h.collectAllVotes).not.toHaveBeenCalled();
   });
 
   it("[fix 2026-10-22] a re-registered model (new id, same name) REPLACES its old rows; other models and other projects survive", async () => {
