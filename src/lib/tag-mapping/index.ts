@@ -51,3 +51,10 @@ export {
 
 // Fuzzy-OCR helpers (still exported for any direct consumer)
 export { isFuzzyCandidate, OCR_CONFUSIONS } from "./matchers/fuzzy";
+
+// ─── [tag-mapping v2 2026-10-24] shape ensemble + owner rules + schedule rules + certificate ───
+export { DEFAULT_TAG_RULES, verdictForWordHit, enclosingShape, type TagRulesOptions, type TagRuleVerdict } from "./tag-rules";
+export { findEnsembleShapeMatches, shapeTextConfidence, type ShapeBackedInstance } from "./matchers/ensemble-shapes";
+export { buildEnsembleContext, ensembleInputsFromAnnotations, type EnsembleContext, type EnsembleContextPage } from "./ensemble-context";
+export { arbitrateColumnRoles, parseQuantity, splitSheetReferences, type ColumnRoles, type GridKind } from "./schedule-rules";
+export { buildCompletenessCertificate, certificateLabel, type CompletenessCertificate, type CertificateVerdict, type CertificateInput } from "./certificate";

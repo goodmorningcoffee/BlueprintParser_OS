@@ -14,7 +14,8 @@ import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones } from "@/lib/page-zones";
 import { buildEvidenceSummary, sameEvidence } from "@/lib/evidence";
-import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
+import { classifyRegionsV2, type RegionsV2 } from "@/lib/region-classifier-v2";
+import { buildShapeEnsemble, sameShapeEnsemble, storedShapeEnsemble, summarizeShapeEnsemble } from "@/lib/shape-ensemble";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -23,6 +24,7 @@ import type {
   ClassifiedPageRegions,
   ClassifiedTable,
   CsiCode,
+  KeynoteShapeData,
   ParsedRegion,
   TextractPageData,
   YoloHeatmap,
@@ -55,6 +57,9 @@ export interface PostYoloPage {
   csiCodes: CsiCode[] | null;
   /** `pages.textractData` `words` + `tables` for the shadow region classifier v2 and the evidence summary [T4] (optional; `lines` unused; null → evidence left as it was). */
   textractData?: Pick<TextractPageData, "words" | "tables"> | null;
+  /** `pages.keynotes` — the classical shape-parse results, the second arm of the shape ensemble
+   *  [tag-mapping v2] (optional; null/absent → YOLO-only ensemble). */
+  keynotes?: readonly KeynoteShapeData[] | null;
 }
 
 export interface PostYoloOptions {
@@ -62,6 +67,8 @@ export interface PostYoloOptions {
   heatmapEnabled: boolean;
   ensembleEnabled: boolean;
   ensembleConfig?: Partial<EnsembleConfig>;
+  /** The project's drawing numbers — detail-callout recognition in the shape ensemble [tag-mapping v2]. */
+  sheetNumbers?: readonly (string | null | undefined)[];
 }
 
 /** JSON with object keys sorted at every depth: Postgres reorders jsonb keys, so a stored record
@@ -108,6 +115,25 @@ export function enrichPageAfterYolo(
     if (!sameJson(regionsV2, existing.regionsV2)) { updated.regionsV2 = regionsV2; pageChanged = true; }
   } catch (err) {
     logger.error(`[YOLO-LOAD] classifyRegionsV2 failed for page ${page.pageNumber}:`, err);
+  }
+  // [tag-mapping v2 2026-10-24] shape ensemble (src/lib/shape-ensemble): yolo_primitive tag shapes
+  // fused with the classical shape-parse results, text from the crop read validated by Textract,
+  // shapes inside detected tables / title blocks dropped. Persisted compactly as `shapes`
+  // (server-owned, services/pages.ts); written only when it differs, like the zones.
+  try {
+    const regionsV2 = updated.regionsV2 as RegionsV2 | undefined;
+    const ensemble = buildShapeEnsemble({
+      yolo: yoloDets.map((d) => ({ name: d.name, bbox: [d.minX, d.minY, d.maxX, d.maxY], confidence: d.confidence, modelName: d.modelName })),
+      classical: (page.keynotes ?? []).map((k) => ({ shape: k.shape, text: k.text ?? "", bbox: k.bbox })),
+      words: page.textractData?.words ?? null,
+      zones,
+      tableBoxes: regionsV2?.regions.filter((r) => r.kind === "table").map((r) => r.bbox) ?? null,
+      sheetNumbers: opts.sheetNumbers ?? null,
+    });
+    const shapes = summarizeShapeEnsemble(ensemble);
+    if (!sameShapeEnsemble(shapes, storedShapeEnsemble(existing))) { updated.shapes = shapes; pageChanged = true; }
+  } catch (err) {
+    logger.error(`[yolo-post-enrichment] Shape ensemble FAILED for page ${page.pageNumber}:`, err);
   }
 
   // Existing: re-run heuristic engine with YOLO data

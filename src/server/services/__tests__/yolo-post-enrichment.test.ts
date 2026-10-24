@@ -194,3 +194,29 @@ describe("enrichPageAfterYolo — [evidence T4] evidence summary", () => {
     expect(updated.evidence).toBe("kept");
   });
 });
+
+describe("enrichPageAfterYolo — shape ensemble [tag-mapping v2]", () => {
+  const page = {
+    pageNumber: 4, rawText: "", pageIntelligence: {}, csiCodes: [] as CsiCode[],
+    textractData: { words: [{ text: "D-101", confidence: 99, bbox: [0.105, 0.105, 0.004, 0.003] as [number, number, number, number] }] },
+    keynotes: [{ shape: "circle", text: "W", bbox: [0.5, 0.5, 0.5 + 40 / 10800, 0.5 + 40 / 10800] as [number, number, number, number] }],
+  };
+  const bubble: PostYoloDetection = { name: "circle", modelName: "yolo_primitive", confidence: 0.9, minX: 0.1, minY: 0.1, maxX: 0.114, maxY: 0.114 };
+
+  it("writes `shapes` (YOLO bubble with Textract text + small classical bubble) and is stable on a re-run", () => {
+    const { updated, pageChanged } = enrichPageAfterYolo(page, [bubble], opts([]));
+    expect(pageChanged).toBe(true);
+    const shapes = updated.shapes as { shapes: Array<{ t: string | null; s: string }>; counts: { yolo: number; classical: number } };
+    expect(shapes.counts).toMatchObject({ yolo: 1, classical: 1 });
+    expect(shapes.shapes.map((s) => [s.s, s.t]).sort()).toEqual([["c", "W"], ["y", "D-101"]]);
+    const again = enrichPageAfterYolo({ ...page, pageIntelligence: updated }, [bubble], opts([]));
+    expect(again.updated.shapes).toBe(updated.shapes);
+  });
+
+  it("without keynotes the ensemble is YOLO-only; without OCR a textless bubble at .9 survives", () => {
+    const { updated } = enrichPageAfterYolo({ ...page, keynotes: null, textractData: null }, [bubble], opts([]));
+    const shapes = updated.shapes as { shapes: Array<{ t: string | null }>; counts: { classical: number } };
+    expect(shapes.counts.classical).toBe(0);
+    expect(shapes.shapes.map((s) => s.t)).toEqual([null]);
+  });
+});

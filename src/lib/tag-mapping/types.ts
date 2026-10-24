@@ -19,6 +19,8 @@ import type {
   QtoItemType,
   ClassifiedPageRegions,
 } from "@/types";
+import type { EnsembleShape } from "@/lib/shape-ensemble";
+import type { TagRulesOptions } from "./tag-rules";
 
 // ─── Core scoring primitives ──────────────────────────────────
 
@@ -162,6 +164,14 @@ export interface MatchContext {
   classifiedRegionsByPage: Record<number, ClassifiedPageRegions | undefined>;
   pattern: InferredPattern | null;
   config?: ScoringConfig;  // defaults to DEFAULT_SCORING_CONFIG
+  // ─── [tag-mapping v2 2026-10-24] all optional; absent → v1 behaviour verbatim ───
+  /** Per-page shape ensemble (src/lib/shape-ensemble). When present, the shape half of Types 1/3/4
+   *  reads tag shapes from it (YOLO + classical, fused inner text) instead of `source === "yolo"`. */
+  shapes?: Record<number, EnsembleShape[] | undefined>;
+  /** The project's drawing numbers: sheet-number guard + detail-callout resolution. */
+  sheetNumbers?: readonly (string | null | undefined)[];
+  /** Owner text rules for free-floating hits (dimension / short tag / token boundary / callout). */
+  rules?: TagRulesOptions;
 }
 
 // ─── Class scan (legacy compat) ──────────────────────────────

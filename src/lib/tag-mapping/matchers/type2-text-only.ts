@@ -10,18 +10,32 @@
  * the raw tag text; pattern-match against the reconstructed window text
  * (done by the caller in find-occurrences.ts), not raw Textract text.
  *
- * Behavior preserved verbatim from yolo-tag-engine.ts.
+ * Behavior preserved verbatim from yolo-tag-engine.ts when `rules` is absent.
+ * [tag-mapping v2 2026-10-24] With `rules`, every hit passes the owner's text rules
+ * (../tag-rules.ts: dimensions, 1–2-char tags in sentences, split tokens, detail callouts) and the
+ * rejected ones are counted in `rules.rejected` instead of emitted.
  */
 
-import type { TextractPageData, YoloTagInstance } from "@/types";
+import type { TextractPageData, TextractWord, YoloTagInstance } from "@/types";
 import { ltwh2minmax } from "@/lib/bbox-utils";
+import type { EnsembleShape } from "@/lib/shape-ensemble";
 import { isFuzzyCandidate } from "./fuzzy";
+import { verdictForWordHit, type TagRuleVerdict, type TagRulesOptions } from "../tag-rules";
+
+export interface TextRulesContext {
+  rules: TagRulesOptions;
+  shapesByPage?: Record<number, readonly EnsembleShape[] | undefined>;
+  tagIsSheetNumber?: boolean;
+  /** Filled by the matcher: how many hits each rule rejected. */
+  rejected?: Partial<Record<Exclude<TagRuleVerdict, "ok">, number>>;
+}
 
 export function findFreeFloatingMatches(
   normalizedTag: string,
   scope: "page" | "project",
   pageNumber: number | undefined,
   textractData: Record<number, TextractPageData>,
+  rules?: TextRulesContext,
 ): YoloTagInstance[] {
   const instances: YoloTagInstance[] = [];
   const pageNums = scope === "page" && pageNumber != null
@@ -29,6 +43,17 @@ export function findFreeFloatingMatches(
     : Object.keys(textractData).map(Number);
 
   const tagWords = normalizedTag.split(/\s+/);
+
+  const passes = (hit: readonly TextractWord[], words: readonly TextractWord[], pn: number): boolean => {
+    if (!rules) return true;
+    const verdict = verdictForWordHit(hit, words, normalizedTag, {
+      rules: rules.rules, shapes: rules.shapesByPage?.[pn], tagIsSheetNumber: rules.tagIsSheetNumber,
+    });
+    if (verdict === "ok") return true;
+    rules.rejected ??= {};
+    rules.rejected[verdict] = (rules.rejected[verdict] ?? 0) + 1;
+    return false;
+  };
 
   for (const pn of pageNums) {
     const words = textractData[pn]?.words;
@@ -39,6 +64,7 @@ export function findFreeFloatingMatches(
       for (const w of words) {
         const wText = w.text.toUpperCase().trim();
         if (wText === normalizedTag || isFuzzyCandidate(wText, normalizedTag)) {
+          if (!passes([w], words, pn)) continue;
           const mm = ltwh2minmax(w.bbox);
           instances.push({
             pageNumber: pn,
@@ -54,6 +80,7 @@ export function findFreeFloatingMatches(
         const window = words.slice(i, i + tagWords.length);
         const windowText = window.map((w) => w.text).join(" ").toUpperCase().trim();
         if (windowText === normalizedTag || isFuzzyCandidate(windowText, normalizedTag)) {
+          if (!passes(window, words, pn)) continue;
           const minX = Math.min(...window.map((w) => w.bbox[0]));
           const minY = Math.min(...window.map((w) => w.bbox[1]));
           const maxX = Math.max(...window.map((w) => w.bbox[0] + w.bbox[2]));

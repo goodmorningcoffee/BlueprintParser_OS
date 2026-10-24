@@ -50,11 +50,15 @@ import {
   scanClassForTexts,
   buildScope,
   inferTagPattern,
+  buildEnsembleContext,
+  DEFAULT_TAG_RULES,
   type ScoredMatch,
   type MatchContext,
   type DropReason,
   type PageMeta,
+  type EnsembleContextPage,
 } from "@/lib/tag-mapping";
+import { isHiddenDuplicate } from "@/lib/page-dedup";
 import type {
   ClientAnnotation,
   TextractPageData,
@@ -206,7 +210,12 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
   const textractMap: Record<number, TextractPageData> = {};
   const classifiedRegionsByPage: Record<number, ClassifiedPageRegions | undefined> = {};
   const pageMeta: PageMeta[] = [];
+  const ensemblePages: EnsembleContextPage[] = [];
+  const hiddenPages = new Set<number>();
   for (const row of pageRows) {
+    // [tag-mapping v2] duplicate-sheet collapse (labelfactory I-4d): a hidden duplicate page
+    // (admin Data tools) contributes neither words nor shapes, so a twin sheet is counted once.
+    if (isHiddenDuplicate(row.pageIntelligence)) { hiddenPages.add(row.pageNumber); continue; }
     if (row.textractData) {
       textractMap[row.pageNumber] = row.textractData as TextractPageData;
     }
@@ -220,7 +229,17 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
       pageNumber: row.pageNumber,
       drawingNumber: row.drawingNumber,
     });
+    ensemblePages.push({
+      pageNumber: row.pageNumber, drawingNumber: row.drawingNumber,
+      textractData: row.textractData as TextractPageData | null, pageIntelligence: pi,
+    });
   }
+  const visibleAnnotations = hiddenPages.size > 0
+    ? clientAnnotations.filter((a) => !hiddenPages.has(a.pageNumber))
+    : clientAnnotations;
+  // [tag-mapping v2] the per-page shape ensemble (YOLO + classical shape-parse rows, fused inner
+  // text, table / title-block drop) the matchers read tag shapes from, plus the sheet numbers.
+  const ensemble = buildEnsembleContext(visibleAnnotations, ensemblePages);
 
   // FQ-2: scanClass mode returns its own {texts} shape.
   if (isScan) {
@@ -258,10 +277,13 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
       pageMeta,
     ),
     isPageScoped: Array.isArray(selectedPages) && selectedPages.length === 1,
-    annotations: clientAnnotations,
+    annotations: visibleAnnotations,
     textractData: textractMap,
     classifiedRegionsByPage,
     pattern: inferredPattern,
+    shapes: ensemble.shapes,
+    sheetNumbers: ensemble.sheetNumbers,
+    rules: DEFAULT_TAG_RULES,
   };
 
   const results: Record<string, ScoredMatch[]> = {};
