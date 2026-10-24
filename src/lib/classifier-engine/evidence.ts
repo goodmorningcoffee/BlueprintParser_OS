@@ -96,7 +96,12 @@ const ROW_TOL = 0.5;
 const LINE_GAP = 1.6;
 /** Lines just above the box count as "above" within this many line heights. */
 const ABOVE_LINES = 2.5;
-/** Rows within this many line heights of the box top may hold the title. */
+/**
+ * Rows within this many line heights of the FIRST row may hold the title. Measured from the first row,
+ * not the box top: the detector pads the box, and on the labelled corpus the title row sat just past
+ * 3 line heights from the padded top on most boxes, so the header band was empty and the title words
+ * fell into the column band ([2a fix round] the header signal never fired on them).
+ */
 const HEADER_LINES = 3;
 const COLUMN_ROWS = 2;
 
@@ -222,7 +227,8 @@ export function buildCandidateEvidence(page: PageEvidence, cand: Candidate): Can
   const lh = median(words.map((w) => w.h)) || page.lineHeight;
   const aboveWords = page.words.filter((w) => !inside(w.c, S) && w.c[1] < S[1] && w.c[1] >= S[1] - ABOVE_LINES * lh && w.c[0] >= S[0] && w.c[0] <= S[2]);
   const aboveRows = groupRows(aboveWords);
-  const headerRows = rows.filter((r) => r[0].bbox[1] < S[1] + HEADER_LINES * lh).slice(0, 3);
+  const firstTop = Math.max(S[1], rows[0]?.[0].bbox[1] ?? S[1]);
+  const headerRows = rows.filter((r) => r[0].bbox[1] < firstTop + HEADER_LINES * lh).slice(0, 3);
   const derived = deriveName({ headerRows, aboveRows, lineHeight: lh });
   let headerIdx = -1;
   if (derived?.source === "header") headerIdx = rows.findIndex((r) => r.some((l) => l.text === derived.line) || r.map((l) => l.text).join(" ") === derived.line);

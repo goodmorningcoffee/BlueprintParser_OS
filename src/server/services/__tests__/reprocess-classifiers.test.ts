@@ -34,7 +34,7 @@ const piOf = async (pageId: number) => (await db.select({ pi: pages.pageIntellig
 const projectPi = async (id: number) => (await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, id)))[0].pi as Record<string, unknown>;
 
 describe.skipIf(!dbUp)("reprocessClassifiersScope", () => {
-  it("writes classifierProposals for YOLO pages by jsonb merge, skips the rest, refreshes projectIntelligence.proposals, and is idempotent", async () => {
+  it("writes classifierProposals for YOLO pages by jsonb merge, drops a stale record, skips the rest, refreshes projectIntelligence.proposals, and is idempotent", async () => {
     const { project } = await createWorld({ projectIntelligence: { yoloTags: [{ a: 1 }] } as never });
     const withLease = <T,>(id: number, op: (c: ReturnType<typeof assertProjectWritable>) => Promise<T>) => op(assertProjectWritable({ ...project, id }));
     const p1 = await createPage(project.id, 1, {
@@ -42,12 +42,15 @@ describe.skipIf(!dbUp)("reprocessClassifiersScope", () => {
       pageIntelligence: { regionsV2, pageZones: { titleBlock: null, drawings: [], tables: [], legends: [], source: "fixed-fallback" }, parsedRegions: [{ id: "keep" }], proposalVerdicts: { old: { verdict: "accept" } }, channels: { v: 1, kind: "vector" }, foo: "bar" } as never,
     });
     const p2 = await createPage(project.id, 2, { pageIntelligence: { textRegions: [] } as never });
+    // a stale record on a page whose YOLO rows are gone → dropped (counted updated), the other keys kept
+    const p3 = await createPage(project.id, 3, { pageIntelligence: { classifierProposals: { engineVersion: "clf/0.0", recipes: {}, proposals: [] }, keep: 1 } as never });
     await db.insert(annotations).values({ projectId: project.id, pageNumber: 1, name: DET.name, minX: DET.minX, minY: DET.minY, maxX: DET.maxX, maxY: DET.maxY, source: "yolo", data: { confidence: DET.confidence, modelName: DET.modelName } } as never);
 
     const { stream, events } = fakeStream();
     const c = await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set 1" }], withReprocessLease: withLease, stream, overlay: undefined });
-    expect(c).toMatchObject({ total: 2, updated: 1, skipped: 1 });
+    expect(c).toMatchObject({ total: 3, updated: 2, skipped: 1 });
     expect(c.proposals).toBe(1);
+    expect(await piOf(p3.id)).toEqual({ keep: 1 });
     const pi1 = await piOf(p1.id);
     const stored = pi1.classifierProposals as { proposals: Array<{ classId: string | null; recipeId: string }> };
     expect(stored.proposals).toHaveLength(1);
@@ -61,11 +64,11 @@ describe.skipIf(!dbUp)("reprocessClassifiersScope", () => {
     expect(ppi.yoloTags).toEqual([{ a: 1 }]);
     expect((ppi.proposals as { total: number; items: Array<{ pageNumber: number; classId: string | null }> }).total).toBe(1);
     expect((ppi.proposals as { items: Array<{ pageNumber: number }> }).items[0].pageNumber).toBe(1);
-    expect(events.at(-1)).toMatchObject({ type: "done", updated: 1, skipped: 1, total: 2 });
+    expect(events.at(-1)).toMatchObject({ type: "done", updated: 2, skipped: 1, total: 3 });
 
     // second run: nothing changed → nothing rewritten
     const again = await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set 1" }], withReprocessLease: withLease, stream: fakeStream().stream, overlay: undefined });
-    expect(again).toMatchObject({ total: 2, updated: 0, skipped: 2 });
+    expect(again).toMatchObject({ total: 3, updated: 0, skipped: 3 });
     expect(storedChannelKind(pi1)).toBe("vector");
     expect(storedChannelKind({})).toBeNull();
   });

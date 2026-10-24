@@ -245,7 +245,12 @@ describe("[clf 2a] classifier engine after classifyRegionsV2", () => {
   });
 
   it("a recipe that throws is contained — the page keeps its other enrichment and the other recipes' proposals", () => {
-    const broken = { ...BUILT_IN_RECIPES[0], id: "broken", scope: { sheetNumberPattern: "(" } };
+    // A words signal with no terms makes evaluateSignal throw on the first candidate (a bad scope regex is
+    // caught by inScope and would never reach the engine's per-recipe guard).
+    const broken = {
+      ...BUILT_IN_RECIPES[0], id: "broken",
+      detect: { ...BUILT_IN_RECIPES[0].detect, signals: [{ id: "bad", label: "bad", spec: { type: "words" as const, where: "box" as const, terms: null as never }, weight: 1, role: "score" as const, enabled: true }] },
+    };
     const out = enrichPageAfterYolo(page({}), dets, { ...opts([]), classifierRecipes: [broken, BUILT_IN_RECIPES[0]] });
     expect(out.pageChanged).toBe(true);
     expect(out.updated.regionsV2).toBeDefined();

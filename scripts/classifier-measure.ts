@@ -98,9 +98,10 @@ const nameAgrees = (p: ClassifierProposal, l: Label): boolean => {
 for (const s of sample) {
   const loaded = loadPage(s, CORPUS);
   if (!loaded) continue;
-  const { detections, words, csiCodes } = loaded;
+  const { detections, words, csiCodes, drawingNumber } = loaded;
   const regionsV2 = classifyRegionsV2({ pageNumber: s.page, detections, textractData: { words }, csiCodes });
-  const run = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words }, csiCodes, regionsV2, tagger }, BUILT_IN_RECIPES.filter((r) => r.id === "schedules.v1"));
+  // drawingNumber: production feeds `pages.drawingNumber` (sheet discipline signals); the corpus run's sheets.json is the same value.
+  const run = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words }, csiCodes, regionsV2, drawingNumber, tagger }, BUILT_IN_RECIPES.filter((r) => r.id === "schedules.v1"));
   stats.pages++; stats.ms += run.ms;
   const ps = stats.perSet.get(s.set) ?? { pages: 0, proposals: 0, labelled: 0, ok: 0 };
   ps.pages++;

@@ -94,10 +94,13 @@ export function isClassifierOverlay(v: unknown): v is ClassifierOverlay {
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-function patchSignals(signals: WeightedSignal[], patch: NonNullable<ClassifierOverlay["patches"][string]>, removed: Set<string>): WeightedSignal[] {
+type RecipePatch = NonNullable<ClassifierOverlay["patches"][string]>;
+
+function patchSignals(signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>): WeightedSignal[] {
+  const bySignal = isRecord(patch.signals) ? patch.signals : {};
   return signals.filter((s) => !removed.has(s.id)).map((s) => {
-    const p = patch.signals?.[s.id];
-    if (!p) return s;
+    const p = bySignal[s.id];
+    if (!isRecord(p)) return s;
     return {
       ...s,
       ...(typeof p.weight === "number" ? { weight: p.weight } : {}),
@@ -108,35 +111,48 @@ function patchSignals(signals: WeightedSignal[], patch: NonNullable<ClassifierOv
   });
 }
 
-/** Built-ins with the company's patches applied, then its custom recipes (invalid ones skipped). */
+/**
+ * One built-in with one company patch applied. The patch is jsonb written by the builder UI (step 3), so
+ * every field is shape-checked here and a field of the wrong shape is ignored (`removed: 5`,
+ * `addedSignals: {}`, `signals: "x"`, `classBias: null`); the caller also catches, so a patch can never
+ * take the recipe (or the whole post-YOLO enrichment that runs it) down.
+ */
+function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): ClassifierRecipe {
+  const removed = new Set(Array.isArray(patch.removed) ? patch.removed.filter((id): id is string => typeof id === "string") : []);
+  const classBias = isRecord(patch.classBias) ? patch.classBias : {};
+  const next = clone(r);
+  if (typeof patch.version === "number") next.version = patch.version;
+  if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+  if (typeof patch.detectThreshold === "number") next.detect.threshold = patch.detectThreshold;
+  if (typeof patch.nameThreshold === "number") next.nameThreshold = patch.nameThreshold;
+  if (typeof patch.minMargin === "number") next.minMargin = patch.minMargin;
+  next.detect.signals = patchSignals(next.detect.signals, patch, removed);
+  next.classes = next.classes.filter((c) => !removed.has(c.id)).map((c) => ({
+    ...c, bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias, signals: patchSignals(c.signals, patch, removed),
+  }));
+  for (const add of Array.isArray(patch.addedSignals) ? patch.addedSignals : []) {
+    try {
+      if (!isRecord(add)) continue;
+      const sig = validateSignal(add.signal, `"${r.id}" overlay`, new Set());
+      if (add.classId === null) next.detect.signals.push(sig);
+      else next.classes.find((c) => c.id === add.classId)?.signals.push(sig);
+    } catch { /* a malformed added signal is skipped, never fatal */ }
+  }
+  for (const add of Array.isArray(patch.addedClasses) ? patch.addedClasses : []) {
+    try { if (!next.classes.some((c) => c.id === (add as ClassifierClass).id)) next.classes.push(validateClass(add, `"${r.id}" overlay`, new Set())); } catch { /* skipped */ }
+  }
+  return next;
+}
+
+/** Built-ins with the company's patches applied (a malformed patch leaves its built-in as is), then its custom recipes (invalid ones skipped). */
 export function applyOverlay(builtIns: readonly ClassifierRecipe[], overlay: ClassifierOverlay | null | undefined): ClassifierRecipe[] {
+  const patches = isRecord(overlay?.patches) ? overlay.patches : {};
   const out: ClassifierRecipe[] = builtIns.map((r) => {
-    const patch = overlay?.patches?.[r.id];
-    if (!patch || typeof patch !== "object") return r;
-    const removed = new Set(patch.removed ?? []);
-    const next = clone(r);
-    if (typeof patch.version === "number") next.version = patch.version;
-    if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
-    if (typeof patch.detectThreshold === "number") next.detect.threshold = patch.detectThreshold;
-    if (typeof patch.nameThreshold === "number") next.nameThreshold = patch.nameThreshold;
-    if (typeof patch.minMargin === "number") next.minMargin = patch.minMargin;
-    next.detect.signals = patchSignals(next.detect.signals, patch, removed);
-    next.classes = next.classes.filter((c) => !removed.has(c.id)).map((c) => ({
-      ...c, bias: typeof patch.classBias?.[c.id] === "number" ? patch.classBias[c.id] : c.bias, signals: patchSignals(c.signals, patch, removed),
-    }));
-    for (const add of patch.addedSignals ?? []) {
-      try {
-        const sig = validateSignal(add.signal, `"${r.id}" overlay`, new Set());
-        if (add.classId === null) next.detect.signals.push(sig);
-        else next.classes.find((c) => c.id === add.classId)?.signals.push(sig);
-      } catch { /* a malformed added signal is skipped, never fatal */ }
-    }
-    for (const add of patch.addedClasses ?? []) {
-      try { if (!next.classes.some((c) => c.id === (add as ClassifierClass).id)) next.classes.push(validateClass(add, `"${r.id}" overlay`, new Set())); } catch { /* skipped */ }
-    }
-    return next;
+    const patch = patches[r.id];
+    if (!isRecord(patch)) return r;
+    try { return patchRecipe(r, patch as RecipePatch); } catch { return r; }
   });
-  for (const custom of overlay?.custom ?? []) {
+  for (const custom of Array.isArray(overlay?.custom) ? overlay.custom : []) {
     try {
       const rec = validateRecipe(custom, "custom");
       if (!out.some((r) => r.id === rec.id)) out.push(rec);
@@ -145,7 +161,7 @@ export function applyOverlay(builtIns: readonly ClassifierRecipe[], overlay: Cla
   return out;
 }
 
-/** The recipes the engine runs for a company: built-ins + its overlay (unknown / malformed overlay → built-ins). */
+/** The recipes the engine runs for a company: built-ins + its overlay (unknown / malformed overlay → built-ins). Never throws. */
 export function effectiveRecipes(overlay?: unknown): ClassifierRecipe[] {
-  return applyOverlay(BUILT_IN_RECIPES, isClassifierOverlay(overlay) ? overlay : null);
+  try { return applyOverlay(BUILT_IN_RECIPES, isClassifierOverlay(overlay) ? overlay : null); } catch { return [...BUILT_IN_RECIPES]; }
 }

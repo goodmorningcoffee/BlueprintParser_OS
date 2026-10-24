@@ -41,6 +41,20 @@ describe("deriveName", () => {
     expect(cand.bands.columns.tokens.has("MARK")).toBe(true);
   });
 
+  it("finds the title inside a padded detector box: the header window is measured from the first row, not the box top", () => {
+    // box top .20; the first row sits 3.5 line heights (.01) below it — the window from the box top would miss it
+    const ws = [
+      word("WATER", 0.30, 0.235, 0.012), word("HEATER", 0.36, 0.235, 0.012), word("SCHEDULE", 0.43, 0.235, 0.012),
+      word("MARK", 0.30, 0.26), word("GAL", 0.36, 0.26), word("EWH-1", 0.30, 0.28), word("40", 0.36, 0.28),
+    ];
+    const page = buildPageEvidence({ pageNumber: 1, detections: [], textractData: { words: ws } });
+    const cand = buildCandidateEvidence(page, { source: "yolo", bbox: [0.28, 0.20, 0.6, 0.3], anchorBbox: [0.28, 0.20, 0.6, 0.3] });
+    expect(cand.derivedName).toMatchObject({ text: "WATER HEATER SCHEDULE", source: "header" });
+    expect(cand.bands.header.tokens.get("SCHEDULE")).toBe(1);
+    expect(cand.bands.columns.tokens.has("MARK")).toBe(true);
+    expect(cand.bands.columns.tokens.has("SCHEDULE")).toBe(false);
+  });
+
   it("returns undefined when nothing title-like exists and a low confidence for a bare topmost line", () => {
     expect(deriveName({ headerRows: [], aboveRows: [], lineHeight: 0.01 })).toBeUndefined();
     const rows = groupRows(ev([word("HM", 0.1, 0.1), word("WD", 0.14, 0.1)]));

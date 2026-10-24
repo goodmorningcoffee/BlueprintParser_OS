@@ -19,6 +19,25 @@ export const DEFAULT_CORPUS = "/workspaces/projects/gitignore/corpus_v2";
 export const DEFAULT_RESEARCH = "/workspaces/projects/gitignore/projects/master_plan_2026-10-24/research/regions";
 
 export const modelOf = (m: Mark): string => m.meta?.modelName ?? (m.provenance ?? "").split(":")[0].split(".").pop() ?? "";
+
+const sheetCache = new Map<string, Map<number, string>>();
+/** `data/runs/<pid>/sheets.json` → the page's drawing number (what production holds in `pages.drawingNumber`); null when absent. */
+export function sheetNumberOf(pid: string, page: number, corpus = DEFAULT_CORPUS): string | null {
+  let m = sheetCache.get(pid);
+  if (!m) {
+    m = new Map();
+    const file = join(corpus, "data", "runs", pid, "sheets.json");
+    if (existsSync(file)) {
+      try {
+        for (const r of JSON.parse(readFileSync(file, "utf8")) as Array<{ page?: number; drawingNumber?: string | null }>) {
+          if (typeof r?.page === "number" && typeof r.drawingNumber === "string" && r.drawingNumber.trim()) m.set(r.page, r.drawingNumber.trim());
+        }
+      } catch { /* malformed → no sheet numbers for this run */ }
+    }
+    sheetCache.set(pid, m);
+  }
+  return m.get(page) ?? null;
+}
 export const minMaxToLtwh = (b: BboxMinMax): [number, number, number, number] => [b[0], b[1], b[2] - b[0], b[3] - b[1]];
 
 export function readSample(research = DEFAULT_RESEARCH): SamplePage[] {
@@ -31,6 +50,8 @@ export interface LoadedPage {
   detections: RegionDetection[];
   words: TextractWord[];
   csiCodes: CsiCode[];
+  /** The sheet number from the run's sheets.json (null when the run has none). */
+  drawingNumber: string | null;
 }
 
 /** The page's marks as classifier inputs, or null when the marks file is absent. */
@@ -48,5 +69,5 @@ export function loadPage(s: SamplePage, corpus = DEFAULT_CORPUS): LoadedPage | n
     code: m.label, description: "", trade: "", division: m.meta?.division ?? m.label,
     triggers: [{ text: "", tier: 1 as const, bbox: minMaxToLtwh(m.bbox) }],
   }));
-  return { marks, yolo, detections, words, csiCodes };
+  return { marks, yolo, detections, words, csiCodes, drawingNumber: sheetNumberOf(s.pid, s.page, corpus) };
 }

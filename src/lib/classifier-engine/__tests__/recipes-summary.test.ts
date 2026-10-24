@@ -63,8 +63,8 @@ describe("applyOverlay", () => {
     expect(s.classes.some((c) => c.id === "widget")).toBe(true);
     expect(out.map((r) => r.id)).toEqual(["schedules.v1", "regions.v1", "custom.v1"]);
     expect(out.find((r) => r.id === "custom.v1")?.source).toBe("custom");
-    // the built-in object was not mutated
-    expect(BUILT_IN_RECIPES[0].version).toBe(1);
+    // the built-in object was not mutated (its own version, not the patch's 7)
+    expect(BUILT_IN_RECIPES[0].version).not.toBe(7);
     expect(BUILT_IN_RECIPES[0].classes.find((c) => c.id === "door")?.bias).toBe(-3);
     expect(BUILT_IN_RECIPES[0].classes.some((c) => c.id === "window")).toBe(true);
   });
@@ -76,6 +76,16 @@ describe("applyOverlay", () => {
     expect(effectiveRecipes({ patches: { "schedules.v1": { version: 2 } } })[0].version).toBe(2);
     expect(isClassifierOverlay({ custom: [], patches: {} })).toBe(true);
     expect(isClassifierOverlay({ custom: {} })).toBe(false);
+  });
+
+  it("a patch with wrong-shaped fields never throws: the shaped fields apply, the rest are ignored", () => {
+    const bad = { patches: { "schedules.v1": { version: 3, removed: 5, addedSignals: {}, addedClasses: "x", signals: "x", classBias: null } } };
+    expect(() => effectiveRecipes(bad)).not.toThrow();
+    const [schedules] = effectiveRecipes(bad);
+    expect(schedules.version).toBe(3);
+    expect(schedules.classes).toEqual(BUILT_IN_RECIPES[0].classes);
+    expect(effectiveRecipes({ patches: { "schedules.v1": null, "regions.v1": 7 } })).toEqual(BUILT_IN_RECIPES);
+    expect(effectiveRecipes({ custom: [null, 5, { id: "x" }], patches: {} })).toEqual(BUILT_IN_RECIPES);
   });
 });
 

@@ -1,11 +1,12 @@
 // [classifier engine 2a 2026-10-24] Admin › Reprocess "Classifiers" (POST /api/admin/reprocess
 // ?scope=classifiers): the classifier ENGINE only — no YOLO, no OCR, no region v2 recompute. For
 // every page with stored YOLO rows it rebuilds `pageIntelligence.classifierProposals` from what is
-// already there (regionsV2, pageZones, channels, parsedRegions, textract words / tables, csiCodes,
-// drawingNumber) with the company's effective recipes, writes only pages whose record changed
-// (jsonb merge of that ONE key — user-owned `proposalVerdicts` and every other key untouched),
-// then refreshes `projectIntelligence.proposals`. A sibling of reprocess.ts (zero line headroom
-// there, and its per-project loop count is pinned); this loop carries its own per-project guard.
+// already there (regionsV2, pageZones, channels, parsedRegions, textract words / tables read ONE
+// page at a time, csiCodes, drawingNumber) with the company's effective recipes, writes only pages
+// whose record changed (jsonb merge of that ONE key — user-owned `proposalVerdicts` and every other
+// key untouched), drops the record of a page whose YOLO rows are gone, then refreshes
+// `projectIntelligence.proposals`. A sibling of reprocess.ts (zero line headroom there, and its
+// per-project loop count is pinned); this loop carries its own per-project guard.
 
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -24,9 +25,9 @@ import { withProjectWrite } from "@/server/api/project-write-capability";
 export interface ClassifiersReprocessProject { id: number; name: string }
 
 export interface ClassifiersReprocessCounters {
-  /** Pages whose classifierProposals record was (re)written. */
+  /** Pages whose classifierProposals record was (re)written, or dropped because their YOLO rows are gone. */
   updated: number;
-  /** Pages with YOLO rows whose record was unchanged, or without YOLO rows (no candidates). */
+  /** Pages with YOLO rows whose record was unchanged, or without YOLO rows and without a record. */
   skipped: number;
   total: number;
   proposals: number;
@@ -55,8 +56,8 @@ export async function reprocessClassifiersScope(args: {
           .select({
             id: pages.id, pageNumber: pages.pageNumber, drawingNumber: pages.drawingNumber, csiCodes: pages.csiCodes, keynotes: pages.keynotes,
             pageIntelligence: pages.pageIntelligence,
-            words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`,
-            tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'`,
+            // textractData is NOT selected here (the yolo.ts "regions v2 T5" lesson: every page's words in one
+            // select can need > 1 GB on a dense set) — each YOLO page reads its own words + tables below.
           })
           .from(pages)
           .where(eq(pages.projectId, project.id))
@@ -76,11 +77,33 @@ export async function reprocessClassifiersScope(args: {
           c.total++;
           const existing = (page.pageIntelligence ?? {}) as Record<string, unknown>;
           const detections = byPage.get(page.pageNumber);
-          if (!detections?.length) { c.skipped++; proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: existing }); continue; }
+          if (!detections?.length) {
+            // No YOLO rows → no candidates. A page that never had a record is skipped; a stale record (its
+            // YOLO rows were deleted since) is dropped, as the intelligence reprocess drops every computed key.
+            if (existing.classifierProposals === undefined) { c.skipped++; proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: existing }); continue; }
+            await withProjectWrite(capability, project.id, async (tx) => {
+              await tx.update(pages)
+                .set({ pageIntelligence: sql`COALESCE(${pages.pageIntelligence}, '{}'::jsonb) - 'classifierProposals'` })
+                .where(eq(pages.id, page.id));
+            });
+            c.updated++;
+            const rest = { ...existing };
+            delete rest.classifierProposals;
+            proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: rest });
+            continue;
+          }
+          // ONE page's OCR at a time, and only the two keys the engine reads (never `lines`).
+          const [ocr] = await db
+            .select({
+              words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`,
+              tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'`,
+            })
+            .from(pages)
+            .where(eq(pages.id, page.id));
           const next = computeClassifierProposals({
             pageNumber: page.pageNumber, detections,
             zones: existing.pageZones as PageZones | undefined,
-            textractData: Array.isArray(page.words) ? { words: page.words, ...(page.tables ? { tables: page.tables } : {}) } : null,
+            textractData: Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null,
             csiCodes: (page.csiCodes ?? []) as CsiCode[],
             regionsV2: storedRegionsV2(existing),
             parsedRegions: existing.parsedRegions as ClassifierPageInputParsed,
