@@ -4,7 +4,7 @@
 // Hiding (page-duplicates-apply.ts) keeps every row and object; this tool removes the HIDDEN
 // duplicates for good: the pages row, its annotations (group memberships cascade; a group left
 // with no members BY THIS DELETE is dropped), its page-scoped chat, and — after the commit —
-// its S3 objects (page image, thumbnail, per-page YOLO output). original.pdf is never touched,
+// its S3 objects (page image, thumbnail, per-page YOLO output, tile pyramid + manifest). original.pdf is never touched,
 // so the pages still exist in the upload. Page numbers are KEPT (gaps); projects.num_pages
 // stays the max index. Every consumer that walks 1..numPages tolerates a missing row.
 //
@@ -34,6 +34,7 @@ import { annotationGroupMembers, annotationGroups, annotations, chatMessages, pa
 import { logger } from "@/lib/logger";
 import { getDuplicateOf } from "@/lib/page-dedup";
 import { deleteFromS3, s3Client, S3_BUCKET } from "@/lib/s3";
+import { storedTiles, tileKeyPageNumber, tilesManifestKey, tilesRootPrefix, type TilesRecord } from "@/lib/tiles/keys";
 import { ApiError } from "@/server/api/envelope";
 import { zPublicId } from "@/server/api/schemas";
 import {
@@ -128,24 +129,51 @@ async function scopeProjects(companyId: number | null, publicIds: readonly strin
 
 const pad4 = (n: number) => String(n).padStart(4, "0");
 
-/** Per-page YOLO result files under {dataUrl}/yolo-output/<model>/ (named page_NNNN.json — yolo.ts:531-546). */
-async function listYoloOutputKeys(dataUrl: string): Promise<Map<number, string[]>> {
-  const prefix = `${dataUrl}/yolo-output/`;
+/** Per-page S3 objects below `prefix`, grouped by the page number `pageOf` reads from a key (null = not a page object). */
+async function listPageKeys(prefix: string, pageOf: (key: string) => number | null): Promise<Map<number, string[]>> {
   const byPage = new Map<number, string[]>();
   let token: string | undefined;
   do {
     const listed = await s3Client.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: prefix, ContinuationToken: token }));
     for (const obj of listed.Contents ?? []) {
       const key = obj.Key;
-      if (!key || !key.endsWith(".json") || key.endsWith("_manifest.json")) continue;
-      const match = /page_(\d+)/.exec(key.split("/").pop() ?? "");
-      if (!match) continue;
-      const page = parseInt(match[1], 10);
+      const page = key ? pageOf(key) : null;
+      if (!key || page === null) continue;
       byPage.set(page, [...(byPage.get(page) ?? []), key]);
     }
     token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
   } while (token);
   return byPage;
+}
+
+/** Per-page YOLO result files under {dataUrl}/yolo-output/<model>/ (named page_NNNN.json — yolo.ts:531-546). */
+const listYoloOutputKeys = (dataUrl: string) =>
+  listPageKeys(`${dataUrl}/yolo-output/`, (key) => {
+    if (!key.endsWith(".json") || key.endsWith("_manifest.json")) return null;
+    const match = /page_(\d+)/.exec(key.split("/").pop() ?? "");
+    return match ? parseInt(match[1], 10) : null;
+  });
+
+/** [tiles T9] Tile PNGs under {dataUrl}/tiles/L<size>/page_NNNN/ (lib/tiles/keys.ts); the manifest key is derived. */
+const listTileKeys = (dataUrl: string) =>
+  listPageKeys(tilesRootPrefix(dataUrl), (key) => (key.endsWith(".png") ? tileKeyPageNumber(key) : null));
+
+/**
+ * The page's listed tile PNGs + its manifest — the manifest only when tiles exist or the row points
+ * at one. The manifest key is ALWAYS derived from (dataUrl, page): the record is member-writable
+ * jsonb and must never name an object to delete (T9 fix round — a forged key could have reached
+ * another tenant's prefix).
+ */
+function tileObjectKeys(dataUrl: string, page: number, record: TilesRecord | undefined, tileKeys: Map<number, string[]> | null): string[] {
+  const listed = tileKeys?.get(page) ?? [];
+  if (listed.length === 0 && !record) return [];
+  return [...listed, tilesManifestKey(dataUrl, page)];
+}
+
+/** S3 listings taken outside the lock (null = listing failed; see keysOrWarn). */
+interface ListedKeys {
+  yolo: Map<number, string[]> | null;
+  tiles: Map<number, string[]> | null;
 }
 
 async function countByPage(reader: WorkReader, projectId: number, pageNumbers: number[]) {
@@ -169,15 +197,19 @@ async function countByPage(reader: WorkReader, projectId: number, pageNumbers: n
 /**
  * The plan for one project from the stored marks: hidden pages minus the protected ones. The
  * dry run plans from `db`; the real run re-plans inside its transaction, so what is deleted is
- * what the lock sees. `yoloKeys` is the S3 listing taken outside the transaction (or null).
+ * what the lock sees. `listed` holds the S3 listings taken outside the transaction (null = failed).
  */
-async function planProject(reader: WorkReader, project: ScopeProject, yoloKeys: Map<number, string[]> | null): Promise<ProjectDeletePlan> {
+async function planProject(reader: WorkReader, project: ScopeProject, listed: ListedKeys): Promise<ProjectDeletePlan> {
   const plan: ProjectDeletePlan = {
     publicId: project.publicId, name: project.name, companyId: project.companyId, numPages: project.numPages,
     pages: [], skipped: [], warnings: [],
   };
   const rows = await reader
-    .select({ id: pages.id, pageNumber: pages.pageNumber, mark: sql<unknown>`${pages.pageIntelligence}->'duplicateOf'` })
+    .select({
+      id: pages.id, pageNumber: pages.pageNumber,
+      mark: sql<unknown>`${pages.pageIntelligence}->'duplicateOf'`,
+      tiles: sql<unknown>`${pages.pageIntelligence}->'tiles'`,
+    })
     .from(pages)
     .where(eq(pages.projectId, project.id))
     .orderBy(asc(pages.pageNumber), asc(pages.id));
@@ -201,7 +233,8 @@ async function planProject(reader: WorkReader, project: ScopeProject, yoloKeys: 
       s3Keys: [
         `${project.dataUrl}/pages/page_${pad4(page)}.png`,
         `${project.dataUrl}/thumbnails/page_${pad4(page)}.png`,
-        ...(yoloKeys?.get(page) ?? []),
+        ...(listed.yolo?.get(page) ?? []),
+        ...tileObjectKeys(project.dataUrl, page, storedTiles({ tiles: row.tiles }), listed.tiles),
       ],
     });
   }
@@ -225,17 +258,25 @@ function planDigest(planned: readonly PlannedPage[]): string {
 }
 
 /**
- * S3 listing for the plan's YOLO files; a listing failure is a warning (keys may be left behind).
- * A leftover page_NNNN.json is harmless to the DB: /yolo/load skips files whose page has no row.
+ * S3 listings for the plan's YOLO files and tiles; a listing failure is a warning (keys may be left
+ * behind). A leftover page_NNNN.json is harmless to the DB: /yolo/load skips files whose page has no
+ * row. Leftover tiles are harmless too: nothing reads a tile whose page row is gone.
  */
 const YOLO_LEFTOVER_NOTE = "a later YOLO load skips them (no page row)";
-async function yoloKeysOrWarn(project: ScopeProject, warnings: string[]): Promise<Map<number, string[]> | null> {
+const TILES_LEFTOVER_NOTE = "nothing reads tiles of a page with no row";
+async function keysOrWarn(project: ScopeProject, warnings: string[]): Promise<ListedKeys> {
+  const listed: ListedKeys = { yolo: null, tiles: null };
   try {
-    return await listYoloOutputKeys(project.dataUrl);
+    listed.yolo = await listYoloOutputKeys(project.dataUrl);
   } catch (err) {
     warnings.push(`YOLO output could not be listed; per-page YOLO files are not deleted, ${YOLO_LEFTOVER_NOTE} (${String(err).slice(0, 120)})`);
-    return null;
   }
+  try {
+    listed.tiles = await listTileKeys(project.dataUrl);
+  } catch (err) {
+    warnings.push(`Tiles could not be listed; per-page tiles are not deleted, ${TILES_LEFTOVER_NOTE} (${String(err).slice(0, 120)})`);
+  }
+  return listed;
 }
 
 /**
@@ -244,7 +285,7 @@ async function yoloKeysOrWarn(project: ScopeProject, warnings: string[]): Promis
  * the page's annotations (memberships cascade), the groups those annotations emptied, the
  * page's chat, then the page row. Returns the committed plan.
  */
-async function deleteInProject(project: ScopeProject, capability: ProjectWriteCapability, yoloKeys: Map<number, string[]> | null, expectedDigest: string): Promise<ProjectDeletePlan> {
+async function deleteInProject(project: ScopeProject, capability: ProjectWriteCapability, listed: ListedKeys, expectedDigest: string): Promise<ProjectDeletePlan> {
   return withProjectWrite(capability, project.id, async (tx) => {
     const [current] = await tx
       .select({ status: projects.status })
@@ -253,7 +294,7 @@ async function deleteInProject(project: ScopeProject, capability: ProjectWriteCa
       .limit(1);
     if (!current || current.status !== "completed") throw new ApiError("CONFLICT", "Project skipped: not completed");
     await assertNotBusy(tx, project.id);
-    const plan = await planProject(tx, project, yoloKeys);
+    const plan = await planProject(tx, project, listed);
     if (plan.planDigest !== expectedDigest) throw new ApiError("CONFLICT", CHANGED_SINCE_PREVIEW);
     for (const p of plan.pages) {
       const onPage = and(eq(annotations.projectId, project.id), eq(annotations.pageNumber, p.page));
@@ -285,16 +326,16 @@ async function runProject(project: ScopeProject, dryRun: boolean, expectedDigest
     return { publicId: project.publicId, name: project.name, companyId: project.companyId, numPages: project.numPages, skippedReason: skip, pages: [], skipped: [], warnings: [] };
   }
   const warnings: string[] = [];
-  const yoloKeys = await yoloKeysOrWarn(project, warnings);
+  const listed = await keysOrWarn(project, warnings);
   if (dryRun) {
-    const plan = await planProject(db, project, yoloKeys);
+    const plan = await planProject(db, project, listed);
     plan.warnings.push(...warnings);
     return plan;
   }
   // A project the preview never saw (e.g. one that completed since, under all:true) is refused.
   if (expectedDigest === undefined) throw new ApiError("CONFLICT", NOT_PREVIEWED);
   const capability = assertProjectWritable(project);
-  const plan = await deleteInProject(project, capability, yoloKeys, expectedDigest);
+  const plan = await deleteInProject(project, capability, listed, expectedDigest);
   plan.warnings.push(...warnings);
   if (plan.pages.length === 0) return plan;
   // Storage after the commit: a failure here leaves an orphan object, never a half-deleted page.
@@ -302,7 +343,7 @@ async function runProject(project: ScopeProject, dryRun: boolean, expectedDigest
     try {
       await deleteFromS3(key);
     } catch (err) {
-      const leftover = key.includes("/yolo-output/") ? `, ${YOLO_LEFTOVER_NOTE}` : "";
+      const leftover = key.includes("/yolo-output/") ? `, ${YOLO_LEFTOVER_NOTE}` : key.includes("/tiles/") || key.endsWith("/tiles.json") ? `, ${TILES_LEFTOVER_NOTE}` : "";
       plan.warnings.push(`S3 delete failed for ${key}${leftover} (${String(err).slice(0, 120)})`);
     }
   }

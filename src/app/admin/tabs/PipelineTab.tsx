@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import CsiSpatialGridPicker from "./CsiSpatialGridPicker";
 import UploadComputePicker from "./UploadComputePicker";
+import TilesToggle from "./TilesToggle";
 import OpenReprocessLink from "./OpenReprocessLink";
 import type { ReprocessPreset } from "./reprocess-plan";
 
@@ -127,6 +128,7 @@ export default function PipelineTab({ onOpenReprocess, isRootAdmin = false }: Pi
         <p className="text-xs text-[var(--muted)] mb-3">Steps that run when a new blueprint is uploaded.</p>
 
         {isRootAdmin && <UploadComputePicker />}
+        {isRootAdmin && <TilesToggle />}
 
         {/* Page concurrency */}
         <div className="flex items-center gap-3 px-3 py-2 mb-3 rounded border border-[var(--border)] bg-[var(--surface)]">

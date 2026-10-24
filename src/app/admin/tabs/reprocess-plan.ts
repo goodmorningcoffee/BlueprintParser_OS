@@ -10,7 +10,7 @@
 // the UI. An auto-included stage can be unticked; the plan then carries a "leaves … stale" warning.
 // Ordering is fixed by the DAG, never by click order.
 
-export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence";
+export type ReprocessScopeId = "full" | "intelligence" | "page-names" | "thumbnails" | "shape-parse" | "evidence" | "tiles";
 
 export type StageId =
   | "thumbnails"
@@ -201,11 +201,15 @@ export const STAGES: readonly StageDef[] = [
     pulls: [],
   },
   {
+    // [tiles T9 2026-10-24] services/reprocess-tiles.ts — depends only on the page raster.
     id: "tiles",
     label: "Tile images",
-    writes: "page tiles for the viewer (planned)",
-    cost: "—",
-    kind: "placeholder",
+    writes: "S3 tiles/L{size}/page_NNNN/r{row}_c{col}.png + pages/page_NNNN/tiles.json; pageIntelligence.tiles (sizes + counts only)",
+    cost: "downloads every 300-DPI page PNG, cuts ~90 tiles per 24x36 sheet in python ON THE WEB TASK (minutes of its CPU per large project), ~90 S3 PUTs per page; runs even when upload tiling is switched off",
+    kind: "reprocess",
+    scope: "tiles",
+    rootOnly: true,
+    overlap: "Cut from pages/page_NNNN.png — re-run after Thumbnails + page images only if those rasters changed.",
     pulls: [],
   },
   {
@@ -234,7 +238,8 @@ export type ReprocessPreset =
   | "after-yolo"
   | "clean-yolo"
   | "thumbnails"
-  | "shape-parse";
+  | "shape-parse"
+  | "tiles";
 
 export interface PresetDef {
   id: ReprocessPreset;
@@ -255,6 +260,7 @@ export const PRESETS: readonly PresetDef[] = [
   { id: "clean-yolo", label: "Clean YOLO + rebuild", stages: ["purge-yolo"], rootOnly: true, replaces: "AI Models › Purge All (then Full + Intelligence)" },
   { id: "thumbnails", label: "Thumbnails", stages: ["thumbnails"], replaces: "Pipeline › Regenerate Thumbnails" },
   { id: "shape-parse", label: "Shape parse", stages: ["shape-parse"], replaces: "Pipeline › Shape Parse (Keynotes)" },
+  { id: "tiles", label: "Tile images", stages: ["tiles"], rootOnly: true, replaces: "nothing — new 2026-10-24 (backfills the tile pyramid for projects uploaded before it)" },
 ];
 
 export const presetDef = (id: ReprocessPreset): PresetDef | undefined => PRESETS.find((p) => p.id === id);

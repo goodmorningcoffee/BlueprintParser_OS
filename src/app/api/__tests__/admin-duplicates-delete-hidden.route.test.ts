@@ -333,8 +333,9 @@ describe.skipIf(!dbUp)("admin duplicates — delete hidden pages permanently", (
     asUser(w.root);
     const { dry, run } = await previewThenRun({ projectPublicIds: [w.p1.publicId] });
     const dryPlan = planOf(dry.body, w.p1.publicId);
-    expect(dryPlan.warnings).toHaveLength(1);
+    expect(dryPlan.warnings).toHaveLength(2); // [tiles T9] the tiles listing is a second, independent best-effort listing
     expect(dryPlan.warnings[0]).toMatch(/YOLO output could not be listed; .*a later YOLO load skips them \(no page row\).*ListDenied/);
+    expect(dryPlan.warnings[1]).toMatch(/Tiles could not be listed; .*nothing reads tiles of a page with no row.*ListDenied/);
     expect(dryPlan.pages[0].s3Keys).toEqual([`${w.p1.dataUrl}/pages/page_0002.png`, `${w.p1.dataUrl}/thumbnails/page_0002.png`]);
     expect(run.status).toBe(200);
     expect(await pageNumbers(w.p1.id)).toEqual([1]);
@@ -351,6 +352,60 @@ describe.skipIf(!dbUp)("admin duplicates — delete hidden pages permanently", (
     expect(warnings).toHaveLength(2);
     expect(warnings.find((x) => x.includes(yoloKey))).toMatch(/a later YOLO load skips them \(no page row\)/);
     expect(warnings.find((x) => x.includes("/pages/page_0002.png"))).not.toMatch(/YOLO load/);
+  });
+
+  it("[tiles T9] a hidden page's tiles and manifest go with it; pages without tiles add no keys; a leftover tile delete says tiles are harmless", async () => {
+    const w = await world();
+    await createPage(w.p1.id, 1);
+    const tilesRecord = { v: 1, width: 10800, height: 7200, overlap: 0.2, levels: [{ size: 3600, rows: 3, cols: 4, tiles: 12 }], tiledAt: AT };
+    const manifestKey = `${w.p1.dataUrl}/pages/page_0002/tiles.json`; // DERIVED from (dataUrl, page) — the record holds no key (T9 fix round)
+    await hiddenPage(w.p1.id, 2, 1, { pageIntelligence: { ...mark(1), tiles: tilesRecord } as never }); // row says the page is tiled
+    await hiddenPage(w.p1.id, 3, 1, { pageIntelligence: { ...mark(1), tiles: { ...tilesRecord, manifestKey: `${w.p2.dataUrl}/original.pdf` } } as never }); // forged pre-fix record (not a TilesRecord) + orphan tiles listed → tiles + DERIVED manifest key
+    await hiddenPage(w.p1.id, 4, 1); // nothing: no extra keys
+    const tile = (size: number, page: string, rc: string) => `${w.p1.dataUrl}/tiles/L${size}/page_${page}/${rc}.png`;
+    s3Mocks.listed.keys = [
+      tile(3600, "0002", "r0_c0"), tile(3600, "0002", "r0_c1"), tile(1280, "0002", "r0_c0"),
+      tile(3600, "0003", "r0_c0"),
+      tile(3600, "0001", "r0_c0"), // the kept page's tiles stay
+      `${w.p2.dataUrl}/tiles/L3600/page_0002/r0_c0.png`, // other project
+      `${w.p1.dataUrl}/tiles/L3600/page_0002/notes.txt`, // not a tile
+    ];
+    asUser(w.root);
+    const { dry, run } = await previewThenRun({ projectPublicIds: [w.p1.publicId] });
+    const dryPlan = planOf(dry.body, w.p1.publicId);
+    expect(dryPlan.warnings).toEqual([]);
+    expect(dryPlan.pages.map((p) => p.s3Keys)).toEqual([
+      [
+        `${w.p1.dataUrl}/pages/page_0002.png`, `${w.p1.dataUrl}/thumbnails/page_0002.png`,
+        tile(3600, "0002", "r0_c0"), tile(3600, "0002", "r0_c1"), tile(1280, "0002", "r0_c0"), manifestKey,
+      ],
+      [
+        `${w.p1.dataUrl}/pages/page_0003.png`, `${w.p1.dataUrl}/thumbnails/page_0003.png`,
+        tile(3600, "0003", "r0_c0"), `${w.p1.dataUrl}/pages/page_0003/tiles.json`,
+      ],
+      [`${w.p1.dataUrl}/pages/page_0004.png`, `${w.p1.dataUrl}/thumbnails/page_0004.png`],
+    ]);
+    expect(dry.body.totals.s3Keys).toBe(12);
+    expect(run.status).toBe(200);
+    expect(await pageNumbers(w.p1.id)).toEqual([1]);
+    expect(s3Mocks.deleteFromS3.mock.calls.map(([k]) => k).sort()).toEqual([...dryPlan.pages.flatMap((p) => p.s3Keys)].sort());
+    expect(s3Mocks.deleteFromS3.mock.calls.map(([k]) => k)).not.toContain(tile(3600, "0001", "r0_c0"));
+    // [T9 fix round] a member-forged record naming another tenant's object never reaches the delete list
+    const forged = `${w.p2.dataUrl}/original.pdf`;
+    expect(JSON.stringify(dryPlan)).not.toContain(forged);
+
+    // a failed tile / manifest delete is a warning that names them harmless
+    const w2 = await world();
+    await createPage(w2.p1.id, 1);
+    await hiddenPage(w2.p1.id, 2, 1);
+    const orphan = `${w2.p1.dataUrl}/tiles/L1280/page_0002/r3_c4.png`;
+    s3Mocks.listed.keys = [orphan];
+    s3Mocks.deleteFromS3.mockImplementation(async (key: string) => { if (key.includes("/tiles")) throw new Error("Denied"); });
+    const second = await previewThenRun({ projectPublicIds: [w2.p1.publicId] });
+    const warnings = planOf(second.run.body, w2.p1.publicId).warnings;
+    expect(warnings).toHaveLength(2);
+    expect(warnings.find((x) => x.includes(orphan))).toMatch(/nothing reads tiles of a page with no row/);
+    expect(warnings.find((x) => x.includes("/pages/page_0002/tiles.json"))).toMatch(/nothing reads tiles of a page with no row/);
   });
 
   it("hidden-but-not-deleted pages: summaries and the project list count visible pages only", async () => {
