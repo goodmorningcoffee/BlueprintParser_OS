@@ -71,6 +71,7 @@ vi.mock("@/lib/keynotes", async (importOriginal) => ({
 }));
 
 import { processProject } from "@/lib/processing";
+import { computePageZones } from "@/lib/page-zones";
 import { assertProjectWritable } from "@/server/api/project-write-capability";
 import { db } from "@/lib/db";
 import { annotations, pages } from "@/lib/db/schema";
@@ -295,6 +296,57 @@ describe.skipIf(!dbUp)("processProject — U7 shape-parse observe warn-net [P4.1
     const ctx = calls[0][1] as Record<string, unknown>;
     expect(ctx.sink).toBe("processing.shapeParse");
     expect(ctx.kind).toBe("shape-parse");
+  }, 30000);
+});
+
+// [zones T2 2026-10-24] A processing re-run must not undo the YOLO step's zones: `pageZones`
+// is a computed key (cleared by carryNonComputedIntelligence), so the UPDATE branch re-adds the
+// stored value AND feeds it to the title-block consumers — otherwise the same page's drawing
+// number / text regions flip between the detected title block and the fixed corner depending
+// on which job ran last (verifier MED-2).
+describe.skipIf(!dbUp)("processProject — stored pageZones survive a re-run and steer the title-block consumers", () => {
+  it("detector zones persist through the UPDATE merge and the drawing number is read INSIDE the detected block", async () => {
+    const { project } = await createWorld();
+    const pageZones = computePageZones([
+      { name: "title_block", minX: 0, minY: 0, maxX: 0.4, maxY: 0.15, confidence: 0.9, modelName: "yolo_medium" },
+    ]);
+    const victim = await createPage(project.id, 1, {
+      error: "first run died",
+      pageIntelligence: { parsedRegions: userParsedRegions, pageZones } as never,
+    });
+    // Sheet number in a TOP-LEFT title block; a cross-reference sits in the fixed bottom-right corner.
+    const W = (text: string, x: number, y: number) => ({ text, confidence: 95, bbox: [x, y, 0.05, 0.02] });
+    textractMocks.analyzePageImageWithFallback.mockResolvedValueOnce({
+      lines: [],
+      words: [W("SHEET", 0.05, 0.05), W("NO.", 0.11, 0.05), W("A-201", 0.15, 0.05), W("SEE", 0.55, 0.8), W("E-345", 0.61, 0.8)],
+    } as never);
+    rasterMocks.getPdfPageCount.mockResolvedValue(1);
+
+    const result = await processProject(project.id, assertProjectWritable(project));
+    expect(result.pageErrors).toBe(0);
+
+    const [row] = await db.select().from(pages).where(eq(pages.id, victim.id));
+    const pi = row.pageIntelligence as Record<string, unknown>;
+    expect(pi.pageZones).toEqual(pageZones); // survived the computed-key clear
+    expect(pi.parsedRegions).toEqual(userParsedRegions);
+    expect(row.drawingNumber).toBe("A-201"); // legacy fixed corner would have answered "E-345"
+  }, 30000);
+
+  it("no stored zones ⇒ legacy fixed-corner search, and no pageZones key is invented", async () => {
+    const { project } = await createWorld();
+    const victim = await createPage(project.id, 1, { error: "first run died", pageIntelligence: { parsedRegions: userParsedRegions } as never });
+    const W = (text: string, x: number, y: number) => ({ text, confidence: 95, bbox: [x, y, 0.05, 0.02] });
+    textractMocks.analyzePageImageWithFallback.mockResolvedValueOnce({
+      lines: [],
+      words: [W("SHEET", 0.05, 0.05), W("NO.", 0.11, 0.05), W("A-201", 0.15, 0.05), W("SEE", 0.55, 0.8), W("E-345", 0.61, 0.8)],
+    } as never);
+    rasterMocks.getPdfPageCount.mockResolvedValue(1);
+
+    await processProject(project.id, assertProjectWritable(project));
+
+    const [row] = await db.select().from(pages).where(eq(pages.id, victim.id));
+    expect((row.pageIntelligence as Record<string, unknown>).pageZones).toBeUndefined();
+    expect(row.drawingNumber).toBe("E-345");
   }, 30000);
 });
 

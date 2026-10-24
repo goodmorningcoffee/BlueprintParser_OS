@@ -23,7 +23,7 @@ const TOP_LEFT_TITLE = [W("SHEET", 0.05, 0.05), W("NO.", 0.11, 0.05, 0.03), W("A
 const CORNER_XREF = [W("SEE", 0.55, 0.8), W("E-345", 0.61, 0.8)];
 
 const detectedTopLeft = computePageZones([
-  { name: "title_block", minX: 0, minY: 0, maxX: 0.4, maxY: 0.15, confidence: 0.9 },
+  { name: "title_block", minX: 0, minY: 0, maxX: 0.4, maxY: 0.15, confidence: 0.9, modelName: "yolo_medium" },
 ]);
 
 describe("extractDrawingNumber — legacy paths unchanged", () => {
@@ -75,7 +75,7 @@ describe("extractDrawingNumber — detector zones", () => {
 
   it("a detected title block that yields no candidate falls back to the legacy corner search", () => {
     // a mis-detection (or an OCR-empty box) must never cost a sheet number the old search found
-    const farRight = computePageZones([{ name: "title_block", minX: 0.95, minY: 0, maxX: 1, maxY: 1 }]);
+    const farRight = computePageZones([{ name: "title_block", minX: 0.95, minY: 0, maxX: 1, maxY: 1, modelName: "yolo_medium" }]);
     expect(extractDrawingNumber(page([...TOP_LEFT_TITLE, ...CORNER_XREF]), null, farRight)).toBe("E-345");
     // …and when the corner is empty too, null — same as legacy
     expect(extractDrawingNumber(page(TOP_LEFT_TITLE), null, farRight)).toBeNull();

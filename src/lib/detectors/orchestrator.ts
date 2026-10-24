@@ -28,6 +28,7 @@ export interface PipelineInput {
   data: TextractPageData;
   csiCodes?: CsiCode[];
   yoloDetections?: DetectorContext["yoloDetections"];
+  pageZones?: DetectorContext["pageZones"];
   enabledDetectorIds?: string[];  // from DB config; null/undefined = all defaults
 }
 
@@ -259,7 +260,7 @@ function tagWithCsi(annotations: TextAnnotation[], csiCodes: CsiCode[]): void {
  * - Returns TextAnnotationResult (same shape as the old monolith)
  */
 export function runTextAnnotationPipeline(input: PipelineInput): TextAnnotationResult {
-  const { data, csiCodes, yoloDetections, enabledDetectorIds } = input;
+  const { data, csiCodes, yoloDetections, pageZones, enabledDetectorIds } = input;
   const { words, lines } = data;
 
   if (!words || words.length === 0) {
@@ -272,6 +273,7 @@ export function runTextAnnotationPipeline(input: PipelineInput): TextAnnotationR
     lines: (lines || []) as any,
     csiCodes: csiCodes || [],
     yoloDetections,
+    pageZones,
   };
 
   // Determine which detectors to run

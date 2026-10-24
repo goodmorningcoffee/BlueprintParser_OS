@@ -27,7 +27,7 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
-import { computePageZones, type PageZoneDetection, type PageZones } from "@/lib/page-zones";
+import { computePageZones, storedPageZones, type PageZoneDetection, type PageZones } from "@/lib/page-zones";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
@@ -274,8 +274,9 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             if (!detsByPage.has(ann.pageNumber)) detsByPage.set(ann.pageNumber, []);
             detsByPage.get(ann.pageNumber)!.push({ ...ann, name: "title_block" });
           }
+          // `models: "any"`: the company CHOSE these classes (any model), so the yolo_medium gate is off here.
           const zonesByPage = new Map<number, PageZones>();
-          for (const [pageNumber, dets] of detsByPage) zonesByPage.set(pageNumber, computePageZones(dets));
+          for (const [pageNumber, dets] of detsByPage) zonesByPage.set(pageNumber, computePageZones(dets, { models: "any" }));
 
           send({
             type: "project",
@@ -729,6 +730,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             textractData: pages.textractData,
             rawText: pages.rawText, drawingNumber: pages.drawingNumber, // [csi-v2 S6] CSI context
             csiCodes: pages.csiCodes, // [fix 2026-10-21] previous YOLO-class codes survive (reprocess-yolo-csi.ts)
+            pageIntelligence: pages.pageIntelligence, // [zones T2] persisted pageZones for the detectors
           })
           .from(pages)
           .where(eq(pages.projectId, project.id))
@@ -772,7 +774,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             const csiCodes = detectCsiCodes(rawText, { lines: textractData.lines, context: { drawingNumber: page.drawingNumber } }, csiCtx.config, csiCtx.db);
 
             // Re-run text annotation detectors (with CSI codes + pipeline config)
-            const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);
+            const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds, storedPageZones(page.pageIntelligence));
 
             // Merge back user notes from previous run
             for (const ann of textAnnotationResult.annotations) {

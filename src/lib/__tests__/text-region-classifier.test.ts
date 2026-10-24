@@ -342,8 +342,8 @@ describe("title-block drop — detector zones", () => {
   const inCorner = fixtureProseAt(0.5, 0.75);
   // Top-left: outside the fixed corner.
   const topLeft = fixtureProseAt(0.05, 0.05);
-  const rightStrip = computePageZones([{ name: "title_block", minX: 0.9, minY: 0, maxX: 1, maxY: 1, confidence: 0.9 }]);
-  const topLeftBlock = computePageZones([{ name: "title_block", minX: 0, minY: 0, maxX: 0.45, maxY: 0.3, confidence: 0.9 }]);
+  const rightStrip = computePageZones([{ name: "title_block", minX: 0.9, minY: 0, maxX: 1, maxY: 1, confidence: 0.9, modelName: "yolo_medium" }]);
+  const topLeftBlock = computePageZones([{ name: "title_block", minX: 0, minY: 0, maxX: 0.45, maxY: 0.3, confidence: 0.9, modelName: "yolo_medium" }]);
 
   it("legacy: prose fully inside the fixed corner is dropped to paragraph @0.2; elsewhere it is paragraph @0.4", () => {
     expect(classifyTextRegions(inCorner, []).map((r) => [r.type, r.confidence])).toEqual([["paragraph", 0.2]]);

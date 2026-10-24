@@ -168,6 +168,7 @@ import {
   signedOut,
 } from "@/test/harness";
 import { db } from "@/lib/db";
+import { FIXED_TITLE_BLOCK_ZONE } from "@/lib/page-zones";
 import {
   models,
   modelAccess,
@@ -1099,6 +1100,39 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
       w.project.id,
       expect.anything(),
     );
+    // [zones T2] post-load enrichment persists pageZones; model "m" is not yolo_medium ⇒ fixed fallback.
+    expect(pi.pageZones).toEqual({ titleBlock: FIXED_TITLE_BLOCK_ZONE, drawings: [], tables: [], legends: [], source: "fixed-fallback" });
+  });
+
+  it("[zones T2] a yolo_medium title_block becomes the page's detector zones; a custom model's title_block does not", async () => {
+    const w = await loadWorld();
+    await createPage(w.project.id, 1, { rawText: "text", pageIntelligence: { parsedRegions: [] } as never });
+    asUser(w.admin);
+    // A previously loaded CUSTOM model claims a title block top-left — must not win the zone.
+    await db.insert(annotationsTable).values({
+      name: "title_block", minX: 0, minY: 0, maxX: 0.3, maxY: 0.1, pageNumber: 1, threshold: 0.9,
+      data: { modelId: w.model.id + 7, confidence: 0.99, modelName: "acme_custom" }, source: "yolo", projectId: w.project.id,
+    } as never);
+    seedS3Results([
+      detFile(`${w.project.dataUrl}/yolo-output/yolo_medium/page_0001.json`, [
+        { ...DET, class_name: "title_block", confidence: 0.6, bbox_normalized: [0.88, 0.02, 0.99, 0.98] },
+        { ...DET, class_name: "tables", confidence: 0.7, bbox_normalized: [0.1, 0.1, 0.3, 0.3] },
+      ]),
+    ]);
+    const { status, body } = await readJson(
+      await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "yolo_medium" }),
+    );
+    expect(status).toBe(200);
+    expect(body.success).toBe(true);
+    const [pageRow] = await db
+      .select({ pi: pagesTable.pageIntelligence })
+      .from(pagesTable)
+      .where(and(eq(pagesTable.projectId, w.project.id), eq(pagesTable.pageNumber, 1)));
+    const pi = pageRow.pi as Record<string, unknown>;
+    expect(pi.parsedRegions).toEqual([]); // spread-merge still holds
+    expect(pi.pageZones).toEqual({
+      titleBlock: [0.88, 0.02, 0.99, 0.98], drawings: [], tables: [[0.1, 0.1, 0.3, 0.3]], legends: [], source: "detector",
+    });
   });
 
   it("[fix 2026-10-22] a re-registered model (new id, same name) REPLACES its old rows; other models and other projects survive", async () => {

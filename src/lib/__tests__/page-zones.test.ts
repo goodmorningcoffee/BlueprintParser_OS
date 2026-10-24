@@ -12,8 +12,10 @@ import {
   isInsideZone,
   isPageZones,
   zoneOf,
+  storedPageZones,
   FIXED_TITLE_BLOCK_ZONE,
   ZONE_CONTAINMENT_THRESHOLD,
+  ZONE_MODEL_PATTERN,
   type PageZoneDetection,
 } from "@/lib/page-zones";
 import { DEFAULT_TITLE_BLOCK_REGION } from "@/lib/spatial-constants";
@@ -23,7 +25,7 @@ const det = (
   name: string,
   [minX, minY, maxX, maxY]: BboxMinMax,
   extra: Partial<PageZoneDetection> = {},
-): PageZoneDetection => ({ name, minX, minY, maxX, maxY, ...extra });
+): PageZoneDetection => ({ name, minX, minY, maxX, maxY, modelName: "yolo_medium", ...extra });
 
 // A typical sheet: title block strip along the right edge (NOT the fixed bottom-right corner),
 // one big plan, a door schedule inset in the top-left, a legend bottom-left.
@@ -87,13 +89,38 @@ describe("computePageZones — detector source", () => {
     expect(z.legends).toEqual([LEGEND]);
   });
 
-  it("ignores detections from a yolo_text model even when the class name matches", () => {
+  it("model gate: only yolo_medium builds zones — yolo_text, yolo_primitive, custom and unknown models are ignored", () => {
+    expect(ZONE_MODEL_PATTERN.test("yolo_medium")).toBe(true);
+    expect(ZONE_MODEL_PATTERN.test("YOLO_MEDIUM_v2")).toBe(true);
     const z = computePageZones([
       det("title_block", TITLE, { modelName: "yolo_text_v3" }),
       det("tables", SCHEDULE, { modelName: "yolo_text" }),
+      det("drawings", PLAN, { modelName: "yolo_primitive" }), // emits `drawings` too (composite-classifier.ts)
+      det("title_block", [0.0, 0.0, 0.3, 0.1], { confidence: 0.99, modelName: "acme_custom" }),
+      det("symbol_legend", LEGEND, { modelName: undefined }),
     ]);
     expect(z.source).toBe("fixed-fallback");
+    expect(z.titleBlock).toEqual(FIXED_TITLE_BLOCK_ZONE);
+    expect(z.drawings).toEqual([]);
     expect(z.tables).toEqual([]);
+    expect(z.legends).toEqual([]);
+  });
+
+  it("a custom model's high-confidence title_block never beats yolo_medium's box", () => {
+    const z = computePageZones([
+      det("title_block", [0.0, 0.0, 0.3, 0.1], { confidence: 0.99, modelName: "acme_custom" }),
+      det("title_block", TITLE, { confidence: 0.5 }),
+    ]);
+    expect(z.titleBlock).toEqual(TITLE);
+  });
+
+  it('models: "any" trusts the caller\'s list (page-names reprocess: company-configured classes)', () => {
+    const dets = [det("title_block", TITLE, { modelName: "acme_custom" }), det("tables", SCHEDULE, { modelName: undefined })];
+    expect(computePageZones(dets).source).toBe("fixed-fallback");
+    const z = computePageZones(dets, { models: "any" });
+    expect(z.source).toBe("detector");
+    expect(z.titleBlock).toEqual(TITLE);
+    expect(z.tables).toEqual([SCHEDULE]);
   });
 
   it("picks the highest-confidence title block; ties go to the bottom-right-most box", () => {
@@ -199,5 +226,22 @@ describe("isPageZones (stored jsonb guard)", () => {
     expect(isPageZones({ titleBlock: [0, 0, 1], drawings: [], tables: [], legends: [], source: "detector" })).toBe(false);
     expect(isPageZones({ titleBlock: null, drawings: [[0, 0, 1, "1"]], tables: [], legends: [], source: "detector" })).toBe(false);
     expect(isPageZones({ titleBlock: null, drawings: [], tables: [], legends: [], source: "yolo" })).toBe(false);
+  });
+});
+
+describe("storedPageZones (what the upload re-run and full reprocess read)", () => {
+  it("returns the persisted zones from a pageIntelligence object, round-tripped through jsonb", () => {
+    const zones = computePageZones(SHEET);
+    const pi = JSON.parse(JSON.stringify({ parsedRegions: [], pageZones: zones }));
+    expect(storedPageZones(pi)).toEqual(zones);
+    expect(storedPageZones({ pageZones: computePageZones([]) })?.source).toBe("fixed-fallback");
+  });
+
+  it("undefined for no intelligence, no key, or a malformed value", () => {
+    expect(storedPageZones(null)).toBeUndefined();
+    expect(storedPageZones(undefined)).toBeUndefined();
+    expect(storedPageZones({ textRegions: [] })).toBeUndefined();
+    expect(storedPageZones({ pageZones: { titleBlock: "x" } })).toBeUndefined();
+    expect(storedPageZones("nope")).toBeUndefined();
   });
 });

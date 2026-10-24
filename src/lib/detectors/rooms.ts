@@ -43,11 +43,11 @@ const RE_AREA_DESIGNATION = /^(?:ZONE|AREA|PHASE|WING)\s+([A-Z\d]+)$/i;
 
 /**
  * [zones T2] "Is this word in the title block?" — the DETECTED title block when the context
- * carries YOLO detections with one (`page-zones.ts`, ≥ 70 % containment); otherwise the legacy
- * rule, unchanged: word centre in the bottom 15 % of the sheet.
+ * carries persisted `pageZones` or yolo_medium detections with one (`page-zones.ts`, ≥ 70 %
+ * containment); otherwise the legacy rule, unchanged: word centre in the bottom 15 % of the sheet.
  */
 function titleBlockTest(ctx: DetectorContext): (w: TextractWord) => boolean {
-  const zones = ctx.yoloDetections?.length ? computePageZones(ctx.yoloDetections) : null;
+  const zones = ctx.pageZones ?? (ctx.yoloDetections?.length ? computePageZones(ctx.yoloDetections) : null);
   if (zones?.source === "detector") return (w) => zoneOf(zones, ltwh2minmax(w.bbox)) === "title_block";
   return (w) => w.bbox[1] + w.bbox[3] / 2 >= 0.85;
 }

@@ -753,8 +753,10 @@ export async function yoloLoad(
             >;
             const updated: Record<string, unknown> = { ...existing };
             let pageChanged = false;
-            // [zones T2] detector zones (src/lib/page-zones.ts); fixed-zone fallback when no title_block.
-            updated.pageZones = computePageZones(yoloDets); pageChanged = true;
+            // [zones T2] detector zones (src/lib/page-zones.ts): yolo_medium only, fixed-zone fallback
+            // otherwise; written only when they differ so an unchanged page is not rewritten.
+            const zones = computePageZones(yoloDets);
+            if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
 
             // Existing: re-run heuristic engine with YOLO data
             const inferences = runHeuristicEngine(rules, {
