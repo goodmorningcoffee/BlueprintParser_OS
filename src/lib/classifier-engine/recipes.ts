@@ -9,21 +9,21 @@
 
 import schedulesRaw from "@/data/classifiers/schedules.v1.json";
 import regionsRaw from "@/data/classifiers/regions.v1.json";
+import { CANDIDATE_TYPES, checkCandidates, checkScope, checkSpec } from "./spec-check";
 import type { CandidateSource, ClassifierClass, ClassifierOverlay, ClassifierRecipe, RecipePatch, SignalPatch, SignalRole, SignalSpec, WeightedSignal } from "./types";
 
-export const SPEC_TYPES = new Set<SignalSpec["type"]>(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel"]);
+export { SPEC_TYPES, CANDIDATE_TYPES } from "./spec-check";
 export const ROLES = new Set<SignalRole>(["score", "required", "veto"]);
-export const CANDIDATE_TYPES = new Set<CandidateSource["type"]>(["regions-v2", "yolo", "textract-tables", "parsed-regions"]);
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isUnit = (v: unknown): v is number => isNum(v) && v >= 0 && v <= 1;
 const fail = (label: string, msg: string): never => { throw new Error(`classifier recipe ${label}: ${msg}`); };
 
-/** Structural validation of one signal spec (throws with the signal named). */
+/** Field-level validation of one signal spec (spec-check.ts; throws the first problem with the signal named). */
 export function validateSpec(spec: unknown, label: string, id: string): SignalSpec {
-  if (!isRecord(spec) || !SPEC_TYPES.has(spec.type as SignalSpec["type"])) throw new Error(`classifier recipe ${label}: signal "${id}" has an unknown spec type`);
-  if (spec.type === "words" && !isRecord(spec.terms)) throw new Error(`classifier recipe ${label}: signal "${id}" words spec needs terms`);
-  if ((spec.type === "yolo" || spec.type === "shapes") && !Array.isArray(spec[spec.type === "yolo" ? "classes" : "shapes"])) throw new Error(`classifier recipe ${label}: signal "${id}" ${spec.type} spec needs a list`);
-  if (spec.type === "channel" && !Array.isArray(spec.pageKinds)) throw new Error(`classifier recipe ${label}: signal "${id}" channel spec needs pageKinds`);
-  return spec as unknown as SignalSpec;
+  const problems = checkSpec(spec, `signal "${id}"`);
+  if (problems.length) fail(label, problems[0]);
+  return spec as SignalSpec;
 }
 
 export function validateSignal(v: unknown, label: string, seen: Set<string>): WeightedSignal {
@@ -32,7 +32,7 @@ export function validateSignal(v: unknown, label: string, seen: Set<string>): We
   const id = s.id as string;
   if (seen.has(id)) fail(label, `duplicate signal id "${id}"`);
   seen.add(id);
-  if (typeof s.weight !== "number" || !Number.isFinite(s.weight)) fail(label, `signal "${id}" weight must be a number`);
+  if (!isNum(s.weight)) fail(label, `signal "${id}" weight must be a number`);
   if (!ROLES.has(s.role as SignalRole)) fail(label, `signal "${id}" role must be score | required | veto`);
   const spec = validateSpec(s.spec, label, id);
   return {
@@ -47,7 +47,8 @@ export function validateClass(v: unknown, label: string, seen: Set<string>): Cla
   const id = c.id as string;
   if (seen.has(id)) fail(label, `duplicate class id "${id}"`);
   seen.add(id);
-  if (typeof c.bias !== "number") fail(label, `class "${id}" bias must be a number`);
+  if (!isNum(c.bias)) fail(label, `class "${id}" bias must be a number`);
+  if (c.threshold !== undefined && !isUnit(c.threshold)) fail(label, `class "${id}" threshold must be a number in [0, 1]`);
   if (!Array.isArray(c.signals)) fail(label, `class "${id}" needs signals[]`);
   const sids = new Set<string>();
   return {
@@ -65,12 +66,14 @@ export function validateRecipe(v: unknown, source: "built-in" | "custom"): Class
   const label = `"${r.id as string}"`;
   if (typeof r.name !== "string" || typeof r.version !== "number" || typeof r.target !== "string") fail(label, "needs name, numeric version and target");
   if (r.unit !== "region" && r.unit !== "page") fail(label, "unit must be region | page");
-  if (!Array.isArray(r.candidates) || !isRecord(r.scope) || !isRecord(r.detect) || !Array.isArray(r.detect.signals) || typeof r.detect.bias !== "number" || typeof r.detect.threshold !== "number") {
-    fail(label, "needs candidates[], scope, detect {bias, signals[], threshold}");
+  if (!Array.isArray(r.candidates) || !isRecord(r.scope) || !isRecord(r.detect) || !Array.isArray(r.detect.signals) || !isNum(r.detect.bias) || !isUnit(r.detect.threshold)) {
+    fail(label, "needs candidates[], scope, detect {bias, signals[], threshold in [0, 1]}");
   }
-  if (!Array.isArray(r.classes) || typeof r.nameThreshold !== "number" || typeof r.minMargin !== "number" || typeof r.fallbackClassName !== "string") {
-    fail(label, "needs classes[], nameThreshold, minMargin, fallbackClassName");
+  if (!Array.isArray(r.classes) || !isUnit(r.nameThreshold) || !isUnit(r.minMargin) || typeof r.fallbackClassName !== "string") {
+    fail(label, "needs classes[], nameThreshold and minMargin in [0, 1], fallbackClassName");
   }
+  const shape = [...checkScope(r.scope, "scope:"), ...checkCandidates(r.candidates, "")];
+  if (shape.length) fail(label, shape[0].trim());
   const detect = r.detect as Record<string, unknown>;
   const cids = new Set<string>();
   return {
@@ -142,9 +145,11 @@ export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): Classifier
   const removed = new Set(Array.isArray(patch.removed) ? patch.removed.filter((id): id is string => typeof id === "string") : []);
   const classBias = isRecord(patch.classBias) ? patch.classBias : {};
   const classThreshold = isRecord(patch.classThreshold) ? patch.classThreshold : {};
+  const classMeta = isRecord(patch.classMeta) ? patch.classMeta : {};
   const next = clone(r);
   if (typeof patch.version === "number") next.version = patch.version;
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+  if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name;
   if (typeof patch.detectBias === "number" && Number.isFinite(patch.detectBias)) next.detect.bias = patch.detectBias;
   if (typeof patch.detectThreshold === "number") next.detect.threshold = patch.detectThreshold;
   if (typeof patch.nameThreshold === "number") next.nameThreshold = patch.nameThreshold;
@@ -155,12 +160,20 @@ export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): Classifier
     if (cands.length) next.candidates = clone(cands) as CandidateSource[];
   }
   next.detect.signals = patchSignals("detect", next.detect.signals, patch, removed, label);
-  next.classes = next.classes.filter((c) => !removed.has(classRemovalKey(c.id)) && !removed.has(c.id)).map((c) => ({
-    ...c,
-    bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias,
-    ...(typeof classThreshold[c.id] === "number" ? { threshold: classThreshold[c.id] as number } : {}),
-    signals: patchSignals(c.id, c.signals, patch, removed, label),
-  }));
+  next.classes = next.classes.filter((c) => !removed.has(classRemovalKey(c.id)) && !removed.has(c.id)).map((c) => {
+    const meta = isRecord(classMeta[c.id]) ? (classMeta[c.id] as Record<string, unknown>) : {};
+    const out: ClassifierClass = {
+      ...c,
+      ...(typeof meta.name === "string" && meta.name.trim() ? { name: meta.name } : {}),
+      ...(typeof meta.group === "string" && meta.group.trim() ? { group: meta.group } : {}),
+      ...(typeof meta.legacyCategory === "string" && meta.legacyCategory.trim() ? { legacyCategory: meta.legacyCategory } : {}),
+      bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias,
+      ...(typeof classThreshold[c.id] === "number" ? { threshold: classThreshold[c.id] as number } : {}),
+      signals: patchSignals(c.id, c.signals, patch, removed, label),
+    };
+    if (meta.legacyCategory === null) delete out.legacyCategory;
+    return out;
+  });
   for (const add of Array.isArray(patch.addedSignals) ? patch.addedSignals : []) {
     try {
       if (!isRecord(add)) continue;

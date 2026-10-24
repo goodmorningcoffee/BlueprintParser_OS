@@ -156,11 +156,54 @@ describe.skipIf(!dbUp)("PUT /api/admin/classifiers/overlay", () => {
     const custom = { ...clone(schedules), id: "acme.schedules", version: 1, source: "custom" };
     const r = await put({ patches: { "schedules.v1": { version: 1, signals: { "detect.structure": { weight: 5.5 }, "door.csiDiv": { weight: 1.9 } }, classBias: { door: -2.8 } } }, custom: [custom] });
     expect(r.status).toBe(200);
+    expect(r.body.mode).toBe("merge");
     expect(r.body.versions).toEqual({ "schedules.v1": schedules.version + 1, "acme.schedules": 1 });
     const pc = await pipelineConfig(company.id);
     expect(pc.classifiers.patches["schedules.v1"].signals["detect.structure"]).toEqual({ weight: 5.5 });
     expect(pc.classifiers.custom[0]).toMatchObject({ id: "acme.schedules", source: "custom", version: 1 });
     expect(r.body.effective.map((x: ClassifierRecipe) => x.id)).toEqual(["schedules.v1", "regions.v1", "acme.schedules"]);
+  });
+
+  it("a bare overlay MERGES by recipe id (other patches and custom recipes survive); { overlay } REPLACES; merge: overrides", async () => {
+    const { company, admin } = await world();
+    asUser(admin);
+    const custom = { ...clone(schedules), id: "acme.schedules", version: 1, source: "custom" };
+    expect((await put({ overlay: { custom: [custom], patches: { "schedules.v1": { version: 1, classBias: { door: -2 } }, "regions.v1": { version: 1, enabled: false } } } })).status).toBe(200);
+    // fitter: only the recipe it fitted
+    const fit = await put({ patches: { "schedules.v1": { version: 1, signals: { "door.header": { weight: 4.4 } } } } });
+    expect(fit.status).toBe(200);
+    expect(fit.body.mode).toBe("merge");
+    let pc = await pipelineConfig(company.id);
+    expect(pc.classifiers.patches["schedules.v1"]).toMatchObject({ signals: { "door.header": { weight: 4.4 } }, version: schedules.version + 2 });
+    expect(pc.classifiers.patches["schedules.v1"].classBias).toBeUndefined();
+    expect(pc.classifiers.patches["regions.v1"]).toMatchObject({ enabled: false });
+    expect(pc.classifiers.custom.map((r: ClassifierRecipe) => r.id)).toEqual(["acme.schedules"]);
+    // the tab: whole replace
+    expect((await put({ overlay: { custom: [], patches: { "regions.v1": { version: 1, enabled: false } } } })).body.mode).toBe("replace");
+    pc = await pipelineConfig(company.id);
+    expect(pc.classifiers.patches["schedules.v1"]).toBeUndefined();
+    expect(pc.classifiers.custom).toEqual([]);
+    // explicit merge with the tab shape; explicit replace with the bare shape
+    expect((await put({ overlay: { custom: [custom], patches: {} }, merge: true })).body.mode).toBe("merge");
+    pc = await pipelineConfig(company.id);
+    expect(pc.classifiers.patches["regions.v1"]).toMatchObject({ enabled: false });
+    expect(pc.classifiers.custom).toHaveLength(1);
+    expect((await put({ patches: {}, merge: false })).body.mode).toBe("replace");
+    pc = await pipelineConfig(company.id);
+    expect(pc.classifiers).toMatchObject({ custom: [], patches: {} });
+    const [audit] = await db.select().from(auditLog).where(and(eq(auditLog.companyId, company.id), eq(auditLog.action, "admin.classifiers.overlay_put"))).orderBy(desc(auditLog.id)).limit(1);
+    expect(audit.details).toMatchObject({ mode: "replace" });
+  });
+
+  it("rejects a deep spec error (bad scope name) and a custom recipe with a null candidate, storing nothing", async () => {
+    const { company, admin } = await world();
+    asUser(admin);
+    const bad = await put({ overlay: { patches: { "schedules.v1": { version: 1, signals: { "door.header": { spec: { type: "words", where: "nowhere", terms: { DOOR: 1 } } } } } } } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.message).toMatch(/where must be one of/);
+    const custom = { ...clone(schedules), id: "acme.schedules", version: 1, candidates: [null] };
+    expect((await put({ custom: [custom] })).body.error.message).toMatch(/candidates\[0\]/);
+    expect((await pipelineConfig(company.id)).classifiers).toBeUndefined();
   });
 });
 
@@ -241,6 +284,7 @@ describe.skipIf(!dbUp)("POST /api/admin/classifiers/run", () => {
     expect((await readJson(await run({}))).status).toBe(400);
     expect((await run({ projectId: "nope" })).status).toBe(404);
     expect((await run({ projectId: other.project.publicId })).status).toBe(404);
+    expect((await run({ projectId: other.project.publicId, companyId: other.company.id })).status).toBe(403);
     await seedDoorPage(project.id, 1);
     const res = await run({ projectId: project.publicId });
     expect(res.status).toBe(200);

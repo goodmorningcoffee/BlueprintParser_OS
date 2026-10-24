@@ -4,10 +4,16 @@
  *                          (every YOLO model the company can run with its class list + the static tool
  *                          signal types of lib/classifier-engine/catalog.ts)
  *   PUT  /overlay          strict-validated overlay (lib/classifier-engine/overlay-edit.ts) → version bump
- *                          per changed recipe → companies.pipeline_config.classifiers, audited. A weight
- *                          fitter's overlay (track 4) is accepted through the same path unchanged.
+ *                          per changed recipe → companies.pipeline_config.classifiers, audited. Two modes:
+ *                          `{ overlay }` from the tab REPLACES the stored overlay (the tab always sends the
+ *                          whole thing); a bare overlay (custom / patches at the top — the weight fitter's
+ *                          shape, track 4) is MERGED by recipe id into the stored one, so a fitter that
+ *                          carries only the recipes it fitted never wipes the company's other patches or
+ *                          its custom recipes. `merge: true | false` in the body overrides either default.
  *   POST /run              reprocess scope "classifiers" for ONE project of the caller's company —
  *                          delegates to reprocessProjects (its leases, demo exclusion and NDJSON stream).
+ *                          reprocessProjects scopes everything by the SIGNED-IN company, so a root admin
+ *                          naming another company gets a 403 that says so (preview works across companies).
  * Company admin or root; root may name another company for GET / PUT (`companyId`). Demo projects are
  * refused for /run (reprocess never touches them; checked here first so the caller sees a 403, not an
  * empty stream). Preview lives in classifier-preview.ts.
@@ -20,7 +26,7 @@ import { audit } from "@/lib/audit";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 import {
-  BUILT_IN_RECIPES, BUILT_IN_RECIPES_HASH, applyOverlay, bumpOverlayVersions, isClassifierOverlay, staticCatalog, validateOverlay,
+  BUILT_IN_RECIPES, BUILT_IN_RECIPES_HASH, applyOverlay, bumpOverlayVersions, isClassifierOverlay, mergeOverlay, staticCatalog, validateOverlay,
   type CatalogModel, type ClassifierOverlay,
 } from "@/lib/classifier-engine";
 import { SCHEDULE_GROUP_NAMES, SCHEDULE_KINDS } from "@/lib/classifier-engine/vocabulary";
@@ -79,13 +85,16 @@ export async function getClassifierBuilder(req: Request, session: AuthSession): 
 
 export async function putClassifierOverlay(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
   const companyId = builderCompanyId(session, body.companyId);
-  // `{ overlay }` from the tab, or a bare overlay (custom / patches at the top) from the fitter.
-  const input = body.overlay !== undefined ? body.overlay : body.custom !== undefined || body.patches !== undefined ? body : undefined;
+  // `{ overlay }` from the tab (whole replace), or a bare overlay (custom / patches at the top) from the fitter (merge by recipe id).
+  const bare = body.overlay === undefined;
+  const input = !bare ? body.overlay : body.custom !== undefined || body.patches !== undefined ? body : undefined;
   if (input === undefined) throw new ApiError("VALIDATION", "overlay required");
-  const checked = validateOverlay(input, BUILT_IN_RECIPES);
+  const merge = typeof body.merge === "boolean" ? body.merge : bare;
+  const checked = validateOverlay(bare ? { custom: body.custom, patches: body.patches } : input, BUILT_IN_RECIPES);
   if (checked.errors.length || !checked.overlay) throw new ApiError("VALIDATION", `overlay rejected: ${checked.errors.slice(0, 8).join("; ")}`);
   const { overlay: stored } = await readOverlay(companyId);
-  const next: ClassifierOverlay = { ...bumpOverlayVersions(checked.overlay, stored, BUILT_IN_RECIPES), updatedAt: new Date().toISOString(), updatedBy: session.user.dbId };
+  const wanted = merge ? mergeOverlay(stored, checked.overlay) : checked.overlay;
+  const next: ClassifierOverlay = { ...bumpOverlayVersions(wanted, stored, BUILT_IN_RECIPES), updatedAt: new Date().toISOString(), updatedBy: session.user.dbId };
   await updatePipelineConfig(companyId, (current) => ({ ...current, classifiers: next }), { touchUpdatedAt: true });
   const versions = {
     ...Object.fromEntries(Object.entries(next.patches).map(([id, p]) => [id, p.version])),
@@ -93,19 +102,21 @@ export async function putClassifierOverlay(session: AuthSession, body: Record<st
   };
   audit("admin.classifiers.overlay_put", {
     userId: session.user.dbId, companyId,
-    details: { patched: Object.keys(next.patches), custom: next.custom.map((r) => r.id), versions, builtInsHash: BUILT_IN_RECIPES_HASH },
+    details: { mode: merge ? "merge" : "replace", patched: Object.keys(next.patches), custom: next.custom.map((r) => r.id), versions, builtInsHash: BUILT_IN_RECIPES_HASH },
   });
-  return { success: true, overlay: next, effective: applyOverlay(BUILT_IN_RECIPES, next), versions };
+  return { success: true, mode: merge ? "merge" : "replace", overlay: next, effective: applyOverlay(BUILT_IN_RECIPES, next), versions };
 }
 
 export async function runClassifiersOnProject(session: AuthSession, body: Record<string, unknown>): Promise<Response> {
   const publicId = body.projectId;
   if (typeof publicId !== "string" || !publicId) throw new ApiError("VALIDATION", "projectId required");
   if (!PUBLIC_ID.test(publicId)) throw new ApiError("NOT_FOUND", "Project not found");
+  const companyId = builderCompanyId(session, body.companyId);
+  if (companyId !== session.user.companyId) throw new ApiError("FORBIDDEN", "Run works on your own company's projects only (reprocess runs under the signed-in company); preview works for any company");
   const [project] = await db
     .select({ id: projects.id, publicId: projects.publicId, isDemo: projects.isDemo })
     .from(projects)
-    .where(and(eq(projects.publicId, publicId), eq(projects.companyId, session.user.companyId)))
+    .where(and(eq(projects.publicId, publicId), eq(projects.companyId, companyId)))
     .limit(1);
   if (!project) throw new ApiError("NOT_FOUND", "Project not found");
   if (project.isDemo) throw new ApiError("FORBIDDEN", "Demo projects are read-only");

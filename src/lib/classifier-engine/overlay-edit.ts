@@ -13,9 +13,10 @@
  */
 
 import type { RegionV2Signals } from "@/lib/region-classifier-v2/types";
-import { CANDIDATE_TYPES, ROLES, applyOverlay, classRemovalKey, signalKey, validateClass, validateRecipe, validateSignal, validateSpec } from "./recipes";
+import { ROLES, applyOverlay, classRemovalKey, signalKey, validateClass, validateRecipe, validateSignal } from "./recipes";
+import { checkCandidates, checkScope, checkSpec } from "./spec-check";
 import type {
-  CandidateSource, ClassifierClass, ClassifierOverlay, ClassifierRecipe, ClassifierScope, RecipePatch, SignalPatch, WeightedSignal,
+  ClassMetaPatch, ClassifierClass, ClassifierOverlay, ClassifierRecipe, ClassifierScope, RecipePatch, SignalPatch, WeightedSignal,
 } from "./types";
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -61,6 +62,7 @@ function patchHead(head: HeadId, base: readonly WeightedSignal[], draft: readonl
 export function buildRecipePatch(builtIn: ClassifierRecipe, draft: ClassifierRecipe, version: number = builtIn.version): RecipePatch | null {
   const patch: RecipePatch = { version };
   if (builtIn.enabled !== draft.enabled) patch.enabled = draft.enabled;
+  if (builtIn.name !== draft.name) patch.name = draft.name;
   if (builtIn.detect.bias !== draft.detect.bias) patch.detectBias = draft.detect.bias;
   if (builtIn.detect.threshold !== draft.detect.threshold) patch.detectThreshold = draft.detect.threshold;
   if (builtIn.nameThreshold !== draft.nameThreshold) patch.nameThreshold = draft.nameThreshold;
@@ -73,6 +75,11 @@ export function buildRecipePatch(builtIn: ClassifierRecipe, draft: ClassifierRec
     if (!d) { (patch.removed ??= []).push(classRemovalKey(b.id)); continue; }
     if (b.bias !== d.bias) (patch.classBias ??= {})[b.id] = d.bias;
     if (!same(b.threshold, d.threshold) && d.threshold !== undefined) (patch.classThreshold ??= {})[b.id] = d.threshold;
+    const meta: ClassMetaPatch = {};
+    if (b.name !== d.name) meta.name = d.name;
+    if (b.group !== d.group) meta.group = d.group;
+    if (!same(b.legacyCategory, d.legacyCategory)) meta.legacyCategory = d.legacyCategory ?? null;
+    if (Object.keys(meta).length) (patch.classMeta ??= {})[b.id] = meta;
     patchHead(b.id, b.signals, d.signals, patch, b.id);
   }
   for (const d of draft.classes) if (!builtIn.classes.some((c) => c.id === d.id)) (patch.addedClasses ??= []).push(clone(d));
@@ -88,7 +95,7 @@ export function describePatch(builtIn: ClassifierRecipe, patch: RecipePatch | nu
   if (!patch) return [];
   const out: DiffLine[] = [];
   const top: Array<[keyof RecipePatch, string, unknown]> = [
-    ["enabled", "enabled", builtIn.enabled], ["detectBias", "detect bias", builtIn.detect.bias], ["detectThreshold", "detect threshold", builtIn.detect.threshold],
+    ["name", "name", builtIn.name], ["enabled", "enabled", builtIn.enabled], ["detectBias", "detect bias", builtIn.detect.bias], ["detectThreshold", "detect threshold", builtIn.detect.threshold],
     ["nameThreshold", "name threshold", builtIn.nameThreshold], ["minMargin", "min margin", builtIn.minMargin], ["scope", "scope", builtIn.scope], ["candidates", "candidates", builtIn.candidates],
   ];
   for (const [key, label, base] of top) if (patch[key] !== undefined) out.push({ path: label, kind: "changed", from: show(base), to: show(patch[key]) });
@@ -105,6 +112,9 @@ export function describePatch(builtIn: ClassifierRecipe, patch: RecipePatch | nu
   }
   for (const [cid, v] of Object.entries(patch.classBias ?? {})) out.push({ path: `${className(cid)}: bias`, kind: "changed", from: show(builtIn.classes.find((c) => c.id === cid)?.bias), to: show(v) });
   for (const [cid, v] of Object.entries(patch.classThreshold ?? {})) out.push({ path: `${className(cid)}: threshold`, kind: "changed", from: show(builtIn.classes.find((c) => c.id === cid)?.threshold), to: show(v) });
+  for (const [cid, meta] of Object.entries(patch.classMeta ?? {})) {
+    for (const [f, v] of Object.entries(meta ?? {})) out.push({ path: `${className(cid)}: ${f === "legacyCategory" ? "legacy category" : f}`, kind: "changed", from: show((builtIn.classes.find((c) => c.id === cid) as unknown as Record<string, unknown> | undefined)?.[f]), to: v === null ? "—" : show(v) });
+  }
   for (const a of patch.addedSignals ?? []) out.push({ path: `${a.classId === null ? "detect" : className(a.classId)} · ${a.signal?.id ?? "?"}`, kind: "added", to: a.signal?.label });
   for (const c of patch.addedClasses ?? []) out.push({ path: `class ${c.name ?? c.id}`, kind: "added", to: `${c.signals?.length ?? 0} signals` });
   for (const r of patch.removed ?? []) {
@@ -146,23 +156,17 @@ export const resetRecipe = (builtIn: ClassifierRecipe): ClassifierRecipe => clon
 // ── strict validation ────────────────────────────────────────────────────────
 
 const STR_LIST = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
 
-function validateScope(scope: unknown, at: string, errors: string[]): void {
-  if (!isRecord(scope)) { errors.push(`${at}: scope must be an object`); return; }
-  const s = scope as Record<string, unknown>;
-  for (const k of ["disciplines", "excludeDisciplines", "pageKinds"]) if (s[k] !== undefined && !STR_LIST(s[k])) errors.push(`${at}: scope.${k} must be a list of strings`);
-  if (s.sheetNumberPattern !== undefined && typeof s.sheetNumberPattern !== "string") errors.push(`${at}: scope.sheetNumberPattern must be a string`);
-  if (s.excludeTitleBlock !== undefined && typeof s.excludeTitleBlock !== "boolean") errors.push(`${at}: scope.excludeTitleBlock must be true/false`);
-  for (const k of ["minWords", "maxWords"]) if (s[k] !== undefined && !isNum(s[k])) errors.push(`${at}: scope.${k} must be a number`);
-}
-
-function validateCandidates(c: unknown, at: string, errors: string[]): void {
-  if (!Array.isArray(c) || !c.length) { errors.push(`${at}: candidates must be a non-empty list`); return; }
-  c.forEach((src, i) => {
-    if (!isRecord(src) || !CANDIDATE_TYPES.has(src.type as CandidateSource["type"])) { errors.push(`${at}: candidates[${i}] has an unknown type`); return; }
-    if (src.type === "regions-v2" && !STR_LIST(src.kinds)) errors.push(`${at}: candidates[${i}] regions-v2 needs kinds[]`);
-    if (src.type === "yolo" && !STR_LIST(src.classes)) errors.push(`${at}: candidates[${i}] yolo needs classes[]`);
-  });
+function validateClassMeta(meta: unknown, classIds: Set<string>, at: string, errors: string[]): void {
+  if (!isRecord(meta)) { errors.push(`${at}: classMeta must be an object keyed by class id`); return; }
+  for (const [cid, m] of Object.entries(meta)) {
+    if (!classIds.has(cid)) { errors.push(`${at}: classMeta names unknown class "${cid}"`); continue; }
+    if (!isRecord(m)) { errors.push(`${at}: classMeta.${cid} must be an object`); continue; }
+    for (const f of ["name", "group"]) if (m[f] !== undefined && !nonEmpty(m[f])) errors.push(`${at}: classMeta.${cid}.${f} must be a non-empty string`);
+    if (m.legacyCategory !== undefined && m.legacyCategory !== null && !nonEmpty(m.legacyCategory)) errors.push(`${at}: classMeta.${cid}.legacyCategory must be a non-empty string or null`);
+    for (const f of Object.keys(m)) if (!["name", "group", "legacyCategory"].includes(f)) errors.push(`${at}: classMeta.${cid} has an unknown field "${f}"`);
+  }
 }
 
 function validateSignalPatchEntry(key: string, p: unknown, recipe: ClassifierRecipe, at: string, errors: string[]): void {
@@ -178,7 +182,7 @@ function validateSignalPatchEntry(key: string, p: unknown, recipe: ClassifierRec
   if (p.role !== undefined && !ROLES.has(p.role as never)) errors.push(`${at}: signal "${key}" role must be score | required | veto`);
   if (p.enabled !== undefined && typeof p.enabled !== "boolean") errors.push(`${at}: signal "${key}" enabled must be true/false`);
   for (const f of ["label", "note"]) if (p[f] !== undefined && typeof p[f] !== "string") errors.push(`${at}: signal "${key}" ${f} must be a string`);
-  if (p.spec !== undefined) { try { validateSpec(p.spec, recipe.id, sid); } catch (e) { errors.push(`${at}: ${(e as Error).message}`); } }
+  if (p.spec !== undefined) for (const m of checkSpec(p.spec, `signal "${key}"`)) errors.push(`${at}: ${m}`);
   for (const f of Object.keys(p)) if (!SIGNAL_FIELDS.includes(f as never)) errors.push(`${at}: signal "${key}" has an unknown field "${f}"`);
 }
 
@@ -188,10 +192,12 @@ function validatePatch(id: string, patch: unknown, builtIn: ClassifierRecipe, er
   for (const k of ["detectThreshold", "nameThreshold", "minMargin"]) if (patch[k] !== undefined && !(isNum(patch[k]) && (patch[k] as number) >= 0 && (patch[k] as number) <= 1)) errors.push(`${at}: ${k} must be a number in [0, 1]`);
   if (patch.detectBias !== undefined && !isNum(patch.detectBias)) errors.push(`${at}: detectBias must be a number`);
   if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") errors.push(`${at}: enabled must be true/false`);
+  if (patch.name !== undefined && !nonEmpty(patch.name)) errors.push(`${at}: name must be a non-empty string`);
   if (patch.version !== undefined && !isNum(patch.version)) errors.push(`${at}: version must be a number`);
-  if (patch.scope !== undefined) validateScope(patch.scope, at, errors);
-  if (patch.candidates !== undefined) validateCandidates(patch.candidates, at, errors);
+  if (patch.scope !== undefined) for (const m of checkScope(patch.scope, "scope:")) errors.push(`${at}: ${m}`);
+  if (patch.candidates !== undefined) for (const m of checkCandidates(patch.candidates, "")) errors.push(`${at}: ${m.trim()}`);
   const classIds = new Set(builtIn.classes.map((c) => c.id));
+  if (patch.classMeta !== undefined) validateClassMeta(patch.classMeta, classIds, at, errors);
   if (patch.signals !== undefined) {
     if (!isRecord(patch.signals)) errors.push(`${at}: signals must be an object`);
     else for (const [key, p] of Object.entries(patch.signals)) validateSignalPatchEntry(key, p, builtIn, at, errors);
@@ -239,7 +245,7 @@ function validatePatch(id: string, patch: unknown, builtIn: ClassifierRecipe, er
       if (!ok) errors.push(`${at}: removed names unknown id "${r}"`);
     }
   }
-  const KNOWN = new Set(["version", "enabled", "detectBias", "detectThreshold", "nameThreshold", "minMargin", "signals", "classBias", "classThreshold", "addedSignals", "addedClasses", "removed", "scope", "candidates"]);
+  const KNOWN = new Set(["version", "enabled", "name", "detectBias", "detectThreshold", "nameThreshold", "minMargin", "signals", "classBias", "classThreshold", "classMeta", "addedSignals", "addedClasses", "removed", "scope", "candidates"]);
   for (const k of Object.keys(patch)) if (!KNOWN.has(k)) errors.push(`${at}: unknown field "${k}"`);
   if (!errors.length) {
     try { validateRecipe(applyOverlay([builtIn], { custom: [], patches: { [id]: patch as unknown as RecipePatch } })[0], "built-in"); }
@@ -305,6 +311,23 @@ export function bumpOverlayVersions(next: ClassifierOverlay, stored: ClassifierO
     out.custom.push({ ...rec, version });
   }
   return out;
+}
+
+/**
+ * `incoming` laid over `stored` by recipe id: a patch replaces the stored patch of that built-in, a custom
+ * recipe replaces the stored one with its id, everything else in `stored` is kept. For a fitter (or any
+ * caller) that carries only the recipes it touched; the tab sends the whole overlay and replaces instead.
+ */
+export function mergeOverlay(stored: ClassifierOverlay | null | undefined, incoming: ClassifierOverlay): ClassifierOverlay {
+  const patches: Record<string, RecipePatch> = {};
+  for (const [id, p] of Object.entries(isRecord(stored?.patches) ? stored.patches : {})) if (isRecord(p)) patches[id] = clone(p);
+  Object.assign(patches, clone(incoming.patches));
+  const custom = (Array.isArray(stored?.custom) ? stored.custom : []).filter((r) => isRecord(r) && typeof r.id === "string").map(clone);
+  for (const rec of incoming.custom) {
+    const i = custom.findIndex((r) => r.id === rec.id);
+    if (i === -1) custom.push(clone(rec)); else custom[i] = clone(rec);
+  }
+  return { custom, patches };
 }
 
 /** A class as "add class" creates it: no signals, neutral bias. */

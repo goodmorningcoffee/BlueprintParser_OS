@@ -160,6 +160,16 @@ export interface RecipePatch {
   /** Whole-value overrides of the built-in's scope / candidate sources. */
   scope?: ClassifierScope;
   candidates?: CandidateSource[];
+  /** [track 3 fix round] Display name override of the built-in recipe. */
+  name?: string;
+  /** [track 3 fix round] classId → display edits of a built-in class (name / group / legacy bridge category; null clears it). */
+  classMeta?: Record<string, ClassMetaPatch>;
+}
+
+export interface ClassMetaPatch {
+  name?: string;
+  group?: string;
+  legacyCategory?: string | null;
 }
 
 /** Per-company edits on top of the built-ins: whole custom recipes plus sparse patches of built-ins. */

@@ -1,7 +1,8 @@
 "use client";
 
-// [classifier builder track 3] One naming class: name / group / bias / threshold, its signals, and
-// reset-to-built-in / remove for the class. Collapsed by default (45 classes in schedules.v1).
+// [classifier builder track 3] One naming class: name / group / legacy category / bias / threshold, its
+// signals, and reset-to-built-in / remove for the class. Collapsed by default (45 classes in schedules.v1).
+// Name / group / legacy category edits of a BUILT-IN class save as RecipePatch.classMeta (fix round).
 
 import { useState } from "react";
 import { type ClassifierClass, type SignalCatalog, type WeightedSignal } from "@/lib/classifier-engine";
@@ -53,13 +54,11 @@ export default function ClassSection(p: ClassSectionProps) {
       </div>
       {open && (
         <div className="px-2 pb-2 space-y-2 border-t border-[var(--border)]">
-          {!builtIn && (
-            <div className="flex gap-2 pt-2">
-              <label className="text-[10px] text-[var(--muted)]">name <input className={`${INPUT} w-48`} value={cls.name} onChange={(e) => p.onChangeClass({ name: e.target.value })} /></label>
-              <label className="text-[10px] text-[var(--muted)]">group <input className={`${INPUT} w-24`} value={cls.group} onChange={(e) => p.onChangeClass({ group: e.target.value })} /></label>
-              <label className="text-[10px] text-[var(--muted)]">legacy category <input className={`${INPUT} w-32`} value={cls.legacyCategory ?? ""} onChange={(e) => p.onChangeClass({ legacyCategory: e.target.value || undefined })} /></label>
-            </div>
-          )}
+          <div className="flex flex-wrap gap-2 pt-2">
+            <label className="text-[10px] text-[var(--muted)]">name <input className={`${INPUT} w-48`} value={cls.name} aria-label={`name of ${cls.id}`} onChange={(e) => p.onChangeClass({ name: e.target.value })} /></label>
+            <label className="text-[10px] text-[var(--muted)]">group <input className={`${INPUT} w-24`} value={cls.group} aria-label={`group of ${cls.id}`} onChange={(e) => p.onChangeClass({ group: e.target.value })} /></label>
+            <label className="text-[10px] text-[var(--muted)]">legacy category <input className={`${INPUT} w-32`} value={cls.legacyCategory ?? ""} aria-label={`legacy category of ${cls.id}`} onChange={(e) => p.onChangeClass({ legacyCategory: e.target.value || undefined })} /></label>
+          </div>
           <HeadSignals signals={cls.signals} builtIn={builtIn?.signals} catalog={p.catalog}
             onChange={p.onChangeSignal} onReset={p.onResetSignal} onDuplicate={p.onDuplicateSignal} onRemove={p.onRemoveSignal} onAdd={p.onAddSignal} />
         </div>

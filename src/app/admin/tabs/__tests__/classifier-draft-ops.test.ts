@@ -60,6 +60,15 @@ describe("draft-ops", () => {
     expect(isModified(undefined, custom)).toBe(false);
   });
 
+  it("renaming a built-in class or recipe saves as RecipePatch.classMeta / name (never silently dropped)", () => {
+    let d = updateClass(schedules, "door", { name: "Doors", group: "openings", legacyCategory: undefined });
+    d = updateRecipe(d, { name: "Our schedules" });
+    const patch = overlayFromDrafts(BUILT_IN_RECIPES, { [schedules.id]: d }).patches[schedules.id];
+    expect(patch.name).toBe("Our schedules");
+    expect(patch.classMeta).toEqual({ door: { name: "Doors", group: "openings", ...(schedules.classes.find((c) => c.id === "door")!.legacyCategory ? { legacyCategory: null } : {}) } });
+    expect(isModified(schedules, d)).toBe(true);
+  });
+
   it("parsePageSpec and formatContribution", () => {
     expect(parsePageSpec("1-3, 7 12")).toEqual([1, 2, 3, 7, 12]);
     expect(parsePageSpec("3-1")).toEqual([]);
