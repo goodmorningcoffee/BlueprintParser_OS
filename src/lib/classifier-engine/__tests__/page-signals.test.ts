@@ -66,4 +66,11 @@ describe("page signals", () => {
     expect(result.proposals[0].bbox).toEqual([0, 0, 1, 1]);
     expect(result.proposals[0].features["detect.kw"]).toBe(1);
   });
+
+  it("[2b fix] malformed stored rows (null csi entry, non-array triggers) are skipped, not thrown", () => {
+    const bad = { ...base, csiCodes: [null, { ...noTrigger, triggers: "x" }, noTrigger] as unknown as CsiCode[] };
+    const page = buildPageEvidence(bad);
+    expect(page.pageCsi).toEqual([]);
+    expect(page.pageCodes.map((c) => c.code)).toEqual(["09 30 00", "09 30 00"]);
+  });
 });

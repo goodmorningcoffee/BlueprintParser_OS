@@ -73,6 +73,54 @@ describe("enrichPageAfterYolo — CSI codes come from pages.csiCodes", () => {
   });
 });
 
+describe("[2b fix] heuristicInferences / classifiedTables are recomputed on every page", () => {
+  const stale = [{ ruleId: "keynote-table", ruleName: "Keynote Table", label: "keynote-table", confidence: 0.6, evidence: ["old"] }];
+  const region = { id: "r1", type: "schedule-table", bbox: [0.1, 0.1, 0.3, 0.3], headerText: "SCHEDULE", confidence: 0.9, wordCount: 30, lineCount: 6 };
+  const page = (pi: Record<string, unknown>, csiCodes: CsiCode[] | null = null) => ({ pageNumber: 4, rawText: "NOTHING", pageIntelligence: pi, csiCodes });
+  const dets = [det("tables", "yolo_medium", 0.1, 0.1)];
+
+  it("a page that now fires no rule loses its stale inferences, and its tables are rebuilt without them", () => {
+    spy.classifyTables.mockReturnValue([{ id: "fresh", category: "door-schedule" }]);
+    const { updated, pageChanged } = enrichPageAfterYolo(page({ textRegions: [region], heuristicInferences: stale, classifiedTables: [{ id: "old" }] }), dets, opts());
+    expect(pageChanged).toBe(true);
+    expect("heuristicInferences" in updated).toBe(false);
+    expect(spy.classifyTables.mock.calls[0][0].heuristicInferences).toEqual([]);
+    expect(updated.classifiedTables).toEqual([{ id: "fresh", category: "door-schedule" }]);
+  });
+
+  it("an empty reclassification removes stale classifiedTables; without textRegions they are left as stored", () => {
+    const cleared = enrichPageAfterYolo(page({ textRegions: [region], classifiedTables: [{ id: "old" }] }), dets, opts());
+    expect("classifiedTables" in cleared.updated).toBe(false);
+    const kept = enrichPageAfterYolo(page({ classifiedTables: [{ id: "old" }] }), dets, opts());
+    expect(spy.classifyTables).toHaveBeenCalledTimes(1);
+    expect(kept.updated.classifiedTables).toEqual([{ id: "old" }]);
+  });
+
+  it("unchanged keys are not rewritten (a stored jsonb copy compares equal)", () => {
+    spy.classifyTables.mockReturnValue([{ id: "t", category: "door-schedule" }]);
+    const first = enrichPageAfterYolo(page({ textRegions: [region] }, [DOORS]), dets, opts());
+    const stored = JSON.parse(JSON.stringify(first.updated));
+    const second = enrichPageAfterYolo(page(stored, [DOORS]), dets, opts());
+    expect(second.updated.heuristicInferences).toBe(stored.heuristicInferences);
+    expect(second.updated.classifiedTables).toBe(stored.classifiedTables);
+  });
+
+  it("malformed stored csiCodes (null entry, non-array triggers) do not throw the page", () => {
+    const bad = [null, { code: "08 11 16", description: "x", trade: "y", division: "08", triggers: "nope" }] as unknown as CsiCode[];
+    const out = enrichPageAfterYolo({ ...page({ textRegions: [region] }, bad), rawText: "OPENINGS" }, dets, opts());
+    expect((out.updated.heuristicInferences as Array<{ ruleId: string }>).map((i) => i.ruleId)).toEqual(["div08"]);
+    expect(out.updated.pageZones).toBeDefined();
+  });
+
+  it("a throw in the recipes is contained: both keys left as stored, the rest of the page still enriched", () => {
+    spy.classifyTables.mockImplementation(() => { throw new Error("boom"); });
+    const out = enrichPageAfterYolo(page({ textRegions: [region], heuristicInferences: stale, classifiedTables: [{ id: "old" }] }), dets, opts());
+    expect(out.updated.heuristicInferences).toBe(stale);
+    expect(out.updated.classifiedTables).toEqual([{ id: "old" }]);
+    expect(out.updated.pageZones).toBeDefined();
+  });
+});
+
 describe("enrichPageAfterYolo — regions v2 runs in shadow", () => {
   const words = Array.from({ length: 12 }, (_, i) => ({
     text: ["DOOR", "SCHEDULE", "FRAME", "HARDWARE", "HM", "WD"][i % 6], confidence: 99,
@@ -91,9 +139,11 @@ describe("enrichPageAfterYolo — regions v2 runs in shadow", () => {
     const v2 = updated.regionsV2 as { version: string; regions: Array<{ kind: string; className: string }> };
     expect(v2.version).toBe("rc-v2/0.1");
     expect(v2.regions).toEqual([expect.objectContaining({ kind: "table", className: "door schedule" })]);
-    // classifiedTables is whatever the legacy classifier returned — v2 never replaces it
-    expect(updated.classifiedTables).toBeUndefined(); // no inference fired ⇒ the legacy reclassifier did not run
-    expect(spy.classifyTables).not.toHaveBeenCalled();
+    // classifiedTables is whatever the legacy classifier returned — v2 never replaces it. [2b fix] The reclassifier
+    // now runs on every page with OCR regions, inference or not (as the intelligence reprocess does).
+    expect(updated.classifiedTables).toEqual([{ id: "legacy", category: "material-schedule" }]);
+    expect(spy.classifyTables).toHaveBeenCalledTimes(1);
+    expect(spy.classifyTables.mock.calls[0][0].heuristicInferences).toEqual([]);
   });
 
   it("an unchanged record is not rewritten; a missing textractData still yields a (wordless) record", () => {

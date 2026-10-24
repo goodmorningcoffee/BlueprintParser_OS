@@ -140,7 +140,7 @@ export function proposalToInference(
  */
 export function runHeuristicRecipes(recipes: readonly ClassifierRecipe[], ctx: HeuristicPageContext): HeuristicInference[] {
   const yoloAvailable = !!ctx.yoloDetections;
-  const csiCodes = ctx.csiCodes ?? [];
+  const csiCodes = (ctx.csiCodes ?? []).filter((c) => c && typeof c.code === "string"); // a malformed stored row is skipped, not thrown
   const textRegions = Array.isArray(ctx.textRegions) ? (ctx.textRegions as Array<{ type?: string | null }>) : null;
   const groups: Array<{ recipes: ClassifierRecipe[]; detections: HeuristicDetection[] | undefined }> = [
     { recipes: recipes.filter((r) => r.source === "built-in"), detections: ctx.yoloDetections ? scopeLayoutDetections(ctx.yoloDetections) : undefined },

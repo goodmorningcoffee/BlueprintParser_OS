@@ -195,8 +195,10 @@ export function buildPageEvidence(input: ClassifierPageInput): PageEvidence {
   const tbRows = groupRows(tbWords).flat().sort((a, b) => b.h - a.h).slice(0, 3);
   const pageCsi: PageEvidence["pageCsi"] = [];
   for (const code of input.csiCodes ?? []) {
+    // [2b fix] tolerate malformed stored rows (null entry, non-array triggers): one bad code must not throw the page.
+    if (!code || !Array.isArray(code.triggers)) continue;
     const division = (code.division || code.code || "").slice(0, 2);
-    for (const t of code.triggers ?? []) {
+    for (const t of code.triggers) {
       if (t?.bbox) pageCsi.push({ c: center(ltwhToMinMax(t.bbox)), code: { code: code.code, division } });
     }
   }
