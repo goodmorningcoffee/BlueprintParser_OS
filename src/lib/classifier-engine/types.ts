@@ -138,6 +138,12 @@ export interface ClassifierOverlay {
     detectThreshold?: number;
     nameThreshold?: number;
     minMargin?: number;
+    /** additive (step 4 fitter): replaces the detect head's bias. */
+    detectBias?: number;
+    /**
+     * Keyed by bare signal id (applies to every head that has that id) or, additive (step 4 fitter),
+     * by head-qualified id "detect.<id>" / "<classId>.<id>" (the `features` key; wins over the bare id).
+     */
     signals?: Record<string, Partial<Pick<WeightedSignal, "weight" | "role" | "enabled" | "label">>>;
     classBias?: Record<string, number>;
     addedSignals?: Array<{ classId: string | null; signal: WeightedSignal }>;

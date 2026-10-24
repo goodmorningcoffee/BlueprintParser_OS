@@ -96,10 +96,11 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 type RecipePatch = NonNullable<ClassifierOverlay["patches"][string]>;
 
-function patchSignals(signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>): WeightedSignal[] {
+/** `prefix` is the head ("detect" or the class id): a qualified key "<prefix>.<id>" wins over the bare id. */
+function patchSignals(signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>, prefix: string): WeightedSignal[] {
   const bySignal = isRecord(patch.signals) ? patch.signals : {};
   return signals.filter((s) => !removed.has(s.id)).map((s) => {
-    const p = bySignal[s.id];
+    const p = isRecord(bySignal[`${prefix}.${s.id}`]) ? bySignal[`${prefix}.${s.id}`] : bySignal[s.id];
     if (!isRecord(p)) return s;
     return {
       ...s,
@@ -126,9 +127,10 @@ function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): ClassifierRecipe 
   if (typeof patch.detectThreshold === "number") next.detect.threshold = patch.detectThreshold;
   if (typeof patch.nameThreshold === "number") next.nameThreshold = patch.nameThreshold;
   if (typeof patch.minMargin === "number") next.minMargin = patch.minMargin;
-  next.detect.signals = patchSignals(next.detect.signals, patch, removed);
+  if (typeof patch.detectBias === "number" && Number.isFinite(patch.detectBias)) next.detect.bias = patch.detectBias;
+  next.detect.signals = patchSignals(next.detect.signals, patch, removed, "detect");
   next.classes = next.classes.filter((c) => !removed.has(c.id)).map((c) => ({
-    ...c, bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias, signals: patchSignals(c.signals, patch, removed),
+    ...c, bias: typeof classBias[c.id] === "number" ? (classBias[c.id] as number) : c.bias, signals: patchSignals(c.signals, patch, removed, c.id),
   }));
   for (const add of Array.isArray(patch.addedSignals) ? patch.addedSignals : []) {
     try {
