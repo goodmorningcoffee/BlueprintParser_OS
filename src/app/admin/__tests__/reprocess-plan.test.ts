@@ -109,8 +109,8 @@ describe("resolvePlan", () => {
     expect(presetTicks("tiles", false).size).toBe(0);
   });
 
-  it("non-runnable ticks (handoff / placeholder / unavailable) are dropped", () => {
-    expect(ids(resolvePlan(set<StageId>("yolo-run", "tiles", "re-ocr", "intelligence"), new Set(), true).run)).toEqual(["intelligence"]);
+  it("non-runnable ticks (handoff / unavailable; no placeholders left after evidence + tiles) are dropped", () => {
+    expect(ids(resolvePlan(set<StageId>("yolo-run", "re-ocr", "intelligence"), new Set(), true).run)).toEqual(["intelligence"]);
   });
 });
 

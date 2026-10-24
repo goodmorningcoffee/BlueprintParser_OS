@@ -193,7 +193,6 @@ describe("ReprocessTab", () => {
     expect(within(stage("tiles")).queryByText("coming soon")).toBeNull();
     expect(box("re-ocr").disabled).toBe(true);
     expect(within(stage("evidence")).queryByText("coming soon")).toBeNull();
-    expect(within(stage("tiles")).getByText("coming soon")).toBeTruthy();
     expect(within(stage("re-ocr")).getByText("not available")).toBeTruthy();
     expect(screen.queryByText(/coming in phase 2 — own company only/u)).toBeNull();
     expect((screen.getByLabelText(/only projects where output is missing/u) as HTMLInputElement).disabled).toBe(true);
