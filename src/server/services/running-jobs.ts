@@ -68,10 +68,44 @@ export async function getRunningJobs(session: AuthSession): Promise<unknown> {
     }));
 
     // [2026-10-21] Completed jobs nobody polled are loaded once server-side (services/yolo-catch-up).
-    const retired = await catchUpYoloJobs(session, jobs, { markTerminal: updateRunningJob });
+    // [fix 2026-10-24] ROOT ONLY: YOLO load became root-only on 2026-10-23 (yolo-root-gate.ts) and
+    // the catch-up loads with the caller's session, so a company admin's page load must not run it.
+    const retired = session.user.isRootAdmin
+      ? await catchUpYoloJobs(session, jobs, { markTerminal: updateRunningJob })
+      : new Set<string>();
     return jobs.filter((j) => !retired.has(catchUpRowKey(j)));
   } catch {
     return [];
+  }
+}
+
+/** DescribeProcessingJob throttled: the SDK's ThrottlingException / TooManyRequests, or an HTTP 429. */
+export function isSagemakerThrottled(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { name?: unknown; Code?: unknown; __type?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  if (e.$metadata?.httpStatusCode === 429) return true;
+  return [e.name, e.Code, e.__type].some((v) => typeof v === "string" && /Throttl|TooManyRequests/u.test(v));
+}
+
+// [fix 2026-10-24 feature_ledger Y11 "finished (Completed) but its status could not be saved:
+// Internal server error"] During a bulk run every open admin tab describes every job every 10 s and
+// this PUT describes it once more, so SageMaker throttles DescribeProcessingJob and the PUT fell
+// through to the generic 500. A throttled describe is retried briefly; if it stays throttled the
+// answer is 429 RATE_LIMITED with a message that says the row stays running (the browser's next
+// poll, or root's page-load catch-up, closes it). Any other provider error is still the 500.
+export const YOLO_STATUS_THROTTLE_RETRY_MS: readonly number[] = [250, 750, 1500];
+export const YOLO_STATUS_THROTTLED_MESSAGE =
+  "SageMaker is throttling status checks; the job stays marked running and is retried on the next poll or page load";
+
+async function describeJobStatus(jobName: string): Promise<{ status: string; failureReason?: string }> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await getYoloJobStatus(jobName);
+    } catch (error) {
+      if (!isSagemakerThrottled(error)) throw error;
+      if (attempt >= YOLO_STATUS_THROTTLE_RETRY_MS.length) throw new ApiError("RATE_LIMITED", YOLO_STATUS_THROTTLED_MESSAGE);
+      await new Promise((resolve) => setTimeout(resolve, YOLO_STATUS_THROTTLE_RETRY_MS[attempt]));
+    }
   }
 }
 
@@ -135,7 +169,7 @@ export async function updateRunningJob(
   // old enough that no in-flight start can still create it; only the JOB row closes — the compute
   // reservation is never touched here (it is unlinked; see the Stuck jobs panel).
   let neverStarted = false;
-  const provider = await getYoloJobStatus(job.executionId!).catch((error: unknown) => {
+  const provider = await describeJobStatus(job.executionId!).catch((error: unknown) => {
     if (!isSagemakerJobNotFound(error)) throw error;
     const ageMs = job.startedAt ? Date.now() - job.startedAt.getTime() : Infinity;
     if (ageMs < YOLO_NEVER_STARTED_MIN_AGE_MS) {

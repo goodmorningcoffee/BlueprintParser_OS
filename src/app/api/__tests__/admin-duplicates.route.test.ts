@@ -15,7 +15,7 @@ import { POST as restorePOST } from "@/app/api/admin/duplicates/restore/route";
 import { GET as flagsGET } from "@/app/api/projects/[id]/page-flags/route";
 import { PATCH as intelligencePATCH } from "@/app/api/pages/intelligence/route";
 import { db } from "@/lib/db";
-import { annotations, auditLog, pages, projectMutationLeases } from "@/lib/db/schema";
+import { annotations, auditLog, pages, projectMutationLeases, projects } from "@/lib/db/schema";
 import { body, page, tweak } from "@/lib/__tests__/page-dedup-fixtures";
 import {
   asUser, createCompany, createPage, createProject, createUser, makeReq, params, publishDemoFixture, readJson, signedOut,
@@ -198,6 +198,11 @@ describe.skipIf(!dbUp)("admin duplicates — apply / restore", () => {
     expect(m[4]).toMatchObject({ v: 1, pageNumber: 1, tier: "exact", score: 1, by: admin.id });
     expect(typeof m[4].hiddenAt).toBe("string");
     expect(typeof m[4].scannedAt).toBe("string");
+    // [fix 2026-10-24 DOUBLE_BACK] hiding recomputes the project analysis + summaries over the VISIBLE pages
+    const analysis = async () => (await db.select({ s: projects.projectSummary, pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, p.id)))[0];
+    const hidden3 = await analysis();
+    expect(hidden3.s).toContain("PROJECT OVERVIEW: 3 sheets");
+    expect((hidden3.pi as Record<string, unknown>).summaries).toBeDefined();
     // digest is unchanged by the marks, so a second apply skips "already hidden"
     const again = await apply({ projectPublicId: p.publicId, reportDigest: digest, tiers: ["exact"] });
     expect(again.body.hidden).toEqual([]);
@@ -205,8 +210,10 @@ describe.skipIf(!dbUp)("admin duplicates — apply / restore", () => {
     const res = await restore({ projectPublicId: p.publicId, pages: [5] });
     expect(res.body.restored).toEqual([5]);
     expect(Object.keys(await marks(p.id)).map(Number)).toEqual([4, 6]);
+    expect((await analysis()).s).toContain("PROJECT OVERVIEW: 4 sheets");
     expect((await restore({ projectPublicId: p.publicId })).body.restored).toEqual([4, 6]);
     expect(await marks(p.id)).toEqual({});
+    expect((await analysis()).s).toContain("PROJECT OVERVIEW: 6 sheets");
     await vi.waitFor(async () => {
       const rows = await db.select({ action: auditLog.action }).from(auditLog).where(eq(auditLog.userId, admin.id));
       expect(rows.map((x) => x.action).sort()).toEqual(

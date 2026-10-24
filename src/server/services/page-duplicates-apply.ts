@@ -37,6 +37,7 @@ import { ApiError } from "@/server/api/envelope";
 import {
   assertProjectWritable,
   withProjectWrite,
+  type ProjectWriteCapability,
   type ProjectWriteTransaction,
 } from "@/server/api/project-write-capability";
 import {
@@ -48,6 +49,7 @@ import {
   scanProjectPages,
   type DuplicateScopeProject,
 } from "@/server/services/page-duplicates";
+import { recomputeProject } from "./project-recompute";
 
 const MAX_ALL_PROJECTS = 500;
 
@@ -204,7 +206,7 @@ export async function applyPlannedHides(
   const skip = projectSkipReason(project);
   if (skip) throw new ApiError(project.isDemo ? "FORBIDDEN" : "CONFLICT", `Project skipped: ${skip}`);
   const capability = assertProjectWritable(project);
-  return withProjectWrite(capability, project.id, async (tx) => {
+  const result = await withProjectWrite(capability, project.id, async (tx) => {
     const [current] = await tx
       .select({ status: projects.status, isDemo: projects.isDemo })
       .from(projects)
@@ -258,6 +260,22 @@ export async function applyPlannedHides(
     }
     return result;
   });
+  if (result.hidden.length > 0) await refreshAfterVisibilityChange(project, capability);
+  return result;
+}
+
+/**
+ * [fix 2026-10-24 DOUBLE_BACK] Hiding / restoring changes the visible page set, so the project
+ * analysis + summaries are refreshed exactly as permanent delete does (project-recompute.ts). The
+ * marks are already committed; a failed refresh is logged and leaves them (Pipeline › Reprocess
+ * intelligence rebuilds the analysis).
+ */
+async function refreshAfterVisibilityChange(project: DuplicateScopeProject, capability: ProjectWriteCapability): Promise<void> {
+  try {
+    await recomputeProject(project.id, capability);
+  } catch (err) {
+    logger.warn("[duplicates] recompute failed", { projectPublicId: project.publicId, error: String(err).slice(0, 200) });
+  }
 }
 
 function auditApply(session: AuthSession, companyId: number, result: ProjectApplyResult, request: { tiers: DuplicateTier[]; blocks: string[]; keep?: DuplicateKeep }) {
@@ -351,6 +369,7 @@ export async function restoreDuplicates(
       .returning({ pageNumber: pages.pageNumber });
   });
   const restoredPages = restored.map((r) => r.pageNumber).sort((a, b) => a - b);
+  if (restoredPages.length > 0) await refreshAfterVisibilityChange(project, capability);
   audit("admin.duplicates.restore", {
     userId: session.user.dbId,
     companyId: project.companyId,

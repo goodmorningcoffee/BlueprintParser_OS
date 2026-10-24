@@ -31,10 +31,8 @@ import type { AuthSession } from "@/lib/api-utils";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { annotationGroupMembers, annotationGroups, annotations, chatMessages, pages, projects } from "@/lib/db/schema";
-import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
 import { logger } from "@/lib/logger";
-import { getDuplicateOf, visiblePage } from "@/lib/page-dedup";
-import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
+import { getDuplicateOf } from "@/lib/page-dedup";
 import { deleteFromS3, s3Client, S3_BUCKET } from "@/lib/s3";
 import { ApiError } from "@/server/api/envelope";
 import { zPublicId } from "@/server/api/schemas";
@@ -46,6 +44,7 @@ import {
 import { USER_MADE_SOURCES } from "./annotation-cleanup";
 import { projectSkipReason, resolveCompanyScope } from "./page-duplicates";
 import { assertNotBusy, humanWorkPages, type WorkReader } from "./page-duplicates-apply";
+import { recomputeProject } from "./project-recompute";
 
 export const DELETE_CONFIRM = "DELETE";
 const MAX_PROJECTS = 2000;
@@ -277,26 +276,6 @@ async function deleteInProject(project: ScopeProject, capability: ProjectWriteCa
     plan.deleted = plan.pages.length;
     return plan;
   });
-}
-
-/** The recompute reprocess does after writing pages: project analysis (visible pages) + summaries. */
-async function recomputeProject(projectId: number, capability: ProjectWriteCapability): Promise<void> {
-  const visible = await db
-    .select({ pageNumber: pages.pageNumber, drawingNumber: pages.drawingNumber, pageIntelligence: pages.pageIntelligence, csiCodes: pages.csiCodes })
-    .from(pages)
-    .where(and(eq(pages.projectId, projectId), visiblePage(pages.pageIntelligence)))
-    .orderBy(pages.pageNumber);
-  const { intelligence, summary } = analyzeProject(visible.map((p) => ({
-    pageNumber: p.pageNumber, drawingNumber: p.drawingNumber, pageIntelligence: p.pageIntelligence ?? null, csiCodes: p.csiCodes,
-  })));
-  await withProjectWrite(capability, projectId, async (tx) => {
-    const [current] = await tx.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, projectId));
-    await tx
-      .update(projects)
-      .set({ projectIntelligence: mergeProjectIntelligence(current?.pi, intelligence as Record<string, unknown>), projectSummary: summary })
-      .where(eq(projects.id, projectId));
-  });
-  await computeProjectSummaries(projectId, capability);
 }
 
 /** `expectedDigest` is the real run's previewed digest for this project (undefined on a dry run). */

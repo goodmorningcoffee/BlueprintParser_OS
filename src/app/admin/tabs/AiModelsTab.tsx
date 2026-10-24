@@ -614,11 +614,11 @@ export default function AiModelsTab({
               {isRootAdmin && <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
                 <div>
                   <span className="font-medium">YOLO Detections</span>
-                  <span className="text-xs ml-2 text-[var(--muted)]">all projects</span>
+                  <span className="text-xs ml-2 text-[var(--muted)]">every non-demo project in your company</span>
                 </div>
                 <button
                   onClick={async () => {
-                    if (!confirm("Purge ALL YOLO detections across all projects? This cannot be undone.")) return;
+                    if (!confirm("Purge ALL YOLO detections from every non-demo project in YOUR company (other companies are untouched)? This cannot be undone.")) return;
                     try {
                       const res = await fetch("/api/admin/yolo-purge", { method: "DELETE" });
                       const data = await res.json();

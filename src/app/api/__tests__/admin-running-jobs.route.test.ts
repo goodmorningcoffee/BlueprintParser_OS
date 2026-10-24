@@ -35,6 +35,7 @@ vi.mock("@/lib/yolo", () => ({
 vi.mock("@/server/services/yolo", () => ({ yoloLoad: h.yoloLoad }));
 
 import { GET as rjGET, PUT as rjPUT } from "@/app/api/admin/running-jobs/route";
+import { YOLO_STATUS_THROTTLE_RETRY_MS, YOLO_STATUS_THROTTLED_MESSAGE } from "@/server/services/running-jobs";
 import { db } from "@/lib/db";
 import { processingJobs } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -366,11 +367,11 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
   });
 
   it("[2026-10-21 catch-up] GET: a provider-Completed job nobody polled is marked completed, loaded once, and dropped from the list", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld();
     const proj = await createProject(company.id, (await createUser(company.id)).id);
     const job = await seedJob(proj.id);
     h.describeYoloJobRun.mockResolvedValue({ instanceType: "ml.g5.xlarge", runSeconds: 321 });
-    asUser(admin);
+    asUser(root);
     const r = await readJson(await rjGET(getReq()));
     expect(r.status).toBe(200);
     expect(r.body.some((j: { executionId: string }) => j.executionId === job.executionId)).toBe(false);
@@ -380,20 +381,58 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
     expect(row?.modelConfig).toMatchObject({ modelId: 7, modelName: "yolo-x", instanceType: "ml.g5.xlarge", runSeconds: 321 });
     expect(h.yoloLoad).toHaveBeenCalledTimes(1);
     expect(h.yoloLoad.mock.calls[0][0]).toEqual({ projectId: proj.publicId, modelId: 7, modelName: "yolo-x" });
-    expect(h.yoloLoad.mock.calls[0][1]).toMatchObject({ user: { dbId: admin.id } });
+    expect(h.yoloLoad.mock.calls[0][1]).toMatchObject({ user: { dbId: root.id } });
   });
 
   it("[2026-10-21 catch-up] GET: an in-progress job is left running and is not loaded", async () => {
     h.getYoloJobStatus.mockResolvedValue({ status: "InProgress" });
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld();
     const proj = await createProject(company.id, (await createUser(company.id)).id);
     const job = await seedJob(proj.id);
-    asUser(admin);
+    asUser(root);
     const r = await readJson(await rjGET(getReq()));
     expect(r.body.some((j: { executionId: string }) => j.executionId === job.executionId)).toBe(true);
     expect((await jobByExec(job.executionId!))?.status).toBe("running");
     expect(h.yoloLoad).not.toHaveBeenCalled();
   });
+
+  it("[fix 2026-10-24] GET as a company admin runs NO catch-up: a provider-Completed row stays running, unloaded and listed (load is root-only)", async () => {
+    const { company, admin } = await makeWorld();
+    const proj = await createProject(company.id, (await createUser(company.id)).id);
+    const job = await seedJob(proj.id);
+    asUser(admin);
+    const r = await readJson(await rjGET(getReq()));
+    expect(r.status).toBe(200);
+    expect(r.body.some((j: { executionId: string }) => j.executionId === job.executionId)).toBe(true);
+    expect((await jobByExec(job.executionId!))?.status).toBe("running");
+    expect(h.yoloLoad).not.toHaveBeenCalled();
+    expect(h.getYoloJobStatus).not.toHaveBeenCalled();
+  });
+
+  it("[fix 2026-10-24 Y11] PUT: a throttled Describe is retried; one that stays throttled is 429 RATE_LIMITED (not a 500) and the row stays running", async () => {
+    const { company, admin } = await makeWorld();
+    const project = await createProject(company.id, (await createUser(company.id)).id);
+    const throttled = () => Object.assign(new Error("Rate exceeded"), { name: "ThrottlingException" });
+    asUser(admin);
+
+    // two throttled answers, then the terminal one → saved
+    const job = await seedJob(project.id);
+    h.getYoloJobStatus.mockRejectedValueOnce(throttled()).mockRejectedValueOnce(throttled()).mockResolvedValueOnce({ status: "Completed" });
+    const ok = await readJson(await rjPUT(putReq({ executionId: job.executionId, status: "Completed" })));
+    expect(ok.status).toBe(200);
+    expect((await jobByExec(job.executionId!))?.status).toBe("completed");
+    expect(h.getYoloJobStatus).toHaveBeenCalledTimes(3);
+
+    // throttled on every attempt → a clear 429, nothing written
+    const stuck = await seedJob(project.id);
+    h.getYoloJobStatus.mockReset();
+    h.getYoloJobStatus.mockRejectedValue(throttled());
+    const r = await readJson(await rjPUT(putReq({ executionId: stuck.executionId, status: "Completed" })));
+    expect(r.status).toBe(429);
+    expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message: YOLO_STATUS_THROTTLED_MESSAGE } });
+    expect(h.getYoloJobStatus).toHaveBeenCalledTimes(YOLO_STATUS_THROTTLE_RETRY_MS.length + 1);
+    expect(await jobByExec(stuck.executionId!)).toMatchObject({ status: "running", completedAt: null });
+  }, 20000);
 
   // [2026-10-22] Batched YOLO jobs: one SageMaker job name, one row per project.
   it("[batch] PUT with projectId closes exactly that project's row of a shared job name", async () => {
@@ -417,13 +456,13 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
   });
 
   it("[batch] GET catch-up loads every project of a completed batched job and drops each row", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld();
     const author = await createUser(company.id);
     const projects = [];
     for (let i = 0; i < 3; i += 1) projects.push(await createProject(company.id, author.id));
     const name = `batch-${tag()}`;
     for (const p of projects) await seedJob(p.id, { executionId: name });
-    asUser(admin);
+    asUser(root);
     const r = await readJson(await rjGET(getReq()));
     expect(r.status).toBe(200);
     expect(r.body.some((j: { executionId: string }) => j.executionId === name)).toBe(false);
