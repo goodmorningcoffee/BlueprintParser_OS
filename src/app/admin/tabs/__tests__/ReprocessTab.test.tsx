@@ -163,7 +163,7 @@ describe("ReprocessTab", () => {
     renderTab({ isRootAdmin: true });
     await screen.findByText(/"All" runs on 2 projects/u);
     fireEvent.click(box("purge-yolo"));
-    expect(planOrder()).toEqual(["1. Delete YOLO annotations", "2. CSI + text annotations (auto)", "3. Intelligence + project analysis (auto)"]);
+    expect(planOrder()).toEqual(["1. Delete YOLO annotations", "2. CSI + text annotations (auto)", "3. Intelligence + project analysis (auto)", "4. Evidence (auto)"]);
     fireEvent.click(screen.getByLabelText(/also clear page-level CSI codes/u));
     fireEvent.click(screen.getByText("Preview"));
     const preview = await screen.findByTestId("reprocess-preview");
@@ -172,14 +172,14 @@ describe("ReprocessTab", () => {
     expect(bodyOf(posts("/api/admin/annotation-cleanup")[0])).toEqual({ mode: "delete", all: true, sources: ["yolo"], clearPageCsi: true, dryRun: true });
     expect(within(preview).getByText("1 project(s) · 12 annotation(s)")).toBeTruthy();
 
-    const run = screen.getByText("Run 3 stages") as HTMLButtonElement;
+    const run = screen.getByText("Run 4 stages") as HTMLButtonElement;
     expect(run.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("confirm phrase"), { target: { value: "DELETE" } });
     expect(run.disabled).toBe(false);
     fireEvent.click(run);
     await waitFor(() => expect(screen.getByText("All stages complete.")).toBeTruthy());
     expect(bodyOf(posts("/api/admin/annotation-cleanup")[1])).toEqual({ mode: "delete", all: true, sources: ["yolo"], clearPageCsi: true, dryRun: false, confirm: "DELETE" });
-    expect(posts("/api/admin/reprocess").map(([u]) => u)).toEqual(["/api/admin/reprocess?scope=full", "/api/admin/reprocess?scope=intelligence"]);
+    expect(posts("/api/admin/reprocess").map(([u]) => u)).toEqual(["/api/admin/reprocess?scope=full", "/api/admin/reprocess?scope=intelligence", "/api/admin/reprocess?scope=evidence"]);
     expect(window.confirm).not.toHaveBeenCalled();
     expect(screen.getByText("Done! 12 annotation(s) deleted across 1 project(s).")).toBeTruthy();
   });
@@ -188,10 +188,11 @@ describe("ReprocessTab", () => {
     const { onOpenTab } = renderTab();
     expect(box("purge-yolo").disabled).toBe(true);
     expect(box("dedupe").disabled).toBe(true);
-    expect(box("evidence").disabled).toBe(true);
+    expect(box("evidence").disabled).toBe(false); // [evidence T4] runnable, not root-only
     expect(box("tiles").disabled).toBe(true);
     expect(box("re-ocr").disabled).toBe(true);
-    expect(within(stage("evidence")).getByText("coming soon")).toBeTruthy();
+    expect(within(stage("evidence")).queryByText("coming soon")).toBeNull();
+    expect(within(stage("tiles")).getByText("coming soon")).toBeTruthy();
     expect(within(stage("re-ocr")).getByText("not available")).toBeTruthy();
     expect(screen.queryByText(/coming in phase 2 — own company only/u)).toBeNull();
     expect((screen.getByLabelText(/only projects where output is missing/u) as HTMLInputElement).disabled).toBe(true);

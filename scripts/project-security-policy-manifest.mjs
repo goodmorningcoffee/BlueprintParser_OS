@@ -761,6 +761,13 @@ export const INTERNAL_MUTATION_SINKS = [
     "replaceShapeParseAnnotations",
     "atomic-project-write",
   ],
+  // [evidence T4 2026-10-24] admin reprocess scope=evidence (under the reprocess lease): merge
+  // ONE key, pageIntelligence.evidence, into one page row via withProjectWrite.
+  [
+    "src/server/services/reprocess-evidence.ts",
+    "writeEvidence",
+    "atomic-project-write",
+  ],
   ["src/lib/llm/stream.ts", "streamChatResponse", "atomic-or-no-persist"],
   [
     "src/lib/services/chat/scoped.ts",

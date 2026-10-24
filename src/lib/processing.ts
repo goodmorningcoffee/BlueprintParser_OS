@@ -21,6 +21,7 @@ import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { storedPageZones } from "@/lib/page-zones";
+import { buildEvidenceSummary } from "@/lib/evidence";
 import { detectCsiCodes } from "@/lib/csi-detect";
 // [refactor jul9 P2-A C1] company CSI context (config + custom DB) resolver — threaded
 // into the detect call below so a company's stored pipelineConfig.csi + uploaded DB take
@@ -612,6 +613,9 @@ async function processProjectWithLease(
           );
         }
 
+        // [evidence T4] OCR-only evidence summary (word counts, Textract tables); YOLO load adds the rest.
+        const evidence = textractData.words.length > 0 ? buildEvidenceSummary({ textract: textractData, zones: pageZones }) : null;
+        if (evidence) pageIntelligence = { ...(pageIntelligence ?? {}), evidence };
         // Build page data
         const pageData: Record<string, unknown> = {
           textractData,

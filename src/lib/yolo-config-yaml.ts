@@ -21,9 +21,9 @@ export const DEFAULT_MAX_DETECTIONS = 2000;
  */
 export const TEXT_MODEL_MAX_DETECTIONS = 6000;
 /** `text`, `text_box`, and numbered variants (`text_box_2`, `text_3`). */
-const TEXT_CLASS = /^text(?:_box)?(?:_\d+)?$/u;
+export const TEXT_CLASS = /^text(?:_box)?(?:_\d+)?$/u;
 /** A whole `text` token in the model name: `yolo_text`, `text-v2`; not `yolo_textures`. */
-const TEXT_MODEL_NAME = /(^|[_-])text($|[_-])/iu;
+export const TEXT_MODEL_NAME = /(^|[_-])text($|[_-])/iu;
 
 /**
  * A model is text-only when its NAME says so (`yolo_text`, checked first, so a new numbered class

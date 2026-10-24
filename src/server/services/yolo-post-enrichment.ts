@@ -13,6 +13,7 @@ import { runHeuristicEngine, type HeuristicRule } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computePageZones } from "@/lib/page-zones";
+import { buildEvidenceSummary, sameEvidence } from "@/lib/evidence";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes, type EnsembleConfig } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
@@ -22,6 +23,7 @@ import type {
   ClassifiedTable,
   CsiCode,
   ParsedRegion,
+  TextractPageData,
   YoloHeatmap,
 } from "@/types";
 import { logger } from "@/lib/logger";
@@ -50,6 +52,8 @@ export interface PostYoloPage {
   pageIntelligence: unknown;
   /** `pages.csiCodes` — the page's CSI codes. NOT pageIntelligence (it has no csiCodes key). */
   csiCodes: CsiCode[] | null;
+  /** [evidence T4] `pages.textractData`; absent/null → the evidence summary is left as it was. */
+  textractData?: TextractPageData | null;
 }
 
 export interface PostYoloOptions {
@@ -73,6 +77,9 @@ export function enrichPageAfterYolo(
   // otherwise; written only when they differ so an unchanged page is not rewritten.
   const zones = computePageZones(yoloDets);
   if (JSON.stringify(zones) !== JSON.stringify(existing.pageZones)) { updated.pageZones = zones; pageChanged = true; }
+  // [evidence T4] fused OCR × YOLO evidence summary (src/lib/evidence), same zones; skipped without OCR.
+  const evidence = page.textractData ? buildEvidenceSummary({ textract: page.textractData, detections: yoloDets, zones }) : null;
+  if (evidence && !sameEvidence(evidence, existing.evidence)) { updated.evidence = evidence; pageChanged = true; }
 
   // Existing: re-run heuristic engine with YOLO data
   const inferences = runHeuristicEngine(opts.rules, {

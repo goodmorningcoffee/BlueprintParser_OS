@@ -734,6 +734,10 @@ export async function yoloLoad(
             const yoloDets = yoloByPage.get(page.pageNumber);
             if (!yoloDets?.length) continue;
 
+            // [evidence T4] the page's OCR for the evidence summary — one page at a time, never the
+            // whole project's textractData at once.
+            const [ocr] = await db.select({ textractData: pages.textractData }).from(pages)
+              .where(eq(pages.id, page.id)).limit(1);
             // [fix 2026-10-24 T1a] heuristics → tables → composite → heatmap → ensemble live in
             // yolo-post-enrichment.ts (unit-tested); it gets the page's REAL csiCodes.
             const { updated, pageChanged } = enrichPageAfterYolo(
@@ -742,6 +746,7 @@ export async function yoloLoad(
                 rawText: page.rawText,
                 pageIntelligence: page.pageIntelligence,
                 csiCodes: page.csiCodes,
+                textractData: ocr?.textractData ?? null,
               },
               yoloDets,
               { rules, heatmapEnabled, ensembleEnabled, ensembleConfig },

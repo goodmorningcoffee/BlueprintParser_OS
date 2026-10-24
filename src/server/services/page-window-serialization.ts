@@ -8,13 +8,15 @@ const PAGE_WINDOW_OMITTED_INTELLIGENCE_KEYS = [
   "yoloHeatmap",
   "csiSpatialMap",
   "autoTableProposals",
+  // [evidence T4 2026-10-24] up to 500 hole boxes per page; server consumers (LLM context) only.
+  "evidence",
 ] as const;
 
 /**
  * Return the PageIntelligence value safe to expose through a page-window response.
  *
  * This deliberately preserves the endpoints' historical `value || null` normalization. JSON
- * objects are shallow-cloned before the four response-only fields are removed; arrays and truthy
+ * objects are shallow-cloned before the response-only fields are removed; arrays and truthy
  * scalar legacy JSON values pass through unchanged. The source value is never mutated because the
  * same DB payload remains authoritative for server pipelines, LLM context, exports, and reprocess.
  */

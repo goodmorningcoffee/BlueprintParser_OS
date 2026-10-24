@@ -29,6 +29,11 @@ describe("carryNonComputedIntelligence", () => {
     expect(carried).toEqual({ parsedRegions: [] });
   });
 
+  it("[evidence T4] evidence is a computed key: every writer rebuilds it, reprocess clears it", () => {
+    expect(REPROCESS_COMPUTED_KEYS).toContain("evidence");
+    expect(carryNonComputedIntelligence({ evidence: { v: 1 }, parsedRegions: [] })).toEqual({ parsedRegions: [] });
+  });
+
   it("clears every computed key so the rebuild refreshes-or-drops them", () => {
     const allComputed = Object.fromEntries(
       REPROCESS_COMPUTED_KEYS.map((k) => [k, { stale: true }]),

@@ -30,7 +30,7 @@ describe("stage DAG", () => {
     for (const s of STAGES) {
       for (const p of s.pulls) expect(isRunnable(stageDef(p.stage))).toBe(true);
     }
-    expect(stageDef("evidence").kind).toBe("placeholder");
+    expect(stageDef("evidence")).toMatchObject({ kind: "reprocess", scope: "evidence" });
     expect(stageDef("tiles").kind).toBe("placeholder");
     expect(stageDef("re-ocr").kind).toBe("unavailable");
     expect(stageDef("yolo-run").handoffTab).toBe("ai-models");
@@ -83,16 +83,34 @@ describe("resolvePlan", () => {
   it("root-only cleanup stages are ignored for non-root and set the typed phrase for root", () => {
     expect(ids(resolvePlan(set<StageId>("purge-yolo"), new Set(), false).run)).toEqual([]);
     const purge = resolvePlan(set<StageId>("purge-yolo"), new Set(), true);
-    expect(ids(purge.run)).toEqual(["purge-yolo", "full", "intelligence"]);
+    expect(ids(purge.run)).toEqual(["purge-yolo", "full", "intelligence", "evidence"]);
     expect(purge.confirmPhrase).toBe("DELETE");
     const dedupe = resolvePlan(set<StageId>("dedupe"), new Set(), true);
-    expect(ids(dedupe.run)).toEqual(["dedupe", "intelligence"]);
+    expect(ids(dedupe.run)).toEqual(["dedupe", "intelligence", "evidence"]);
     expect(dedupe.confirmPhrase).toBe("DEDUPE");
     expect(resolvePlan(set<StageId>("dedupe", "purge-yolo"), new Set(), true).confirmPhrase).toBe("DELETE");
   });
 
   it("non-runnable ticks (handoff / placeholder / unavailable) are dropped", () => {
-    expect(ids(resolvePlan(set<StageId>("yolo-run", "evidence", "re-ocr", "intelligence"), new Set(), true).run)).toEqual(["intelligence"]);
+    expect(ids(resolvePlan(set<StageId>("yolo-run", "tiles", "re-ocr", "intelligence"), new Set(), true).run)).toEqual(["intelligence"]);
+  });
+});
+
+describe("evidence stage [evidence T4]", () => {
+  it("runs alone as one ?scope=evidence request and pulls nothing", () => {
+    const plan = resolvePlan(set<StageId>("evidence"), new Set(), false);
+    expect(ids(plan.run)).toEqual(["evidence"]);
+    expect(buildRunSteps(plan, { projectIds: ["p1"], companyId: 3 }, { clearPageCsi: false })).toEqual([
+      { kind: "reprocess", id: "evidence", label: "Evidence", scope: "evidence", projectIds: ["p1"] },
+    ]);
+  });
+
+  it("YOLO-row cleanups pull it after Intelligence; unticking it warns what goes stale", () => {
+    const plan = resolvePlan(set<StageId>("dedupe"), set<StageId>("intelligence"), true);
+    expect(ids(plan.run)).toEqual(["dedupe", "evidence"]);
+    expect(plan.run[1].reasons).toEqual(["Evidence added because it fuses OCR with the YOLO rows this changes"]);
+    const off = resolvePlan(set<StageId>("purge-yolo"), set<StageId>("evidence"), true);
+    expect(off.warnings).toContain("Evidence unticked — leaves stale: Delete YOLO annotations → pages.page_intelligence.evidence");
   });
 });
 
@@ -100,7 +118,7 @@ describe("buildRunSteps", () => {
   it("reprocess stages become one request each with the scope's project ids; cleanup stages pin the company and mode", () => {
     const plan = resolvePlan(set<StageId>("purge-yolo", "dedupe"), new Set(), true);
     const steps = buildRunSteps(plan, { projectIds: undefined, companyId: 3 }, { clearPageCsi: true });
-    expect(steps.map((s) => s.kind)).toEqual(["cleanup", "cleanup", "reprocess", "reprocess"]);
+    expect(steps.map((s) => s.kind)).toEqual(["cleanup", "cleanup", "reprocess", "reprocess", "reprocess"]);
     expect(steps[0]).toEqual({
       kind: "cleanup", id: "purge-yolo", label: "Delete YOLO annotations", url: "/api/admin/annotation-cleanup?companyId=3",
       body: { mode: "delete", all: true, sources: ["yolo"], clearPageCsi: true },

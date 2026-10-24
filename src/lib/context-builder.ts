@@ -7,6 +7,7 @@
 
 import { classifyZone, DEFAULT_GRID } from "@/lib/csi-spatial";
 import { migrateTextRegionType, migrateTextRegions } from "@/lib/text-region-migrate";
+import { buildEvidenceContextSection } from "@/lib/evidence/llm-context";
 
 export const DEFAULT_CONTEXT_BUDGET = 24000; // ~6000 tokens
 
@@ -372,6 +373,11 @@ export function buildPageIntelligenceSection(pageIntelligence: any, pageNumber: 
     sections.push({ header: `CROSS-REFERENCES — Page ${pageNumber}`, content: text, priority: 3.5 });
     summaryLines.push(`${refs.length} cross-page reference(s) from Page ${pageNumber}`);
   }
+
+  // [evidence T4] Page evidence (priority 5.2): unread-text holes + Textract table grids, read from
+  // the persisted evidence summary (src/lib/evidence) instead of re-deriving overlaps here.
+  const evidence = buildEvidenceContextSection(pageIntelligence, pageNumber);
+  if (evidence) { sections.push(evidence.section); summaryLines.push(evidence.summaryLine); }
 
   // Ensemble regions (priority 5.3 — cross-signal-agreement table detection.
   // Authoritative source for "is there a real table here"; suppresses the
