@@ -20,9 +20,12 @@ function doorPage(): ClassifierPageInput {
   const detections = [
     { name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 },
     { name: "title_block", modelName: "yolo_medium", confidence: 0.9, minX: 0.92, minY: 0.0, maxX: 1, maxY: 1 },
+    // [shape-tags] the fitted detect head weighs the page's yolo_primitive grid and its Textract TABLE, as real sheets carry them.
+    { name: "grid", modelName: "yolo_primitive", confidence: 0.6, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 },
   ];
-  const regionsV2 = classifyRegionsV2({ pageNumber: 3, detections, textractData: { words }, csiCodes: [] });
-  return { pageNumber: 3, detections, textractData: { words }, csiCodes: [], regionsV2, drawingNumber: "A-601", tagger: () => [{ code: "08 11 13", division: "08 00 00" }, { code: "08 14 16", division: "08 00 00" }] };
+  const textractData = { words, tables: [{ bbox: [0.5, 0.21, 0.4, 0.24] as [number, number, number, number], cells: [], rowCount: 9, colCount: 6 }] };
+  const regionsV2 = classifyRegionsV2({ pageNumber: 3, detections, textractData, csiCodes: [] });
+  return { pageNumber: 3, detections, textractData, csiCodes: [], regionsV2, drawingNumber: "A-601", tagger: () => [{ code: "08 11 13", division: "08 00 00" }, { code: "08 14 16", division: "08 00 00" }] };
 }
 
 describe("runClassifierEngine — built-in schedules recipe", () => {
@@ -46,7 +49,7 @@ describe("runClassifierEngine — built-in schedules recipe", () => {
     expect(p.source).toBe("regions-v2");
     expect(p.regionId).toBe(input.regionsV2!.regions[0].id);
     expect(p.id).toBe(proposalId("schedules.v1", 3, input.regionsV2!.regions[0].anchorBbox));
-    expect(p.detectWhy[0].signalId).toBe("detect.structure");
+    expect(p.detectWhy[0].signalId).toBe("detect.textract"); // [shape-tags] Textract containment is the strongest fitted detect signal
     expect(p.nameWhy.length).toBeLessThanOrEqual(8);
     expect(p.features["door.columns"]).toBeGreaterThan(0.5);
     // csiSec counts the matching box codes (3 = full): the fixture's tagger yields two 08 1x codes
@@ -65,9 +68,10 @@ describe("runClassifierEngine — built-in schedules recipe", () => {
     const words: TextractWord[] = [word("WIDGET", 0.52, 0.19, 0.018), word("SCHEDULE", 0.6, 0.19, 0.018)];
     ["MARK", "QTY", "REMARKS"].forEach((t, i) => words.push(word(t, 0.51 + i * 0.1, 0.22)));
     for (let r = 0; r < 6; r++) words.push(word(`W${r}`, 0.51, 0.25 + r * 0.02), word(`${r + 1}`, 0.61, 0.25 + r * 0.02), word("TBD", 0.71, 0.25 + r * 0.02));
-    const detections = [{ name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.4 }];
-    const regionsV2 = classifyRegionsV2({ pageNumber: 1, detections, textractData: { words }, csiCodes: [] });
-    const run = runClassifierEngine({ pageNumber: 1, detections, textractData: { words }, csiCodes: [], regionsV2, drawingNumber: "A-601", tagger: () => [] }, BUILT_IN_RECIPES);
+    const detections = [{ name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.4 }, { name: "grid", modelName: "yolo_primitive", confidence: 0.6, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.4 }];
+    const textractData = { words, tables: [{ bbox: [0.5, 0.21, 0.4, 0.19] as [number, number, number, number], cells: [], rowCount: 7, colCount: 3 }] };
+    const regionsV2 = classifyRegionsV2({ pageNumber: 1, detections, textractData, csiCodes: [] });
+    const run = runClassifierEngine({ pageNumber: 1, detections, textractData, csiCodes: [], regionsV2, drawingNumber: "A-601", tagger: () => [] }, BUILT_IN_RECIPES);
     const [p] = run.result.proposals;
     expect(p.classId).toBeNull();
     expect(p.className).toBe("Other schedule");

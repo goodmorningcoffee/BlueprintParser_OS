@@ -778,7 +778,7 @@
  "deriveName": true,
  "fallbackClassName": "text (unclassified)",
  "tableHead": {
-  "bias": -2.5,
+  "bias": -4.368,
   "signals": [
    {
     "id": "textract",
@@ -787,7 +787,7 @@
      "type": "textract-table",
      "minContainment": 0.5
     },
-    "weight": 3.0,
+    "weight": 1.493,
     "role": "score",
     "enabled": true,
     "note": "strongest single table-ness signal: AUC .81, precision .90 / recall .86 at \u2265 .5"
@@ -800,7 +800,7 @@
      "measure": "grid",
      "scale": 24
     },
-    "weight": 1.5,
+    "weight": 0.02,
     "role": "score",
     "enabled": true,
     "note": "AUC .76 table-ness"
@@ -812,7 +812,7 @@
      "type": "ocr-grid",
      "measure": "regularity"
     },
-    "weight": 1.0,
+    "weight": 1.863,
     "role": "score",
     "enabled": true
    },
@@ -828,7 +828,7 @@
       "grid"
      ]
     },
-    "weight": 1.5,
+    "weight": 1.395,
     "role": "score",
     "enabled": true
    },
@@ -845,7 +845,7 @@
       "horizontal_area"
      ]
     },
-    "weight": 0.5,
+    "weight": 1.541,
     "role": "score",
     "enabled": true
    },
@@ -857,7 +857,7 @@
      "feature": "textRows",
      "scale": 6
     },
-    "weight": 1.0,
+    "weight": 0.726,
     "role": "score",
     "enabled": true
    },
@@ -869,7 +869,7 @@
      "source": "any",
      "measure": "count"
     },
-    "weight": 1.0,
+    "weight": 0.842,
     "role": "score",
     "enabled": true,
     "note": "owner: shapes lined up in column A inside a table / grid \u2014 table evidence, kind-neutral"
@@ -881,7 +881,7 @@
      "type": "structure",
      "feature": "structureScore"
     },
-    "weight": 2.0,
+    "weight": 1.447,
     "role": "score",
     "enabled": true
    }
