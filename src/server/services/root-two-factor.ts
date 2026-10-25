@@ -43,7 +43,7 @@ import { db } from "@/lib/db";
 import { appSettings, users } from "@/lib/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthSession } from "@/lib/api-utils";
-import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
+import { SecretUnreadableError, openSecret, sealSecret } from "@/lib/secret-box";
 import { logger } from "@/lib/logger";
 import {
   rootTwoFactorSettingKey,
@@ -100,6 +100,19 @@ interface RootTwoFactorRow extends RootTwoFactorLockout {
   lastStep?: number;
   pending?: { secretEnc: string; createdAt: string };
   verified?: Record<string, number>;
+}
+
+/** HKDF purpose label for the sealed TOTP seed (lib/secret-box.ts). */
+const TOTP_SECRET_PURPOSE = "root-2fa";
+
+/** A seed sealed under a key that has since changed is a clear break-glass case, not a 500. */
+function openTotpSecret(sealed: string): string {
+  try {
+    return openSecret(sealed, TOTP_SECRET_PURPOSE);
+  } catch (err) {
+    if (err instanceof SecretUnreadableError) throw new ApiError("INTERNAL", err.message);
+    throw err;
+  }
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -330,7 +343,7 @@ async function authenticateCodeLocked(
   if (!row || !isActive(row)) throw new ApiError("NOT_FOUND", "Two-factor authentication is not enabled");
   const submitted = code.trim();
   if (!looksLikeBackupCode(submitted)) {
-    const secret = Buffer.from(decryptApiKey(row.secretEnc!), "base64");
+    const secret = Buffer.from(openTotpSecret(row.secretEnc!), "base64");
     const result = verifyTotp(secret, submitted, { nowMs: now, lastStep: row.lastStep ?? null });
     if (result.ok) return { row: { ...row, lastStep: result.step }, method: "totp" };
     throw new ApiError("UNAUTHORIZED", result.reason === "replay" ? "Code already used" : "Invalid two-factor code");
@@ -385,7 +398,7 @@ export async function beginRootTwoFactorEnrollment(
   await guarded(caller, "root_2fa_enroll", now, () => assertAccountPassword(caller.id, body.password));
   const secret = generateTotpSecret();
   const secretBase32 = base32Encode(secret);
-  const pending = { secretEnc: encryptApiKey(secret.toString("base64")), createdAt: new Date(now).toISOString() };
+  const pending = { secretEnc: sealSecret(secret.toString("base64"), TOTP_SECRET_PURPOSE), createdAt: new Date(now).toISOString() };
   await db.transaction(async (tx) => {
     const row = (await readRow(tx, caller.id, true)) ?? {};
     if (isActive(row)) throw ALREADY_ENABLED();
@@ -418,7 +431,7 @@ export async function confirmRootTwoFactorEnrollment(
       // An active secret is never overwritten by a confirm, even if a stale `pending` is present.
       if (row && isActive(row)) throw ALREADY_ENABLED();
       if (!row?.pending?.secretEnc) throw new ApiError("CONFLICT", "No enrollment in progress");
-      const secret = Buffer.from(decryptApiKey(row.pending.secretEnc), "base64");
+      const secret = Buffer.from(openTotpSecret(row.pending.secretEnc), "base64");
       const result = verifyTotp(secret, body.code, { nowMs: now, lastStep: null });
       if (!result.ok) throw new ApiError("UNAUTHORIZED", "Invalid two-factor code");
       // Markers from a previous enrollment never carry over: only the enrolling login is verified.

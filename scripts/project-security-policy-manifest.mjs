@@ -1300,7 +1300,7 @@ export const EXPLICIT_NON_PUBLIC_DEMO_SURFACES = [
  * user-keyed middleware rule that root is never exempt from, plus the persistent lockout ladder in
  * the enrollment row. The enrollment document lives in app_settings under `settingKeyPrefix`,
  * hidden from and unwritable through the generic settings route; the only other writer is the
- * break-glass operation in root_admin.sh, which now also inserts an audit_log row. `enforceEnv`=0
+ * break-glass operation in root_admin.sh (audited AWS-side: CloudTrail ExecuteCommand). `enforceEnv`=0
  * is the logged emergency off-switch (lib/root-two-factor-claims.ts rootTwoFactorEnforced).
  */
 export const ROOT_TWO_FACTOR_POLICY = {
@@ -1375,6 +1375,7 @@ export const ROOT_ONLY_SURFACES = [
   rootOnly("/api/admin/users", ["PUT"], { shellAuth: "admin", inService: ["src/server/services/admin-users.ts", "updateUser"], conditional: "role / company moves" }),
   rootOnly("/api/admin/users/reset-password", ["POST"], { shellAuth: "admin", inService: ["src/server/services/users-reset-password.ts", "resetUserPassword"] }),
   rootOnly("/api/admin/companies", ["GET", "POST", "PUT", "DELETE"]),
+  rootOnly("/api/admin/llm-owner-key", ["GET", "PUT"], { inService: ["src/server/services/llm-owner-key.ts", "putLlmOwnerKeyGrant"] }),
   // owner-billed spend
   rootOnly("/api/yolo/run", ["POST"], { shellAuth: "none", inService: ["src/server/services/yolo-root-gate.ts", "requireYoloRoot"] }),
   rootOnly("/api/yolo/load", ["POST"], { shellAuth: "none", inService: ["src/server/services/yolo-root-gate.ts", "requireYoloRoot"] }),
@@ -1436,6 +1437,7 @@ export const ROOT_AUDITED_MUTATIONS = [
   ["src/server/services/yolo-admin.ts", "purgeYolo", "yolo_purged"],
   ["src/server/services/llm-config.ts", "upsertLlmConfig", "llm_config_changed"],
   ["src/server/services/llm-config.ts", "deleteLlmConfig", "llm_config_deleted"],
+  ["src/server/services/llm-owner-key.ts", "putLlmOwnerKeyGrant", "llm_owner_key_grant_changed"],
   ["src/server/services/company-settings.ts", "putPipelineConfig", "pipeline_config_changed"],
   ["src/server/services/reprocess-admission.ts", "admitReprocess", "admin.reprocess"],
   ["src/server/services/labeling.ts", "createLabelingSessions", "labeling_session_created"],

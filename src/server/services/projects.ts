@@ -59,6 +59,7 @@ import { headS3Object } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { processingStartInput } from "@/server/services/processing-start-input";
 import { checkUploadQuota } from "@/lib/quotas";
+import { checkTextractCap } from "@/lib/compute-usage";
 import { deleteProjectFully } from "@/lib/project-delete";
 import { visiblePageCount, visiblePageCountsByProject } from "@/server/services/project-page-counts";
 import { audit } from "@/lib/audit";
@@ -523,6 +524,16 @@ export async function createProject(
       "RATE_LIMITED",
       quota.message ?? "Daily upload limit reached",
     );
+  }
+  // [2026-10-25] Every page of an upload is a Textract AnalyzeDocument: a company already at its
+  // root-set Textract page cap cannot start another one (root exempt). Pages are charged by the
+  // processing webhook as results land, so a single upload may finish past the cap; the next is refused.
+  if (!session.user.isRootAdmin) {
+    const textractCap = await checkTextractCap(session.user.companyId, 1);
+    if (!textractCap.allowed) {
+      audit("textract_cap_hit", { userId: session.user.dbId, companyId: session.user.companyId, details: { surface: "upload" } });
+      throw new ApiError("RATE_LIMITED", textractCap.message ?? "Textract page limit reached");
+    }
   }
 
   // Direct-final upload credentials are disabled. Requiring the exact isolated staging manifest

@@ -28,6 +28,7 @@ import { logger } from "@/lib/logger";
 import { processProject } from "@/lib/processing";
 import { ApiError } from "@/server/api/envelope";
 import { requireVerifiedRoot } from "@/server/api/root-authority";
+import { recordComputeUsage } from "@/lib/compute-usage";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
 import { zPublicId } from "@/server/api/schemas";
@@ -68,6 +69,12 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
     throw new ApiError("NOT_FOUND", "Project not found");
   }
   const writeCapability = assertProjectWritable(project);
+  // [2026-10-25] The pipeline ran Textract on every page in this batch: charge the company ledger so
+  // the root-set cap (lib/compute-usage.ts checkTextractCap) and the Usage tab see real numbers.
+  // Never fails the webhook: a ledger hiccup must not lose the results.
+  if (Array.isArray(payload.pages) && payload.pages.length > 0) {
+    await recordComputeUsage({ companyId: project.companyId, userId: project.authorId ?? null, projectId: project.id, resource: "textract", pages: payload.pages.length }).catch((err) => logger.error("[webhook] textract usage ledger failed", err));
+  }
 
   return withProjectWrite(writeCapability, project.id, async (tx) => {
 

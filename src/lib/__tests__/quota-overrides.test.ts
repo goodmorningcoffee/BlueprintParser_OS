@@ -49,7 +49,7 @@ describe("resolveQuotaLimit precedence", () => {
   it("an empty document yields the code defaults (byte-identical behaviour)", () => {
     expect(resolveQuotaLimit("uploadsPerDay", QUOTA_DEFAULTS.uploadsPerDay.member, { companyId: 1, userId: 1 }, emptyQuotaOverrides()))
       .toEqual({ source: "default", limit: 3 });
-    expect(QUOTA_DEFAULTS).toEqual({ uploadsPerDay: { member: 3, admin: 10 }, yoloJobsPerDay: 10, chatMessagesPerDay: 200 });
+    expect(QUOTA_DEFAULTS).toEqual({ uploadsPerDay: { member: 3, admin: 10 }, yoloJobsPerDay: 10, chatMessagesPerDay: 200, lambdaPagesPerDay: 20_000 });
   });
 });
 

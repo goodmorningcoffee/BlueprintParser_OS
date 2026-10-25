@@ -42,6 +42,8 @@ import { rasterizePage } from "@/lib/pdf-rasterize";
 import { extractKeynotes } from "@/lib/keynotes";
 import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import { isLambdaCvEnabled, fanOutShapeParse } from "@/lib/lambda-cv";
+import { checkLambdaQuota } from "@/lib/quotas";
+import { recordComputeUsage } from "@/lib/compute-usage";
 import { logger } from "@/lib/logger";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
@@ -126,6 +128,10 @@ export async function shapeParse(rawBody: Record<string, unknown>): Promise<unkn
     }
 
     if (isLambdaCvEnabled()) {
+      // [2026-10-25] Owner-billed fan-out inside the root-set daily Lambda quota (root exempt).
+      const lambdaQuota = await checkLambdaQuota(project.companyId, session?.user?.isRootAdmin === true, creatorId, pageS3Keys.length);
+      if (!lambdaQuota.allowed) throw new ApiError("RATE_LIMITED", lambdaQuota.message ?? "Daily Lambda page limit reached");
+      await recordComputeUsage({ companyId: project.companyId, userId: creatorId, projectId: project.id, resource: "lambda_cv", pages: pageS3Keys.length }).catch(() => {});
       const { results, failedPages, warnings, okPages } = await fanOutShapeParse({ pageS3Keys });
 
       const byPage: Record<number, typeof results> = {};

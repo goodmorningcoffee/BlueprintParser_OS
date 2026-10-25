@@ -160,6 +160,45 @@ export async function checkChatQuota(
   return { allowed: true, current, limit: DAILY_LIMIT };
 }
 
+/**
+ * [2026-10-25] Owner-billed CV Lambda fan-out (symbol search, shape parse): `pagesRequested` pages
+ * are about to be dispatched. Counted in compute_usage rows with resource 'lambda_cv' over the
+ * last 24 h — the company's (or, under a per-user override, the user's). Root is exempt; its
+ * usage is still recorded by the caller.
+ */
+export async function checkLambdaQuota(
+  companyId: number,
+  isRootAdmin: boolean = false,
+  userId?: number | null,
+  pagesRequested: number = 1,
+): Promise<QuotaCheck> {
+  if (isRootAdmin) return { allowed: true };
+  const resolved = resolveQuotaLimit(
+    "lambdaPagesPerDay",
+    QUOTA_DEFAULTS.lambdaPagesPerDay,
+    { companyId, userId },
+    await loadQuotaOverrides(),
+  );
+  if (resolved.source === "root" || resolved.limit === null) return { allowed: true };
+  const DAILY_LIMIT = resolved.limit;
+  const result = resolved.source === "user"
+    ? await db.execute(sql`
+    SELECT COALESCE(SUM(pages), 0)::int AS cnt FROM compute_usage
+    WHERE user_id = ${userId} AND resource = 'lambda_cv'
+      AND created_at > NOW() - INTERVAL '1 day'
+  `)
+    : await db.execute(sql`
+    SELECT COALESCE(SUM(pages), 0)::int AS cnt FROM compute_usage
+    WHERE company_id = ${companyId} AND resource = 'lambda_cv'
+      AND created_at > NOW() - INTERVAL '1 day'
+  `);
+  const current = countOf(result);
+  if (current + pagesRequested > DAILY_LIMIT) {
+    return { allowed: false, message: `Daily Lambda page limit reached (${current}/${DAILY_LIMIT} pages used; this request needs ${pagesRequested})`, current, limit: DAILY_LIMIT };
+  }
+  return { allowed: true, current, limit: DAILY_LIMIT };
+}
+
 /** Shared across every anonymous demo caller; the only thing between them and the LLM bill. */
 export const DEMO_CHAT_DAILY_LIMIT = 500;
 

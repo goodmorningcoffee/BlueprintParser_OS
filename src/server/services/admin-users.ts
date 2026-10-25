@@ -50,6 +50,7 @@ import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
 import { isVerifiedRoot } from "@/server/api/root-authority";
+import { isReservedRootBootstrapEmail } from "@/lib/root-bootstrap-email";
 import type { AuthSession } from "@/lib/api-utils";
 import { assertProjectWritable } from "@/server/api/access";
 import {
@@ -218,6 +219,10 @@ export async function createUser(
 
   if (existing) {
     throw new ApiError("VALIDATION", "Email already exists");
+  }
+  // [2026-10-25] The ROOT_ADMIN_EMAIL bootstrap address is reserved: only root may create it.
+  if (isReservedRootBootstrapEmail(email) && !isVerifiedRoot(session)) {
+    throw new ApiError("FORBIDDEN", "This email address is reserved");
   }
 
   // [2026-10-25] role is an enum, and the admin tier is ROOT-GRANTED: a company admin can no

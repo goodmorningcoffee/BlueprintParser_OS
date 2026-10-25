@@ -9654,14 +9654,12 @@ async function validateRootTwoFactorPolicy() {
       `${policy.breakGlass.operation}:Object.freeze({text:'DELETE FROM public.app_settings AS setting USING public.users AS owner WHERE owner.email = `,
       "Type RESET-2FA to confirm",
       "2fa-reset <email>",
-      "INSERT INTO public.audit_log (action, user_id, company_id, details)",
-      "'root_admin_sh_'+operation",
       "Root 2FA is MANDATORY",
     ])
   ) {
     report(
       "ROOT_TWO_FACTOR_BREAK_GLASS_DRIFT",
-      "root_admin.sh must keep the confirmed, exact-email, audited 2fa-reset operation on the same prefix and document that it returns the account to the enrollment gate",
+      "root_admin.sh must keep the confirmed, exact-email 2fa-reset operation on the same prefix and document that it returns the account to the enrollment gate",
       policy.breakGlass.file,
     );
   }

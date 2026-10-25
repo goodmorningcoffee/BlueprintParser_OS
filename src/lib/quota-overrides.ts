@@ -21,7 +21,7 @@
 
 export const QUOTA_OVERRIDES_KEY = "quota_overrides";
 
-export const QUOTA_FIELDS = ["uploadsPerDay", "yoloJobsPerDay", "chatMessagesPerDay"] as const;
+export const QUOTA_FIELDS = ["uploadsPerDay", "yoloJobsPerDay", "chatMessagesPerDay", "lambdaPagesPerDay"] as const;
 export type QuotaField = (typeof QUOTA_FIELDS)[number];
 
 export const QUOTA_OVERRIDE_MAX = 1_000_000;
@@ -31,6 +31,8 @@ export const QUOTA_DEFAULTS = {
   uploadsPerDay: { member: 3, admin: 10 },
   yoloJobsPerDay: 10,
   chatMessagesPerDay: 200,
+  /** [2026-10-25] Pages fanned out to the owner-billed CV Lambda (symbol search, shape parse) per company per day. */
+  lambdaPagesPerDay: 20_000,
 } as const;
 
 /** number = that limit, null = unlimited. An absent field means "not overridden". */

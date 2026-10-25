@@ -24,6 +24,25 @@ export default function AiRbacTab() {
   const [modelAccess, setModelAccess] = useState<Record<number, ModelAccessRow[]>>({});
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [loading, setLoading] = useState(true);
+  // [2026-10-25] Which companies may chat on the OWNER's environment LLM keys (root grant; without
+  // it a company must store its own key). GET/PUT /api/admin/llm-owner-key.
+  const [ownerKeyGrants, setOwnerKeyGrants] = useState<number[]>([]);
+  const [grantError, setGrantError] = useState("");
+
+  async function setOwnerKeyGrant(companyId: number, granted: boolean) {
+    setGrantError("");
+    const res = await fetch("/api/admin/llm-owner-key", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companyId, granted }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      setGrantError(body?.error?.message || `Could not change the grant (${res.status})`);
+      return;
+    }
+    setOwnerKeyGrants(body?.companies ?? []);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -38,6 +57,10 @@ export default function AiRbacTab() {
     }
     if (userRes.ok) setUsers(await userRes.json());
     if (modelRes.ok) setModels(await modelRes.json());
+    try {
+      const grantRes = await fetch("/api/admin/llm-owner-key");
+      if (grantRes.ok) setOwnerKeyGrants(((await grantRes.json()) as { companies?: number[] }).companies ?? []);
+    } catch { /* the toggle shows "not granted" */ }
     setLoading(false);
   }, []);
 
@@ -132,6 +155,11 @@ export default function AiRbacTab() {
       {/* ─── Section 1: Companies + Users ─── */}
       <section>
         <h2 className="text-lg font-semibold mb-3">Companies &amp; User Access</h2>
+        <p className="text-[10px] text-[var(--muted)] mb-2">
+          &quot;Owner LLM keys&quot; lets that company chat on YOUR environment API keys (you pay). Without the
+          grant a company admin must store the company&apos;s own key under LLM Override.
+        </p>
+        {grantError && <div className="text-xs text-red-400 mb-2">{grantError}</div>}
         <div className="space-y-2">
           {companies.map((company) => {
             const companyUsers = users.filter((u) => u.companyId === company.id);
@@ -150,6 +178,19 @@ export default function AiRbacTab() {
                     <span className="text-xs text-[var(--muted)]">{companyUsers.length} users</span>
                   </div>
                   <div className="flex items-center gap-3 text-[10px]">
+                    <span
+                      role="switch"
+                      aria-checked={ownerKeyGrants.includes(company.id)}
+                      title="Allow this company to chat on the owner's LLM keys"
+                      onClick={(e) => { e.stopPropagation(); void setOwnerKeyGrant(company.id, !ownerKeyGrants.includes(company.id)); }}
+                      className={`px-2 py-0.5 rounded border cursor-pointer ${
+                        ownerKeyGrants.includes(company.id)
+                          ? "border-yellow-400/40 text-yellow-300 bg-yellow-500/10"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >
+                      Owner LLM keys: {ownerKeyGrants.includes(company.id) ? "granted" : "not granted"}
+                    </span>
                     <span className="text-[var(--muted)]">
                       Models: {models.filter((m) => m.companyId === company.id).length} owned
                       {models.some(m => m.companyId !== company.id &&

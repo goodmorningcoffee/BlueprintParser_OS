@@ -16,9 +16,11 @@ set -euo pipefail
 #
 # [2026-10-25] Root two-factor is MANDATORY in the app: a promoted root holds no access until it
 # has enrolled an authenticator app (password + code) in /admin; 2fa-reset returns an account to
-# that enrollment gate (it does NOT grant password-only root). Every mutation here also inserts an
-# app audit_log row (action root_admin_sh_<operation>) inside the same transaction. The only
-# password-only root path is the emergency task-definition switch ROOT_2FA_ENFORCE=0.
+# that enrollment gate (it does NOT grant password-only root). The remote channel is frozen to
+# exactly BEGIN / advisory lock / one allowlisted statement / COMMIT by the schema-cutover gate, so
+# the audit trail for these operations is AWS-side: the CloudTrail ExecuteCommand event and ECS
+# Exec session logging (owner runbook). The only password-only root path is the emergency
+# task-definition switch ROOT_2FA_ENFORCE=0.
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly DEPLOY_ENV_FILE="${BP_ROOT_ADMIN_ENV_FILE:-${SCRIPT_DIR}/.deploy.env}"
@@ -337,11 +339,7 @@ run_fixed_operation() {
     if(spec.mutation&&result.rowCount!==1){
       throw new Error('safety check refused the update: expected exactly one changed user row (demotion also requires another root admin; 2fa-reset requires an existing enrollment)');
     }
-    if(spec.mutation){
-      // [2026-10-25] Every break-glass mutation leaves an app audit_log row in the same transaction.
-      await client.query('INSERT INTO public.audit_log (action, user_id, company_id, details) SELECT \\\$1, id, company_id, \\\$2::jsonb FROM public.users WHERE email = \\\$3',['root_admin_sh_'+operation,JSON.stringify({operation,via:'ecs-exec',email}),email]);
-      await client.query('COMMIT');
-    }
+    if(spec.mutation)await client.query('COMMIT');
     for(const row of result.rows||[]){
       console.log(JSON.stringify({email:row.email,isRootAdmin:row.is_root_admin===true}));
     }

@@ -19,6 +19,7 @@ import { db } from "@/lib/db";
 import { users, companies, inviteRequests } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { audit } from "@/lib/audit";
+import { isReservedRootBootstrapEmail } from "@/lib/root-bootstrap-email";
 import { ApiError } from "@/server/api/envelope";
 
 export async function inviteRequest(rawBody: Record<string, unknown>): Promise<unknown> {
@@ -78,6 +79,12 @@ export async function registerUser(rawBody: Record<string, unknown>): Promise<un
 
   if (!company) {
     // Generic message — don't reveal whether key or email was wrong
+    throw new ApiError("VALIDATION", "Invalid access key or email already in use");
+  }
+
+  // [2026-10-25] The ROOT_ADMIN_EMAIL bootstrap address can never be self-registered (same
+  // generic message: no enumeration of the owner's address).
+  if (isReservedRootBootstrapEmail(email)) {
     throw new ApiError("VALIDATION", "Invalid access key or email already in use");
   }
 

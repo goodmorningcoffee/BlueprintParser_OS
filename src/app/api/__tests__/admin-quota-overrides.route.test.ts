@@ -86,6 +86,7 @@ describe.skipIf(!dbUp)("/api/admin/quota-overrides", () => {
       uploadsPerDay: { member: 3, admin: 10 },
       yoloJobsPerDay: 10,
       chatMessagesPerDay: 200,
+      lambdaPagesPerDay: 20_000,
     });
     expect(r.body.overrides).toMatchObject({ users: expect.any(Object), companies: expect.any(Object) });
   });

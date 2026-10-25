@@ -1,8 +1,22 @@
 import { db } from "@/lib/db";
-import { llmConfigs } from "@/lib/db/schema";
+import { appSettings, llmConfigs } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { decryptApiKey } from "@/lib/crypto";
+import { LLM_OWNER_KEY_GRANTS_KEY, parseOwnerKeyGrants } from "./owner-key-grant";
 import type { ResolvedLLMConfig } from "./types";
+
+/**
+ * [2026-10-25] Request-path read of the owner-key grant list (lib/llm/owner-key-grant.ts): a
+ * missing row, a malformed value or a failed read all mean "not granted" — fail closed.
+ */
+export async function isOwnerKeyGranted(companyId: number): Promise<boolean> {
+  try {
+    const [row] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, LLM_OWNER_KEY_GRANTS_KEY)).limit(1);
+    return parseOwnerKeyGrants(row?.value).companies.includes(companyId);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Resolve which LLM provider/model/key to use for a chat request.
@@ -25,6 +39,10 @@ export async function resolveLLMConfig(
   userId?: number,
   isDemo?: boolean
 ): Promise<ResolvedLLMConfig | null> {
+  // [2026-10-25 root hardening] The OWNER's environment keys are reachable only by a demo session
+  // or a company root has granted (lib/llm/owner-key-grant.ts). Everyone else must bring a key.
+  const ownerKeysAllowed = isDemo === true || (await isOwnerKeyGranted(companyId));
+  const getEnvKey = (provider: string) => (ownerKeysAllowed ? getOwnerEnvKey(provider) : undefined);
   // 1. Check user-specific config (future per-user provisioning)
   if (userId) {
     try {
@@ -111,6 +129,8 @@ export async function resolveLLMConfig(
       return { provider: "groq", model: "llama-3.3-70b-versatile", apiKey: process.env.GROQ_API_KEY };
     }
   }
+  // No grant: a company without its own key gets no LLM (chat reports "not configured").
+  if (!ownerKeysAllowed) return null;
 
   // 3. Check explicit env var overrides (LLM_PROVIDER + LLM_MODEL)
   if (process.env.LLM_PROVIDER) {
@@ -139,7 +159,7 @@ export async function resolveLLMConfig(
   return null;
 }
 
-function getEnvKey(provider: string): string | undefined {
+function getOwnerEnvKey(provider: string): string | undefined {
   switch (provider) {
     case "groq": return process.env.GROQ_API_KEY;
     case "anthropic": return process.env.ANTHROPIC_API_KEY;

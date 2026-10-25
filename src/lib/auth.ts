@@ -196,6 +196,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                   ?.acquired === true;
               if (!acquired) return "busy" as const;
 
+              // [2026-10-25] ONE-SHOT: the bootstrap exists to seat the FIRST root on a fresh
+              // database. Once any root exists, root is designated only by root_admin.sh, so a
+              // CLI demote is never undone at the next login and a later registration of this
+              // address (unverified by design) never becomes root.
+              const [existingRoot] = await tx
+                .select({ id: users.id })
+                .from(users)
+                .where(eq(users.isRootAdmin, true))
+                .limit(1);
+              if (existingRoot) return "root-exists" as const;
+
               const [promoted] = await tx
                 .update(users)
                 .set({ isRootAdmin: true })
@@ -215,12 +226,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 : ("missing" as const);
             });
             if (promotion === "busy" || promotion === "missing") return null;
-            isRootAdmin = true;
-            audit("root_admin_bootstrap", {
-              userId: user.id,
-              companyId: user.companyId,
-              details: { email },
-            });
+            if (promotion === "root-exists") {
+              audit("root_admin_bootstrap_skipped", {
+                userId: user.id,
+                companyId: user.companyId,
+                details: { email, reason: "a root admin already exists; use root_admin.sh promote" },
+              });
+            } else {
+              isRootAdmin = true;
+              audit("root_admin_bootstrap", {
+                userId: user.id,
+                companyId: user.companyId,
+                details: { email },
+              });
+            }
           } catch {
             return null;
           }
@@ -250,10 +269,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ user, account, profile }) {
       // OAuth: create or link user on sign-in
       if (account?.provider === "google" && user.email) {
         const oauthEmail = user.email.toLowerCase().trim();
+        // [2026-10-25] Google is disabled in prod today; if it is ever enabled, an account is
+        // linked only on a VERIFIED email claim, and a linked account accepts only the Google
+        // account it was linked to.
+        if ((profile as { email_verified?: unknown } | undefined)?.email_verified !== true) {
+          return "/login?error=oauth-unverified";
+        }
         try {
           const [existing] = await db
             .select()
@@ -261,6 +286,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             .where(eq(users.email, oauthEmail))
             .limit(1);
           if (existing) {
+            if (existing.oauthProvider && existing.oauthProviderId !== account.providerAccountId) {
+              return "/login?error=oauth-mismatch";
+            }
+            // Never auto-link a privileged account: root and company admins sign in with their password.
+            if (!existing.oauthProvider && (existing.isRootAdmin || existing.role === "admin")) {
+              return "/login?error=oauth-link-refused";
+            }
             // Link OAuth to existing account if not already linked
             if (!existing.oauthProvider) {
               await db

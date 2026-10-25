@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
 
-type QuotaField = "uploadsPerDay" | "yoloJobsPerDay" | "chatMessagesPerDay";
+type QuotaField = "uploadsPerDay" | "yoloJobsPerDay" | "chatMessagesPerDay" | "lambdaPagesPerDay";
 type QuotaEntry = Partial<Record<QuotaField, number | null>>;
 
 export interface QuotaOverridesDoc {
@@ -19,12 +19,14 @@ export interface QuotaDefaults {
   uploadsPerDay: { member: number; admin: number };
   yoloJobsPerDay: number;
   chatMessagesPerDay: number;
+  lambdaPagesPerDay: number;
 }
 
 const FIELDS: { field: QuotaField; label: string }[] = [
   { field: "uploadsPerDay", label: "PDF uploads / day" },
   { field: "yoloJobsPerDay", label: "YOLO jobs / day" },
   { field: "chatMessagesPerDay", label: "Chat messages / day" },
+  { field: "lambdaPagesPerDay", label: "Lambda CV pages / day" },
 ];
 
 const MAX_LIMIT = 1_000_000;

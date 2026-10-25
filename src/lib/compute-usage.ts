@@ -114,6 +114,39 @@ export async function reserveSagemakerPages(
   });
 }
 
+/**
+ * [2026-10-25 root hardening] The company Textract page cap (companies.textract_page_limit, set by
+ * root in the Usage tab) was written and displayed but never read on a spend path. This is the
+ * read: pages charged under resource 'textract' since the company's usage window. Callers refuse
+ * (non-root) when `used + pages` would exceed the limit, and record every live Textract call —
+ * the upload pipeline's per-page Textract through processingWebhook, the table-parse live crop,
+ * and the root-only page rerun — so the Usage tab's "textract used" stops reading zero.
+ */
+export async function checkTextractCap(
+  companyId: number,
+  pages: number,
+): Promise<{ allowed: boolean; message?: string; companyUsed: number; companyLimit: number }> {
+  const [company] = await db
+    .select({ limit: companies.textractPageLimit, windowStart: companies.usageWindowStart })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+  if (!company) return { allowed: false, message: "Company not found", companyUsed: 0, companyLimit: 0 };
+  const res = company.windowStart
+    ? await db.execute(sql`SELECT COALESCE(SUM(pages), 0)::int AS used FROM compute_usage WHERE company_id = ${companyId} AND resource = 'textract' AND created_at >= ${company.windowStart}`)
+    : await db.execute(sql`SELECT COALESCE(SUM(pages), 0)::int AS used FROM compute_usage WHERE company_id = ${companyId} AND resource = 'textract'`);
+  const companyUsed = (res.rows[0] as { used?: number } | undefined)?.used ?? 0;
+  if (companyUsed + pages > company.limit) {
+    return {
+      allowed: false,
+      message: `Textract page limit reached for your company (${companyUsed}/${company.limit} pages used). Request a limit increase from root_admin.`,
+      companyUsed,
+      companyLimit: company.limit,
+    };
+  }
+  return { allowed: true, companyUsed, companyLimit: company.limit };
+}
+
 /** Roll back a reservation when the job failed to start (so it isn't charged). */
 export async function releaseReservation(reservationId: number): Promise<void> {
   await db.delete(computeUsage).where(eq(computeUsage.id, reservationId));
