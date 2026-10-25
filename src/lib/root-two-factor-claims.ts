@@ -82,12 +82,40 @@ function gateIgnoringSwitch(claims: RootTwoFactorClaims | null | undefined): Roo
 export function rootTwoFactorGate(claims: RootTwoFactorClaims | null | undefined): RootTwoFactorGate | null {
   const gate = gateIgnoringSwitch(claims);
   if (gate === null || rootTwoFactorEnforced()) return gate;
+  logOffSwitchBypass(String(claims?.dbId ?? "?"), gate);
+  return null;
+}
+
+/** Off-switch log throttle: one line per root user per minute (the middleware and the session callback evaluate the gate on every request). */
+export const OFF_SWITCH_LOG_INTERVAL_MS = 60_000;
+const offSwitchLastLoggedAt = new Map<string, number>();
+
+function logOffSwitchBypass(userId: string, gate: RootTwoFactorGate, now = Date.now()): void {
+  const last = offSwitchLastLoggedAt.get(userId);
+  if (last !== undefined && now - last < OFF_SWITCH_LOG_INTERVAL_MS && now >= last) return;
+  if (offSwitchLastLoggedAt.size >= 1_000) offSwitchLastLoggedAt.clear();
+  offSwitchLastLoggedAt.set(userId, now);
   // Loud by design: this line is the only trace that root was admitted without its second factor.
   console.error(
-    `[SECURITY] ${ROOT_TWO_FACTOR_ENFORCE_ENV}=0: root user ${String(claims?.dbId ?? "?")} admitted as root ` +
+    `[SECURITY] ${ROOT_TWO_FACTOR_ENFORCE_ENV}=0: root user ${userId} admitted as root ` +
       `without two-factor (state would be "${gate}"). Unset the switch as soon as the incident is over.`,
   );
-  return null;
+}
+
+/** Test seam: forget the off-switch log throttle. */
+export function resetOffSwitchLogThrottle(): void {
+  offSwitchLastLoggedAt.clear();
+}
+
+/**
+ * [fix round] Defence in depth for every session consumer: a session that carries a gate is a
+ * gated root login whatever `user` says. lib/root-session-projection.ts already sends such a
+ * session out with `user: null`; this refuses it even if a future Auth.js wrapper, a test
+ * harness or a cached object hands a gated session a user again. Only the two gate values count —
+ * `null` / absent is the verified (or non-root) shape.
+ */
+export function sessionIsGated(session: { twoFactorGate?: unknown } | null | undefined): boolean {
+  return session?.twoFactorGate === "enroll" || session?.twoFactorGate === "verify";
 }
 
 /** Root in the database and this login still owes its second factor (enrollment or a code). */

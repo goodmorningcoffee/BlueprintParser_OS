@@ -11,18 +11,21 @@
  */
 
 import type { AuthSession } from "@/lib/api-utils";
+import { sessionIsGated } from "@/lib/root-two-factor-claims";
 import { ApiError } from "./envelope";
 
 export const ROOT_ONLY_MESSAGE = "Root admin only";
 
 /** True only for a root user whose login has enrolled AND verified a code (or the enforce switch is off). */
 export function isVerifiedRoot(session: AuthSession | null | undefined): boolean {
-  return session?.user?.isRootAdmin === true;
+  // [fix round] A session carrying a gate is never root, whatever `user` says (defence in depth
+  // behind lib/root-session-projection.ts's `user: null`).
+  return !sessionIsGated(session) && session?.user?.isRootAdmin === true;
 }
 
 /** Throws FORBIDDEN "Root admin only" (401 UNAUTHORIZED with no session) unless isVerifiedRoot. */
 export function requireVerifiedRoot(session: AuthSession | null | undefined): AuthSession {
-  if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");
+  if (!session?.user || sessionIsGated(session)) throw new ApiError("UNAUTHORIZED", "Unauthorized");
   if (!isVerifiedRoot(session)) throw new ApiError("FORBIDDEN", ROOT_ONLY_MESSAGE);
   return session;
 }

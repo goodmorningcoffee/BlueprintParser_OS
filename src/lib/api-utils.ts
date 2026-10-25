@@ -30,6 +30,7 @@
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { sessionIsGated } from "@/lib/root-two-factor-claims";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -64,6 +65,15 @@ export interface AuthSession {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * [2026-10-25 fix round] A gated root login (lib/root-session-projection.ts sends it out with
+ * `user: null` + `twoFactorGate`) is signed-out everywhere here. This is the defence in depth
+ * behind that projection: whatever `user` such a session carries, the engine never sees it.
+ */
+function withoutGatedAuthority<T extends { twoFactorGate?: unknown }>(session: T | null): T | null {
+  return session && sessionIsGated(session) ? null : session;
+}
+
+/**
  * Require authenticated session. Returns typed session or error response.
  *
  * @deprecated Zero call sites in src/. The live equivalent is `auth: "session"` on
@@ -74,7 +84,7 @@ export async function requireAuth(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
 > {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
   return { session: session as unknown as AuthSession, error: null };
@@ -87,7 +97,7 @@ export async function requireAdmin(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
 > {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
   if (session.user.role !== "admin" && !session.user.isRootAdmin) {
@@ -106,7 +116,7 @@ export async function requireRootAdmin(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
 > {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
   if (!session.user.isRootAdmin) {
@@ -171,7 +181,7 @@ export async function resolveProjectAccess(
   lookup: ProjectLookup,
   options?: { allowDemo?: boolean }
 ): Promise<ProjectAccessSuccess | ProjectAccessDemoSuccess | ProjectAccessFailure> {
-  const session = await auth();
+  const session = withoutGatedAuthority(await auth());
 
   // Look up project
   const where = "publicId" in lookup
@@ -259,7 +269,7 @@ export async function checkProjectAccess(
   | { session: AuthSession | null; scope: "demo"; error: null }
   | { session: null; scope: null; error: NextResponse }
 > {
-  const session = await auth();
+  const session = withoutGatedAuthority(await auth());
 
   if (project.isDemo && options?.allowDemo) {
     return {

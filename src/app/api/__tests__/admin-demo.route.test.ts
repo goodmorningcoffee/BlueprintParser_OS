@@ -138,13 +138,13 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
   });
 
   it("DEMO-4 set isDemo by publicId (companyId-scoped); cross-company silently no-ops", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld(); // [fix round M2] publishing a demo is root-only
     const author = await createUser(company.id);
     const proj = await createProject(company.id, author.id, {
       isDemo: false,
     } as never);
     await ageProjectForPublication(proj.id);
-    asUser(admin);
+    asUser(root);
     let r = await readJson(
       await demoPOST(post({ projectId: proj.publicId, isDemo: true })),
     );
@@ -171,15 +171,36 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
     expect((await projectRow(otherProj.id)).isDemo).toBe(false); // NOT toggled (cross-company scope)
   });
 
+  it("DEMO-5 [2026-10-25 M2] publishing (isDemo:true) is ROOT-ONLY; a company admin may still withdraw and refresh", async () => {
+    const { company, admin, root } = await makeWorld();
+    const author = await createUser(company.id);
+    const proj = await createProject(company.id, author.id, { isDemo: false } as never);
+    await ageProjectForPublication(proj.id);
+    asUser(admin);
+    let r = await readJson(await demoPOST(post({ projectId: proj.publicId, isDemo: true })));
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Root admin only" } });
+    expect((await projectRow(proj.id)).isDemo).toBe(false); // untouched
+    asUser(root);
+    r = await readJson(await demoPOST(post({ projectId: proj.publicId, isDemo: true })));
+    expect(r.status).toBe(200);
+    expect((await projectRow(proj.id)).isDemo).toBe(true);
+    // Withdrawal only reduces exposure: still company-admin.
+    asUser(admin);
+    r = await readJson(await demoPOST(post({ projectId: proj.publicId, isDemo: false })));
+    expect(r.status).toBe(200);
+    expect((await projectRow(proj.id)).isDemo).toBe(false);
+  });
+
   it("B2 RED: publishing rejects an incomplete project without changing lifecycle state", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld(); // [fix round M2] publishing a demo is root-only
     const author = await createUser(company.id);
     const project = await createProject(company.id, author.id, {
       isDemo: false,
       status: "processing",
     });
     await ageProjectForPublication(project.id);
-    asUser(admin);
+    asUser(root);
 
     const response = await readJson(
       await demoPOST(post({ projectId: project.publicId, isDemo: true })),
@@ -196,7 +217,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
   });
 
   it("B2 RED: publishing rejects a completed project with an active processing job", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld(); // [fix round M2] publishing a demo is root-only
     const author = await createUser(company.id);
     const project = await createProject(company.id, author.id, {
       isDemo: false,
@@ -208,7 +229,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
       executionId: `active-${project.id}`,
       status: "running",
     });
-    asUser(admin);
+    asUser(root);
 
     const response = await readJson(
       await demoPOST(post({ projectId: project.publicId, isDemo: true })),
@@ -225,7 +246,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
   });
 
   it("publishing rejects a project with a linked Label Studio session", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld(); // [fix round M2] publishing a demo is root-only
     const author = await createUser(company.id);
     const project = await createProject(company.id, author.id, {
       isDemo: false,
@@ -238,7 +259,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
       taskType: "generic",
       status: "active",
     });
-    asUser(admin);
+    asUser(root);
 
     const response = await readJson(
       await demoPOST(post({ projectId: project.publicId, isDemo: true })),
@@ -255,7 +276,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
   });
 
   it("publishing rejects a project with a pending Label Studio provider intent", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, root } = await makeWorld(); // [fix round M2] publishing a demo is root-only
     const author = await createUser(company.id);
     const project = await createProject(company.id, author.id, {
       isDemo: false,
@@ -273,7 +294,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
       providerInstanceId: `fixture-provider-${intentId}`,
       state: "create_uncertain",
     });
-    asUser(admin);
+    asUser(root);
 
     const response = await readJson(
       await demoPOST(post({ projectId: project.publicId, isDemo: true })),

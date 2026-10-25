@@ -145,6 +145,11 @@ resource "aws_ecs_task_definition" "beaver_app" {
           valueFrom = aws_secretsmanager_secret.nextauth_secret.arn
         },
         {
+          # Root TOTP seed key (lib/secret-box.ts). Wired here so a release can never drop it.
+          name      = "ROOT_2FA_KEY"
+          valueFrom = aws_secretsmanager_secret.root_2fa_key.arn
+        },
+        {
           name      = "PROCESSING_WEBHOOK_SECRET"
           valueFrom = aws_secretsmanager_secret.processing_webhook_secret.arn
         },

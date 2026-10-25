@@ -27,6 +27,8 @@ import {
   rootTwoFactorGate,
   rootTwoFactorPending,
   rootTwoFactorSettingKey,
+  OFF_SWITCH_LOG_INTERVAL_MS,
+  resetOffSwitchLogThrottle,
 } from "@/lib/root-two-factor-claims";
 import { makeReq, readJson, sessionState } from "@/test/harness";
 import type { AuthSession } from "@/lib/api-utils";
@@ -84,17 +86,28 @@ describe("root two-factor claim model", () => {
     }
   });
 
-  it("the off-switch collapses every gate to null and logs a [SECURITY] line each time it does", () => {
+  it("the off-switch collapses every gate to null and logs a [SECURITY] line — once per root user per minute", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-25T12:00:00.000Z"));
+    resetOffSwitchLogThrottle();
     process.env[ROOT_TWO_FACTOR_ENFORCE_ENV] = "0";
     expect(rootTwoFactorGate(ROOT_ENROLL)).toBeNull();
     expect(rootTwoFactorGate(ROOT_VERIFY)).toBeNull();
     expect(projectRootAuthority(ROOT_ENROLL)).toEqual({ isRootAdmin: true, rootTwoFactorPending: false, rootTwoFactorGate: null });
+    // [2026-10-25 L3] three bypasses of the same user inside a minute → ONE line (the middleware and
+    // the session callback evaluate the gate on every request); another user logs on its own.
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(rootTwoFactorGate({ ...ROOT_ENROLL, dbId: 8 })).toBeNull();
+    expect(err).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(OFF_SWITCH_LOG_INTERVAL_MS + 1);
+    expect(rootTwoFactorGate(ROOT_ENROLL)).toBeNull();
     expect(err).toHaveBeenCalledTimes(3);
     for (const call of err.mock.calls) {
       expect(String(call[0])).toContain("[SECURITY] ROOT_2FA_ENFORCE=0");
-      expect(String(call[0])).toContain("root user 7");
+      expect(String(call[0])).toMatch(/root user [78]/u);
     }
+    vi.useRealTimers();
     // Nothing is logged where the switch changes nothing (verified root, non-root).
     err.mockClear();
     expect(rootTwoFactorGate(ROOT_VERIFIED)).toBeNull();

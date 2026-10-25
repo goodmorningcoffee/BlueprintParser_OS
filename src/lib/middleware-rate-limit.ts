@@ -383,29 +383,34 @@ export function verifiedRootUserId(token: unknown): number | null {
 // lookup, so neither anonymous nor non-root callers cause a DB read here.
 export const ROOT_CLAIM_RECHECK_MS = 30_000;
 const ROOT_CLAIM_CACHE_MAX = 1_000;
-const rootClaimCache = new Map<number, { confirmed: Promise<boolean>; checkedAt: number }>();
+// [fix round L2] Keyed by login (user id + the login's 2FA nonce): the lookup also re-checks the
+// live verified marker, which is per login, so two logins of one root never share an answer.
+const rootClaimCache = new Map<string, { confirmed: Promise<boolean>; checkedAt: number }>();
 
 /** The verified root admin's id, re-confirmed against the database; null for everyone else. */
 export async function confirmedRootUserId(
   token: unknown,
-  isRootInDatabase: (userId: number) => Promise<boolean>,
+  isRootInDatabase: (userId: number, twoFactorNonce: string | null) => Promise<boolean>,
   now: number = Date.now(),
 ): Promise<number | null> {
   const claimedId = verifiedRootUserId(token);
   if (claimedId === null) return null;
-  let entry = rootClaimCache.get(claimedId);
+  const rawNonce = (token as { twoFactorNonce?: unknown }).twoFactorNonce;
+  const nonce = typeof rawNonce === "string" && rawNonce.length > 0 ? rawNonce : null;
+  const cacheKey = `${claimedId}:${nonce ?? ""}`;
+  let entry = rootClaimCache.get(cacheKey);
   if (!entry || now - entry.checkedAt >= ROOT_CLAIM_RECHECK_MS || now < entry.checkedAt) {
     if (rootClaimCache.size >= ROOT_CLAIM_CACHE_MAX) rootClaimCache.clear();
     entry = {
       confirmed: Promise.resolve()
-        .then(() => isRootInDatabase(claimedId))
+        .then(() => isRootInDatabase(claimedId, nonce))
         .then(
           (isRoot) => isRoot === true,
           () => false,
         ),
       checkedAt: now,
     };
-    rootClaimCache.set(claimedId, entry);
+    rootClaimCache.set(cacheKey, entry);
   }
   return (await entry.confirmed) ? claimedId : null;
 }

@@ -1309,6 +1309,8 @@ export const ROOT_TWO_FACTOR_POLICY = {
   claimsFile: "src/lib/root-two-factor-claims.ts",
   serviceFile: "src/server/services/root-two-factor.ts",
   authFile: "src/lib/auth.ts",
+  // [2026-10-25 fix round] the session projection lib/auth.ts delegates to (pure; tested through @auth/core)
+  sessionProjectionFile: "src/lib/root-session-projection.ts",
   routeShellFile: "src/server/api/defineRoute.ts",
   rootAuthorityFile: "src/server/api/root-authority.ts",
   apiUtilsFile: "src/lib/api-utils.ts",
@@ -1398,6 +1400,7 @@ export const ROOT_ONLY_SURFACES = [
   rootOnly("/api/admin/duplicates/delete-hidden", ["POST"]),
   rootOnly("/api/admin/annotation-cleanup", ["GET", "POST"]),
   rootOnly("/api/admin/logs/accounts", ["GET"]),
+  rootOnly("/api/admin/demo", ["POST"], { shellAuth: "admin", inService: ["src/server/services/demo.ts", "manageDemo"], conditional: "isDemo:true publication (withdrawal and refresh stay company-admin)" }),
   rootOnly("/api/admin/logs/alert-count", ["GET"]),
   rootOnly("/api/admin/logs/engagement", ["GET"]),
   rootOnly("/api/admin/logs/monitor", ["GET"]),

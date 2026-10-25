@@ -170,10 +170,13 @@ export default function AdminPage() {
       setYoloStatusLoad({ loaded: !!r.status, error: r.error });
     }
 
-    try {
-      const togRes = await fetch("/api/admin/toggles");
-      if (togRes.ok) setToggles(await togRes.json());
-    } catch { /* ignore */ }
+    // [2026-10-25] Root-only since the hardening (a company admin got a silent 403 and default state).
+    if (session?.user?.isRootAdmin) {
+      try {
+        const togRes = await fetch("/api/admin/toggles");
+        if (togRes.ok) setToggles(await togRes.json());
+      } catch { /* ignore */ }
+    }
 
     // Resume polling for any running YOLO jobs
     try {

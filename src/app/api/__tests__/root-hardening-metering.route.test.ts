@@ -166,19 +166,28 @@ describe.skipIf(!dbUp)("reserved ROOT_ADMIN_EMAIL (2026-10-25)", () => {
 });
 
 describe("secret-box (2026-10-25)", () => {
-  it("seals per purpose, opens legacy ciphertext, refuses a wrong purpose and a changed key with a clear error", () => {
+  it("seals per purpose, opens legacy ciphertext, refuses a wrong purpose; opens under ANY candidate key, and a lost key is a clear error", () => {
     process.env.LLM_KEY_SECRET = "box-secret-one";
     const sealed = sealSecret("seed-bytes", "root-2fa");
     expect(sealed.startsWith("v2:")).toBe(true);
     expect(openSecret(sealed, "root-2fa")).toBe("seed-bytes");
     expect(() => openSecret(sealed, "llm-key")).toThrow(SecretUnreadableError);
     expect(openSecret(encryptApiKey("legacy-seed"), "root-2fa")).toBe("legacy-seed");
-    // a dedicated ROOT_2FA_KEY takes precedence and separates the TOTP key from the session secret
+    // a dedicated ROOT_2FA_KEY takes precedence for SEALING and separates the TOTP key from the session secret
     process.env.ROOT_2FA_KEY = "dedicated-two-factor-key";
     const dedicated = sealSecret("seed-2", "root-2fa");
     expect(openSecret(dedicated, "root-2fa")).toBe("seed-2");
-    expect(() => openSecret(sealed, "root-2fa")).toThrow(/cannot be decrypted .* break-glass/u);
+    // [fix round M1] ... but OPENING tries every candidate: a seed sealed before ROOT_2FA_KEY was
+    // set still opens after it is set (no lockout at the release that wires the key) ...
+    expect(openSecret(sealed, "root-2fa")).toBe("seed-bytes");
+    // ... and one sealed under ROOT_2FA_KEY still opens if a task definition ever lacks it.
     delete process.env.ROOT_2FA_KEY;
     expect(openSecret(sealed, "root-2fa")).toBe("seed-bytes");
+    expect(() => openSecret(dedicated, "root-2fa")).toThrow(/cannot be decrypted .* break-glass/u);
+    // A seed under a key that is in NO candidate (rotated ROOT_2FA_KEY, old value gone) is the break-glass case.
+    process.env.ROOT_2FA_KEY = "rotated-two-factor-key";
+    expect(() => openSecret(dedicated, "root-2fa")).toThrow(SecretUnreadableError);
+    expect(openSecret(sealed, "root-2fa")).toBe("seed-bytes");
+    delete process.env.ROOT_2FA_KEY;
   });
 });

@@ -9174,7 +9174,8 @@ async function validateMiddlewareRateLimitIdentityPolicy() {
       !rootConfirm ||
       !textHasAll(rootConfirm.getText(ratePolicy.source), [
         "verifiedRootUserId(token)",
-        "isRootInDatabase(claimedId)",
+        // [fix round L2] the login's nonce rides along so the lookup can re-check the live marker
+        "isRootInDatabase(claimedId, nonce)",
         "isRoot === true",
         "() => false",
         "ROOT_CLAIM_RECHECK_MS",
@@ -9183,7 +9184,8 @@ async function validateMiddlewareRateLimitIdentityPolicy() {
       !textHasAll(rootLookup.getText(middleware.source), [
         "{ dbId: userId }",
         "refreshJwtUserAuthority(fresh)",
-        "?.isRootAdmin === true",
+        "?.isRootAdmin !== true) return false;",
+        "rootTwoFactorEnforced() ? rootTwoFactorMarkerLive(userId, nonce) : true",
       ]) ||
       !textHasAll(handlerText, [
         "const rootUserId = await confirmedRootUserId(await verifiedAuthToken, isRootInDatabase, now)",
@@ -9456,6 +9458,8 @@ async function validateRootTwoFactorPolicy() {
   const enforced = functionFor(claims, "rootTwoFactorEnforced");
   const pending = functionFor(claims, "rootTwoFactorPending");
   const projection = functionFor(claims, "projectRootAuthority");
+  const offSwitchLogger = functionFor(claims, "logOffSwitchBypass");
+  const gated = functionFor(claims, "sessionIsGated");
   if (
     !prefix ||
     literalValue(prefix) !== policy.settingKeyPrefix ||
@@ -9468,7 +9472,12 @@ async function validateRootTwoFactorPolicy() {
       `export const ROOT_TWO_FACTOR_ENFORCE_ENV = "${policy.enforceEnv}";`,
     ]) ||
     !hasCall(gateFn, ["rootTwoFactorEnforced"]) ||
-    !textHasAll(gateFn.getText(claims.source), ["console.error(", "[SECURITY]"]) ||
+    // [fix round L3] the [SECURITY] line is emitted by logOffSwitchBypass (once per user per minute)
+    !hasCall(gateFn, ["logOffSwitchBypass"]) ||
+    !offSwitchLogger ||
+    !textHasAll(offSwitchLogger.getText(claims.source), ["console.error(", "[SECURITY]"]) ||
+    !gated ||
+    !textHasAll(gated.getText(claims.source), ['session?.twoFactorGate === "enroll"', 'session?.twoFactorGate === "verify"']) ||
     !enforced ||
     !pending ||
     !hasCall(pending, ["rootTwoFactorGate"]) ||
@@ -9492,21 +9501,30 @@ async function validateRootTwoFactorPolicy() {
   );
   const jwtText = jwtMethods.length === 1 ? jwtMethods[0].getText(auth.source) : "";
   const sessionText = sessionMethods.length === 1 ? sessionMethods[0].getText(auth.source) : "";
+  const projectionModule = await parsed(policy.sessionProjectionFile);
+  const projectionFn = functionFor(projectionModule, "projectSessionFromToken");
+  const projectionText = projectionFn ? projectionFn.getText(projectionModule.source) : "";
   if (
     !textHasAll(jwtText, [
       'if (trigger === "signIn") {\n        await stampRootTwoFactorAtSignIn(token);\n      }',
       'if (trigger !== "signIn") {\n        return refreshJwtSessionClaims(token);\n      }',
     ]) ||
-    !textHasAll(sessionText, [
+    // [2026-10-25 fix round] The callback delegates to the pure projection (lib/root-session-projection.ts).
+    !textHasAll(sessionText, ["return projectSessionFromToken(session, token);"]) ||
+    sessionText.includes("token.isRootAdmin") ||
+    sessionText.includes("rootTwoFactorPending") ||
+    !textHasAll(projectionText, [
       "const rootAuthority = projectRootAuthority(token);",
       "if (rootAuthority.rootTwoFactorGate !== null) {",
       "twoFactorGate: rootAuthority.rootTwoFactorGate,",
       "session.user.isRootAdmin = rootAuthority.isRootAdmin;",
     ]) ||
-    sessionText.includes("session.user.isRootAdmin = token.isRootAdmin") ||
-    sessionText.includes("rootTwoFactorPending") ||
-    // The gated return carries no user: only `expires` and the gate.
-    !/return \{\s*expires: session\.expires,\s*twoFactorGate: rootAuthority\.rootTwoFactorGate,\s*\}/u.test(sessionText) ||
+    projectionText.includes("session.user.isRootAdmin = token.isRootAdmin") ||
+    projectionText.includes("rootTwoFactorPending") ||
+    // The gated return carries an EXPLICIT `user: null` (verifier H1: next-auth's server wrapper does
+    // `{ user: args[0].user ?? args[0].token, ...session }`, so an ABSENT user is replaced by the raw
+    // token with the database isRootAdmin), `expires` and the gate — nothing else.
+    !/user: null,\s*expires: session\.expires,\s*twoFactorGate: rootAuthority\.rootTwoFactorGate,\s*\}/u.test(projectionText) ||
     // 2FA claims are derived only inside refreshJwtSessionClaims, after the authority re-read.
     jwtText.includes("refreshRootTwoFactorClaims")
   ) {
@@ -9575,18 +9593,28 @@ async function validateRootTwoFactorPolicy() {
   const requireVerifiedRoot = functionFor(rootAuthority, "requireVerifiedRoot");
   if (
     !requireSession ||
+    // [2026-10-25 fix round — verifier H1] every level also refuses a session that CARRIES a gate
+    // (sessionIsGated), whatever `user` says: defence in depth behind the projection's `user: null`.
     !textHasAll(requireSessionText, [
-      'if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");',
+      'if (!session?.user || sessionIsGated(session)) throw new ApiError("UNAUTHORIZED", "Unauthorized");',
       'if (minRole === "root") requireVerifiedRoot(session);',
     ]) ||
     requireSessionText.includes("rootTwoFactorPending") ||
     shell.source.getText().includes("rootTwoFactorPending") ||
     !isVerifiedRoot ||
-    !textHasAll(isVerifiedRoot.getText(rootAuthority.source), ["session?.user?.isRootAdmin === true"]) ||
+    !textHasAll(isVerifiedRoot.getText(rootAuthority.source), ["!sessionIsGated(session) && session?.user?.isRootAdmin === true"]) ||
     !requireVerifiedRoot ||
     !hasCall(requireVerifiedRoot, ["isVerifiedRoot"]) ||
-    !textHasAll(requireVerifiedRoot.getText(rootAuthority.source), ['throw new ApiError("FORBIDDEN", ROOT_ONLY_MESSAGE)']) ||
-    apiUtils.source.getText().includes("rootTwoFactorPending")
+    !textHasAll(requireVerifiedRoot.getText(rootAuthority.source), [
+      'if (!session?.user || sessionIsGated(session)) throw new ApiError("UNAUTHORIZED", "Unauthorized");',
+      'throw new ApiError("FORBIDDEN", ROOT_ONLY_MESSAGE)',
+    ]) ||
+    apiUtils.source.getText().includes("rootTwoFactorPending") ||
+    !textHasAll(apiUtils.source.getText(), [
+      "return session && sessionIsGated(session) ? null : session;",
+      "withoutGatedAuthority(await auth())",
+    ]) ||
+    apiUtils.source.getText().split("if (!session?.user || sessionIsGated(session)) {").length !== 4
   ) {
     report(
       "ROOT_TWO_FACTOR_ROUTE_SHELL_DRIFT",

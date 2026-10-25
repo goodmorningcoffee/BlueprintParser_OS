@@ -11,7 +11,8 @@ import { trustedClientIp } from "@/lib/trusted-client-ip";
 // encrypted token; the session projects isRootAdmin=false while a root login is still unverified.
 // Claim model: lib/root-two-factor-claims.ts; storage + the server-side verified marker:
 // server/services/root-two-factor.ts.
-import { projectRootAuthority, type RootTwoFactorGate } from "@/lib/root-two-factor-claims";
+import type { RootTwoFactorGate } from "@/lib/root-two-factor-claims";
+import { projectSessionFromToken } from "@/lib/root-session-projection";
 import {
   refreshJwtSessionClaims,
   stampRootTwoFactorAtSignIn,
@@ -390,27 +391,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
     async session({ session, token }) {
-      // [2026-10-25 root hardening] A root login that still owes enrollment or its code has NO
-      // authority anywhere a session is consulted: the session goes out WITHOUT a user, carrying
-      // only the gate, so the route shell, the project-access engine and every service that calls
-      // auth() itself all fail closed as signed-out. The /admin page renders the gate from it.
-      const rootAuthority = projectRootAuthority(token);
-      if (rootAuthority.rootTwoFactorGate !== null) {
-        return {
-          expires: session.expires,
-          twoFactorGate: rootAuthority.rootTwoFactorGate,
-        } as unknown as typeof session;
-      }
-      if (session.user) {
-        session.user.companyId = token.companyId;
-        session.user.dbId = token.dbId;
-        session.user.username = token.username;
-        session.user.role = token.role;
-        session.user.canRunModels = token.canRunModels;
-        session.user.isRootAdmin = rootAuthority.isRootAdmin;
-      }
-      session.twoFactorGate = null;
-      return session;
+      // [2026-10-25 root hardening] Pure projection in lib/root-session-projection.ts: a gated root
+      // login goes out as `user: null` + `twoFactorGate` (explicit null — the next-auth server
+      // wrapper falls back to the raw token when `user` is merely absent), a verified one with the
+      // effective root flag. Tested through the real Auth.js session path.
+      return projectSessionFromToken(session, token);
     },
   },
 });

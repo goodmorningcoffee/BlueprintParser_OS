@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
   lookupCountry: vi.fn(async () => null),
   loggerInfo: vi.fn(),
   recordAbuseEvent: vi.fn(),
+  // [2026-10-25 L2] The login's live verified marker. Default: still live.
+  rootTwoFactorMarkerLive: vi.fn(async (): Promise<boolean> => true),
   // The users row as the DB has it now. Default: the DB agrees with the token's claim.
   refreshJwtUserAuthority: vi.fn(
     async (token: { dbId?: number }): Promise<Record<string, unknown> | null> => ({
@@ -31,6 +33,9 @@ vi.mock("@/lib/admin-logs/manual-ban-cache", () => ({ isManuallyBanned: vi.fn(()
 vi.mock("@/lib/geo", () => ({ lookupCountry: h.lookupCountry }));
 vi.mock("@/lib/logger", () => ({ logger: { info: h.loggerInfo } }));
 vi.mock("next-auth/jwt", () => ({ getToken: h.getToken }));
+vi.mock("@/server/services/root-two-factor-store", () => ({
+  rootTwoFactorMarkerLive: h.rootTwoFactorMarkerLive,
+}));
 vi.mock("@/server/services/auth-jwt-authority", () => ({
   refreshJwtUserAuthority: h.refreshJwtUserAuthority,
 }));
@@ -199,7 +204,7 @@ describe("confirmedRootUserId (database re-confirmation of the root claim)", () 
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(await confirmedRootUserId(token, lookup, t0 + ROOT_CLAIM_RECHECK_MS)).toBeNull();
     expect(lookup).toHaveBeenCalledTimes(2);
-    expect(lookup).toHaveBeenLastCalledWith(7102);
+    expect(lookup).toHaveBeenLastCalledWith(7102, "n"); // [L2] the login's nonce rides along
   });
 
   it("shares one read between concurrent requests", async () => {
@@ -242,6 +247,15 @@ describe("middleware: a stale root claim (demoted or deleted in the DB) is not e
     // One read for the whole burst: the answer is cached for the window.
     expect(h.refreshJwtUserAuthority).toHaveBeenCalledTimes(1);
     expect(h.refreshJwtUserAuthority).toHaveBeenCalledWith({ dbId: 9010 });
+  });
+
+  it("[2026-10-25 L2] revoked verified marker with an unrefreshed cookie: route rule binds again", async () => {
+    h.getToken.mockResolvedValue({ dbId: 9013, isRootAdmin: true, ...VERIFIED });
+    h.rootTwoFactorMarkerLive.mockResolvedValueOnce(false);
+    const s = await statuses(11, () => req("/api/projects", "203.0.113.243"));
+    expect(s.slice(0, 10)).toEqual(Array(10).fill(200));
+    expect(s[10]).toBe(429);
+    expect(h.rootTwoFactorMarkerLive).toHaveBeenCalledWith(9013, VERIFIED.twoFactorNonce);
   });
 
   it("deleted user with an unrefreshed root cookie: the IP backstop binds again", async () => {

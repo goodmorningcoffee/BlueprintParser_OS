@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef } from "react";
+import { TextractRerunButton } from "./TextractRerunButton";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
@@ -688,19 +689,8 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
   return (
     <div className="p-3 space-y-3 text-xs">
       <div>
-        <button
-          onClick={handleRerun}
-          disabled={loading || !publicId || isDemo}
-          className={`w-full px-3 py-2 rounded border text-sm font-medium transition-colors ${
-            loading
-              ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
-              : !publicId || isDemo
-              ? "border-[var(--border)] text-[var(--muted)]/50 cursor-not-allowed"
-              : "border-[var(--accent)]/60 text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20"
-          }`}
-        >
-          {loading ? "Re-running Textract…" : "Re-run Textract"}
-        </button>
+        {/* [2026-10-25] root-only control, sibling module (TextPanel line ceiling) */}
+        <TextractRerunButton onClick={handleRerun} loading={loading} publicId={publicId} isDemo={isDemo} />
         {isDemo ? (
           <p className="mt-1 text-[10px] text-[var(--muted)] leading-snug">
             Demo projects are read-only. Textract re-runs are unavailable in demo mode.

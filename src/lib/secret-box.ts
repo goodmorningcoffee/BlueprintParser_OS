@@ -12,8 +12,13 @@
  *   • binds the ciphertext to its purpose through GCM additional data;
  *   • prefixes the ciphertext with "v2:" so legacy ciphertext (lib/crypto.ts format) still opens —
  *     an owner enrolled before this change keeps working, and re-enrolling moves him to v2.
- * Owner runbook: set ROOT_2FA_KEY (any long random string) in the task definition BEFORE enrolling
- * for the first time after this ships, and never rotate it without a 2fa-reset planned.
+ * [fix round — verifier M1] Opening a v2 ciphertext TRIES EVERY candidate keying material in
+ * precedence order (ROOT_2FA_KEY, LLM_KEY_SECRET, NEXTAUTH_SECRET): a seed sealed before
+ * ROOT_2FA_KEY was set still opens after it is set, and one sealed under ROOT_2FA_KEY still opens
+ * if a task definition is ever registered without it. Sealing always uses the first present key.
+ * ROOT_2FA_KEY is wired through terraform (infrastructure/terraform/secrets.tf → ecs.tf) as the
+ * `root_2fa_key` variable, so a release cannot drop it. Rotating ROOT_2FA_KEY itself still needs
+ * a 2fa-reset planned (the old value is not kept anywhere).
  */
 
 import crypto from "crypto";
@@ -31,10 +36,31 @@ export class SecretUnreadableError extends Error {
   }
 }
 
-function keyFor(purpose: string): Buffer {
-  const ikm = process.env.ROOT_2FA_KEY || process.env.LLM_KEY_SECRET || process.env.NEXTAUTH_SECRET;
-  if (!ikm) throw new Error("No encryption key: set ROOT_2FA_KEY, LLM_KEY_SECRET or NEXTAUTH_SECRET");
+/** Candidate input keying materials, precedence order, duplicates and blanks dropped. */
+function candidateIkms(): string[] {
+  const seen = new Set<string>();
+  for (const name of ["ROOT_2FA_KEY", "LLM_KEY_SECRET", "NEXTAUTH_SECRET"]) {
+    const value = process.env[name];
+    if (value) seen.add(value);
+  }
+  if (seen.size === 0) throw new Error("No encryption key: set ROOT_2FA_KEY, LLM_KEY_SECRET or NEXTAUTH_SECRET");
+  return [...seen];
+}
+
+function keyFrom(ikm: string, purpose: string): Buffer {
   return Buffer.from(crypto.hkdfSync("sha256", ikm, "blueprintparser", `bp/secret-box/v2/${purpose}`, 32));
+}
+
+/** The sealing key: the first present candidate. */
+function keyFor(purpose: string): Buffer {
+  return keyFrom(candidateIkms()[0], purpose);
+}
+
+function openV2(buf: Buffer, key: Buffer, purpose: string): string {
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, buf.subarray(0, IV_LENGTH));
+  decipher.setAAD(Buffer.from(purpose, "utf8"));
+  decipher.setAuthTag(buf.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH));
+  return decipher.update(buf.subarray(IV_LENGTH + AUTH_TAG_LENGTH)) + decipher.final("utf8");
 }
 
 /** Seal `plaintext` for `purpose`; the result opens only with openSecret(…, purpose). */
@@ -46,17 +72,26 @@ export function sealSecret(plaintext: string, purpose: string): string {
   return VERSION_PREFIX + Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString("base64");
 }
 
-/** Open a v2 ciphertext for `purpose`, or a legacy lib/crypto.ts ciphertext. Throws SecretUnreadableError. */
+/**
+ * Open a v2 ciphertext for `purpose` (trying every candidate key, precedence order), or a legacy
+ * lib/crypto.ts ciphertext. Throws SecretUnreadableError when no key opens it.
+ */
 export function openSecret(ciphertext: string, purpose: string): string {
+  let ikms: string[];
   try {
     if (!ciphertext.startsWith(VERSION_PREFIX)) return decryptApiKey(ciphertext);
-    const buf = Buffer.from(ciphertext.slice(VERSION_PREFIX.length), "base64");
-    const decipher = crypto.createDecipheriv(ALGORITHM, keyFor(purpose), buf.subarray(0, IV_LENGTH));
-    decipher.setAAD(Buffer.from(purpose, "utf8"));
-    decipher.setAuthTag(buf.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH));
-    return decipher.update(buf.subarray(IV_LENGTH + AUTH_TAG_LENGTH)) + decipher.final("utf8");
+    ikms = candidateIkms();
   } catch (err) {
     if (err instanceof Error && /encryption key/u.test(err.message)) throw err;
     throw new SecretUnreadableError(purpose);
   }
+  const buf = Buffer.from(ciphertext.slice(VERSION_PREFIX.length), "base64");
+  for (const ikm of ikms) {
+    try {
+      return openV2(buf, keyFrom(ikm, purpose), purpose);
+    } catch {
+      /* next candidate */
+    }
+  }
+  throw new SecretUnreadableError(purpose);
 }

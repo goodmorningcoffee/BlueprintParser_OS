@@ -64,8 +64,9 @@ import { refreshJwtUserAuthority } from "@/server/services/auth-jwt-authority";
 import {
   lockoutRemainingMs,
   nextLockout,
-  type RootTwoFactorLockout,
 } from "@/server/services/root-two-factor-lockout";
+// [fix round] Row type + read side live in root-two-factor-store.ts (the middleware shares them).
+import { isActive, readRow, type RootTwoFactorRow } from "@/server/services/root-two-factor-store";
 
 /** A verified root session lives this long from the moment of verification, then re-proves. */
 export const ROOT_TWO_FACTOR_VERIFIED_MARKER_TTL_MS = 12 * 60 * 60 * 1000;
@@ -93,15 +94,6 @@ export const ROOT_TWO_FACTOR_SIGN_IN_AGAIN =
 export const ROOT_TWO_FACTOR_PASSWORD_INCORRECT = "Password incorrect";
 export const ROOT_TWO_FACTOR_LOCKED = "Too many failed two-factor attempts; try again later";
 
-interface RootTwoFactorRow extends RootTwoFactorLockout {
-  secretEnc?: string;
-  backupCodeHashes?: string[];
-  enrolledAt?: string;
-  lastStep?: number;
-  pending?: { secretEnc: string; createdAt: string };
-  verified?: Record<string, number>;
-}
-
 /** HKDF purpose label for the sealed TOTP seed (lib/secret-box.ts). */
 const TOTP_SECRET_PURPOSE = "root-2fa";
 
@@ -116,29 +108,6 @@ function openTotpSecret(sealed: string): string {
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
-type Reader = Pick<typeof db, "select">;
-
-function asRow(value: unknown): RootTwoFactorRow {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as RootTwoFactorRow) : {};
-}
-
-function isActive(row: RootTwoFactorRow): boolean {
-  return (
-    typeof row.secretEnc === "string" &&
-    Array.isArray(row.backupCodeHashes) &&
-    typeof row.enrolledAt === "string"
-  );
-}
-
-async function readRow(reader: Reader, userId: number, lock = false): Promise<RootTwoFactorRow | null> {
-  const query = reader
-    .select({ value: appSettings.value })
-    .from(appSettings)
-    .where(eq(appSettings.key, rootTwoFactorSettingKey(userId)))
-    .limit(1);
-  const [row] = lock ? await query.for("update") : await query;
-  return row ? asRow(row.value) : null;
-}
 
 async function writeRow(tx: Tx, userId: number, row: RootTwoFactorRow): Promise<void> {
   const key = rootTwoFactorSettingKey(userId);

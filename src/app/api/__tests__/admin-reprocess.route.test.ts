@@ -572,6 +572,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const { company, project } = await createWorld({ numPages: 1 });
     await ageProjectForPublication(project.id);
     const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser(company.id, { isRootAdmin: true }); // [fix round M2] publishing a demo is root-only
     let signalUploadStarted!: () => void;
     let releaseUpload!: () => void;
     const uploadStarted = new Promise<void>((resolve) => { signalUploadStarted = resolve; });
@@ -587,6 +588,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     );
     await uploadStarted;
 
+    asUser(root); // [fix round M2] publishing a demo is root-only
     const publish = await readJson(await demoPOST(makeReq("/api/admin/demo", {
       method: "POST",
       body: { projectId: project.publicId, isDemo: true },
@@ -596,6 +598,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
       error: { code: "CONFLICT", message: "Project has an active mutation lease" },
     });
 
+    asUser(admin);
     releaseUpload();
     const lines = await drain(reprocessResponse);
     expect(lines[lines.length - 1]).toEqual({
@@ -825,6 +828,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
       projectIntelligence: { disciplines: ["stale-normal"] } as any,
     });
     const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser(company.id, { isRootAdmin: true });
     const demoProj = await createProject(company.id, user.id, {
       isDemo: false,
       projectIntelligence: { curated: "demo-content" } as any,
@@ -833,11 +837,12 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     await createPage(demoProj.id, 1, { textractData: emptyTextract, rawText: "" });
     await ageProjectForPublication(demoProj.id);
 
-    asUser(admin);
+    asUser(root); // [fix round M2] publishing a demo is root-only
     expect((await readJson(await demoPOST(makeReq("/api/admin/demo", {
       method: "POST",
       body: { projectId: demoProj.publicId, isDemo: true },
     })))).status).toBe(200);
+    asUser(admin);
     const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
     const lines = await drain(res);
     expect(lines[0]).toEqual({ type: "start", projects: 1 }); // demo project NOT counted

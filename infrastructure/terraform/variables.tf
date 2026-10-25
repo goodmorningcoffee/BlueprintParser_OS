@@ -242,6 +242,17 @@ variable "root_admin_email" {
   }
 }
 
+variable "root_2fa_key" {
+  description = "Dedicated keying material for the root TOTP seed (lib/secret-box.ts): any long random string, >= 32 chars. Never rotate it without a `./root_admin.sh 2fa-reset` planned — the old value is kept nowhere"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.root_2fa_key) >= 32
+    error_message = "root_2fa_key must be at least 32 characters (e.g. `openssl rand -base64 48`)."
+  }
+}
+
 variable "root_2fa_enforce" {
   description = "Mandatory root two-factor. \"1\" (default) enforces; \"0\" is the emergency off-switch and must never be left on after an incident"
   type        = string

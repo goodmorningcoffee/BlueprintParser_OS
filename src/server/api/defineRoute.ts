@@ -30,6 +30,7 @@ import { logger } from "@/lib/logger";
 import { ApiError, errorResponse } from "./envelope";
 import { resolveProjectOrThrow } from "./access";
 import { requireVerifiedRoot } from "./root-authority";
+import { sessionIsGated } from "@/lib/root-two-factor-claims";
 import { isDemoWriteProtectionError } from "./project-write-errors";
 import { zPublicId } from "./schemas";
 
@@ -184,7 +185,7 @@ async function preAuthBodyCap(req: Request): Promise<number> {
     return DEFAULT_MAX_BODY_BYTES;
   }
   const session = await auth().catch(() => null);
-  return session?.user ? AUTHENTICATED_MAX_BODY_BYTES : DEFAULT_MAX_BODY_BYTES;
+  return session?.user && !sessionIsGated(session) ? AUTHENTICATED_MAX_BODY_BYTES : DEFAULT_MAX_BODY_BYTES;
 }
 
 const bodyTooLarge = () => new ApiError("BAD_REQUEST", "Request body too large", 413);
@@ -254,7 +255,8 @@ function checkWebhookSecret(req: Request): void {
 // "is this a verified root" check that in-service gates share (server/api/root-authority.ts).
 async function requireSession(minRole?: "admin" | "root"): Promise<AuthSession> {
   const session = (await auth()) as unknown as AuthSession | null;
-  if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");
+  // [fix round] `sessionIsGated` is the belt behind the projection's `user: null` braces.
+  if (!session?.user || sessionIsGated(session)) throw new ApiError("UNAUTHORIZED", "Unauthorized");
   if (minRole === "admin" && session.user.role !== "admin" && !session.user.isRootAdmin) {
     throw new ApiError("FORBIDDEN", "Admin only");
   }

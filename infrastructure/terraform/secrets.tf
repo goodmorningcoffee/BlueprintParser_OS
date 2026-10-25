@@ -32,6 +32,23 @@ resource "aws_secretsmanager_secret_version" "nextauth_secret" {
   secret_string = var.nextauth_secret
 }
 
+# [2026-10-25] Root TOTP seed key — a secret the session secret never touches, so a NEXTAUTH_SECRET
+# rotation (the standard response to a leak) does not make every TOTP seed unreadable.
+resource "aws_secretsmanager_secret" "root_2fa_key" {
+  name                    = "beaver/ROOT_2FA_KEY"
+  description             = "Keying material for the root two-factor TOTP seed (lib/secret-box.ts)"
+  recovery_window_in_days = 7
+
+  tags = {
+    Name = "beaver-root-2fa-key"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "root_2fa_key" {
+  secret_id     = aws_secretsmanager_secret.root_2fa_key.id
+  secret_string = var.root_2fa_key
+}
+
 resource "aws_secretsmanager_secret" "processing_webhook_secret" {
   name                    = "beaver/PROCESSING_WEBHOOK_SECRET"
   description             = "Secret for authenticating processing pipeline webhook calls"

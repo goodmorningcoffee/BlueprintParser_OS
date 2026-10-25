@@ -10,6 +10,12 @@
 // PRESERVED byte-exact: BOTH writes carry the companyId tenancy guard (eq(projects.companyId,
 // session.user.companyId) — NO root bypass); the isDemo=true refresh filter + .returning(id);
 // the set-branch publicId+companyId WHERE; new Date() updatedAt bumps.
+// [2026-10-25 root hardening, fix round — verifier M2] PUBLISHING (isDemo:true) is ROOT-ONLY: a
+// demo project is public, and demo chat runs on the owner's LLM keys (lib/llm/resolve.ts
+// ownerKeysAllowed = isDemo) against the GLOBAL demo daily limit — a company admin could publish
+// its own project, spend the owner's keys and exhaust the owner's public demo, skipping the
+// per-company owner-key grant. Withdrawal (isDemo:false) and refresh stay company-admin: both
+// only reduce exposure. Listed in ROOT_ONLY_SURFACES (conditional) and pinned by the policy gate.
 
 import { db } from "@/lib/db";
 import {
@@ -23,6 +29,7 @@ import { eq, and, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { PROJECT_UPLOAD_PUBLICATION_FENCE_SECONDS } from "@/lib/project-upload-authority";
 import { ApiError } from "@/server/api/envelope";
+import { requireVerifiedRoot } from "@/server/api/root-authority";
 
 export async function manageDemo(
   rawBody: Record<string, unknown>,
@@ -63,6 +70,7 @@ export async function manageDemo(
   }
 
   if (isDemo) {
+    requireVerifiedRoot(session);
     await db.transaction(async (tx) => {
       const [project] = await tx
         .select({
