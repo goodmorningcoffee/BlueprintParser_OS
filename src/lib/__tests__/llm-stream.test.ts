@@ -79,7 +79,7 @@ describe.skipIf(!dbUp)("streamChatResponse project lifecycle persistence", () =>
     const { company, project } = await createWorld();
     await ageProjectForPublication(project.id);
     const writeCapability = assertProjectWritable(project);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     asUser(admin);
     await manageDemo(
       { projectId: project.publicId, isDemo: true },

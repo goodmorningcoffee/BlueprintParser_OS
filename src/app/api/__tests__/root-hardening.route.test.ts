@@ -62,13 +62,13 @@ import { POST as reprocessPOST } from "@/app/api/admin/reprocess/route";
 import { POST as devPOST } from "@/app/api/processing/dev/route";
 import { POST as disable2faPOST } from "@/app/api/auth/2fa/disable/route";
 import { db } from "@/lib/db";
-import { appSettings } from "@/lib/db/schema";
+import { appSettings, models } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { ROOT_TWO_FACTOR_ENFORCE_ENV, projectRootAuthority, rootTwoFactorSettingKey } from "@/lib/root-two-factor-claims";
 import { refreshJwtSessionClaims, stampRootTwoFactorAtSignIn } from "@/server/services/root-two-factor";
 import { ROOT_ONLY_SURFACES } from "../../../../scripts/project-security-policy-manifest.mjs";
-import { asUser, createCompany, createUser, makeReq, readJson, sessionState, signedOut, type FixtureUser } from "@/test/harness";
+import { asUser, createCompany, createProject, createUser, makeReq, readJson, sessionState, signedOut, type FixtureUser } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -78,7 +78,8 @@ interface Row {
   route: string;
   method: string;
   handler: Handler;
-  body?: unknown;
+  /** A function is resolved per call (fixtures made in beforeEach). */
+  body?: unknown | (() => unknown);
   /** The 403 a company admin receives. */
   adminDenied: string;
   /** Skip the verified-root admission probe when the handler would do real work. */
@@ -99,17 +100,23 @@ const rows: Row[] = [
   { name: "companies POST", route: "/api/admin/companies", method: "POST", handler: companiesPOST, body: { name: "" }, adminDenied: ROOT_ONLY },
   { name: "model-access POST", route: "/api/admin/model-access", method: "POST", handler: modelAccessPOST, body: {}, adminDenied: ROOT_ONLY },
   { name: "users POST role admin", route: "/api/admin/users", method: "POST", handler: usersPOST, body: { username: "x", email: "x@x.test", password: "longenough", role: "admin" }, adminDenied: "Root admin only: creating a company admin" },
-  { name: "models PATCH enable", route: "/api/admin/models", method: "PATCH", handler: modelsPATCH, body: { modelId: 1, enabled: true }, adminDenied: "Model not found", rootProbe: false },
+  // [fix round 2] The company's OWN model (made in beforeEach): a static `modelId: 1` resolved to
+  // whatever row another file left in the shared DB ("Not found" when it was foreign), and never
+  // reached the enabling gate. Own model → the admin is refused AT the gate; root is admitted.
+  { name: "models PATCH enable", route: "/api/admin/models", method: "PATCH", handler: modelsPATCH, body: () => ({ modelId: ownModel.id, enabled: true }), adminDenied: "Root admin only: enabling model access" },
   { name: "users/reset-password POST", route: "/api/admin/users/reset-password", method: "POST", handler: resetPasswordPOST, body: { userId: 1, newPassword: "longenough", adminPassword: "x" }, adminDenied: "Root admin required" },
   { name: "yolo-purge DELETE", route: "/api/admin/yolo-purge", method: "DELETE", handler: yoloPurgeDELETE, adminDenied: ROOT_ONLY },
   { name: "yolo/run-batch POST", route: "/api/yolo/run-batch", method: "POST", handler: runBatchPOST, body: {}, adminDenied: ROOT_ONLY },
-  { name: "pages/textract-rerun POST", route: "/api/pages/textract-rerun", method: "POST", handler: textractRerunPOST, body: { projectId: 1, pageNumber: 1 }, adminDenied: ROOT_ONLY },
+  // [fix round 2] Own non-demo project (beforeEach): a static `projectId: 1` was whatever row another
+  // file in the same run had made — once that was a published demo and the root probe saw 403.
+  { name: "pages/textract-rerun POST", route: "/api/pages/textract-rerun", method: "POST", handler: textractRerunPOST, body: () => ({ projectId: ownProject.id, pageNumber: 1 }), adminDenied: ROOT_ONLY },
   { name: "admin/reprocess?scope=shape-parse (Lambda on)", route: "/api/admin/reprocess?scope=shape-parse", method: "POST", handler: reprocessPOST, adminDenied: "Root admin only: this scope fans out owner-billed Lambda invocations", rootProbe: false },
   { name: "processing/dev POST", route: "/api/processing/dev", method: "POST", handler: devPOST, body: { projectId: "x" }, adminDenied: ROOT_ONLY },
   { name: "auth/2fa/disable POST", route: "/api/auth/2fa/disable", method: "POST", handler: disable2faPOST, body: { code: "123456", password: "x" }, adminDenied: ROOT_ONLY, rootProbe: false /* verified path: auth-2fa.route.test.ts */ },
 ];
 
-const call = async (row: Row) => readJson(await row.handler(makeReq(row.route, { method: row.method, body: row.body })));
+const call = async (row: Row) =>
+  readJson(await row.handler(makeReq(row.route, { method: row.method, body: typeof row.body === "function" ? row.body() : row.body })));
 
 function asGatedRoot(gate: "enroll" | "verify") {
   sessionState.current = { twoFactorGate: gate } as unknown as AuthSession;
@@ -118,6 +125,8 @@ function asGatedRoot(gate: "enroll" | "verify") {
 let company: Awaited<ReturnType<typeof createCompany>>;
 let companyAdmin: FixtureUser;
 let root: FixtureUser;
+let ownModel: { id: number };
+let ownProject: { id: number };
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -128,6 +137,11 @@ beforeEach(async () => {
     company = await createCompany();
     companyAdmin = await createUser(company.id, { role: "admin" });
     root = await createUser(company.id, { isRootAdmin: true });
+    [ownModel] = await db
+      .insert(models)
+      .values({ companyId: company.id, name: `M-${company.id}`, type: "yolo", s3Path: `models/m-${company.id}`, config: {} as never })
+      .returning({ id: models.id });
+    ownProject = await createProject(company.id, companyAdmin.id);
   }
 });
 
@@ -140,7 +154,7 @@ describe.skipIf(!dbUp)("root-only surface (2026-10-25)", () => {
   it.each(rows.map((row) => [row.name, row] as const))("%s: company admin → 403, gated root → 401, verified root admitted", async (_name, row) => {
     asUser(companyAdmin);
     let r = await call(row);
-    expect(r.status, `${row.name} as company admin`).toBe(row.adminDenied === "Model not found" ? 404 : 403);
+    expect(r.status, `${row.name} as company admin`).toBe(403);
     expect(r.body.error.message).toBe(row.adminDenied);
 
     for (const gate of ["enroll", "verify"] as const) {
