@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useTableParseHintStore } from "@/stores/tableParseHintStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { acceptTableParseRegion, navigateViewerPage, resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
@@ -116,6 +117,33 @@ describe("Auto region queue is page-scoped", () => {
     act(() => navigateViewerPage(7));
     await waitFor(() => expect(regionRows()).toHaveLength(0));
     expect(screen.queryByRole("button", { name: "Process Region" })).toBeNull();
+  });
+
+  it("[shape-tags fix round] a parse hint for THIS project's region rides in the request body once, then is consumed", async () => {
+    renderTab();
+    act(() => acceptTableParseRegion([...ON_P3] as Box));
+    await waitFor(() => expect(regionRows()).toHaveLength(1));
+    // another project's hint on the same page number is not ours
+    useTableParseHintStore.setState({ hint: { publicId: "other-project", pageNumber: 3, bbox: [...ON_P3] as Box, rowSource: "shape-centres" } });
+    fireEvent.click(screen.getByRole("button", { name: "Process Region" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect("rowSource" in JSON.parse(fetchMock.mock.calls[0][1].body as string)).toBe(false);
+    expect(useTableParseHintStore.getState().hint).not.toBeNull();
+    // ours: sent, and cleared by that request
+    useTableParseHintStore.setState({ hint: { publicId: "queue-project", pageNumber: 3, bbox: [...ON_P3] as Box, rowSource: "shape-centres" } });
+    act(() => acceptTableParseRegion([...ON_P3] as Box));
+    await waitFor(() => expect(regionRows()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Process Region" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Process Region" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toMatchObject({ pageNumber: 3, regionBbox: ON_P3, rowSource: "shape-centres" });
+    expect(useTableParseHintStore.getState().hint).toBeNull();
+    act(() => acceptTableParseRegion([...ON_P3] as Box));
+    await waitFor(() => expect(regionRows()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Process Region" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Process Region" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect("rowSource" in JSON.parse(fetchMock.mock.calls[2][1].body as string)).toBe(false);
   });
 
   it("re-queues the same box after removal, and never duplicates it", async () => {

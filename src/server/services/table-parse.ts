@@ -387,7 +387,10 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     (pdfBuffer || pagePngBuffer)
       ? timed(extractWithImg2Table(pdfBuffer, pagePngBuffer, pageNumber, regionBbox))
       : Promise.resolve({ method: "img2table", headers: [], rows: [], confidence: 0, error: skippedReason("PDF and page image") } as MethodResult),
-    ...(shapeRows ? [timed(Promise.resolve(methodShapeRows(textractData.words, pageShapes, regionBbox, { minColGap, colHitRatio })))] : []),
+    // [fix round] runs inside the promise, so a throw is this method's soft failure, not the request's.
+    ...(shapeRows ? [timed(Promise.resolve().then(() => methodShapeRows(textractData.words, pageShapes, regionBbox, { minColGap, colHitRatio })).catch(
+      (e: unknown) => ({ method: "shape-rows", headers: [], rows: [], confidence: 0, error: e instanceof Error ? e.message : String(e) } as MethodResult),
+    ))] : []),
   ];
 
   const rawResults = await Promise.all(methodPromises);

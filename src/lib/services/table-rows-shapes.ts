@@ -81,7 +81,14 @@ export function methodShapeRows(
   const headerCells = bounds.map(() => [] as ColumnWord[]);
   for (const w of headerWords) headerCells[colOf(w)].push(w);
   const headerTexts = headerCells.map(joinWords);
-  const headers = bounds.map((_, i) => headerTexts[i] || (i === 0 ? "TAG" : `Column ${i}`));
+  // [fix round] duplicate header texts ("QTY", "QTY") would collapse into one row key; the repeat gets a suffix.
+  const seen = new Map<string, number>();
+  const headers = bounds.map((_, i) => {
+    const h = headerTexts[i] || (i === 0 ? "TAG" : `Column ${i}`);
+    const n = (seen.get(h) ?? 0) + 1;
+    seen.set(h, n);
+    return n === 1 ? h : `${h} (${n})`;
+  });
   const tagColumn = headers[0];
 
   const rows: Record<string, string>[] = [];

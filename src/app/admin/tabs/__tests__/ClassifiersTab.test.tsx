@@ -64,7 +64,7 @@ describe("ClassifiersTab", () => {
     const [, putInit] = fetchMock.mock.calls.find(([u, i]) => String(u).includes("/overlay") && i?.method === "PUT")!;
     const sent = JSON.parse(putInit.body as string);
     expect(sent.overlay.custom).toEqual([]);
-    expect(sent.overlay.patches["schedules.v1"]).toEqual({ version: BUILT_IN_RECIPES[0].version, signals: { "door.header": { weight: 4.5 } } });
+    expect(sent.overlay.patches["schedules.v1"]).toEqual({ version: BUILT_IN_RECIPES[0].version, baseVersion: BUILT_IN_RECIPES[0].version, signals: { "door.header": { weight: 4.5 } } });
     expect(sent.overlay.patches["regions.v1"]).toBeUndefined();
     expect((await screen.findByRole("status")).textContent).toMatch(/Saved — schedules.v1 v3/);
 

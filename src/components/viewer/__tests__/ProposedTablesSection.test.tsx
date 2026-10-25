@@ -37,7 +37,7 @@ import { centerDelta, fitScaleForBox } from "@/components/viewer/proposals/propo
 import { queryKeys } from "@/queries/queryKeys";
 import { seedProposalsFromBootstrap } from "@/queries/useProposals";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
-import { tableParseRequestHints, useTableParseHintStore } from "@/stores/tableParseHintStore";
+import { consumeTableParseHints, tableParseRequestHints, useTableParseHintStore } from "@/stores/tableParseHintStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import type { ProjectProposalSummary, ProposalSummaryItem } from "@/lib/classifier-engine/types";
@@ -261,11 +261,13 @@ describe("ProposedTablesSection", () => {
     );
   });
 
-  it("[shape-tags] table chip, the tag column block, and Accept with tags sets the parse hint for that region", async () => {
+  it("[shape-tags] table chip, the tag column block (readable tags, sheet · trade), and Accept with tags sets the parse hint for that project's region", async () => {
     persistence.persistFetch.mockResolvedValue({ verdict: {} });
     useTableParseHintStore.setState({ hint: null });
+    useSessionStore.setState({ pageDrawingNumbers: { 1: "A-601" } } as never);
     seedProposalsFromBootstrap(qc, "pub-1", { proposals: { ...SUMMARY, items: [
-      item({ id: "a", pageNumber: 1, tableP: 0.93, tagRows: 7, tags: ["K1", "K2", "K3"], tagShape: "hexagon" }),
+      // 7 rows, 5 readable tags, 3 chips → "+2 more" counts TAGS beyond the chips, never the unreadable rows
+      item({ id: "a", pageNumber: 1, tableP: 0.93, tagRows: 7, tags: ["K1", "K2", "K3"], tagCount: 5, tagShape: "hexagon" }),
       item({ id: "b", pageNumber: 1, classId: "panel", className: "Panel schedule", group: "elec", displayName: "Panel schedule", tableP: 0.4 }),
     ] } });
     mount(<ProposedTablesSection />);
@@ -275,19 +277,31 @@ describe("ProposedTablesSection", () => {
     fireEvent.click(screen.getByText("Panel schedule", { selector: "span" }).closest("button")!);
     expect(screen.queryByRole("button", { name: "Accept with tags" })).toBeNull(); // no tag column on b
     fireEvent.click(screen.getByText("Door schedule", { selector: "span" }).closest("button")!);
-    expect(screen.getByText(/Tag column: 7 hexagon rows/)).toBeInTheDocument();
-    expect(screen.getByText(/K1, K2, K3 \+4 more/)).toBeInTheDocument();
+    const block = screen.getByText(/Tag column: 7 hexagon rows/);
+    expect(block).toHaveTextContent("Tag column: 7 hexagon rows · 5 tags: K1, K2, K3 +2 more · sheet A-601 · Architectural");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept with tags" })); });
     expect(commands.transitionTableParseTab).toHaveBeenCalledWith("auto");
     expect(commands.acceptTableParseRegion).toHaveBeenCalledWith([0.1, 0.2, 0.5, 0.6]);
     expect(persistence.persistFetch).toHaveBeenCalledWith("/api/projects/pub-1/proposals/verdict", { pageNumber: 1, proposalId: "a", verdict: "accept" }, "POST");
-    expect(useTableParseHintStore.getState().hint).toEqual({ pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], rowSource: "shape-centres", tagYoloClass: { model: "yolo_primitive", className: "hexagon" } });
-    expect(tableParseRequestHints(1, [0.1, 0.2, 0.5, 0.6])).toEqual({ rowSource: "shape-centres" });
-    expect(tableParseRequestHints(2, [0.1, 0.2, 0.5, 0.6])).toEqual({});
-    expect(tableParseRequestHints(1, [0.6, 0.6, 0.9, 0.9])).toEqual({});
+    expect(useTableParseHintStore.getState().hint).toEqual({ publicId: "pub-1", pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], rowSource: "shape-centres", tagYoloClass: { model: "yolo_primitive", className: "hexagon" } });
+    expect(tableParseRequestHints("pub-1", 1, [0.1, 0.2, 0.5, 0.6])).toEqual({ rowSource: "shape-centres" });
+    expect(tableParseRequestHints("pub-2", 1, [0.1, 0.2, 0.5, 0.6])).toEqual({}); // another project, same page number
+    expect(tableParseRequestHints("pub-1", 2, [0.1, 0.2, 0.5, 0.6])).toEqual({});
+    expect(tableParseRequestHints("pub-1", 1, [0.6, 0.6, 0.9, 0.9])).toEqual({});
+    // an Auto Parse run consumes the hint it uses; one that does not match leaves it
+    expect(consumeTableParseHints("pub-1", 1, [[0.6, 0.6, 0.9, 0.9]])).toEqual([{}]);
+    expect(useTableParseHintStore.getState().hint).not.toBeNull();
+    expect(consumeTableParseHints("pub-1", 1, [[0.6, 0.6, 0.9, 0.9], [0.1, 0.2, 0.5, 0.6]])).toEqual([{}, { rowSource: "shape-centres" }]);
+    expect(useTableParseHintStore.getState().hint).toBeNull();
     // plain Parse this table clears a stale hint
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept with tags" })); });
+    expect(useTableParseHintStore.getState().hint).not.toBeNull();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Parse this table" })); });
     expect(useTableParseHintStore.getState().hint).toBeNull();
+    // a column with no readable tag says so instead of "+n more"
+    seedProposalsFromBootstrap(qc, "pub-1", { proposals: { ...SUMMARY, items: [item({ id: "a", pageNumber: 1, tagRows: 3, tags: [], tagCount: 0, tagShape: "circle" })] } });
+    fireEvent.click(screen.getByText("Door schedule", { selector: "span" }).closest("button")!);
+    expect(screen.getByText(/Tag column: 3 circle rows/)).toHaveTextContent("3 circle rows · no readable tags");
   });
 
   it("demo: proposals are listed read-only — no verdict buttons, parse prefill without a verdict", () => {

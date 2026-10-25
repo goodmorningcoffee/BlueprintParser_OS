@@ -30,12 +30,16 @@ const same = (a: unknown, b: unknown): boolean => canonical(a) === canonical(b);
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
-/** "detect" or a class id. */
+/** "detect", "table" (the table-ness head, when the recipe has one) or a class id. */
 export type HeadId = string;
 export const DETECT: HeadId = "detect";
+/** [shape-tags fix round] The table-ness head's id in feature keys ("table.<id>") and patches. */
+export const TABLE: HeadId = "table";
 
 export function headSignals(recipe: ClassifierRecipe, head: HeadId): WeightedSignal[] | undefined {
-  return head === DETECT ? recipe.detect.signals : recipe.classes.find((c) => c.id === head)?.signals;
+  if (head === DETECT) return recipe.detect.signals;
+  if (head === TABLE) return recipe.tableHead?.signals;
+  return recipe.classes.find((c) => c.id === head)?.signals;
 }
 
 const SIGNAL_FIELDS = ["weight", "role", "enabled", "label", "note", "spec"] as const;
@@ -58,18 +62,24 @@ function patchHead(head: HeadId, base: readonly WeightedSignal[], draft: readonl
   for (const d of draft) if (!base.some((s) => s.id === d.id)) (patch.addedSignals ??= []).push({ classId, signal: clone(d) });
 }
 
-/** The sparse patch that turns `builtIn` into `draft`; null when they are the same. `version` is the caller's. */
+/**
+ * The sparse patch that turns `builtIn` into `draft`; null when they are the same. `version` is the caller's;
+ * `baseVersion` records the built-in the patch was made against (recipes.ts `patchRecipe` drops a stale patch's
+ * detect / table head numbers).
+ */
 export function buildRecipePatch(builtIn: ClassifierRecipe, draft: ClassifierRecipe, version: number = builtIn.version): RecipePatch | null {
-  const patch: RecipePatch = { version };
+  const patch: RecipePatch = { version, baseVersion: builtIn.version };
   if (builtIn.enabled !== draft.enabled) patch.enabled = draft.enabled;
   if (builtIn.name !== draft.name) patch.name = draft.name;
   if (builtIn.detect.bias !== draft.detect.bias) patch.detectBias = draft.detect.bias;
+  if (builtIn.tableHead && draft.tableHead && builtIn.tableHead.bias !== draft.tableHead.bias) patch.tableBias = draft.tableHead.bias;
   if (builtIn.detect.threshold !== draft.detect.threshold) patch.detectThreshold = draft.detect.threshold;
   if (builtIn.nameThreshold !== draft.nameThreshold) patch.nameThreshold = draft.nameThreshold;
   if (builtIn.minMargin !== draft.minMargin) patch.minMargin = draft.minMargin;
   if (!same(builtIn.scope, draft.scope)) patch.scope = clone(draft.scope);
   if (!same(builtIn.candidates, draft.candidates)) patch.candidates = clone(draft.candidates);
   patchHead(DETECT, builtIn.detect.signals, draft.detect.signals, patch, null);
+  if (builtIn.tableHead && draft.tableHead) patchHead(TABLE, builtIn.tableHead.signals, draft.tableHead.signals, patch, TABLE);
   for (const b of builtIn.classes) {
     const d = draft.classes.find((c) => c.id === b.id);
     if (!d) { (patch.removed ??= []).push(classRemovalKey(b.id)); continue; }
@@ -83,7 +93,7 @@ export function buildRecipePatch(builtIn: ClassifierRecipe, draft: ClassifierRec
     patchHead(b.id, b.signals, d.signals, patch, b.id);
   }
   for (const d of draft.classes) if (!builtIn.classes.some((c) => c.id === d.id)) (patch.addedClasses ??= []).push(clone(d));
-  return Object.keys(patch).length > 1 ? patch : null;
+  return Object.keys(patch).length > 2 ? patch : null;
 }
 
 export interface DiffLine { path: string; kind: "changed" | "added" | "removed"; from?: string; to?: string }
@@ -96,16 +106,17 @@ export function describePatch(builtIn: ClassifierRecipe, patch: RecipePatch | nu
   const out: DiffLine[] = [];
   const top: Array<[keyof RecipePatch, string, unknown]> = [
     ["name", "name", builtIn.name], ["enabled", "enabled", builtIn.enabled], ["detectBias", "detect bias", builtIn.detect.bias], ["detectThreshold", "detect threshold", builtIn.detect.threshold],
+    ["tableBias", "table-ness bias", builtIn.tableHead?.bias],
     ["nameThreshold", "name threshold", builtIn.nameThreshold], ["minMargin", "min margin", builtIn.minMargin], ["scope", "scope", builtIn.scope], ["candidates", "candidates", builtIn.candidates],
   ];
   for (const [key, label, base] of top) if (patch[key] !== undefined) out.push({ path: label, kind: "changed", from: show(base), to: show(patch[key]) });
   const className = (id: string): string => builtIn.classes.find((c) => c.id === id)?.name ?? id;
-  const headLabel = (head: string): string => (head === DETECT ? "detect" : className(head));
+  const headLabel = (head: string): string => (head === DETECT ? "detect" : head === TABLE ? "table-ness" : className(head));
   for (const [key, p] of Object.entries(patch.signals ?? {})) {
     const dot = key.indexOf(".");
     const head = dot === -1 ? "*" : key.slice(0, dot);
     const sid = dot === -1 ? key : key.slice(dot + 1);
-    const base = (head === "*" ? [...builtIn.detect.signals, ...builtIn.classes.flatMap((c) => c.signals)] : headSignals(builtIn, head) ?? []).find((s) => s.id === sid);
+    const base = (head === "*" ? allSignals(builtIn) : headSignals(builtIn, head) ?? []).find((s) => s.id === sid);
     for (const [f, v] of Object.entries(p)) {
       out.push({ path: `${head === "*" ? "every head" : headLabel(head)} · ${sid}: ${f}`, kind: "changed", from: show(base ? (base as unknown as Record<string, unknown>)[f] : undefined), to: show(v) });
     }
@@ -115,7 +126,7 @@ export function describePatch(builtIn: ClassifierRecipe, patch: RecipePatch | nu
   for (const [cid, meta] of Object.entries(patch.classMeta ?? {})) {
     for (const [f, v] of Object.entries(meta ?? {})) out.push({ path: `${className(cid)}: ${f === "legacyCategory" ? "legacy category" : f}`, kind: "changed", from: show((builtIn.classes.find((c) => c.id === cid) as unknown as Record<string, unknown> | undefined)?.[f]), to: v === null ? "—" : show(v) });
   }
-  for (const a of patch.addedSignals ?? []) out.push({ path: `${a.classId === null ? "detect" : className(a.classId)} · ${a.signal?.id ?? "?"}`, kind: "added", to: a.signal?.label });
+  for (const a of patch.addedSignals ?? []) out.push({ path: `${a.classId === null ? "detect" : headLabel(a.classId)} · ${a.signal?.id ?? "?"}`, kind: "added", to: a.signal?.label });
   for (const c of patch.addedClasses ?? []) out.push({ path: `class ${c.name ?? c.id}`, kind: "added", to: `${c.signals?.length ?? 0} signals` });
   for (const r of patch.removed ?? []) {
     if (r.startsWith("class:")) out.push({ path: `class ${className(r.slice(6))}`, kind: "removed" });
@@ -157,6 +168,8 @@ export const resetRecipe = (builtIn: ClassifierRecipe): ClassifierRecipe => clon
 
 const STR_LIST = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
+/** Every signal of every head (bare-id patch keys match across heads). */
+const allSignals = (r: ClassifierRecipe): WeightedSignal[] => [...r.detect.signals, ...(r.tableHead?.signals ?? []), ...r.classes.flatMap((c) => c.signals)];
 
 function validateClassMeta(meta: unknown, classIds: Set<string>, at: string, errors: string[]): void {
   if (!isRecord(meta)) { errors.push(`${at}: classMeta must be an object keyed by class id`); return; }
@@ -173,9 +186,7 @@ function validateSignalPatchEntry(key: string, p: unknown, recipe: ClassifierRec
   const dot = key.indexOf(".");
   const head = dot === -1 ? null : key.slice(0, dot);
   const sid = dot === -1 ? key : key.slice(dot + 1);
-  const exists = head === null
-    ? [...recipe.detect.signals, ...recipe.classes.flatMap((c) => c.signals)].some((s) => s.id === sid)
-    : (headSignals(recipe, head) ?? []).some((s) => s.id === sid);
+  const exists = head === null ? allSignals(recipe).some((s) => s.id === sid) : (headSignals(recipe, head) ?? []).some((s) => s.id === sid);
   if (!exists) { errors.push(`${at}: signal "${key}" does not exist`); return; }
   if (!isRecord(p)) { errors.push(`${at}: signal "${key}" patch must be an object`); return; }
   if (p.weight !== undefined && !isNum(p.weight)) errors.push(`${at}: signal "${key}" weight must be a number`);
@@ -191,9 +202,12 @@ function validatePatch(id: string, patch: unknown, builtIn: ClassifierRecipe, er
   if (!isRecord(patch)) { errors.push(`${at}: must be an object`); return; }
   for (const k of ["detectThreshold", "nameThreshold", "minMargin"]) if (patch[k] !== undefined && !(isNum(patch[k]) && (patch[k] as number) >= 0 && (patch[k] as number) <= 1)) errors.push(`${at}: ${k} must be a number in [0, 1]`);
   if (patch.detectBias !== undefined && !isNum(patch.detectBias)) errors.push(`${at}: detectBias must be a number`);
+  if (patch.tableBias !== undefined && !isNum(patch.tableBias)) errors.push(`${at}: tableBias must be a number`);
+  else if (patch.tableBias !== undefined && !builtIn.tableHead) errors.push(`${at}: tableBias set but the recipe has no table-ness head`);
   if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") errors.push(`${at}: enabled must be true/false`);
   if (patch.name !== undefined && !nonEmpty(patch.name)) errors.push(`${at}: name must be a non-empty string`);
   if (patch.version !== undefined && !isNum(patch.version)) errors.push(`${at}: version must be a number`);
+  if (patch.baseVersion !== undefined && !isNum(patch.baseVersion)) errors.push(`${at}: baseVersion must be a number`);
   if (patch.scope !== undefined) for (const m of checkScope(patch.scope, "scope:")) errors.push(`${at}: ${m}`);
   if (patch.candidates !== undefined) for (const m of checkCandidates(patch.candidates, "")) errors.push(`${at}: ${m.trim()}`);
   const classIds = new Set(builtIn.classes.map((c) => c.id));
@@ -218,7 +232,7 @@ function validatePatch(id: string, patch: unknown, builtIn: ClassifierRecipe, er
       if (!isRecord(a) || (a.classId !== null && typeof a.classId !== "string")) { errors.push(`${at}: addedSignals[${i}] needs classId (null = detect) and signal`); return; }
       const head = a.classId === null ? DETECT : (a.classId as string);
       const existing = headSignals(builtIn, head);
-      if (!existing) { errors.push(`${at}: addedSignals[${i}] names unknown class "${head}"`); return; }
+      if (!existing) { errors.push(`${at}: addedSignals[${i}] names unknown ${head === TABLE ? "head" : "class"} "${head}"`); return; }
       try {
         const sig = validateSignal(a.signal, builtIn.id, new Set());
         const seen = addedIds.get(head) ?? addedIds.set(head, new Set()).get(head)!;
@@ -241,11 +255,11 @@ function validatePatch(id: string, patch: unknown, builtIn: ClassifierRecipe, er
     else for (const r of patch.removed) {
       const ok = r.startsWith("class:") ? classIds.has(r.slice(6))
         : r.includes(".") ? (headSignals(builtIn, r.slice(0, r.indexOf("."))) ?? []).some((s) => s.id === r.slice(r.indexOf(".") + 1))
-          : classIds.has(r) || [...builtIn.detect.signals, ...builtIn.classes.flatMap((c) => c.signals)].some((s) => s.id === r);
+          : classIds.has(r) || allSignals(builtIn).some((s) => s.id === r);
       if (!ok) errors.push(`${at}: removed names unknown id "${r}"`);
     }
   }
-  const KNOWN = new Set(["version", "enabled", "name", "detectBias", "detectThreshold", "nameThreshold", "minMargin", "signals", "classBias", "classThreshold", "classMeta", "addedSignals", "addedClasses", "removed", "scope", "candidates"]);
+  const KNOWN = new Set(["version", "baseVersion", "enabled", "name", "detectBias", "tableBias", "detectThreshold", "nameThreshold", "minMargin", "signals", "classBias", "classThreshold", "classMeta", "addedSignals", "addedClasses", "removed", "scope", "candidates"]);
   for (const k of Object.keys(patch)) if (!KNOWN.has(k)) errors.push(`${at}: unknown field "${k}"`);
   if (!errors.length) {
     try { validateRecipe(applyOverlay([builtIn], { custom: [], patches: { [id]: patch as unknown as RecipePatch } })[0], "built-in"); }
@@ -290,18 +304,20 @@ export function validateOverlay(input: unknown, builtIns: readonly ClassifierRec
 
 /**
  * Versions for a save: a built-in's patch gets `max(stored patch version, built-in version) + 1` when its
- * content (version aside) changed, else the stored version; a custom recipe gets `stored + 1` when changed,
- * else the stored version; a new custom recipe keeps its own version (≥ 1).
+ * content (version / baseVersion aside) changed, else the stored version; a custom recipe gets `stored + 1`
+ * when changed, else the stored version; a new custom recipe keeps its own version (≥ 1). Every built-in patch
+ * is stamped `baseVersion` = the built-in's current version: the saver saw the heads it is layering on
+ * (recipes.ts drops a stale patch's detect / table head numbers until it is saved again).
  */
 export function bumpOverlayVersions(next: ClassifierOverlay, stored: ClassifierOverlay | null | undefined, builtIns: readonly ClassifierRecipe[]): ClassifierOverlay {
   const out: ClassifierOverlay = { custom: [], patches: {} };
-  const strip = (p: RecipePatch): Omit<RecipePatch, "version"> => { const { version: _v, ...rest } = p; return rest; };
+  const strip = (p: RecipePatch): Omit<RecipePatch, "version" | "baseVersion"> => { const { version: _v, baseVersion: _b, ...rest } = p; return rest; };
   for (const [id, patch] of Object.entries(next.patches)) {
     const prev = stored?.patches?.[id];
     const base = builtIns.find((r) => r.id === id)?.version ?? 0;
     const prevVersion = isNum(prev?.version) ? Math.max(prev!.version, base) : base;
     const changed = !prev || !same(strip(prev), strip(patch));
-    out.patches[id] = { ...patch, version: changed ? prevVersion + 1 : prevVersion };
+    out.patches[id] = { ...patch, version: changed ? prevVersion + 1 : prevVersion, baseVersion: base };
   }
   for (const rec of next.custom) {
     const prev = stored?.custom?.find((r) => r.id === rec.id);

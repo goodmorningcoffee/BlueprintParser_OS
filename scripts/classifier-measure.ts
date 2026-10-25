@@ -62,6 +62,17 @@ const openDetect = { ...hand, detect: { ...hand.detect, threshold: 0 } };
 /** [shape-tags] per labelled candidate: scores + labels for the detect / table-ness block. */
 interface Scored { set: number; group: string; isSchedule: boolean; isTable: boolean; p: number; structure: number; tableP: number | null; tagRows: number | null; tagRowsWithText: number }
 const scored: Scored[] = [];
+/**
+ * [shape-tags fix round] regions.v1 (legend / notes / keynotes regions) measured on the same labels, in its OWN engine run so
+ * the schedules.v1 numbers above stay byte-identical: table-ness (tableP) and the legend-vs-notes naming of its classes.
+ * `--no-regions` skips it.
+ */
+const USE_REGIONS = !args.includes("--no-regions");
+const regionsHand = BUILT_IN_RECIPES.find((r) => r.id === "regions.v1")!;
+const openRegions = { ...regionsHand, detect: { ...regionsHand.detect, threshold: 0 } };
+const LEGEND_CLASSES = new Set(["keynotes", "symbol-legend"]);
+interface RegionScored { group: string; isTable: boolean; p: number; tableP: number | null; structure: number; classId: string | null; tagRows: number | null }
+const regionScored: RegionScored[] = [];
 const labels = readKindLabels(LABELS);
 const tagger = createCsiBoxTagger();
 const byKey = labelsByPage(labels?.items ?? []);
@@ -104,6 +115,14 @@ for (const s of sample) {
       set: s.set, group: noteGroup(l), isSchedule: l.kind !== "not-a-schedule", isTable: isTableLabel(l), p: c.p, structure: c.features["detect.structure"] ?? 0,
       tableP: typeof c.tableP === "number" ? c.tableP : null, tagRows: c.tagMap ? c.tagMap.rows.length : null, tagRowsWithText: c.tagMap ? c.tagMap.rows.filter((r) => r.rowText).length : 0,
     });
+  }
+  if (USE_REGIONS) {
+    const rr = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words, tables }, csiCodes, regionsV2, drawingNumber, tagger, keynotes: loaded.keynotes }, [openRegions]);
+    for (const l of byKey.get(`${s.set}:${s.page}`) ?? []) {
+      const c = matchLabel(rr.result.proposals, l);
+      if (!c) continue;
+      regionScored.push({ group: noteGroup(l), isTable: isTableLabel(l), p: c.p, tableP: typeof c.tableP === "number" ? c.tableP : null, structure: c.features["detect.structure"] ?? 0, classId: c.classId, tagRows: c.tagMap ? c.tagMap.rows.length : null });
+    }
   }
   const proposals = candidates.filter((p) => p.p >= hand.detect.threshold);
   stats.proposals += proposals.length; ps.proposals += proposals.length;
@@ -185,6 +204,19 @@ for (const g of ["schedule", "legend-keynote", "notes", "title-block", "other-no
   const rows = col.reduce((a, x) => a + (x.tagRows ?? 0), 0);
   const txt = col.reduce((a, x) => a + x.tagRowsWithText, 0);
   lines.push(`  ${g.padEnd(18)} ${String(xs.length).padStart(4)} · ${String(col.length).padStart(4)} · ${String(rows).padStart(5)} · ${pct(txt, rows)}`);
+}
+if (USE_REGIONS) {
+  const byGroup = (g: string) => regionScored.filter((x) => x.group === g);
+  lines.push("");
+  lines.push(`REGIONS.v1 (legend / notes / keynotes candidates; ${regionScored.length} labelled candidates: ${["schedule", "legend-keynote", "notes", "title-block", "other-nonschedule"].map((g) => `${g} ${byGroup(g).length}`).join(", ")})`);
+  const rt = regionScored.filter((x) => x.tableP !== null).map((x) => ({ s: x.tableP!, y: x.isTable }));
+  lines.push(`  TABLE-NESS (schedule ∪ legend-keynote vs the rest; ${rt.length} with tableP): AUC tableP ${f3(auc(rt))} · structureScore alone ${f3(auc(regionScored.map((x) => ({ s: x.structure, y: x.isTable }))))} · at tableP ≥ .5: ${pr(rt, 0.5)}`);
+  const ln = regionScored.filter((x) => (x.group === "legend-keynote" || x.group === "notes") && x.tableP !== null);
+  lines.push(`  legend-keynote vs notes AUC (tableP) ${f3(auc(ln.map((x) => ({ s: x.tableP!, y: x.group === "legend-keynote" }))))} (n ${ln.length}) · detect p ${f3(auc(ln.map((x) => ({ s: x.p, y: x.group === "legend-keynote" }))))}`);
+  const named = (xs: RegionScored[]) => xs.filter((x) => x.p >= regionsHand.detect.threshold);
+  const leg = named(byGroup("legend-keynote")), notes = named(byGroup("notes"));
+  lines.push(`  NAMING at p ≥ ${regionsHand.detect.threshold}: legend-keynote → keynotes|symbol-legend ${pct(leg.filter((x) => x.classId && LEGEND_CLASSES.has(x.classId)).length, leg.length)} · notes → a notes class ${pct(notes.filter((x) => x.classId && !LEGEND_CLASSES.has(x.classId)).length, notes.length)} · notes mis-named as legend ${pct(notes.filter((x) => x.classId && LEGEND_CLASSES.has(x.classId)).length, notes.length)}`);
+  lines.push(`  tag map: legend-keynote with a column ${pct(byGroup("legend-keynote").filter((x) => x.tagRows !== null).length, byGroup("legend-keynote").length)} · notes with a column ${pct(byGroup("notes").filter((x) => x.tagRows !== null).length, byGroup("notes").length)}`);
 }
 lines.push("");
 lines.push("PER SET: set · pages · proposals · labelled · engine top-1");

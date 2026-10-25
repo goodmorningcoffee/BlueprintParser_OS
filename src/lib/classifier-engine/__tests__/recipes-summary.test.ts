@@ -35,7 +35,8 @@ describe("applyOverlay", () => {
     custom: [{ ...BUILT_IN_RECIPES[1], id: "custom.v1", name: "Custom" }, { id: "broken" } as never],
     patches: {
       "schedules.v1": {
-        version: 7, enabled: true, detectThreshold: 0.6, nameThreshold: 0.55, minMargin: 0.2,
+        // [fix round] baseVersion = the built-in's version: without it the detect head's numbers (structure, dx) stay built-in
+        version: 7, baseVersion: BUILT_IN_RECIPES[0].version, enabled: true, detectThreshold: 0.6, nameThreshold: 0.55, minMargin: 0.2,
         signals: { header: { weight: 9, label: "renamed" }, structure: { enabled: false }, columns: { role: "required" } },
         classBias: { door: -1 },
         addedSignals: [{ classId: "door", signal: { id: "extra", label: "x", spec: { type: "sheet", disciplines: ["A"] }, weight: 1, role: "score", enabled: true } }, { classId: null, signal: { id: "dx", label: "dx", spec: { type: "channel", pageKinds: ["vector"] }, weight: 0.5, role: "score", enabled: true } }, { classId: "door", signal: { id: "bad" } as never }],

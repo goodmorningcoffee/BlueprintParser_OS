@@ -54,11 +54,14 @@ async function seedDoorPage(projectId: number, pageNumber = 3) {
   for (let r = 0; r < 8; r++) words.push(word(`10${r}`, 0.51, 0.25 + r * 0.02), word("HM", 0.58, 0.25 + r * 0.02), word("WD", 0.65, 0.25 + r * 0.02), word("PR", 0.72, 0.25 + r * 0.02), word("90 MIN", 0.8, 0.25 + r * 0.02));
   const detections = [
     { name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 },
+    // [shape-tags fix round] the fitted detect head weighs the page's yolo_primitive grid and its Textract TABLE (engine.test.ts fixture)
+    { name: "grid", modelName: "yolo_primitive", confidence: 0.6, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 },
     { name: "title_block", modelName: "yolo_medium", confidence: 0.9, minX: 0.92, minY: 0.0, maxX: 1, maxY: 1 },
   ];
-  const regionsV2 = classifyRegionsV2({ pageNumber, detections, textractData: { words }, csiCodes: [] });
+  const textractData = { words, tables: [{ bbox: [0.5, 0.21, 0.4, 0.24] as [number, number, number, number], cells: [], rowCount: 9, colCount: 6 }] };
+  const regionsV2 = classifyRegionsV2({ pageNumber, detections, textractData, csiCodes: [] });
   const page = await createPage(projectId, pageNumber, {
-    drawingNumber: "A-601", textractData: { words } as never, csiCodes: [] as never,
+    drawingNumber: "A-601", textractData: textractData as never, csiCodes: [] as never,
     pageIntelligence: { regionsV2, keep: "me" } as never,
   });
   for (const d of detections) {
@@ -83,7 +86,7 @@ describe.skipIf(!dbUp)("GET /api/admin/classifiers", () => {
     expect(body.effective).toEqual(body.builtIns);
     expect(body.overlay).toBeNull();
     expect(body.catalog.models).toEqual([{ id: expect.any(Number), name: "acme-yolo", classes: ["tables", "door_tag"], shared: false }]);
-    expect(body.catalog.signalTypes.map((t: { type: string }) => t.type)).toEqual(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel"]);
+    expect(body.catalog.signalTypes.map((t: { type: string }) => t.type)).toEqual(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shape-column", "ocr-grid", "shapes", "zone", "channel"]);
     expect(body.catalog.scopes).toContain("header");
     expect(body.vocabulary.kinds.some((k: { id: string }) => k.id === "door")).toBe(true);
   });

@@ -29,7 +29,11 @@ function verdicts(n: number, tag: string): Record<string, ProposalVerdict> {
     const id = `schedules.v1:p1:${tag}${i}`;
     out[id] = {
       proposalId: id, recipeId: "schedules.v1", recipeVersion: 2, verdict: accept ? "accept" : "reject",
-      features: { "detect.structure": accept ? 0.5 + s / 2 : s / 2, "detect.textract": 0, "detect.scheduleWord": accept ? 1 : 0.2, "detect.rows": s },
+      // [shape-tags fix round] every score signal of the detect head (a sample missing a key is unusable to the fitter → small-n)
+      features: {
+        "detect.structure": accept ? 0.5 + s / 2 : s / 2, "detect.textract": 0, "detect.scheduleWord": accept ? 1 : 0.2, "detect.rows": s,
+        "detect.ocrRows": s, "detect.ocrCols": 0.5, "detect.ocrRegular": accept ? 0.8 : 0.3, "detect.gridCover": 0, "detect.areaCover": 0, "detect.shapeColumn": 0,
+      },
       proposedClassId: null, userId: 1, at: "2026-10-24T00:00:00Z",
     };
   }

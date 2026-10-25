@@ -53,7 +53,7 @@ describe("draft-ops", () => {
     const custom = blankRecipe("acme.x", "Acme");
     const overlay = overlayFromDrafts(BUILT_IN_RECIPES, { [schedules.id]: edited, "regions.v1": BUILT_IN_RECIPES[1], "acme.x": custom });
     expect(Object.keys(overlay.patches)).toEqual([schedules.id]);
-    expect(overlay.patches[schedules.id]).toEqual({ version: schedules.version, classBias: { door: -1 } });
+    expect(overlay.patches[schedules.id]).toEqual({ version: schedules.version, baseVersion: schedules.version, classBias: { door: -1 } });
     expect(overlay.custom).toEqual([custom]);
     expect(isModified(schedules, edited)).toBe(true);
     expect(isModified(schedules, schedules)).toBe(false);

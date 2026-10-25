@@ -9,9 +9,9 @@
 // [clf visibility 2026-10-25] No summary / no items renders a short empty state (it used to render nothing, which
 // read the same as "wrong tab"); the scope defaults to All pages while the current page has no proposals.
 // [shape-tags 2026-10-25] A "table NN %" chip when the recipe scored table-ness, and, on a focused proposal whose
-// tag column the engine found, the column (shape class, rows, first tags) with ACCEPT WITH TAGS: Parse this table
-// plus a parse hint (tableParseHintStore) that asks the Auto Parse request for the shape-centre rows and pre-selects
-// the column's class for Map Tags.
+// tag column the engine found, the column (shape class, rows, readable tags, first tags) plus the sheet and its
+// trade, with ACCEPT WITH TAGS: Parse this table plus a parse hint (tableParseHintStore, keyed by project + page +
+// region) that asks the Auto Parse request for the shape-centre rows and pre-selects the column's class for Map Tags.
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -25,8 +25,9 @@ import {
 import { submitProposalVerdict, undoProposalVerdict, useProposals } from "@/queries/useProposals";
 import { useProposalFocusStore, type ProposalFocusTarget } from "@/stores/proposalFocusStore";
 import { useTableParseHintStore } from "@/stores/tableParseHintStore";
-import { useProject } from "@/stores/sessionStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { DISCIPLINE_NAMES, extractDisciplinePrefix } from "@/lib/page-utils";
 import { acceptTableParseRegion, navigateViewerPage, transitionTableParseTab } from "@/stores/viewerCommands";
 import {
   buildProposalGroups,
@@ -43,6 +44,24 @@ const FILTERS: ReadonlyArray<[ProposalFilter, string]> = [
 ];
 
 const VERDICT_LABEL: Record<VerdictKind, string> = { accept: "accepted", reject: "not a table", rename: "renamed" };
+
+/** "sheet A-601 · Architectural" from the page's drawing number, or null when the sheet is unknown. */
+function sheetLabel(drawingNumber: string | null | undefined): string | null {
+  if (!drawingNumber) return null;
+  const prefix = extractDisciplinePrefix(drawingNumber);
+  const trade = DISCIPLINE_NAMES[prefix];
+  return `sheet ${drawingNumber}${trade ? ` · ${trade}` : ""}`;
+}
+
+/** "7 hexagon rows · 5 tags: K1, K2, K3 +2 more" — the "+n more" counts READABLE tags beyond the chips, not rows. */
+function tagColumnLabel(item: ProposalSummaryItem): string {
+  const tags = item.tags ?? [];
+  const readable = item.tagCount ?? tags.length;
+  const more = Math.max(0, readable - tags.length);
+  const head = `${item.tagRows} ${item.tagShape ?? "shape"} rows`;
+  if (!tags.length) return `${head} · no readable tags`;
+  return `${head} · ${readable} tag${readable === 1 ? "" : "s"}: ${tags.join(", ")}${more ? ` +${more} more` : ""}`;
+}
 
 const FOCUS_RING = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#00E676]";
 
@@ -115,6 +134,7 @@ export default function ProposedTablesSection() {
   const summary = useProposals();
   const { publicId, isDemo } = useProject();
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   const qc = useQueryClient();
   const focus = useProposalFocusStore((s) => s.focus);
   const setHover = useProposalFocusStore((s) => s.setHover);
@@ -177,7 +197,7 @@ export default function ProposedTablesSection() {
 
   const parseThis = (item: ProposalSummaryItem, withTags = false) => {
     useTableParseHintStore.getState().setHint(withTags && item.tagRows ? {
-      pageNumber: item.pageNumber, bbox: [...item.bbox] as typeof item.bbox, rowSource: "shape-centres",
+      publicId, pageNumber: item.pageNumber, bbox: [...item.bbox] as typeof item.bbox, rowSource: "shape-centres",
       ...(item.tagShape ? { tagYoloClass: { model: "yolo_primitive", className: item.tagShape } } : {}),
     } : null);
     focusItem(item);
@@ -263,10 +283,8 @@ export default function ProposedTablesSection() {
                       <div className="px-2 pb-1.5 space-y-1">
                         {item.tagRows ? (
                           <div className="text-[10px] text-[var(--muted)]" data-tag-column={item.id}>
-                            Tag column: {item.tagRows} {item.tagShape ?? "shape"} rows
-                            {item.tags && item.tags.length > 0 && (
-                              <span> · {item.tags.join(", ")}{item.tagRows > item.tags.length ? ` +${item.tagRows - item.tags.length} more` : ""}</span>
-                            )}
+                            Tag column: {tagColumnLabel(item)}
+                            {sheetLabel(pageDrawingNumbers[item.pageNumber]) && <span> · {sheetLabel(pageDrawingNumbers[item.pageNumber])}</span>}
                           </div>
                         ) : null}
                         <div className="flex flex-wrap gap-1">

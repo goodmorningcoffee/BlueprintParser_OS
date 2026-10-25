@@ -8,7 +8,7 @@ import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useTableCellStructureOperation } from "@/hooks/useTableCellStructureOperation";
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { useTableParseHintStore } from "@/stores/tableParseHintStore";
+import { hintMatches, useTableParseHintStore } from "@/stores/tableParseHintStore";
 import {
   completeTableParseOperation,
   invalidateParseOperationAtRevision,
@@ -96,11 +96,12 @@ export default function TableParsePanel() {
 
   // ─── Shared state for Map Tags (used by Auto + Manual tabs) ───
   const [tagYoloClass, setTagYoloClassState] = useState<{ model: string; className: string } | null>(null);
-  // [shape-tags 2026-10-25] a proposal accepted with tags pre-selects its column's shape class for Map Tags.
+  // [shape-tags 2026-10-25] a proposal accepted with tags pre-selects its column's shape class for Map Tags —
+  // only for THIS project's region (hint keyed by project + page + bbox; the Auto Parse request consumes it).
   const parseHint = useTableParseHintStore((s) => s.hint);
   useEffect(() => {
-    if (parseHint?.tagYoloClass && parseHint.pageNumber === pageNumber) setTagYoloClassState(parseHint.tagYoloClass);
-  }, [parseHint, pageNumber]);
+    if (hintMatches(parseHint, publicId, pageNumber, tableParseRegion) && parseHint.tagYoloClass) setTagYoloClassState(parseHint.tagYoloClass);
+  }, [parseHint, publicId, pageNumber, tableParseRegion]);
   const [tagMappingDone, setTagMappingDone] = useState(false);
   const [tagMappingCount, setTagMappingCount] = useState(0);
   // Phase 3: strictness + scope UI for the server-side Map Tags route.

@@ -19,7 +19,7 @@ import { exportTableCsv } from "@/lib/table-parse-utils";
 // [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
 // for cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both).
 import { apiErrorMessage } from "@/lib/client-persist";
-import { tableParseRequestHints } from "@/stores/tableParseHintStore";
+import { consumeTableParseHints } from "@/stores/tableParseHintStore";
 import { PARSE_OPTION_DEFAULTS as DEFAULTS, type ParseOptions } from "./autoParseOptions";
 import HelpTooltip from "./HelpTooltip";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
@@ -100,7 +100,7 @@ export default function AutoParseTab({
   lastDropCounts,
 }: AutoParseTabProps) {
   const { pageNumber } = useNavigation();
-  const { projectId, isDemo } = useProject();
+  const { projectId, publicId, isDemo } = useProject();
   const {
     step: tableParseStep,
     region: tableParseRegion,
@@ -157,6 +157,8 @@ export default function AutoParseTab({
         const targetProjectId = projectId;
         const targetPageNumber = pageNumber;
         const debugMode = isTableParseDebugMode(isDemo);
+        // [shape-tags] per region: `{ rowSource }` when the proposal was accepted with tags; frozen here, and the hint is consumed.
+        const targetHints = consumeTableParseHints(publicId, targetPageNumber, targetRegions);
 
         const phasePublished = commitParseOperation(token, () => {
           setAutoParsingRevision(token.revision);
@@ -193,7 +195,7 @@ export default function AutoParseTab({
               pageNumber: targetPageNumber,
               regionBbox: bbox,
               ...targetOptions,
-              ...tableParseRequestHints(targetPageNumber, bbox), // [shape-tags] rowSource when the proposal was accepted with tags
+              ...targetHints[i],
               debugMode,
             }),
           });

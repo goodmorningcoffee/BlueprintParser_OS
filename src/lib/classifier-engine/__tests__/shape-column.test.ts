@@ -8,7 +8,7 @@ import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import { BUILT_IN_RECIPES, runClassifierEngine, buildProjectProposalSummary, checkSpec, SIGNAL_TYPES, SPEC_TYPES, validateRecipe } from "..";
 import { buildCandidateEvidence, buildPageEvidence, type ClassifierPageInput } from "../evidence";
 import { evaluateSignal } from "../signals";
-import { bestShapeColumn, buildTagMap, columnTextShares, findShapeColumn, rowBands, type ColumnShape, type ColumnWord } from "../shape-column";
+import { TAG_ROW_TEXT_CAP, bestShapeColumn, buildTagMap, columnTextShares, findShapeColumn, rowBands, type ColumnShape, type ColumnWord } from "../shape-column";
 import { TAG_MAP_ROW_CAP } from "../types";
 
 const BOX: BboxMinMax = [0.1, 0.1, 0.5, 0.4];
@@ -62,6 +62,12 @@ describe("findShapeColumn", () => {
     expect(bands[0][3]).toBeCloseTo(0.172, 6); // the next band's top
     expect(bands[4][3]).toBeCloseTo(0.278 + 0.015, 6);
     expect(bands.every((b) => b[0] === BOX[0] && b[2] === BOX[2])).toBe(true);
+    // [fix round] a tall shape right after a short one cannot invert its band: tops never decrease, every band has height ≥ 0
+    const tall: ColumnShape = { label: "circle", bbox: [0.11, 0.18 - 0.04, 0.13, 0.18 + 0.04], source: "yolo", confidence: 0.8 };
+    const mixed = findShapeColumn([circle(0.15), tall, circle(0.21), circle(0.24)], BOX, "yolo")!;
+    const mb = rowBands(mixed, BOX);
+    expect(mb.map((b) => b[1])).toEqual([...mb.map((b) => b[1])].sort((a, b) => a - b));
+    expect(mb.every((b) => b[3] >= b[1])).toBe(true);
   });
 });
 
@@ -84,6 +90,13 @@ describe("buildTagMap", () => {
     expect(map.rows).toHaveLength(TAG_MAP_ROW_CAP);
     expect(map.truncated).toBe(true);
     expect(map.column.n).toBe(TAG_MAP_ROW_CAP + 5);
+  });
+
+  it("[fix round] caps a row's text at TAG_ROW_TEXT_CAP characters", () => {
+    const long = Array.from({ length: 120 }, (_, i) => word("WORDWORD", 0.2 + (i % 40) * 0.007, 0.15 + Math.floor(i / 40) * 0.003));
+    const map = buildTagMap([circle(0.15), circle(0.18), circle(0.21)], long, BOX)!;
+    expect(map.rows[0].rowText.length).toBe(TAG_ROW_TEXT_CAP);
+    expect(map.rows[0].rowText.endsWith("…")).toBe(true);
   });
 });
 
@@ -148,7 +161,7 @@ describe("shape-column / ocr-grid signals and the table head", () => {
     expect(p).toMatchObject({ sheetNumber: "A-001", discipline: "A" });
     const summary = buildProjectProposalSummary([{ pageNumber: 4, pageIntelligence: { classifierProposals: run.result } }], "t");
     const item = summary.items.find((i) => i.id === p!.id)!;
-    expect(item).toMatchObject({ tableP: p!.tableP, tagRows: 5, tags: ["K1", "K2", "K3", "K4", "K5"], tagShape: "hexagon" });
+    expect(item).toMatchObject({ tableP: p!.tableP, tagRows: 5, tags: ["K1", "K2", "K3", "K4", "K5"], tagCount: 5, tagShape: "hexagon" });
     // a recipe without a table head yields no tableP; a recipe with a malformed one fails validation
     const bare = { ...BUILT_IN_RECIPES[0], tableHead: undefined };
     const run2 = runClassifierEngine({ ...input, regionsV2 }, [bare]);

@@ -53,13 +53,26 @@ describe("methodShapeRows", () => {
     expect(r.confidence).toBe(0.35);
   });
 
-  it("no column → soft failure with the reason; merges through grid-merger beside OCR positions", () => {
+  it("no column → soft failure with the reason; merges through grid-merger beside OCR positions AS THE BASE, keeping the folded row", () => {
     expect(methodShapeRows([], [], REGION)).toMatchObject({ method: SHAPE_ROWS_METHOD, confidence: 0, error: expect.stringContaining("no shape column") });
     const { words, shapes } = legend();
     const ocr = methodOcrPositions([...words], REGION);
     const shapeRows = methodShapeRows(words, shapes, REGION);
     const merged = mergeGrids([ocr, shapeRows]);
     expect(merged.methods.map((m) => m.name)).toContain(SHAPE_ROWS_METHOD);
-    expect(merged.rows.length).toBeGreaterThanOrEqual(4);
+    // [fix round] pinned: the regular column (confidence .6) is the merge base, so the continuation line stays folded
+    expect(merged.mergerNotes?.baseMethod).toBe(SHAPE_ROWS_METHOD);
+    expect(merged.rows).toHaveLength(4);
+    expect(merged.rows[1].DESCRIPTION).toBe("NEW WALL CONTINUED");
+    expect(merged.rows.map((r) => r.SYM)).toEqual(["K1", "K2", "K3", "K4"]);
+  });
+
+  it("[fix round] duplicate header texts stay separate columns", () => {
+    const words = [word("SYM", 0.11, 0.125), word("QTY", 0.2, 0.125), word("QTY", 0.4, 0.125)];
+    const shapes: ColumnShape[] = [];
+    ys.forEach((y, i) => { shapes.push(hex(y)); words.push(word(`K${i + 1}`, 0.113, y), word(`${i}`, 0.2, y), word(`${i * 10}`, 0.4, y)); });
+    const r = methodShapeRows(words, shapes, REGION);
+    expect(r.headers).toEqual(["SYM", "QTY", "QTY (2)"]);
+    expect(r.rows[3]).toEqual({ SYM: "K4", QTY: "3", "QTY (2)": "30" });
   });
 });

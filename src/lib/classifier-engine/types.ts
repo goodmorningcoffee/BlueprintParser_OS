@@ -215,6 +215,12 @@ export interface RecipePatch {
   detectBias?: number;
   /** [shape-tags additive] Table-ness head bias override (its signals patch under "table.<id>"). */
   tableBias?: number;
+  /**
+   * [shape-tags fix round, additive] The built-in's version this patch was saved against (stamped by the builder's
+   * save). A patch whose base is older than the built-in (or that has none) was fitted on other head weights, so
+   * recipes.ts leaves the built-in's detect / table head numbers in place; class edits still apply.
+   */
+  baseVersion?: number;
   /** classId → per-class nameP threshold override. */
   classThreshold?: Record<string, number>;
   /** Whole-value overrides of the built-in's scope / candidate sources. */
@@ -386,6 +392,8 @@ export interface ProposalSummaryItem {
   tagRows?: number;
   /** The first SUMMARY_TAGS_CAP non-null tags of the column (chips in the panel). */
   tags?: string[];
+  /** [fix round] Rows whose tag could be read (`tags` is the first SUMMARY_TAGS_CAP of these); absent on older summaries. */
+  tagCount?: number;
   /** The column's majority shape class (the Map Tags yolo_primitive class to search for). */
   tagShape?: string;
 }

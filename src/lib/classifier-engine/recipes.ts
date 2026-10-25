@@ -133,12 +133,13 @@ export const classRemovalKey = (classId: string): string => `class:${classId}`;
 /**
  * One head's signals with the patch applied. A patch entry keyed by the feature key ("<head>.<id>") wins
  * over a legacy bare-id entry; `removed` matches the feature key or the bare id. A patched `spec` that
- * fails validation leaves the built-in spec in place.
+ * fails validation leaves the built-in spec in place. The table-ness head (`bareIds` false) never answers
+ * to bare ids: those patches predate it, and its "textract" is not the detect head's "textract".
  */
-function patchSignals(head: string, signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>, label: string): WeightedSignal[] {
+function patchSignals(head: string, signals: WeightedSignal[], patch: RecipePatch, removed: Set<string>, label: string, bareIds = true): WeightedSignal[] {
   const bySignal = isRecord(patch.signals) ? patch.signals : {};
-  return signals.filter((s) => !removed.has(signalKey(head, s.id)) && !removed.has(s.id)).map((s) => {
-    const p = (bySignal[signalKey(head, s.id)] ?? bySignal[s.id]) as SignalPatch | undefined;
+  return signals.filter((s) => !removed.has(signalKey(head, s.id)) && !(bareIds && removed.has(s.id))).map((s) => {
+    const p = (bySignal[signalKey(head, s.id)] ?? (bareIds ? bySignal[s.id] : undefined)) as SignalPatch | undefined;
     if (!isRecord(p)) return s;
     let spec = s.spec;
     if (p.spec !== undefined) { try { spec = validateSpec(p.spec, label, s.id); } catch { /* keep the built-in spec */ } }
@@ -155,13 +156,35 @@ function patchSignals(head: string, signals: WeightedSignal[], patch: RecipePatc
 }
 
 /**
+ * [shape-tags fix round] A patch is STALE for the detect / table heads when it does not record a `baseVersion`
+ * at least the built-in's version: it was saved against other head weights (the 2026-10-25 refit moved every
+ * detect weight and added six signals), so layering its biases and head weights would give a head nobody
+ * fitted. A stale patch keeps its class edits, scope, candidates, thresholds and names; the builder's next save
+ * re-stamps it.
+ */
+export const patchHeadsStale = (r: Pick<ClassifierRecipe, "version">, patch: Pick<RecipePatch, "baseVersion">): boolean =>
+  !(typeof patch.baseVersion === "number" && Number.isFinite(patch.baseVersion) && patch.baseVersion >= r.version);
+
+/** The patch without its detect / table head numbers (biases and "detect.*" / "table.*" / bare-id signal entries that name a head signal). */
+function withoutHeadNumbers(r: ClassifierRecipe, patch: RecipePatch): RecipePatch {
+  const headIds = new Set([...r.detect.signals, ...(r.tableHead?.signals ?? [])].map((s) => s.id));
+  const isHeadKey = (k: string): boolean => k.startsWith("detect.") || k.startsWith("table.") || (!k.includes(".") && headIds.has(k));
+  const { detectBias: _d, tableBias: _t, ...rest } = patch;
+  const signals = isRecord(patch.signals) ? Object.fromEntries(Object.entries(patch.signals).filter(([k]) => !isHeadKey(k))) : patch.signals;
+  const removed = Array.isArray(patch.removed) ? patch.removed.filter((k) => typeof k !== "string" || !isHeadKey(k)) : patch.removed;
+  const addedSignals = Array.isArray(patch.addedSignals) ? patch.addedSignals.filter((a) => !isRecord(a) || (a.classId !== null && a.classId !== "table")) : patch.addedSignals;
+  return { ...rest, ...(signals === undefined ? {} : { signals }), ...(removed === undefined ? {} : { removed }), ...(addedSignals === undefined ? {} : { addedSignals }) };
+}
+
+/**
  * One built-in with one company patch applied. The patch is jsonb written by the builder UI (step 3), so
  * every field is shape-checked here and a field of the wrong shape is ignored (`removed: 5`,
  * `addedSignals: {}`, `signals: "x"`, `classBias: null`); the caller also catches, so a patch can never
  * take the recipe (or the whole post-YOLO enrichment that runs it) down.
  */
-export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): ClassifierRecipe {
+export function patchRecipe(r: ClassifierRecipe, input: RecipePatch): ClassifierRecipe {
   const label = `"${r.id}" overlay`;
+  const patch = patchHeadsStale(r, input) ? withoutHeadNumbers(r, input) : input;
   const removed = new Set(Array.isArray(patch.removed) ? patch.removed.filter((id): id is string => typeof id === "string") : []);
   const classBias = isRecord(patch.classBias) ? patch.classBias : {};
   const classThreshold = isRecord(patch.classThreshold) ? patch.classThreshold : {};
@@ -181,7 +204,7 @@ export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): Classifier
     if (cands.length) next.candidates = clone(cands) as CandidateSource[];
   }
   next.detect.signals = patchSignals("detect", next.detect.signals, patch, removed, label);
-  if (next.tableHead) next.tableHead.signals = patchSignals("table", next.tableHead.signals, patch, removed, label);
+  if (next.tableHead) next.tableHead.signals = patchSignals("table", next.tableHead.signals, patch, removed, label, false);
   next.classes = next.classes.filter((c) => !removed.has(classRemovalKey(c.id)) && !removed.has(c.id)).map((c) => {
     const meta = isRecord(classMeta[c.id]) ? (classMeta[c.id] as Record<string, unknown>) : {};
     const out: ClassifierClass = {
@@ -200,7 +223,7 @@ export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): Classifier
     try {
       if (!isRecord(add)) continue;
       const sig = validateSignal(add.signal, label, new Set());
-      const target = add.classId === null ? next.detect.signals : next.classes.find((c) => c.id === add.classId)?.signals;
+      const target = add.classId === null ? next.detect.signals : add.classId === "table" ? next.tableHead?.signals : next.classes.find((c) => c.id === add.classId)?.signals;
       if (target && !target.some((s) => s.id === sig.id)) target.push(sig);
     } catch { /* a malformed added signal is skipped, never fatal */ }
   }

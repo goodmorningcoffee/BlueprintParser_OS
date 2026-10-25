@@ -48,6 +48,7 @@ vi.mock("@/lib/auth", async () => {
 });
 
 const h = vi.hoisted(() => ({
+  methodShapeRows: vi.fn(),
   methodOcrPositions: vi.fn(),
   methodTextractTables: vi.fn(),
   methodOpenCvLines: vi.fn(),
@@ -67,6 +68,8 @@ vi.mock("@/lib/services/table-parse", () => ({
   methodOpenCvLines: h.methodOpenCvLines,
 }));
 vi.mock("@/lib/grid-merger", () => ({ mergeGrids: h.mergeGrids }));
+// [shape-tags fix round] the shape-centre row builder (5th method behind rowSource "shape-centres")
+vi.mock("@/lib/services/table-rows-shapes", () => ({ methodShapeRows: h.methodShapeRows, SHAPE_ROWS_METHOD: "shape-rows" }));
 vi.mock("@/lib/csi-detect", () => ({ detectCsiFromGrid: h.detectCsiFromGrid, detectCsiCodes: vi.fn() }));
 vi.mock("@/lib/img2table-extract", () => ({ extractWithImg2Table: h.extractWithImg2Table }));
 // Full mock keeps the AWS SDK out of the graph (symbol-search precedent).
@@ -96,7 +99,7 @@ import {
   signedOut,
 } from "@/test/harness";
 import { db } from "@/lib/db";
-import { appSettings, companies } from "@/lib/db/schema";
+import { annotations, appSettings, companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 const dbUp = inject("dbUp") as boolean;
@@ -302,6 +305,40 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pipeline happy path (TQ-4/5/7)
     expect(entry.response.methodResults).toHaveLength(4);
     expect(typeof entry.id).toBe("string"); // randomUUID — shape only
     expect(typeof entry.response.durationMs).toBe("number");
+  });
+
+  it("[shape-tags fix round] rowSource 'shape-centres' adds the shape-rows method from the page's yolo_primitive rows + classical keynotes; off by default", async () => {
+    const { user, project } = await createWorld();
+    const keynote = { shape: "circle", text: "7", bbox: [0.12, 0.3, 0.14, 0.32] };
+    await createPage(project.id, 1, { textractData: TEXTRACT_WITH_TABLES as never, keynotes: [keynote] as never });
+    const row = (name: string, modelName: string, y: number) => ({
+      projectId: project.id, pageNumber: 1, name, source: "yolo", minX: 0.11, minY: y, maxX: 0.13, maxY: y + 0.02, data: { modelName, confidence: 0.9 } as never,
+    });
+    await db.insert(annotations).values([row("hexagon", "yolo_primitive", 0.2), row("tables", "yolo_medium", 0.1), { ...row("hexagon", "yolo_primitive", 0.25), source: "user" }]);
+    asUser(user);
+    h.methodShapeRows.mockReturnValue(mr("shape-rows", { tagColumn: "Tag" }));
+    // default: not run, four results merge
+    let r = await readJson(await call(bodyFor(project.id)));
+    expect(r.status).toBe(200);
+    expect(h.methodShapeRows).not.toHaveBeenCalled();
+    expect(h.mergeGrids.mock.calls[0][0]).toHaveLength(4);
+    // with the hint: the yolo_primitive annotation (not yolo_medium, not a user box) + the classical keynote, as a 5th timed result
+    r = await readJson(await call(bodyFor(project.id, { rowSource: "shape-centres", minColGap: 0.02 })));
+    expect(r.status).toBe(200);
+    expect(h.methodShapeRows).toHaveBeenCalledWith(WORDS, [
+      { label: "hexagon", bbox: [0.11, 0.2, 0.13, 0.22], source: "yolo", confidence: 0.9 },
+      { label: "circle", bbox: keynote.bbox, source: "classical", confidence: 1, text: "7" },
+    ], BBOX, { minColGap: 0.02, colHitRatio: undefined });
+    const results = h.mergeGrids.mock.calls[1][0];
+    expect(results).toHaveLength(5);
+    expect(results[4]).toEqual({ ...mr("shape-rows", { tagColumn: "Tag" }), debug: { durationMs: expect.any(Number) } });
+    expect(h.addToHistory.mock.calls[1][0].request.options.rowSource).toBe("shape-centres");
+    expect("rowSource" in h.addToHistory.mock.calls[0][0].request.options).toBe(false);
+    // a throw inside the row builder is that method's soft failure, not the request's
+    h.methodShapeRows.mockImplementation(() => { throw new Error("rows exploded"); });
+    r = await readJson(await call(bodyFor(project.id, { rowSource: "shape-centres" })));
+    expect(r.status).toBe(200);
+    expect(h.mergeGrids.mock.calls[2][0][4]).toMatchObject({ method: "shape-rows", confidence: 0, error: "rows exploded" });
   });
 
   it("csiTags: detectCsiFromGrid throw → key ABSENT (best-effort empty catch)", async () => {

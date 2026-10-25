@@ -4,7 +4,7 @@
 // bad numbers, malformed specs, fitter-shaped overlays), and version bumps per changed recipe.
 import { describe, expect, it } from "vitest";
 import {
-  BUILT_IN_RECIPES, DETECT, applyOverlay, buildRecipePatch, bumpOverlayVersions, describePatch, mergeOverlay, resetClass, resetRecipe, resetSignal,
+  BUILT_IN_RECIPES, DETECT, TABLE, applyOverlay, buildRecipePatch, bumpOverlayVersions, describePatch, mergeOverlay, resetClass, resetRecipe, resetSignal,
   signalKey, validateOverlay, type ClassifierOverlay, type ClassifierRecipe, type WeightedSignal,
 } from "..";
 
@@ -137,6 +137,61 @@ describe("validateOverlay", () => {
     const r = validateOverlay(fitter, BUILT_IN_RECIPES);
     expect(r.errors).toEqual([]);
     expect(r.overlay).toEqual({ custom: [], patches: fitter.patches });
+  });
+
+  it("[shape-tags fix round] the table-ness head is a head: tableBias + table.* keys validate, patch, describe and round-trip; bare ids never reach it", () => {
+    expect(schedules.tableHead).toBeDefined();
+    const tableIds = schedules.tableHead!.signals.map((s) => s.id);
+    // the detect-fitter's shape (scripts/classifier-fit.ts step 4 emits exactly this)
+    const fitted = { patches: { [schedules.id]: { version: 4, baseVersion: schedules.version, tableBias: -5.495, signals: Object.fromEntries(tableIds.map((id) => [`table.${id}`, { weight: 1.25 }])) } } };
+    const ok = validateOverlay(fitted, BUILT_IN_RECIPES);
+    expect(ok.errors).toEqual([]);
+    const [eff] = applyOverlay([schedules], ok.overlay!);
+    expect(eff.tableHead!.bias).toBe(-5.495);
+    expect(eff.tableHead!.signals.every((s) => s.weight === 1.25)).toBe(true);
+    expect(eff.detect.signals.map((s) => s.weight)).toEqual(schedules.detect.signals.map((s) => s.weight)); // detect untouched
+    // the editor builds the same keys from a draft, and describes them under "table-ness"
+    const draft = clone(schedules);
+    draft.tableHead!.bias = -3;
+    draft.tableHead!.signals[0].weight = 9;
+    const patch = buildRecipePatch(schedules, draft, 5)!;
+    expect(patch).toEqual({ version: 5, baseVersion: schedules.version, tableBias: -3, signals: { [signalKey(TABLE, tableIds[0])]: { weight: 9 } } });
+    expect(applyOverlay([schedules], { custom: [], patches: { [schedules.id]: patch } })[0]).toEqual({ ...draft, version: 5 });
+    expect(describePatch(schedules, patch).map((l) => l.path)).toEqual(["table-ness bias", `table-ness · ${tableIds[0]}: weight`]);
+    expect(resetSignal(draft, schedules, TABLE, tableIds[0]).tableHead!.signals[0].weight).toBe(schedules.tableHead!.signals[0].weight);
+    // a bare-id patch (legacy, pre table head) rewrites detect + classes but NOT the table head's signal of the same id
+    const shared = tableIds.find((id) => schedules.detect.signals.some((s) => s.id === id))!;
+    const [bare] = applyOverlay([schedules], { custom: [], patches: { [schedules.id]: { version: 4, baseVersion: schedules.version, signals: { [shared]: { weight: 9 } }, removed: [] } } });
+    expect(bare.detect.signals.find((s) => s.id === shared)!.weight).toBe(9);
+    expect(bare.tableHead!.signals.find((s) => s.id === shared)!.weight).toBe(schedules.tableHead!.signals.find((s) => s.id === shared)!.weight);
+    // rejections: tableBias on a recipe without a table head, an unknown table.* signal
+    const errs = (v: unknown) => validateOverlay(v, BUILT_IN_RECIPES).errors;
+    expect(errs({ patches: { [schedules.id]: { version: 1, signals: { "table.nothing": { weight: 1 } } } } })[0]).toMatch(/does not exist/);
+    const noHead = { ...schedules, id: "nohead.v1", tableHead: undefined } as ClassifierRecipe;
+    expect(validateOverlay({ patches: { "nohead.v1": { version: 1, tableBias: -1 } } }, [noHead]).errors[0]).toMatch(/no table-ness head/);
+  });
+
+  it("[shape-tags fix round] a patch without a baseVersion ≥ the built-in's keeps the built-in's detect / table head numbers, and its class edits", () => {
+    const detectId = schedules.detect.signals[0].id;
+    const stale = { version: 3, detectBias: 0.5, tableBias: 0.5, signals: { [`detect.${detectId}`]: { weight: 42 }, [`table.${schedules.tableHead!.signals[0].id}`]: { weight: 42 }, [signalKey("door", "header")]: { weight: 7 } }, classBias: { door: -1 } };
+    for (const p of [stale, { ...stale, baseVersion: schedules.version - 1 }]) {
+      const [eff] = applyOverlay([schedules], { custom: [], patches: { [schedules.id]: p } });
+      expect(eff.detect.bias).toBe(schedules.detect.bias);
+      expect(eff.tableHead!.bias).toBe(schedules.tableHead!.bias);
+      expect(eff.detect.signals[0].weight).toBe(schedules.detect.signals[0].weight);
+      expect(eff.tableHead!.signals[0].weight).toBe(schedules.tableHead!.signals[0].weight);
+      expect(sig(eff, "door", "header").weight).toBe(7);
+      expect(eff.classes.find((c) => c.id === "door")!.bias).toBe(-1);
+    }
+    const [fresh] = applyOverlay([schedules], { custom: [], patches: { [schedules.id]: { ...stale, baseVersion: schedules.version } } });
+    expect(fresh.detect.bias).toBe(0.5);
+    expect(fresh.tableHead!.bias).toBe(0.5);
+    expect(fresh.detect.signals[0].weight).toBe(42);
+    // the save stamps baseVersion = the built-in's version, and ignores it when deciding "changed"
+    const saved = bumpOverlayVersions({ custom: [], patches: { [schedules.id]: { version: 0, classBias: { door: -2 } } } }, null, BUILT_IN_RECIPES);
+    expect(saved.patches[schedules.id].baseVersion).toBe(schedules.version);
+    const again = bumpOverlayVersions({ custom: [], patches: { [schedules.id]: { version: 0, classBias: { door: -2 } } } }, saved, BUILT_IN_RECIPES);
+    expect(again.patches[schedules.id].version).toBe(saved.patches[schedules.id].version);
   });
 
   it("rejects unknown recipe / signal / class ids, bad numbers, malformed specs, colliding added ids and built-in ids as custom", () => {

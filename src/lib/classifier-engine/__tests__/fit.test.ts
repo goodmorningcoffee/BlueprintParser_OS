@@ -161,10 +161,15 @@ describe("samplesFromVerdicts", () => {
 
 describe("overlay signal keys", () => {
   it("a head-qualified key wins over the bare id and touches only its head; detectBias replaces the detect bias", () => {
-    const out = applyOverlay([toy()], { custom: [], patches: { "toy.v1": { version: 4, detectBias: 0.25, signals: { header: { weight: 7 }, "door.header": { weight: 9 }, "detect.a": { weight: 3 } } } } })[0];
+    // [fix round] baseVersion = the built-in's version: a patch saved against an older (or unrecorded) built-in keeps the built-in's detect head
+    const out = applyOverlay([toy()], { custom: [], patches: { "toy.v1": { version: 4, baseVersion: 3, detectBias: 0.25, signals: { header: { weight: 7 }, "door.header": { weight: 9 }, "detect.a": { weight: 3 } } } } })[0];
     expect(out.detect.bias).toBe(0.25);
     expect(out.detect.signals.find((s) => s.id === "a")!.weight).toBe(3);
     expect(out.classes[0].signals.find((s) => s.id === "header")!.weight).toBe(9);
     expect(out.classes[1].signals.find((s) => s.id === "header")!.weight).toBe(7);
+    const stale = applyOverlay([toy()], { custom: [], patches: { "toy.v1": { version: 4, detectBias: 0.25, signals: { "door.header": { weight: 9 }, "detect.a": { weight: 3 } } } } })[0];
+    expect(stale.detect.bias).toBe(toy().detect.bias);
+    expect(stale.detect.signals.find((s) => s.id === "a")!.weight).toBe(toy().detect.signals.find((s) => s.id === "a")!.weight);
+    expect(stale.classes[0].signals.find((s) => s.id === "header")!.weight).toBe(9);
   });
 });

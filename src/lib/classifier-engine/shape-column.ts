@@ -159,12 +159,17 @@ export function columnTextShares(col: ShapeColumn, words: readonly ColumnWord[])
  * the row above (measured: 29 % of legend tag bands span ≥ 2 OCR rows). Words above the first band are the header.
  */
 export function rowBands(col: ShapeColumn, box: BboxMinMax): BboxMinMax[] {
-  const tops = col.shapes.map((s) => rowBand(s, box)[1]);
+  // [fix round] tops never decrease: a tall shape right after a short one would otherwise invert its band.
+  const tops: number[] = [];
+  for (const s of col.shapes) tops.push(Math.max(rowBand(s, box)[1], tops[tops.length - 1] ?? -Infinity));
   const half = 0.5 * (col.pitch ?? height(col.shapes[col.n - 1]));
   return col.shapes.map((s, i) => [box[0], tops[i], box[2], i + 1 < col.n ? tops[i + 1] : Math.min(box[3], rowBand(s, box)[3] + half)] as BboxMinMax);
 }
 
 const clean = (t: string): string => t.replace(/\s+/g, " ").trim();
+/** [fix round] A stored row's text is capped (the longest on the corpus was 2,092 characters; the page record holds every row). */
+export const TAG_ROW_TEXT_CAP = 300;
+const capText = (t: string): string => (t.length > TAG_ROW_TEXT_CAP ? `${t.slice(0, TAG_ROW_TEXT_CAP - 1)}…` : t);
 
 /** The tag text of one shape: Textract word(s) inside, else the classical crop read, else null. */
 export function tagTextOf(s: ColumnShape, words: readonly ColumnWord[]): string | null {
@@ -183,7 +188,7 @@ export function buildTagMap(shapes: readonly ColumnShape[], words: readonly Colu
   const rows: ProposalTagRow[] = col.shapes.slice(0, TAG_MAP_ROW_CAP).map((s, i) => {
     const band = bands[i];
     const inRow = rightWords.filter((w) => w.c[1] >= band[1] && w.c[1] < band[3]).sort((a, b) => a.c[1] - b.c[1] || a.bbox[0] - b.bbox[0]);
-    return { tag: tagTextOf(s, words), shapeClass: s.label, shapeBbox: s.bbox, rowBbox: band, rowText: clean(inRow.map((w) => w.text).join(" ")) };
+    return { tag: tagTextOf(s, words), shapeClass: s.label, shapeBbox: s.bbox, rowBbox: band, rowText: capText(clean(inRow.map((w) => w.text).join(" "))) };
   });
   const { textInside } = columnTextShares(col, words);
   return {

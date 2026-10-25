@@ -5,7 +5,7 @@
  "enabled": true,
  "unit": "region",
  "target": "text-region",
- "_how": "Port of region v2's text classes (region-classes.v2.json `text`): the same keyword weights, now as one words signal per class over the box (saturation 3, weight 5 \u2192 a 5-point phrase alone clears the bar) plus the title line, the CSI division share and the title-block priors. Detect reuses region v2's structure score. Falls back to 'text (unclassified)' with the derived title.",
+ "_how": "Port of region v2's text classes (region-classes.v2.json `text`): the same keyword weights, now as one words signal per class over the box (saturation 3, weight 5 → a 5-point phrase alone clears the bar) plus the title line, the CSI division share and the title-block priors. Detect reuses region v2's structure score. Falls back to 'text (unclassified)' with the derived title.",
  "candidates": [
   {
    "type": "regions-v2",
@@ -98,7 +98,7 @@
      "weight": 2.0,
      "role": "score",
      "enabled": true,
-     "note": "29/80 legend-keynote boxes vs 6/378 schedules; legend vs notes AUC .67\u2013.74"
+     "note": "29/80 legend-keynote boxes vs 6/378 schedules; legend vs notes AUC .67–.74"
     },
     {
      "id": "shapeTextRight",
@@ -183,7 +183,7 @@
      "weight": 2.0,
      "role": "score",
      "enabled": true,
-     "note": "29/80 legend-keynote boxes vs 6/378 schedules; legend vs notes AUC .67\u2013.74"
+     "note": "29/80 legend-keynote boxes vs 6/378 schedules; legend vs notes AUC .67–.74"
     },
     {
      "id": "shapeTextRight",
@@ -777,115 +777,5 @@
  "minMargin": 0.05,
  "deriveName": true,
  "fallbackClassName": "text (unclassified)",
- "tableHead": {
-  "bias": -4.368,
-  "signals": [
-   {
-    "id": "textract",
-    "label": "Textract table coincides",
-    "spec": {
-     "type": "textract-table",
-     "minContainment": 0.5
-    },
-    "weight": 1.493,
-    "role": "score",
-    "enabled": true,
-    "note": "strongest single table-ness signal: AUC .81, precision .90 / recall .86 at \u2265 .5"
-   },
-   {
-    "id": "ocrGrid",
-    "label": "OCR rows \u00d7 cols (24 = full)",
-    "spec": {
-     "type": "ocr-grid",
-     "measure": "grid",
-     "scale": 24
-    },
-    "weight": 0.02,
-    "role": "score",
-    "enabled": true,
-    "note": "AUC .76 table-ness"
-   },
-   {
-    "id": "ocrRegular",
-    "label": "OCR row pitch regularity",
-    "spec": {
-     "type": "ocr-grid",
-     "measure": "regularity"
-    },
-    "weight": 1.863,
-    "role": "score",
-    "enabled": true
-   },
-   {
-    "id": "gridCover",
-    "label": "yolo_primitive grid covers the box",
-    "spec": {
-     "type": "yolo",
-     "where": "inside",
-     "measure": "cover",
-     "model": "yolo_primitive",
-     "classes": [
-      "grid"
-     ]
-    },
-    "weight": 1.395,
-    "role": "score",
-    "enabled": true
-   },
-   {
-    "id": "areaCover",
-    "label": "yolo_primitive vertical / horizontal areas cover the box",
-    "spec": {
-     "type": "yolo",
-     "where": "inside",
-     "measure": "cover",
-     "model": "yolo_primitive",
-     "classes": [
-      "vertical_area",
-      "horizontal_area"
-     ]
-    },
-    "weight": 1.541,
-    "role": "score",
-    "enabled": true
-   },
-   {
-    "id": "rows",
-    "label": "yolo_text rows (\u2265 6 = full)",
-    "spec": {
-     "type": "structure",
-     "feature": "textRows",
-     "scale": 6
-    },
-    "weight": 0.726,
-    "role": "score",
-    "enabled": true
-   },
-   {
-    "id": "shapeColumn",
-    "label": "column of tag shapes in the left part (any source)",
-    "spec": {
-     "type": "shape-column",
-     "source": "any",
-     "measure": "count"
-    },
-    "weight": 0.842,
-    "role": "score",
-    "enabled": true,
-    "note": "owner: shapes lined up in column A inside a table / grid \u2014 table evidence, kind-neutral"
-   },
-   {
-    "id": "structure",
-    "label": "region v2 structure score",
-    "spec": {
-     "type": "structure",
-     "feature": "structureScore"
-    },
-    "weight": 1.447,
-    "role": "score",
-    "enabled": true
-   }
-  ]
- },
- "_shape_tags": "2026-10-25 shape-tag columns + table-ness head (gitignore/projects/classifier_builder/shape_tags/PLAN.md); weights fitted on the ODD label sets, even held out; rows added by shape_tags/tools/patch_recipes.py"
+ "_shape_tags": "2026-10-25 shape-tag columns (gitignore/projects/classifier_builder/shape_tags/PLAN.md): keynotes / symbol-legend classes carry shapeColumn 2.0 + shapeTextRight 1.0 (fix round ablation on the 733 labels: legend-keynote named as a legend class 37.5 % → 58.3 % even, 12.5 % → 25.0 % odd; notes mis-named as legend 0 → 0 even, 0 → 1/12 odd). The tableHead copied from the schedules.v1 fit was REMOVED in the fix round: measured on this recipe's own candidates it scored table-ness AUC .568 even / .738 odd and legend-vs-notes AUC .358 / .557 (n 51 per split), so its tableP would have misled the chip. Rows added by shape_tags/tools/patch_recipes.py"
 }
