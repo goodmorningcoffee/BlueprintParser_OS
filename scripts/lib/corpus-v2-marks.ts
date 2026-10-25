@@ -6,7 +6,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { BboxMinMax, CsiCode, TextractWord } from "@/types";
+import type { BboxMinMax, CsiCode, KeynoteShapeData, TextractTable, TextractWord } from "@/types";
 import type { RegionDetection } from "@/lib/region-classifier-v2";
 
 export interface Mark {
@@ -52,6 +52,8 @@ export interface LoadedPage {
   csiCodes: CsiCode[];
   /** The sheet number from the run's sheets.json (null when the run has none). */
   drawingNumber: string | null;
+  /** [shape-tags] Classical shape-parse marks (channel "shape") as `pages.keynotes` rows: label, MinMax bbox, crop read. */
+  keynotes: KeynoteShapeData[];
 }
 
 /** The page's marks as classifier inputs, or null when the marks file is absent. */
@@ -69,5 +71,30 @@ export function loadPage(s: SamplePage, corpus = DEFAULT_CORPUS): LoadedPage | n
     code: m.label, description: "", trade: "", division: m.meta?.division ?? m.label,
     triggers: [{ text: "", tier: 1 as const, bbox: minMaxToLtwh(m.bbox) }],
   }));
-  return { marks, yolo, detections, words, csiCodes, drawingNumber: sheetNumberOf(s.pid, s.page, corpus) };
+  const keynotes: KeynoteShapeData[] = marks.filter((m) => m.channel === "shape").map((m) => ({ shape: m.label, text: m.text ?? "", bbox: m.bbox }));
+  return { marks, yolo, detections, words, csiCodes, drawingNumber: sheetNumberOf(s.pid, s.page, corpus), keynotes };
+}
+
+const tablesCache = new Map<string, Map<number, TextractTable[]>>();
+/**
+ * [shape-tags] The page's Textract TABLES from the corpus bundle (`data/bundles/<pid>.json` → pages[].textractData.tables;
+ * the marks do not carry them, production holds them in `pages.textractData.tables`). The bundle is parsed once per
+ * pid and only its tables are kept. Empty when the bundle is absent.
+ */
+export function textractTablesOf(pid: string, page: number, corpus = DEFAULT_CORPUS): TextractTable[] {
+  let m = tablesCache.get(pid);
+  if (!m) {
+    m = new Map();
+    const file = join(corpus, "data", "bundles", `${pid}.json`);
+    if (existsSync(file)) {
+      try {
+        const bundle = JSON.parse(readFileSync(file, "utf8")) as { pages?: Array<{ pageNumber?: number; textractData?: { tables?: TextractTable[] } | null }> };
+        for (const p of bundle.pages ?? []) {
+          if (typeof p?.pageNumber === "number" && Array.isArray(p.textractData?.tables)) m.set(p.pageNumber, p.textractData.tables.filter((t) => t?.bbox));
+        }
+      } catch { /* malformed bundle → no tables for this run */ }
+    }
+    tablesCache.set(pid, m);
+  }
+  return m.get(page) ?? [];
 }

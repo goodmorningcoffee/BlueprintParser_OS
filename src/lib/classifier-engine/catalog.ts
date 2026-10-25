@@ -136,8 +136,30 @@ export const SIGNAL_TYPES: readonly SignalTypeSchema[] = [
   },
   {
     type: "textract-table", name: "Textract table", valueHelp: "containment of the best coinciding Textract table (0 below the minimum)",
-    params: [{ key: "minContainment", label: "Min containment", kind: "number", min: 0, max: 1, step: 0.05 }],
+    params: [
+      { key: "minContainment", label: "Min containment", kind: "number", min: 0, max: 1, step: 0.05 },
+      { key: "minRows", label: "Min rows", kind: "number", min: 0, max: 100, step: 1, help: "the Textract table must have at least this many rows" },
+    ],
     blank: { type: "textract-table", minContainment: 0.5 },
+  },
+  {
+    type: "shape-column", name: "Shape-tag column", valueHelp: "a vertical run of ≥ 3 aligned tag shapes in the left part of the box: count / 8, regular (gap CV ≤ max) 0/1, or the share with text inside / to the right",
+    params: [
+      { key: "source", label: "Shape source", kind: "enum", options: ["any", "yolo", "classical"], required: true, help: "yolo_primitive, the classical shape parse, or the better of the two" },
+      { key: "measure", label: "Measure", kind: "enum", options: ["count", "regular", "textInside", "textRight"], required: true },
+      { key: "leftShare", label: "Left share of the box", kind: "number", min: 0.05, max: 1, step: 0.05 },
+      { key: "minShapes", label: "Min shapes", kind: "number", min: 1, max: 50, step: 1 },
+      { key: "maxGapCv", label: "Max gap CV (regular)", kind: "number", min: 0, max: 5, step: 0.05 },
+    ],
+    blank: { type: "shape-column", source: "any", measure: "count" },
+  },
+  {
+    type: "ocr-grid", name: "OCR word grid", valueHelp: "the box's OCR words as rows × columns: rows / scale (8), cols / scale (4), rows × cols / scale (24), or the row-pitch regularity (1 − CV)",
+    params: [
+      { key: "measure", label: "Measure", kind: "enum", options: ["rows", "cols", "grid", "regularity"], required: true },
+      { key: "scale", label: "Scale (value / scale)", kind: "number", min: 1, step: 1 },
+    ],
+    blank: { type: "ocr-grid", measure: "grid" },
   },
   {
     type: "shapes", name: "Shapes", valueHelp: "shape-parse / yolo_primitive shapes inside (count / min, capped at 1)",

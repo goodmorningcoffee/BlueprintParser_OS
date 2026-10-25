@@ -1,7 +1,7 @@
 {
  "id": "regions.v1",
  "name": "Legends / notes / keynotes",
- "version": 1,
+ "version": 2,
  "enabled": true,
  "unit": "region",
  "target": "text-region",
@@ -86,6 +86,32 @@
      "weight": 2.0,
      "role": "score",
      "enabled": true
+    },
+    {
+     "id": "shapeColumn",
+     "label": "column of tag shapes in the left part",
+     "spec": {
+      "type": "shape-column",
+      "source": "any",
+      "measure": "count"
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true,
+     "note": "29/80 legend-keynote boxes vs 6/378 schedules; legend vs notes AUC .67\u2013.74"
+    },
+    {
+     "id": "shapeTextRight",
+     "label": "column rows have text to the right",
+     "spec": {
+      "type": "shape-column",
+      "source": "any",
+      "measure": "textRight"
+     },
+     "weight": 1.0,
+     "role": "score",
+     "enabled": true,
+     "note": "97 % of column rows"
     }
    ]
   },
@@ -145,6 +171,32 @@
      "weight": 2.0,
      "role": "score",
      "enabled": true
+    },
+    {
+     "id": "shapeColumn",
+     "label": "column of tag shapes in the left part",
+     "spec": {
+      "type": "shape-column",
+      "source": "any",
+      "measure": "count"
+     },
+     "weight": 2.0,
+     "role": "score",
+     "enabled": true,
+     "note": "29/80 legend-keynote boxes vs 6/378 schedules; legend vs notes AUC .67\u2013.74"
+    },
+    {
+     "id": "shapeTextRight",
+     "label": "column rows have text to the right",
+     "spec": {
+      "type": "shape-column",
+      "source": "any",
+      "measure": "textRight"
+     },
+     "weight": 1.0,
+     "role": "score",
+     "enabled": true,
+     "note": "97 % of column rows"
     }
    ]
   },
@@ -724,5 +776,116 @@
  "nameThreshold": 0.5,
  "minMargin": 0.05,
  "deriveName": true,
- "fallbackClassName": "text (unclassified)"
+ "fallbackClassName": "text (unclassified)",
+ "tableHead": {
+  "bias": -2.5,
+  "signals": [
+   {
+    "id": "textract",
+    "label": "Textract table coincides",
+    "spec": {
+     "type": "textract-table",
+     "minContainment": 0.5
+    },
+    "weight": 3.0,
+    "role": "score",
+    "enabled": true,
+    "note": "strongest single table-ness signal: AUC .81, precision .90 / recall .86 at \u2265 .5"
+   },
+   {
+    "id": "ocrGrid",
+    "label": "OCR rows \u00d7 cols (24 = full)",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "grid",
+     "scale": 24
+    },
+    "weight": 1.5,
+    "role": "score",
+    "enabled": true,
+    "note": "AUC .76 table-ness"
+   },
+   {
+    "id": "ocrRegular",
+    "label": "OCR row pitch regularity",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "regularity"
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "gridCover",
+    "label": "yolo_primitive grid covers the box",
+    "spec": {
+     "type": "yolo",
+     "where": "inside",
+     "measure": "cover",
+     "model": "yolo_primitive",
+     "classes": [
+      "grid"
+     ]
+    },
+    "weight": 1.5,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "areaCover",
+    "label": "yolo_primitive vertical / horizontal areas cover the box",
+    "spec": {
+     "type": "yolo",
+     "where": "inside",
+     "measure": "cover",
+     "model": "yolo_primitive",
+     "classes": [
+      "vertical_area",
+      "horizontal_area"
+     ]
+    },
+    "weight": 0.5,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "rows",
+    "label": "yolo_text rows (\u2265 6 = full)",
+    "spec": {
+     "type": "structure",
+     "feature": "textRows",
+     "scale": 6
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "shapeColumn",
+    "label": "column of tag shapes in the left part (any source)",
+    "spec": {
+     "type": "shape-column",
+     "source": "any",
+     "measure": "count"
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true,
+    "note": "owner: shapes lined up in column A inside a table / grid \u2014 table evidence, kind-neutral"
+   },
+   {
+    "id": "structure",
+    "label": "region v2 structure score",
+    "spec": {
+     "type": "structure",
+     "feature": "structureScore"
+    },
+    "weight": 2.0,
+    "role": "score",
+    "enabled": true
+   }
+  ]
+ },
+ "_shape_tags": "2026-10-25 shape-tag columns + table-ness head (gitignore/projects/classifier_builder/shape_tags/PLAN.md); weights fitted on the ODD label sets, even held out; rows added by shape_tags/tools/patch_recipes.py"
 }

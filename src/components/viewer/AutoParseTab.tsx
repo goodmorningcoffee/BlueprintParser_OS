@@ -19,6 +19,8 @@ import { exportTableCsv } from "@/lib/table-parse-utils";
 // [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
 // for cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both).
 import { apiErrorMessage } from "@/lib/client-persist";
+import { tableParseRequestHints } from "@/stores/tableParseHintStore";
+import { PARSE_OPTION_DEFAULTS as DEFAULTS, type ParseOptions } from "./autoParseOptions";
 import HelpTooltip from "./HelpTooltip";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 import type { DetectCsiAndPersist } from "./table-operation-types";
@@ -191,6 +193,7 @@ export default function AutoParseTab({
               pageNumber: targetPageNumber,
               regionBbox: bbox,
               ...targetOptions,
+              ...tableParseRequestHints(targetPageNumber, bbox), // [shape-tags] rowSource when the proposal was accepted with tags
               debugMode,
             }),
           });
@@ -814,19 +817,7 @@ function DetectCellStructureButton({
   );
 }
 
-// ─── Parsing Options Panel ───────────────────────────────────
-const DEFAULTS = {
-  rowTolerance: 0.006, minColGap: 0.015, colHitRatio: 0.3, headerMode: "auto" as const,
-  minHLineLengthRatio: 0.15, minVLineLengthRatio: 0.10, clusteringTolerance: 15,
-  mergerEditDistance: 2,
-};
-
-type ParseOptions = {
-  rowTolerance: number; minColGap: number; colHitRatio: number; headerMode: "auto" | "first" | "none";
-  minHLineLengthRatio: number; minVLineLengthRatio: number; clusteringTolerance: number;
-  mergerEditDistance: number;
-};
-
+// ─── Parsing Options Panel ─── (option defaults + type: ./autoParseOptions.ts)
 function ParseOptionsPanel({
   options,
   onChange,

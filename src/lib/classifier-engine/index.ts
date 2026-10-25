@@ -4,7 +4,8 @@
  * ./csi-box-tagger.ts (server / CLI only) and is injected through `ClassifierPageInput.tagger`.
  */
 export { runClassifierEngine, isPageClassifierProposals, storedClassifierProposals, proposalId, type EngineRun } from "./engine";
-export { buildPageEvidence, buildCandidateEvidence, groupRows, type ClassifierPageInput, type BoxTagger, type CsiCodeLike } from "./evidence";
+export { buildPageEvidence, buildCandidateEvidence, groupRows, columnWords, shapesInside, type ClassifierPageInput, type BoxTagger, type CsiCodeLike } from "./evidence";
+export { findShapeColumn, bestShapeColumn, buildTagMap, rowBands, rowBand, tagTextOf, columnTextShares, wordsInside, wordsRight, COLUMN_SHAPE_LABELS, type ColumnShape, type ColumnWord, type ShapeColumn, type ShapeColumnOptions, type ShapeSource } from "./shape-column";
 export { BUILT_IN_RECIPES, BUILT_IN_RECIPES_HASH, HEURISTIC_RECIPES, effectiveRecipes, applyOverlay, validateRecipe, validateSignal, validateClass, validateSpec, hashRecipes, isClassifierOverlay, signalKey, classRemovalKey } from "./recipes";
 export { buildRecipePatch, describePatch, resetSignal, resetClass, resetRecipe, validateOverlay, bumpOverlayVersions, mergeOverlay, headSignals, blankClass, blankRecipe, DETECT, type DiffLine, type HeadId, type OverlayValidation } from "./overlay-edit";
 export { checkSpec, checkScope, checkCandidates, SPEC_TYPES, CANDIDATE_TYPES } from "./spec-check";

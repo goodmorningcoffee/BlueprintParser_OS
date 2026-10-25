@@ -33,18 +33,21 @@
 
 import { randomUUID } from "crypto";
 import { db } from "@/lib/db";
-import { pages, appSettings } from "@/lib/db/schema";
+import { pages, appSettings, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { mergeGrids, type MethodResult } from "@/lib/grid-merger";
-import type { TextractPageData, TextractTable } from "@/types";
+import type { KeynoteShapeData, TextractPageData, TextractTable } from "@/types";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
 // [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
 // the best-effort table-parse detect below (D-1/D-2).
 import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractWithImg2Table } from "@/lib/img2table-extract";
 import { methodOcrPositions, methodTextractTables, methodOpenCvLines } from "@/lib/services/table-parse";
+// [shape-tags 2026-10-25] the shape-centre row builder, a 4th method behind `rowSource: "shape-centres"`.
+import { methodShapeRows } from "@/lib/services/table-rows-shapes";
+import type { ColumnShape } from "@/lib/classifier-engine/shape-column";
 import { analyzePageImage } from "@/lib/textract";
 import { logger } from "@/lib/logger";
 import { addToHistory, type ParseHistoryEntry, type InfraStage } from "@/lib/parse-history";
@@ -221,6 +224,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance,
     mergerEditDistance,
     debugMode,
+    rowSource,
   } = rawBody as {
     projectId: number;
     pageNumber: number;
@@ -237,7 +241,10 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     // users see merged result only. Developers/admins flip via env var or
     // localStorage on the client. See AutoParseTab.tsx isTableParseDebugMode().
     debugMode?: boolean;
+    /** [shape-tags] "shape-centres" adds the shape-centre row builder (tag shapes down the left of the region) to the merge. Default off. */
+    rowSource?: "shape-centres";
   };
+  const shapeRows = rowSource === "shape-centres";
 
   if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
     throw new ApiError("VALIDATION", "Missing projectId, pageNumber, or regionBbox");
@@ -263,7 +270,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
   const [pageRow] = await db
-    .select({ id: pages.id, textractData: pages.textractData })
+    .select({ id: pages.id, textractData: pages.textractData, keynotes: pages.keynotes })
     .from(pages)
     .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)))
     .limit(1);
@@ -273,6 +280,22 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
   }
 
   const textractData = pageRow.textractData as TextractPageData;
+
+  // [shape-tags] the page's tag shapes for the shape-centre rows: yolo_primitive rows + the classical parse (`pages.keynotes`).
+  let pageShapes: ColumnShape[] = [];
+  if (shapeRows) {
+    const yolo = await db
+      .select({ name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, data: annotations.data })
+      .from(annotations)
+      .where(and(eq(annotations.projectId, project.id), eq(annotations.pageNumber, pageNumber), eq(annotations.source, "yolo")));
+    for (const a of yolo) {
+      const d = a.data as { confidence?: number; modelName?: string } | null;
+      if (d?.modelName === "yolo_primitive") pageShapes.push({ label: a.name, bbox: [a.minX, a.minY, a.maxX, a.maxY], source: "yolo", confidence: d.confidence ?? 0 });
+    }
+    for (const k of (pageRow.keynotes ?? []) as KeynoteShapeData[]) {
+      if (k?.shape && Array.isArray(k.bbox) && k.bbox.length === 4) pageShapes.push({ label: k.shape, bbox: k.bbox, source: "classical", confidence: 1, text: k.text ?? "" });
+    }
+  }
 
   // Phase I.2.e: persistent debug toggle. Server-side appSettings.tableParse.debugMode
   // overrides the per-request flag — when ON, every parse returns full methodResults
@@ -364,6 +387,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     (pdfBuffer || pagePngBuffer)
       ? timed(extractWithImg2Table(pdfBuffer, pagePngBuffer, pageNumber, regionBbox))
       : Promise.resolve({ method: "img2table", headers: [], rows: [], confidence: 0, error: skippedReason("PDF and page image") } as MethodResult),
+    ...(shapeRows ? [timed(Promise.resolve(methodShapeRows(textractData.words, pageShapes, regionBbox, { minColGap, colHitRatio })))] : []),
   ];
 
   const rawResults = await Promise.all(methodPromises);
@@ -398,7 +422,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
       pageNumber,
       regionBbox,
       debugMode: !!debugMode,
-      options: { rowTolerance, minColGap, colHitRatio, headerMode, minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance, mergerEditDistance },
+      options: { rowTolerance, minColGap, colHitRatio, headerMode, minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance, mergerEditDistance, ...(shapeRows ? { rowSource } : {}) },
     },
     response: {
       status: 200,

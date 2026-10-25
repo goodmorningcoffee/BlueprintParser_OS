@@ -4,8 +4,10 @@
  * sample exactly as region-classifier-v2-parity.ts does (same loader: scripts/lib/corpus-v2-marks.ts),
  * join the kind labels, and report accuracy against the legacy region v2 L2 names.
  *
- *   npx tsx scripts/classifier-measure.ts [--sets odd|even|all|16,19] [--labels <kinds.v1.json>] [--json out.json]
+ *   npx tsx scripts/classifier-measure.ts [--sets odd|even|all|16,19] [--labels <kinds.v1.json>] [--json out.json] [--no-textract]
  *     --corpus / --research   as the parity script
+ *     --no-textract           [shape-tags] leave the bundles' Textract tables out (the marks never carry them; default: loaded
+ *                             per pid from data/bundles, as production holds them in pages.textractData.tables)
  *     --labels                default gitignore/projects/classifier_builder/labels/kinds.v1.json (optional:
  *                             without it the run still prints proposal counts, fallback rate, timing)
  *     --sets                  odd | even | all (default) | comma-separated set numbers
@@ -20,14 +22,20 @@
  * count with derived-name agreement (the label's kind name words appear in the derived name, or the
  * label's own `name` matches), and the same accuracy for legacy region v2 className mapped onto the
  * vocabulary. Projects are reported as "set N"; no OCR text is printed (derived names are not shown).
+ *
+ * [shape-tags 2026-10-25] DETECT / TABLE-NESS block: the recipe is run with the detect threshold OPEN (0) so every
+ * labelled candidate carries its p; kind accuracy still counts only proposals that pass the real threshold. Reports
+ * schedule-vs-not AUC (hand p, and the bare structureScore as the pre-shape-tags baseline), precision / recall / fp at
+ * p ≥ threshold, table-ness AUC (label: schedule ∪ legend-keynote from the labeller's note) with precision / recall at
+ * tableP ≥ .5, and the tag-map coverage (boxes with a column, rows with text) by label group.
  */
 import { writeFileSync } from "node:fs";
 import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import { iou } from "@/lib/region-classifier-v2/geometry";
 import { BUILT_IN_RECIPES, OTHER_SCHEDULE, runClassifierEngine, scheduleKind, type ClassifierProposal } from "@/lib/classifier-engine";
 import { createCsiBoxTagger } from "@/lib/classifier-engine/csi-box-tagger";
-import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage } from "./lib/corpus-v2-marks";
-import { DEFAULT_LABELS, labelledSamplePages, labelsByPage, matchLabel, readKindLabels, type KindLabel as Label } from "./lib/classifier-labels";
+import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage, textractTablesOf } from "./lib/corpus-v2-marks";
+import { DEFAULT_LABELS, isTableLabel, labelledSamplePages, labelsByPage, matchLabel, noteGroup, readKindLabels, type KindLabel as Label } from "./lib/classifier-labels";
 
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -47,7 +55,13 @@ const LEGACY_TO_KIND: Record<string, { kind: string | null; group: string }> = {
   "structural schedule": { kind: null, group: "struct" }, "drawing list": { kind: "drawing-list", group: "arch" },
 };
 
+const USE_TEXTRACT = !args.includes("--no-textract");
 const sample = labelledSamplePages(RESEARCH, LABELS, opt("pages")).filter((s) => setFilter(s.set));
+const hand = BUILT_IN_RECIPES.find((r) => r.id === "schedules.v1")!;
+const openDetect = { ...hand, detect: { ...hand.detect, threshold: 0 } };
+/** [shape-tags] per labelled candidate: scores + labels for the detect / table-ness block. */
+interface Scored { set: number; group: string; isSchedule: boolean; isTable: boolean; p: number; structure: number; tableP: number | null; tagRows: number | null; tagRowsWithText: number }
+const scored: Scored[] = [];
 const labels = readKindLabels(LABELS);
 const tagger = createCsiBoxTagger();
 const byKey = labelsByPage(labels?.items ?? []);
@@ -75,13 +89,23 @@ for (const s of sample) {
   const loaded = loadPage(s, CORPUS);
   if (!loaded) continue;
   const { detections, words, csiCodes, drawingNumber } = loaded;
-  const regionsV2 = classifyRegionsV2({ pageNumber: s.page, detections, textractData: { words }, csiCodes });
+  const tables = USE_TEXTRACT ? textractTablesOf(s.pid, s.page, CORPUS) : [];
+  const regionsV2 = classifyRegionsV2({ pageNumber: s.page, detections, textractData: { words, tables }, csiCodes });
   // drawingNumber: production feeds `pages.drawingNumber` (sheet discipline signals); the corpus run's sheets.json is the same value.
-  const run = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words }, csiCodes, regionsV2, drawingNumber, tagger }, BUILT_IN_RECIPES.filter((r) => r.id === "schedules.v1"));
+  const run = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words, tables }, csiCodes, regionsV2, drawingNumber, tagger, keynotes: loaded.keynotes }, [openDetect]);
   stats.pages++; stats.ms += run.ms;
   const ps = stats.perSet.get(s.set) ?? { pages: 0, proposals: 0, labelled: 0, ok: 0 };
   ps.pages++;
-  const proposals = run.result.proposals;
+  const candidates = run.result.proposals;
+  for (const l of byKey.get(`${s.set}:${s.page}`) ?? []) {
+    const c = matchLabel(candidates, l);
+    if (!c) continue;
+    scored.push({
+      set: s.set, group: noteGroup(l), isSchedule: l.kind !== "not-a-schedule", isTable: isTableLabel(l), p: c.p, structure: c.features["detect.structure"] ?? 0,
+      tableP: typeof c.tableP === "number" ? c.tableP : null, tagRows: c.tagMap ? c.tagMap.rows.length : null, tagRowsWithText: c.tagMap ? c.tagMap.rows.filter((r) => r.rowText).length : 0,
+    });
+  }
+  const proposals = candidates.filter((p) => p.p >= hand.detect.threshold);
   stats.proposals += proposals.length; ps.proposals += proposals.length;
   for (const p of proposals) { stats.schedules++; if (!p.classId) stats.fallbacks++; }
   const pageLabels = byKey.get(`${s.set}:${s.page}`) ?? [];
@@ -130,6 +154,37 @@ if (!labels) {
   lines.push(`LEGACY region v2 L2 (className → vocabulary)  top-1 kind ${pct(stats.legacy.top1.ok, stats.legacy.top1.n)}  group ${pct(stats.legacy.group.ok, stats.legacy.group.n)}`);
   for (const [g, a] of [...stats.legacy.byGroup].sort()) lines.push(`  group ${g.padEnd(6)} ${pct(a.ok, a.n)}`);
   for (const [k, v] of [...stats.legacy.confusion].sort((a, b) => b[1] - a[1]).slice(0, 10)) lines.push(`    ${k} ×${v}`);
+}
+// ── [shape-tags] detect / table-ness block ──
+const auc = (xs: Array<{ s: number; y: boolean }>): number | null => {
+  const pos = xs.filter((x) => x.y).map((x) => x.s);
+  const neg = xs.filter((x) => !x.y).map((x) => x.s);
+  if (!pos.length || !neg.length) return null;
+  let wins = 0;
+  for (const a of pos) for (const b of neg) wins += a > b ? 1 : a === b ? 0.5 : 0;
+  return wins / (pos.length * neg.length);
+};
+const f3 = (v: number | null) => (v === null ? "n/a" : v.toFixed(3));
+const pr = (xs: Array<{ s: number; y: boolean }>, t: number) => {
+  const tp = xs.filter((x) => x.y && x.s >= t).length, fp = xs.filter((x) => !x.y && x.s >= t).length, fn = xs.filter((x) => x.y && x.s < t).length;
+  return `precision ${f3(tp + fp ? tp / (tp + fp) : null)} recall ${f3(tp + fn ? tp / (tp + fn) : null)} (tp ${tp} fp ${fp} fn ${fn})`;
+};
+lines.push("");
+lines.push(`DETECT (schedule vs not; ${scored.length} labelled candidates${USE_TEXTRACT ? ", bundle Textract tables loaded" : ", NO Textract tables"})`);
+lines.push(`  AUC hand p ${f3(auc(scored.map((x) => ({ s: x.p, y: x.isSchedule }))))} · structureScore alone ${f3(auc(scored.map((x) => ({ s: x.structure, y: x.isSchedule }))))}`);
+lines.push(`  at p ≥ ${hand.detect.threshold}: ${pr(scored.map((x) => ({ s: x.p, y: x.isSchedule })), hand.detect.threshold)}`);
+const withTable = scored.filter((x) => x.tableP !== null).map((x) => ({ s: x.tableP!, y: x.isTable }));
+lines.push(`TABLE-NESS (schedule ∪ legend-keynote vs the rest; ${withTable.length} with tableP)`);
+lines.push(`  AUC tableP ${f3(auc(withTable))} · structureScore alone ${f3(auc(scored.map((x) => ({ s: x.structure, y: x.isTable }))))} · at tableP ≥ .5: ${pr(withTable, 0.5)}`);
+const legNotes = scored.filter((x) => x.group === "legend-keynote" || x.group === "notes");
+lines.push(`  legend-keynote vs notes AUC (tableP) ${f3(auc(legNotes.filter((x) => x.tableP !== null).map((x) => ({ s: x.tableP!, y: x.group === "legend-keynote" }))))} (n ${legNotes.length})`);
+lines.push("TAG MAP coverage: group · labelled · with a column · rows · rows with text");
+for (const g of ["schedule", "legend-keynote", "notes", "title-block", "other-nonschedule"]) {
+  const xs = scored.filter((x) => x.group === g);
+  const col = xs.filter((x) => x.tagRows !== null);
+  const rows = col.reduce((a, x) => a + (x.tagRows ?? 0), 0);
+  const txt = col.reduce((a, x) => a + x.tagRowsWithText, 0);
+  lines.push(`  ${g.padEnd(18)} ${String(xs.length).padStart(4)} · ${String(col.length).padStart(4)} · ${String(rows).padStart(5)} · ${pct(txt, rows)}`);
 }
 lines.push("");
 lines.push("PER SET: set · pages · proposals · labelled · engine top-1");

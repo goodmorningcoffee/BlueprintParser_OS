@@ -19,6 +19,8 @@ export interface FitSample {
   isTarget: boolean;
   /** Naming label when `isTarget`: the final class id, or null (fallback: other schedule, or a kind the recipe has no class for). */
   classId: string | null;
+  /** [shape-tags] Table-ness label (schedule ∪ legend / keynote list) for the recipe's `tableHead`; absent → the head is not fitted. */
+  isTable?: boolean;
   /** CV fold key (set number); the fitter never reads it. */
   fold?: number;
 }

@@ -9,8 +9,9 @@ import type { BboxMinMax } from "@/types";
 import { round5 } from "@/lib/region-classifier-v2/geometry";
 import { collectCandidates } from "./candidates";
 import { CONFIDENT_NAME } from "./derive-name";
-import { bboxKey, buildCandidateEvidence, buildPageEvidence, type ClassifierPageInput } from "./evidence";
+import { bboxKey, buildCandidateEvidence, buildPageEvidence, columnWords, shapesInside, type ClassifierPageInput } from "./evidence";
 import { evaluateHead, pickClass, topWhy } from "./heads";
+import { buildTagMap } from "./shape-column";
 import { CLASSIFIER_ENGINE_VERSION, type ClassifierProposal, type ClassifierRecipe, type PageClassifierProposals } from "./types";
 
 export interface EngineRun {
@@ -43,6 +44,9 @@ export function runClassifierEngine(input: ClassifierPageInput, recipes: readonl
         const derivedName = recipe.deriveName ? ev.derivedName : undefined;
         const displayName = pick.classId ? pick.className
           : derivedName && derivedName.confidence >= CONFIDENT_NAME && derivedName.text ? derivedName.text : pick.className;
+        // [shape-tags 2026-10-25] table-ness head (kind kept separate) + the tag column with its rows, region candidates only.
+        const table = recipe.tableHead ? evaluateHead("table", recipe.tableHead.bias, recipe.tableHead.signals, ev, page) : null;
+        const tagMap = recipe.unit === "region" ? buildTagMap(shapesInside(page, cand.bbox), columnWords(ev), cand.bbox) : undefined;
         proposals.push({
           id: proposalId(recipe.id, input.pageNumber, cand.anchorBbox),
           recipeId: recipe.id, recipeVersion: recipe.version, engineVersion: CLASSIFIER_ENGINE_VERSION,
@@ -52,9 +56,12 @@ export function runClassifierEngine(input: ClassifierPageInput, recipes: readonl
           ...(derivedName ? { derivedName } : {}),
           displayName,
           detectWhy: topWhy(detect.contributions), nameWhy: pick.why,
-          features: { ...detect.features, ...pick.features },
+          features: { ...detect.features, ...pick.features, ...(table ? table.features : {}) },
           source: cand.source, ...(cand.regionId ? { regionId: cand.regionId } : {}),
           ...(pick.legacyCategory ? { legacyCategory: pick.legacyCategory } : {}),
+          ...(table && !table.rejected ? { tableP: table.p, tableWhy: topWhy(table.contributions) } : {}),
+          ...(tagMap ? { tagMap } : {}),
+          ...(page.sheetNumber ? { sheetNumber: page.sheetNumber } : {}), ...(page.discipline ? { discipline: page.discipline } : {}),
         });
       }
     } catch (err) {

@@ -1,7 +1,7 @@
 {
  "id": "schedules.v1",
  "name": "Schedules (kind)",
- "version": 2,
+ "version": 3,
  "enabled": true,
  "unit": "region",
  "target": "schedule",
@@ -23,7 +23,7 @@
   "minWords": 8
  },
  "detect": {
-  "bias": -2.2,
+  "bias": -3.0,
   "threshold": 0.5,
   "signals": [
    {
@@ -33,7 +33,7 @@
      "type": "structure",
      "feature": "structureScore"
     },
-    "weight": 6.0,
+    "weight": 4.0,
     "role": "score",
     "enabled": true
    },
@@ -44,7 +44,7 @@
      "type": "textract-table",
      "minContainment": 0.5
     },
-    "weight": 1.0,
+    "weight": 3.0,
     "role": "score",
     "enabled": true
    },
@@ -81,9 +81,95 @@
      "feature": "textRows",
      "scale": 6
     },
-    "weight": 1.5,
+    "weight": 1.0,
     "role": "score",
     "enabled": true
+   },
+   {
+    "id": "ocrRows",
+    "label": "OCR word rows (8 = full)",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "rows",
+     "scale": 8
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true,
+    "note": "rows AUC .91 legend vs title block; rows \u00d7 cols AUC .67 schedule vs not (shape_tags/out/REPORT.md)"
+   },
+   {
+    "id": "ocrCols",
+    "label": "aligned OCR columns (4 = full)",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "cols",
+     "scale": 4
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true,
+    "note": "fit weight +.5 standardized"
+   },
+   {
+    "id": "ocrRegular",
+    "label": "OCR row pitch regularity",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "regularity"
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true,
+    "note": "fit +.8 but even-set AUC .54 alone \u2014 modest weight"
+   },
+   {
+    "id": "gridCover",
+    "label": "yolo_primitive grid covers the box",
+    "spec": {
+     "type": "yolo",
+     "where": "inside",
+     "measure": "cover",
+     "model": "yolo_primitive",
+     "classes": [
+      "grid"
+     ]
+    },
+    "weight": 1.5,
+    "role": "score",
+    "enabled": true,
+    "note": "owner: table inside a yolo_primitive grid; cover AUC .66, precision .76 at \u2265 .3"
+   },
+   {
+    "id": "areaCover",
+    "label": "yolo_primitive vertical / horizontal areas cover the box",
+    "spec": {
+     "type": "yolo",
+     "where": "inside",
+     "measure": "cover",
+     "model": "yolo_primitive",
+     "classes": [
+      "vertical_area",
+      "horizontal_area"
+     ]
+    },
+    "weight": 0.5,
+    "role": "score",
+    "enabled": true,
+    "note": "horizontal_area cover AUC .65"
+   },
+   {
+    "id": "shapeColumn",
+    "label": "column of tag shapes in the left part (any source)",
+    "spec": {
+     "type": "shape-column",
+     "source": "any",
+     "measure": "count"
+    },
+    "weight": -0.5,
+    "role": "score",
+    "enabled": true,
+    "note": "a LEGEND signal (schedule vs legend AUC .33): weight \u2264 0 in the schedule detect head"
    }
   ]
  },
@@ -24550,5 +24636,116 @@
  "nameThreshold": 0.5,
  "minMargin": 0.05,
  "deriveName": true,
- "fallbackClassName": "Other schedule"
+ "fallbackClassName": "Other schedule",
+ "tableHead": {
+  "bias": -2.5,
+  "signals": [
+   {
+    "id": "textract",
+    "label": "Textract table coincides",
+    "spec": {
+     "type": "textract-table",
+     "minContainment": 0.5
+    },
+    "weight": 3.0,
+    "role": "score",
+    "enabled": true,
+    "note": "strongest single table-ness signal: AUC .81, precision .90 / recall .86 at \u2265 .5"
+   },
+   {
+    "id": "ocrGrid",
+    "label": "OCR rows \u00d7 cols (24 = full)",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "grid",
+     "scale": 24
+    },
+    "weight": 1.5,
+    "role": "score",
+    "enabled": true,
+    "note": "AUC .76 table-ness"
+   },
+   {
+    "id": "ocrRegular",
+    "label": "OCR row pitch regularity",
+    "spec": {
+     "type": "ocr-grid",
+     "measure": "regularity"
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "gridCover",
+    "label": "yolo_primitive grid covers the box",
+    "spec": {
+     "type": "yolo",
+     "where": "inside",
+     "measure": "cover",
+     "model": "yolo_primitive",
+     "classes": [
+      "grid"
+     ]
+    },
+    "weight": 1.5,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "areaCover",
+    "label": "yolo_primitive vertical / horizontal areas cover the box",
+    "spec": {
+     "type": "yolo",
+     "where": "inside",
+     "measure": "cover",
+     "model": "yolo_primitive",
+     "classes": [
+      "vertical_area",
+      "horizontal_area"
+     ]
+    },
+    "weight": 0.5,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "rows",
+    "label": "yolo_text rows (\u2265 6 = full)",
+    "spec": {
+     "type": "structure",
+     "feature": "textRows",
+     "scale": 6
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true
+   },
+   {
+    "id": "shapeColumn",
+    "label": "column of tag shapes in the left part (any source)",
+    "spec": {
+     "type": "shape-column",
+     "source": "any",
+     "measure": "count"
+    },
+    "weight": 1.0,
+    "role": "score",
+    "enabled": true,
+    "note": "owner: shapes lined up in column A inside a table / grid \u2014 table evidence, kind-neutral"
+   },
+   {
+    "id": "structure",
+    "label": "region v2 structure score",
+    "spec": {
+     "type": "structure",
+     "feature": "structureScore"
+    },
+    "weight": 2.0,
+    "role": "score",
+    "enabled": true
+   }
+  ]
+ },
+ "_shape_tags": "2026-10-25 shape-tag columns + table-ness head (gitignore/projects/classifier_builder/shape_tags/PLAN.md); weights fitted on the ODD label sets, even held out; rows added by shape_tags/tools/patch_recipes.py"
 }

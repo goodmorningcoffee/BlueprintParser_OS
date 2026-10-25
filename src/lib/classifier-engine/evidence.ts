@@ -18,6 +18,7 @@ import { center, inside, ltwhToMinMax } from "@/lib/region-classifier-v2/geometr
 import { tokenize, type TokenCounts } from "@/lib/region-classifier-v2/l2-score";
 import { extractDisciplinePrefix } from "@/lib/page-utils";
 import type { CandidateSource, DerivedName, SignalScope } from "./types";
+import type { ColumnShape, ColumnWord } from "./shape-column";
 import { deriveName } from "./derive-name";
 import { migrateTextRegionType } from "@/lib/text-region-migrate";
 
@@ -73,8 +74,10 @@ export interface PageEvidence {
   channelKind: ChannelKind | null;
   /** CSI trigger marks on the page (centre + the code), from `pages.csiCodes`. */
   pageCsi: Array<{ c: [number, number]; code: CsiCodeLike }>;
-  textractTables: BboxMinMax[];
-  shapes: Array<{ label: string; c: [number, number] }>;
+  /** Textract tables: bbox + row count (`textract-table` signals). */
+  textractTables: Array<{ bbox: BboxMinMax; rowCount: number }>;
+  /** yolo_primitive + classical (`pages.keynotes`) shapes. [shape-tags additive] bbox, source, confidence and the crop read ride along for the column rule. */
+  shapes: Array<ColumnShape & { c: [number, number] }>;
   scopes: { page: BandText; titleBlock: BandText; sheetTitle: BandText };
   tagger: BoxTagger | null;
   boxCsiCache: Map<string, BoxCsi>;
@@ -182,10 +185,12 @@ export function buildPageEvidence(input: ClassifierPageInput): PageEvidence {
     const c = center(bbox);
     detections.push({ name: d.name, bbox, c, confidence: d.confidence ?? 0, modelName });
     if (ZONE_MODEL_PATTERN.test(modelName) && d.name === "title_block" && !titleBlocks.some((t) => t.every((v, i) => v === bbox[i]))) titleBlocks.push(bbox);
-    if (modelName === "yolo_primitive") shapes.push({ label: d.name, c });
+    if (modelName === "yolo_primitive") shapes.push({ label: d.name, c, bbox, source: "yolo", confidence: d.confidence ?? 0 });
   }
   for (const k of input.keynotes ?? []) {
-    if (k?.shape && Array.isArray(k.bbox) && k.bbox.length === 4) shapes.push({ label: k.shape, c: center(k.bbox as BboxMinMax) });
+    if (!k?.shape || !Array.isArray(k.bbox) || k.bbox.length !== 4 || !k.bbox.every((v) => Number.isFinite(v))) continue;
+    const bbox = k.bbox as BboxMinMax;
+    shapes.push({ label: k.shape, c: center(bbox), bbox, source: "classical", confidence: 1, ...(typeof k.text === "string" ? { text: k.text } : {}) });
   }
   const words: EvWord[] = [];
   for (const w of input.textractData?.words ?? []) { const ew = toWord(w); if (ew) words.push(ew); }
@@ -208,7 +213,7 @@ export function buildPageEvidence(input: ClassifierPageInput): PageEvidence {
     pageNumber: input.pageNumber, words, lineHeight, detections, zones, titleBlocks, sheetNumber,
     discipline: discipline && discipline !== "OTHER" ? discipline : null,
     channelKind: input.channelKind ?? null, pageCsi,
-    textractTables: (input.textractData?.tables ?? []).flatMap((t) => (t?.bbox ? [ltwhToMinMax(t.bbox)] : [])),
+    textractTables: (input.textractData?.tables ?? []).flatMap((t) => (t?.bbox ? [{ bbox: ltwhToMinMax(t.bbox), rowCount: typeof t.rowCount === "number" ? t.rowCount : 0 }] : [])),
     shapes,
     scopes: { page: bandOf(words), titleBlock: bandOf(tbWords), sheetTitle: bandOf(tbRows.flatMap((l) => l.words)) },
     tagger: input.tagger ?? null,
@@ -264,6 +269,12 @@ export function buildCandidateEvidence(page: PageEvidence, cand: Candidate): Can
     csi: boxCsi(page, S, words),
   };
 }
+
+/** [shape-tags] The candidate's words in the shape-column helper's shape (original-case text). */
+export const columnWords = (cand: CandidateEvidence): ColumnWord[] => cand.words.map((w) => ({ text: w.raw.text, bbox: w.bbox, c: w.c, h: w.h }));
+
+/** [shape-tags] The page's shapes whose centre lies inside the candidate box. */
+export const shapesInside = (page: PageEvidence, bbox: BboxMinMax): ColumnShape[] => page.shapes.filter((s) => inside(s.c, bbox));
 
 export function scopeText(page: PageEvidence, cand: CandidateEvidence, where: SignalScope): BandText {
   if (where === "page" || where === "titleBlock" || where === "sheetTitle") return page.scopes[where];

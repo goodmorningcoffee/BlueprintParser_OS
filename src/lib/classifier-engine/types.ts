@@ -70,9 +70,25 @@ export type SignalSpec =
   | { type: "yolo-spatial"; operator: "contains" | "overlaps" | "near" | "aligned"; classA: string; classB: string; minInstances?: number; axis?: "horizontal" | "vertical" | "any"; maxDistance?: number }
   /** A region-v2 structure signal (or its structureScore), mapped to 0/1 by min/max, or scaled by `scale`. */
   | { type: "structure"; feature: keyof RegionV2Signals | "structureScore"; min?: number; max?: number; scale?: number }
-  | { type: "textract-table"; minContainment?: number }
+  /** [shape-tags additive] `minRows`: the coinciding Textract table must have at least this many rows (default 0). */
+  | { type: "textract-table"; minContainment?: number; minRows?: number }
   /** Shape-parse / yolo_primitive shapes inside the box (count saturates at `min`). */
   | { type: "shapes"; shapes: string[]; where: "inside" | "leftColumn"; min?: number }
+  /**
+   * [shape-tags 2026-10-25] A vertical COLUMN of tag shapes in the left `leftShare` of the box (default .25): ≥ `minShapes`
+   * (default 3) yolo_primitive / classical shapes whose x-centres lie within .5 × their median width (shape-column.ts).
+   * count → min(1, n / 8); regular → 1 when the gap CV ≤ `maxGapCv` (default .5); textInside / textRight → the share of
+   * column shapes with an OCR word inside / to the right on the row band (centre ± .5 × height). Measured: a legend
+   * signal (legend vs notes AUC .67–.74), NOT a schedule signal (AUC .46) — keep its schedule-detect weight ≤ 0.
+   */
+  | { type: "shape-column"; source: "yolo" | "classical" | "any"; measure: "count" | "regular" | "textInside" | "textRight"; leftShare?: number; minShapes?: number; maxGapCv?: number }
+  /**
+   * [shape-tags 2026-10-25] The OCR words inside the box as a grid (region v2's cluster rules on word boxes: rows = y-centre
+   * clusters with gap > .6 × median height holding ≥ 2 words; cols = left-edge clusters with gap > .5 × h holding ≥ 3; < 6
+   * words → 0). rows → min(1, rows / scale (default 8)); cols → / 4; grid → rows × cols / 24; regularity → 1 − CV of the row
+   * pitch (0 below 3 rows). Measured: rows × cols AUC .67 (schedule vs not) / .76 (table-ness); rows AUC .91 legend vs title block.
+   */
+  | { type: "ocr-grid"; measure: "rows" | "cols" | "grid" | "regularity"; scale?: number }
   | { type: "zone"; zone: "titleBlock" | "drawing" | "margin"; minContainment?: number }
   /** Page kind from the PDF channel census. 0/1. */
   | { type: "channel"; pageKinds: ChannelKind[] };
@@ -137,6 +153,12 @@ export interface ClassifierRecipe {
   scope: ClassifierScope;
   /** Detect head: p(candidate is the target). */
   detect: { bias: number; signals: WeightedSignal[]; threshold: number };
+  /**
+   * [shape-tags additive] Table-ness head: p(the candidate is a TABLE of any kind — schedule, legend, keynote list),
+   * evaluated on every proposal the detect head keeps and stored as `tableP` / `tableWhy` (features "table.<id>").
+   * Separate from the kind on purpose: a legend with tableP .9 stays a legend. Absent → no `tableP`.
+   */
+  tableHead?: { bias: number; signals: WeightedSignal[] };
   /** Naming head (may be empty for a binary recipe). */
   classes: ClassifierClass[];
   nameThreshold: number;
@@ -191,6 +213,8 @@ export interface RecipePatch {
   // ── additive (track 3 builder): optional, absent on older overlays ──
   /** Detect head bias override. */
   detectBias?: number;
+  /** [shape-tags additive] Table-ness head bias override (its signals patch under "table.<id>"). */
+  tableBias?: number;
   /** classId → per-class nameP threshold override. */
   classThreshold?: Record<string, number>;
   /** Whole-value overrides of the built-in's scope / candidate sources. */
@@ -270,7 +294,49 @@ export interface ClassifierProposal {
   regionId?: string;
   /** The winning class's legacy ClassifiedTable category, when it declares one. */
   legacyCategory?: string;
+  // ── additive (shape-tags 2026-10-25): optional, absent on older records ──
+  /** Table-ness head probability (recipe `tableHead`), independent of the kind. */
+  tableP?: number;
+  tableWhy?: SignalContribution[];
+  /** The shape-tag column found in the box, with one row per tag shape (≤ TAG_MAP_ROW_CAP). */
+  tagMap?: ProposalTagMap;
+  /** `pages.drawingNumber` and its discipline prefix, so a tag row reads "tag · row · table · sheet · trade". */
+  sheetNumber?: string;
+  discipline?: string;
 }
+
+/** [shape-tags] One tag shape of a column and the row it anchors. */
+export interface ProposalTagRow {
+  /** The tag text: the OCR word(s) inside the shape, else the classical crop read; null when neither exists (listed, not mapped). */
+  tag: string | null;
+  shapeClass: string;
+  shapeBbox: BboxMinMax;
+  /** The row band: the box's width, the shape's centre ± half its height (continuation lines without a shape fold in). */
+  rowBbox: BboxMinMax;
+  /** OCR words to the right of the column inside the band, joined. */
+  rowText: string;
+}
+
+/** [shape-tags] `ClassifierProposal.tagMap`: the column the engine found and its rows. */
+export interface ProposalTagMap {
+  column: {
+    source: "yolo" | "classical";
+    /** Majority yolo_primitive / classical class of the column ("hexagon"); the map-tags class to search for. */
+    shapeClass: string;
+    n: number;
+    /** Coefficient of variation of the vertical gaps (0 = perfectly regular; null below 3 gaps). */
+    gapCv: number | null;
+    /** Share of column shapes with an OCR word inside. */
+    textInside: number;
+  };
+  rows: ProposalTagRow[];
+  /** True when more than TAG_MAP_ROW_CAP shapes were found and `rows` is the first cap by y. */
+  truncated: boolean;
+}
+
+export const TAG_MAP_ROW_CAP = 60;
+/** Tags carried on a `ProposalSummaryItem` (the panel's chips); the full rows live on the page record. */
+export const SUMMARY_TAGS_CAP = 8;
 
 /** `pageIntelligence.classifierProposals` (computed; refreshed by reprocess; server-owned). */
 export interface PageClassifierProposals {
@@ -313,6 +379,15 @@ export interface ProposalSummaryItem {
   p: number;
   nameP: number;
   verdict?: VerdictKind;
+  // ── additive (shape-tags 2026-10-25) ──
+  /** Table-ness probability when the recipe has a table head. */
+  tableP?: number;
+  /** Number of tag rows in the proposal's `tagMap` (absent when no column was found). */
+  tagRows?: number;
+  /** The first SUMMARY_TAGS_CAP non-null tags of the column (chips in the panel). */
+  tags?: string[];
+  /** The column's majority shape class (the Map Tags yolo_primitive class to search for). */
+  tagShape?: string;
 }
 
 /** `projectIntelligence.proposals` — compact list for the panel. */

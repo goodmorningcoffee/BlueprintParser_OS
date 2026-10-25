@@ -27,8 +27,8 @@ import { BUILT_IN_RECIPES, NOT_A_SCHEDULE, runClassifierEngine, type ClassifierR
 import { createCsiBoxTagger } from "@/lib/classifier-engine/csi-box-tagger";
 import { fitRecipe, overlayFromFits, MIN_POSITIVES, type FitOptions } from "@/lib/classifier-engine/fit";
 import { evaluateRecipe, scoreFeatures, type Acc, type EvalMetrics, type FitSample } from "@/lib/classifier-engine/fit-score";
-import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage } from "./lib/corpus-v2-marks";
-import { DEFAULT_LABELS, labelledSamplePages, labelsByPage, matchLabel, readKindLabels } from "./lib/classifier-labels";
+import { DEFAULT_CORPUS, DEFAULT_RESEARCH, loadPage, textractTablesOf } from "./lib/corpus-v2-marks";
+import { DEFAULT_LABELS, isTableLabel, labelledSamplePages, labelsByPage, matchLabel, readKindLabels } from "./lib/classifier-labels";
 
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -57,8 +57,10 @@ for (const s of labelledSamplePages(RESEARCH, LABELS, opt("pages"))) {
   const loaded = loadPage(s, CORPUS);
   if (!loaded) { noCandidate += pageLabels.length; continue; }
   const { detections, words, csiCodes, drawingNumber } = loaded;
-  const regionsV2 = classifyRegionsV2({ pageNumber: s.page, detections, textractData: { words }, csiCodes });
-  const run = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words }, csiCodes, regionsV2, drawingNumber, tagger }, [openDetect]);
+  // [shape-tags] bundle Textract tables + classical shapes, as production holds them (pages.textractData.tables / pages.keynotes).
+  const tables = textractTablesOf(s.pid, s.page, CORPUS);
+  const regionsV2 = classifyRegionsV2({ pageNumber: s.page, detections, textractData: { words, tables }, csiCodes });
+  const run = runClassifierEngine({ pageNumber: s.page, detections, textractData: { words, tables }, csiCodes, regionsV2, drawingNumber, tagger, keynotes: loaded.keynotes }, [openDetect]);
   pages++;
   const proposals = run.result.proposals;
   candidates += proposals.length;
@@ -71,7 +73,7 @@ for (const s of labelledSamplePages(RESEARCH, LABELS, opt("pages"))) {
     const p = matchLabel(proposals, l);
     if (!p) { noCandidate++; continue; }
     const isTarget = l.kind !== NOT_A_SCHEDULE;
-    samples.push({ features: p.features, isTarget, classId: isTarget && classIds.has(l.kind) ? l.kind : null, fold: s.set });
+    samples.push({ features: p.features, isTarget, classId: isTarget && classIds.has(l.kind) ? l.kind : null, fold: s.set, isTable: isTableLabel(l) });
   }
 }
 const loadMs = Date.now() - t0;
@@ -191,6 +193,7 @@ const fitSummary = (title: string, f: ReturnType<typeof fitRecipe>) => {
   L.push(`${title}: detect ${r.detect.status}${r.detect.fitted ? ` (bias ${r.detect.hand.bias} → ${r.detect.fitted.bias}, threshold ${r.detect.threshold.hand} → ${r.detect.threshold.fitted})` : ""}; naming ${r.naming}; classes fitted ${r.classes.filter((c) => c.status === "fitted").map((c) => `${c.head}(${c.positives})`).join(" ") || "none"}; nameThreshold ${r.nameThreshold.hand} → ${r.nameThreshold.fitted}`);
   for (const n of r.notes) L.push(`  note: ${n}`);
   if (r.detect.fitted) L.push(`  detect weights ${Object.entries(r.detect.fitted.weights).map(([k, w]) => `${k.slice(7)} ${r.detect.hand.weights[k]}→${w}`).join(", ")}`);
+  if (r.table) L.push(`  table head ${r.table.status} (n ${r.table.n}, positives ${r.table.positives})${r.table.fitted ? `: bias ${r.table.hand.bias} → ${r.table.fitted.bias}; weights ${Object.entries(r.table.fitted.weights).map(([k, w]) => `${k.slice(6)} ${r.table!.hand.weights[k]}→${w}`).join(", ")}` : ""}`);
 };
 fitSummary("FIT ON ODD", oddFit);
 L.push("");

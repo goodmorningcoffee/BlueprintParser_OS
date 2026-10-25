@@ -162,6 +162,7 @@ function putHead(patch: RecipePatch, h: HeadFit): void {
   patch.signals ??= {};
   for (const [k, w] of Object.entries(h.fitted.weights)) patch.signals[k] = { weight: w };
   if (h.head === "detect") patch.detectBias = h.fitted.bias;
+  else if (h.head === "table") patch.tableBias = h.fitted.bias;
   else (patch.classBias ??= {})[h.head] = h.fitted.bias;
 }
 
@@ -183,6 +184,8 @@ export interface RecipeFitReport {
   samples: number;
   targets: number;
   detect: HeadFit & { threshold: { hand: number; fitted: number } };
+  /** [shape-tags] The table-ness head, when the recipe has one and the samples carry `isTable`. */
+  table?: HeadFit;
   classes: HeadFit[];
   nameThreshold: { hand: number; fitted: number };
   naming: HeadStatus;
@@ -222,6 +225,14 @@ export function fitRecipe(source: ClassifierRecipe, samples: readonly FitSample[
     }
   }
 
+  // [shape-tags] table-ness head: fitted on the samples that carry a table label, kept when it is a proper fit (no threshold here).
+  let table: HeadFit | undefined;
+  if (recipe.tableHead) {
+    const labelled = samples.filter((s) => typeof s.isTable === "boolean");
+    table = fitHead("table", recipe.tableHead.bias, recipe.tableHead.signals, labelled, (s) => s.isTable === true, detectLambda, minPositives);
+    if (table.fitted) putHead(patch, table);
+  }
+
   // naming (one-vs-rest over the target samples)
   const targets = samples.filter((s) => s.isTarget);
   const classes = recipe.classes.map((c) => fitHead(c.id, c.bias, c.signals, targets, (s) => s.classId === c.id, lambda, minPositives));
@@ -251,7 +262,7 @@ export function fitRecipe(source: ClassifierRecipe, samples: readonly FitSample[
   const small = classes.filter((c) => c.status === "small-n").length;
   if (small) notes.push(`${small} of ${classes.length} classes have < ${minPositives} positives (or negatives) and keep hand weights`);
 
-  const changed = det.status === "fitted" || naming === "fitted";
+  const changed = det.status === "fitted" || naming === "fitted" || table?.status === "fitted";
   const fitted = changed ? withPatch(source, patch) : source;
   return {
     patch: changed ? patch : null,
@@ -260,6 +271,7 @@ export function fitRecipe(source: ClassifierRecipe, samples: readonly FitSample[
       fitVersion: FIT_VERSION, recipeId: recipe.id, recipeVersion: recipe.version, lambda, detectLambda, minPositives,
       samples: samples.length, targets: targets.length,
       detect: { ...det, threshold: { hand: recipe.detect.threshold, fitted: detectThreshold } },
+      ...(table ? { table } : {}),
       classes, nameThreshold: { hand: recipe.nameThreshold, fitted: nameThreshold }, naming,
       inSample: { hand: handEval, fitted: changed ? evaluateRecipe(fitted, samples) : handEval }, notes,
     },

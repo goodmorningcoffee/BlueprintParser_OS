@@ -77,6 +77,8 @@ export function validateRecipe(v: unknown, source: "built-in" | "custom"): Class
   const shape = [...checkScope(r.scope, "scope:"), ...checkCandidates(r.candidates, "", r.unit === "page")];
   if (shape.length) fail(label, shape[0].trim());
   const detect = r.detect as Record<string, unknown>;
+  const th = r.tableHead;
+  if (th !== undefined && (!isRecord(th) || !isNum(th.bias) || !Array.isArray(th.signals))) fail(label, "tableHead needs {bias, signals[]}");
   const cids = new Set<string>();
   const h = r.heuristic;
   if (h !== undefined && (!isRecord(h) || typeof h.minConfidence !== "number" || !AVAILABILITY.has(h.yoloAvailabilityMode as HeuristicRecipeOutput["yoloAvailabilityMode"]))) {
@@ -87,6 +89,7 @@ export function validateRecipe(v: unknown, source: "built-in" | "custom"): Class
     unit: r.unit as ClassifierRecipe["unit"], target: r.target as string,
     candidates: r.candidates as ClassifierRecipe["candidates"], scope: r.scope as ClassifierRecipe["scope"],
     detect: { bias: detect.bias as number, threshold: detect.threshold as number, signals: (detect.signals as unknown[]).map((s) => validateSignal(s, `${label} detect`, new Set())) },
+    ...(isRecord(th) ? { tableHead: { bias: th.bias as number, signals: (th.signals as unknown[]).map((s) => validateSignal(s, `${label} tableHead`, new Set())) } } : {}),
     classes: (r.classes as unknown[]).map((c) => validateClass(c, label, cids)),
     nameThreshold: r.nameThreshold as number, minMargin: r.minMargin as number, deriveName: r.deriveName !== false,
     fallbackClassName: r.fallbackClassName as string, ...(typeof r.note === "string" ? { note: r.note } : {}),
@@ -168,6 +171,7 @@ export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): Classifier
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name;
   if (typeof patch.detectBias === "number" && Number.isFinite(patch.detectBias)) next.detect.bias = patch.detectBias;
+  if (next.tableHead && typeof patch.tableBias === "number" && Number.isFinite(patch.tableBias)) next.tableHead.bias = patch.tableBias;
   if (typeof patch.detectThreshold === "number") next.detect.threshold = patch.detectThreshold;
   if (typeof patch.nameThreshold === "number") next.nameThreshold = patch.nameThreshold;
   if (typeof patch.minMargin === "number") next.minMargin = patch.minMargin;
@@ -177,6 +181,7 @@ export function patchRecipe(r: ClassifierRecipe, patch: RecipePatch): Classifier
     if (cands.length) next.candidates = clone(cands) as CandidateSource[];
   }
   next.detect.signals = patchSignals("detect", next.detect.signals, patch, removed, label);
+  if (next.tableHead) next.tableHead.signals = patchSignals("table", next.tableHead.signals, patch, removed, label);
   next.classes = next.classes.filter((c) => !removed.has(classRemovalKey(c.id)) && !removed.has(c.id)).map((c) => {
     const meta = isRecord(classMeta[c.id]) ? (classMeta[c.id] as Record<string, unknown>) : {};
     const out: ClassifierClass = {

@@ -12,7 +12,7 @@
 import { CHANNEL_KINDS } from "@/lib/pdf-channels/types";
 import type { CandidateSource, SignalSpec } from "./types";
 
-export const SPEC_TYPES = new Set<SignalSpec["type"]>(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel", "text", "text-region", "yolo-spatial"]);
+export const SPEC_TYPES = new Set<SignalSpec["type"]>(["words", "csi", "sheet", "yolo", "structure", "textract-table", "shapes", "zone", "channel", "text", "text-region", "yolo-spatial", "shape-column", "ocr-grid"]);
 export const CANDIDATE_TYPES = new Set<CandidateSource["type"]>(["regions-v2", "yolo", "textract-tables", "parsed-regions"]);
 
 const SCOPES = new Set(["box", "header", "columns", "body", "above", "page", "titleBlock", "sheetTitle"]);
@@ -21,6 +21,9 @@ const CSI_MEASURE = new Set(["share", "count", "presence"]);
 const YOLO_WHERE = new Set(["inside", "overlap", "page", "near"]);
 const YOLO_MEASURE = new Set(["presence", "count", "maxConfidence", "cover"]);
 const SHAPES_WHERE = new Set(["inside", "leftColumn"]);
+const COLUMN_SOURCE = new Set(["yolo", "classical", "any"]);
+const COLUMN_MEASURE = new Set(["count", "regular", "textInside", "textRight"]);
+const GRID_MEASURE = new Set(["rows", "cols", "grid", "regularity"]);
 const TEXT_MODE = new Set(["any", "all"]);
 const SPATIAL_OPS = new Set(["contains", "overlaps", "near", "aligned"]);
 const AXES = new Set(["horizontal", "vertical", "any"]);
@@ -37,8 +40,10 @@ const SPEC_FIELDS: Record<SignalSpec["type"], readonly string[]> = {
   sheet: ["disciplines", "numberPattern"],
   yolo: ["where", "classes", "model", "minConfidence", "measure", "noDetections"],
   structure: ["feature", "min", "max", "scale"],
-  "textract-table": ["minContainment"],
+  "textract-table": ["minContainment", "minRows"],
   shapes: ["shapes", "where", "min"],
+  "shape-column": ["source", "measure", "leftShare", "minShapes", "maxGapCv"],
+  "ocr-grid": ["measure", "scale"],
   zone: ["zone", "minContainment"],
   channel: ["pageKinds"],
   text: ["terms", "mode"],
@@ -151,6 +156,18 @@ export function checkSpec(spec: unknown, at: string): string[] {
       break;
     case "textract-table":
       e.num(spec, "minContainment", 0, 1);
+      e.int(spec, "minRows", 0);
+      break;
+    case "shape-column":
+      e.oneOf(spec, "source", COLUMN_SOURCE);
+      e.oneOf(spec, "measure", COLUMN_MEASURE);
+      e.num(spec, "leftShare", 0.05, 1);
+      e.int(spec, "minShapes", 1);
+      e.num(spec, "maxGapCv", 0, 5);
+      break;
+    case "ocr-grid":
+      e.oneOf(spec, "measure", GRID_MEASURE);
+      e.num(spec, "scale", Number.MIN_VALUE);
       break;
     case "shapes":
       e.list(spec, "shapes", true);

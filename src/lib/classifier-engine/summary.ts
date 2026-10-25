@@ -6,7 +6,7 @@
 
 import { storedClassifierProposals } from "./engine";
 import {
-  CLASSIFIER_ENGINE_VERSION, PROJECT_PROPOSALS_CAP,
+  CLASSIFIER_ENGINE_VERSION, PROJECT_PROPOSALS_CAP, SUMMARY_TAGS_CAP,
   type PageProposalVerdicts, type ProjectProposalSummary, type ProposalSummaryItem, type ProposalVerdict,
 } from "./types";
 
@@ -33,10 +33,14 @@ export function buildProjectProposalSummary(pages: readonly ProposalPage[], gene
     const verdicts = storedProposalVerdicts(page.pageIntelligence);
     for (const p of stored.proposals) {
       const verdict = verdicts[p.id]?.verdict;
+      // [shape-tags] table-ness + the tag column's first tags (chips); the full rows stay on the page record.
+      const tags = p.tagMap?.rows.flatMap((r) => (r.tag ? [r.tag] : [])).slice(0, SUMMARY_TAGS_CAP);
       items.push({
         id: p.id, recipeId: p.recipeId, pageNumber: p.pageNumber, bbox: p.bbox, target: p.target,
         classId: p.classId, className: p.className, group: p.group, displayName: p.displayName, p: p.p, nameP: p.nameP,
         ...(verdict ? { verdict } : {}),
+        ...(typeof p.tableP === "number" ? { tableP: p.tableP } : {}),
+        ...(p.tagMap ? { tagRows: p.tagMap.rows.length, tags: tags ?? [], tagShape: p.tagMap.column.shapeClass } : {}),
       });
     }
   }

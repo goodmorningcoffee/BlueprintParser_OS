@@ -8,6 +8,10 @@
 // name for "Other schedule"), Undo (deletes the verdict). Demo projects are read-only: no verdict buttons.
 // [clf visibility 2026-10-25] No summary / no items renders a short empty state (it used to render nothing, which
 // read the same as "wrong tab"); the scope defaults to All pages while the current page has no proposals.
+// [shape-tags 2026-10-25] A "table NN %" chip when the recipe scored table-ness, and, on a focused proposal whose
+// tag column the engine found, the column (shape class, rows, first tags) with ACCEPT WITH TAGS: Parse this table
+// plus a parse hint (tableParseHintStore) that asks the Auto Parse request for the shape-centre rows and pre-selects
+// the column's class for Map Tags.
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -20,6 +24,7 @@ import {
 } from "@/lib/classifier-engine/vocabulary";
 import { submitProposalVerdict, undoProposalVerdict, useProposals } from "@/queries/useProposals";
 import { useProposalFocusStore, type ProposalFocusTarget } from "@/stores/proposalFocusStore";
+import { useTableParseHintStore } from "@/stores/tableParseHintStore";
 import { useProject } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { acceptTableParseRegion, navigateViewerPage, transitionTableParseTab } from "@/stores/viewerCommands";
@@ -170,7 +175,11 @@ export default function ProposedTablesSection() {
       }),
     );
 
-  const parseThis = (item: ProposalSummaryItem) => {
+  const parseThis = (item: ProposalSummaryItem, withTags = false) => {
+    useTableParseHintStore.getState().setHint(withTags && item.tagRows ? {
+      pageNumber: item.pageNumber, bbox: [...item.bbox] as typeof item.bbox, rowSource: "shape-centres",
+      ...(item.tagShape ? { tagYoloClass: { model: "yolo_primitive", className: item.tagShape } } : {}),
+    } : null);
     focusItem(item);
     transitionTableParseTab("auto");
     // A fresh array each click, so re-queueing after a removal is not mistaken for a repeat.
@@ -243,14 +252,32 @@ export default function ProposedTablesSection() {
                       <span className="text-[10px] font-mono text-[var(--muted)]" title={`detect ${pct(item.p)} · kind ${pct(item.nameP)}`}>
                         {pct(item.p)}
                       </span>
+                      {item.tableP !== undefined && (
+                        <span className="text-[9px] font-mono text-[var(--muted)] border border-[var(--border)] rounded px-1" title="table-ness: how table-like the box is, independent of its kind">
+                          table {pct(item.tableP)}
+                        </span>
+                      )}
                       {item.verdict && <span className="text-[9px] text-[#00E676]">{VERDICT_LABEL[item.verdict]}</span>}
                     </button>
                     {focused && (
                       <div className="px-2 pb-1.5 space-y-1">
+                        {item.tagRows ? (
+                          <div className="text-[10px] text-[var(--muted)]" data-tag-column={item.id}>
+                            Tag column: {item.tagRows} {item.tagShape ?? "shape"} rows
+                            {item.tags && item.tags.length > 0 && (
+                              <span> · {item.tags.join(", ")}{item.tagRows > item.tags.length ? ` +${item.tagRows - item.tags.length} more` : ""}</span>
+                            )}
+                          </div>
+                        ) : null}
                         <div className="flex flex-wrap gap-1">
                           <button type="button" disabled={busy} onClick={() => parseThis(item)} className={`${toggleClass(true)} disabled:opacity-50`}>
                             Parse this table
                           </button>
+                          {item.tagRows ? (
+                            <button type="button" disabled={busy} onClick={() => parseThis(item, true)} className={`${toggleClass(true)} disabled:opacity-50`} title="Parse with the tag shapes as row centres and map the tags across the set">
+                              Accept with tags
+                            </button>
+                          ) : null}
                           {!isDemo && (
                             <>
                               <button type="button" disabled={busy} onClick={() => void verdict(item, "reject")} className={`${toggleClass(false)} disabled:opacity-50`}>

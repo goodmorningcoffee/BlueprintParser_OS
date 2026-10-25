@@ -9,7 +9,8 @@ import { ZONE_CONTAINMENT_THRESHOLD, containmentRatio } from "@/lib/page-zones";
 import { area, cover, inside, inter, overlapSmaller } from "@/lib/region-classifier-v2/geometry";
 import { isWholeWordMatch } from "@/lib/text-match-utils";
 import { migrateTextRegionType } from "@/lib/text-region-migrate";
-import { scopeText, type CandidateEvidence, type PageEvidence } from "./evidence";
+import { columnWords, scopeText, shapesInside, type CandidateEvidence, type PageEvidence } from "./evidence";
+import { bestShapeColumn, columnTextShares } from "./shape-column";
 import { yoloSpatialHolds } from "./spatial";
 import type { SignalSpec } from "./types";
 
@@ -108,9 +109,67 @@ function structureSignal(spec: Extract<SignalSpec, { type: "structure" }>, cand:
 }
 
 function textractSignal(spec: Extract<SignalSpec, { type: "textract-table" }>, cand: CandidateEvidence, page: PageEvidence): SignalValue {
-  const best = page.textractTables.reduce((m, t) => Math.max(m, overlapSmaller(cand.bbox, t)), 0);
+  const minRows = spec.minRows ?? 0;
+  const best = page.textractTables.reduce((m, t) => (t.rowCount >= minRows ? Math.max(m, overlapSmaller(cand.bbox, t.bbox)) : m), 0);
   const min = spec.minContainment ?? 0.5;
   return best >= min ? { value: r3(best), detail: `Textract table coincides (${pct(best)})` } : { value: 0 };
+}
+
+/** [shape-tags] A column of tag shapes in the box's left part (shape-column.ts). */
+function shapeColumnSignal(spec: Extract<SignalSpec, { type: "shape-column" }>, cand: CandidateEvidence, page: PageEvidence): SignalValue {
+  const col = bestShapeColumn(shapesInside(page, cand.bbox), cand.bbox, spec.source, { leftShare: spec.leftShare, minShapes: spec.minShapes });
+  if (!col) return { value: 0 };
+  const label = `${col.n} ${col.shapeClass} column (${col.source})`;
+  switch (spec.measure) {
+    case "count": return { value: r3(Math.min(1, col.n / 8)), detail: label };
+    case "regular": {
+      const ok = col.gapCv !== null && col.gapCv <= (spec.maxGapCv ?? 0.5);
+      return { value: ok ? 1 : 0, detail: `${label}, gap CV ${col.gapCv === null ? "n/a" : r3(col.gapCv)}` };
+    }
+    case "textInside": case "textRight": {
+      const shares = columnTextShares(col, columnWords(cand));
+      const v = spec.measure === "textInside" ? shares.textInside : shares.textRight;
+      return { value: r3(v), detail: `${label}, ${pct(v)} with text ${spec.measure === "textInside" ? "inside" : "to the right"}` };
+    }
+    default: return { value: 0 };
+  }
+}
+
+/** Sorted 1-D clusters: a gap wider than `tol` starts a new one. */
+function clusters1d(values: readonly number[], tol: number): number[][] {
+  const out: number[][] = [];
+  for (const v of [...values].sort((a, b) => a - b)) {
+    const cur = out[out.length - 1];
+    if (cur && v - cur[cur.length - 1] <= tol) cur.push(v);
+    else out.push([v]);
+  }
+  return out;
+}
+
+/** [shape-tags] The box's OCR words as a grid (region v2 geometry.textGrid's rules on word boxes). */
+function ocrGridSignal(spec: Extract<SignalSpec, { type: "ocr-grid" }>, cand: CandidateEvidence): SignalValue {
+  const words = cand.words;
+  if (words.length < 6) return { value: 0, detail: `${words.length} words` };
+  const hs = words.map((w) => w.h).sort((a, b) => a - b);
+  const mh = Math.max(hs[Math.floor(hs.length / 2)], 1e-4);
+  const rows = clusters1d(words.map((w) => w.c[1]), 0.6 * mh).filter((c) => c.length >= 2);
+  const cols = clusters1d(words.map((w) => w.bbox[0]), 0.5 * mh).filter((c) => c.length >= 3).length;
+  const label = `${rows.length} rows × ${cols} cols`;
+  switch (spec.measure) {
+    case "rows": return { value: r3(Math.min(1, rows.length / (spec.scale ?? 8))), detail: label };
+    case "cols": return { value: r3(Math.min(1, cols / (spec.scale ?? 4))), detail: label };
+    case "grid": return { value: r3(Math.min(1, (rows.length * cols) / (spec.scale ?? 24))), detail: label };
+    case "regularity": {
+      if (rows.length < 3) return { value: 0, detail: label };
+      const centres = rows.map((c) => c.reduce((a, b) => a + b, 0) / c.length).sort((a, b) => a - b);
+      const pitch = centres.slice(1).map((c, i) => c - centres[i]);
+      const m = pitch.reduce((a, b) => a + b, 0) / pitch.length;
+      const sd = Math.sqrt(pitch.reduce((a, p) => a + (p - m) ** 2, 0) / pitch.length);
+      const v = m > 0 ? clamp01(1 - sd / m) : 0;
+      return { value: r3(v), detail: `${label}, pitch CV ${r3(m > 0 ? sd / m : 0)}` };
+    }
+    default: return { value: 0 };
+  }
 }
 
 function shapesSignal(spec: Extract<SignalSpec, { type: "shapes" }>, cand: CandidateEvidence, page: PageEvidence): SignalValue {
@@ -156,6 +215,8 @@ export function evaluateSignal(spec: SignalSpec, cand: CandidateEvidence, page: 
     case "yolo": return yoloSignal(spec, cand, page);
     case "structure": return structureSignal(spec, cand);
     case "textract-table": return textractSignal(spec, cand, page);
+    case "shape-column": return shapeColumnSignal(spec, cand, page);
+    case "ocr-grid": return ocrGridSignal(spec, cand);
     case "shapes": return shapesSignal(spec, cand, page);
     case "zone": return zoneSignal(spec, cand, page);
     case "text": return textSignal(spec, page);

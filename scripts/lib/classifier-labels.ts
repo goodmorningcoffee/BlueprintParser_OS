@@ -12,7 +12,24 @@ import { readSample, type SamplePage } from "./corpus-v2-marks";
 
 export const DEFAULT_LABELS = "/workspaces/projects/gitignore/projects/classifier_builder/labels/kinds.v1.json";
 
-export interface KindLabel { set: number; page: number; regionId?: string; bbox?: BboxMinMax; kind: string; name?: string; printedTitle?: string | null }
+export interface KindLabel { set: number; page: number; regionId?: string; bbox?: BboxMinMax; kind: string; name?: string; printedTitle?: string | null; note?: string | null }
+
+export type NoteGroup = "schedule" | "legend-keynote" | "title-block" | "notes" | "other-nonschedule";
+
+/**
+ * [shape-tags] The not-a-schedule sub-group from the labeller's free-text note (shape_tags/tools/extract_features.py
+ * note_group, verbatim): approximate, single labeller. "legend-keynote" boxes are TABLES too (owner), so table-ness
+ * = schedule ∪ legend-keynote.
+ */
+export function noteGroup(l: Pick<KindLabel, "kind" | "note">): NoteGroup {
+  if (l.kind !== "not-a-schedule") return "schedule";
+  const n = (l.note ?? "").toLowerCase();
+  if (["legend", "symbol", "keynote", "key note", "coded note", "abbrev"].some((w) => n.includes(w))) return "legend-keynote";
+  if (["title block", "revision", "stamp", "consultant"].some((w) => n.includes(w))) return "title-block";
+  if (n.includes("note")) return "notes";
+  return "other-nonschedule";
+}
+export const isTableLabel = (l: Pick<KindLabel, "kind" | "note">): boolean => { const g = noteGroup(l); return g === "schedule" || g === "legend-keynote"; };
 
 /** The labels file (an array, or {labeller, labels | items}); "unreadable" and malformed rows dropped. Null when the file is absent. */
 export function readKindLabels(path = DEFAULT_LABELS): { labeller: string; items: KindLabel[] } | null {

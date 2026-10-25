@@ -37,6 +37,7 @@ import { centerDelta, fitScaleForBox } from "@/components/viewer/proposals/propo
 import { queryKeys } from "@/queries/queryKeys";
 import { seedProposalsFromBootstrap } from "@/queries/useProposals";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
+import { tableParseRequestHints, useTableParseHintStore } from "@/stores/tableParseHintStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import type { ProjectProposalSummary, ProposalSummaryItem } from "@/lib/classifier-engine/types";
@@ -258,6 +259,35 @@ describe("ProposedTablesSection", () => {
     expect(persistence.persistFetch).toHaveBeenCalledWith(
       "/api/projects/pub-1/proposals/verdict", { pageNumber: 1, proposalId: "a", verdict: "accept" }, "POST",
     );
+  });
+
+  it("[shape-tags] table chip, the tag column block, and Accept with tags sets the parse hint for that region", async () => {
+    persistence.persistFetch.mockResolvedValue({ verdict: {} });
+    useTableParseHintStore.setState({ hint: null });
+    seedProposalsFromBootstrap(qc, "pub-1", { proposals: { ...SUMMARY, items: [
+      item({ id: "a", pageNumber: 1, tableP: 0.93, tagRows: 7, tags: ["K1", "K2", "K3"], tagShape: "hexagon" }),
+      item({ id: "b", pageNumber: 1, classId: "panel", className: "Panel schedule", group: "elec", displayName: "Panel schedule", tableP: 0.4 }),
+    ] } });
+    mount(<ProposedTablesSection />);
+    expect(screen.getByText("table 93%")).toBeInTheDocument();
+    expect(screen.getByText("table 40%")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Accept with tags" })).toBeNull();
+    fireEvent.click(screen.getByText("Panel schedule", { selector: "span" }).closest("button")!);
+    expect(screen.queryByRole("button", { name: "Accept with tags" })).toBeNull(); // no tag column on b
+    fireEvent.click(screen.getByText("Door schedule", { selector: "span" }).closest("button")!);
+    expect(screen.getByText(/Tag column: 7 hexagon rows/)).toBeInTheDocument();
+    expect(screen.getByText(/K1, K2, K3 \+4 more/)).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept with tags" })); });
+    expect(commands.transitionTableParseTab).toHaveBeenCalledWith("auto");
+    expect(commands.acceptTableParseRegion).toHaveBeenCalledWith([0.1, 0.2, 0.5, 0.6]);
+    expect(persistence.persistFetch).toHaveBeenCalledWith("/api/projects/pub-1/proposals/verdict", { pageNumber: 1, proposalId: "a", verdict: "accept" }, "POST");
+    expect(useTableParseHintStore.getState().hint).toEqual({ pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], rowSource: "shape-centres", tagYoloClass: { model: "yolo_primitive", className: "hexagon" } });
+    expect(tableParseRequestHints(1, [0.1, 0.2, 0.5, 0.6])).toEqual({ rowSource: "shape-centres" });
+    expect(tableParseRequestHints(2, [0.1, 0.2, 0.5, 0.6])).toEqual({});
+    expect(tableParseRequestHints(1, [0.6, 0.6, 0.9, 0.9])).toEqual({});
+    // plain Parse this table clears a stale hint
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Parse this table" })); });
+    expect(useTableParseHintStore.getState().hint).toBeNull();
   });
 
   it("demo: proposals are listed read-only — no verdict buttons, parse prefill without a verdict", () => {
