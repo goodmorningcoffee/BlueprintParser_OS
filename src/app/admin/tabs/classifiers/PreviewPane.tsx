@@ -37,6 +37,16 @@ async function readError(res: Response): Promise<string> {
   try { const j = await res.json(); return j?.error?.message ?? `HTTP ${res.status}`; } catch { return `HTTP ${res.status}`; }
 }
 
+/** The closing line(s) of a run: a missing `done` or a 0-proposal run gets an explanation, not silence. */
+export function runVerdictLines(done: Record<string, unknown> | null, reasons: readonly string[]): string[] {
+  if (!done) return ["Stream ended without a done line — the run may have been cut off; check the server log."];
+  if (typeof done.proposals !== "number" || done.proposals > 0) return [];
+  const why = reasons.filter(Boolean);
+  return [why.length
+    ? `No proposals were written. Why: ${why.join("; ")}.`
+    : "No proposals were written: the engine ran on the pages with YOLO detections but no table candidate cleared the recipe thresholds."];
+}
+
 function ProposalRow({ p }: { p: ClassifierProposal }) {
   const why = [...p.detectWhy.slice(0, 2), ...p.nameWhy.slice(0, 4)];
   return (
@@ -88,10 +98,19 @@ export default function PreviewPane({ draft, projects, companyId, canRun }: Prev
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      // [clf visibility 2026-10-25] every line is printed; the server's reasons (warnings / errors) are kept so
+      // a run that ends with 0 proposals can say why instead of just "Done".
+      const reasons: string[] = [];
+      let doneLine: Record<string, unknown> | null = null;
       const handle = (raw: string) => {
         if (!raw.trim()) return;
-        try { const line = formatReprocessEvent(JSON.parse(raw)); if (line !== null) setRunLog((l) => [...l, line]); }
-        catch { setRunLog((l) => [...l, `  (unparseable line) ${raw.slice(0, 120)}`]); }
+        let event: Record<string, unknown>;
+        try { event = JSON.parse(raw) as Record<string, unknown>; }
+        catch { setRunLog((l) => [...l, `  (unparseable line) ${raw.slice(0, 120)}`]); return; }
+        if (event.type === "warning" || event.type === "error") reasons.push(String(event.message ?? event.error ?? ""));
+        if (event.type === "done") doneLine = event;
+        const line = formatReprocessEvent(event);
+        if (line !== null) setRunLog((l) => [...l, line]);
       };
       for (;;) {
         const { done, value } = await reader.read();
@@ -102,6 +121,7 @@ export default function PreviewPane({ draft, projects, companyId, canRun }: Prev
         lines.forEach(handle);
       }
       handle(buffer);
+      setRunLog((l) => [...l, ...runVerdictLines(doneLine, reasons)]);
     } catch (e) { setRunLog((l) => [...l, `Error: ${e instanceof Error ? e.message : "run failed"}`]); }
     finally { setBusy(null); }
   };

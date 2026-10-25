@@ -12,7 +12,7 @@ import { annotations, pages, projects } from "@/lib/db/schema";
 import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import type { TextractWord } from "@/types";
 import { assertProjectWritable } from "@/server/api/project-write-capability";
-import { reprocessClassifiersScope, storedChannelKind } from "@/server/services/reprocess-classifiers";
+import { regionsV2OrCompute, reprocessClassifiersScope, storedChannelKind } from "@/server/services/reprocess-classifiers";
 import type { ReprocessStream } from "@/server/services/reprocess-stream";
 import { createPage, createWorld } from "@/test/harness";
 
@@ -73,6 +73,45 @@ describe.skipIf(!dbUp)("reprocessClassifiersScope", () => {
     expect(storedChannelKind({})).toBeNull();
   });
 
+  // [clf visibility 2026-10-25] the owner's case: YOLO rows but no stored regionsV2 (Intelligence never re-run)
+  it("computes regionsV2 for a YOLO page that has none stored, persists it beside the proposals, and reports the counts", async () => {
+    const { project } = await createWorld();
+    const withLease = <T,>(id: number, op: (c: ReturnType<typeof assertProjectWritable>) => Promise<T>) => op(assertProjectWritable({ ...project, id }));
+    const p1 = await createPage(project.id, 1, { drawingNumber: "A-601", textractData: { lines: [], words: WORDS } as never, pageIntelligence: { proposalVerdicts: { old: { verdict: "accept" } }, keep: 1 } as never });
+    await createPage(project.id, 2, { pageIntelligence: { textRegions: [] } as never });
+    await db.insert(annotations).values({ projectId: project.id, pageNumber: 1, name: DET.name, minX: DET.minX, minY: DET.minY, maxX: DET.maxX, maxY: DET.maxY, source: "yolo", data: { confidence: DET.confidence, modelName: DET.modelName } } as never);
+
+    const { stream, events } = fakeStream();
+    const c = await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set 2" }], withReprocessLease: withLease, stream, overlay: undefined });
+    expect(c).toMatchObject({ total: 2, updated: 1, skipped: 1, proposals: 1 });
+    const pi1 = await piOf(p1.id);
+    expect((pi1.regionsV2 as { regions: unknown[] }).regions.length).toBeGreaterThan(0);
+    expect((pi1.classifierProposals as { proposals: Array<{ classId: string | null }> }).proposals[0]).toMatchObject({ classId: "door" });
+    expect(pi1.proposalVerdicts).toEqual({ old: { verdict: "accept" } });
+    expect(pi1.keep).toBe(1);
+    expect(events.find((e) => e.type === "classifiers")).toMatchObject({ project: "set 2", pages: 2, yoloPages: 1, regionsComputed: 1, proposals: 1, truncated: false });
+    expect(events.some((e) => e.type === "warning")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "done", proposals: 1 });
+
+    // second run: the regions are stored now → nothing computed, nothing rewritten, proposals still counted
+    const again = fakeStream();
+    const c2 = await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set 2" }], withReprocessLease: withLease, stream: again.stream, overlay: undefined });
+    expect(c2).toMatchObject({ updated: 0, skipped: 2, proposals: 1 });
+    expect(again.events.find((e) => e.type === "classifiers")).toMatchObject({ regionsComputed: 0, proposals: 1 });
+  });
+
+  it("a project with pages but no YOLO detections gets the 'run YOLO load first' warning and 0 proposals", async () => {
+    const { project } = await createWorld();
+    const withLease = <T,>(id: number, op: (c: ReturnType<typeof assertProjectWritable>) => Promise<T>) => op(assertProjectWritable({ ...project, id }));
+    await createPage(project.id, 1, { textractData: { lines: [], words: WORDS } as never });
+    const { stream, events } = fakeStream();
+    const c = await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set 3" }], withReprocessLease: withLease, stream, overlay: undefined });
+    expect(c).toMatchObject({ total: 1, updated: 0, skipped: 1, proposals: 0 });
+    expect(events.map((e) => e.type)).toEqual(["project", "warning", "classifiers", "done"]);
+    expect(events[1]).toMatchObject({ project: "set 3", message: "no YOLO detections — run YOLO load first" });
+    expect(events[2]).toMatchObject({ pages: 1, yoloPages: 0, regionsComputed: 0, proposals: 0 });
+  });
+
   it("a project that throws is one error line; the stream still ends with done", async () => {
     const { stream, events } = fakeStream();
     const c = await reprocessClassifiersScope({
@@ -83,5 +122,17 @@ describe.skipIf(!dbUp)("reprocessClassifiersScope", () => {
     expect(c).toMatchObject({ total: 0, updated: 0 });
     expect(events.map((e) => e.type)).toEqual(["error", "done"]);
     expect(events[0]).toMatchObject({ project: "set 9", error: "lease refused" });
+  });
+});
+
+describe("regionsV2OrCompute (no DB)", () => {
+  const input = { pageNumber: 1, detections: [DET], textractData: { words: WORDS }, csiCodes: [] };
+  it("returns the stored record untouched, computes when a YOLO page has none, and never computes without detections", () => {
+    expect(regionsV2OrCompute({ regionsV2 }, input)).toEqual({ regionsV2, computed: false });
+    const fresh = regionsV2OrCompute({ pageZones: undefined }, input);
+    expect(fresh.computed).toBe(true);
+    expect(fresh.regionsV2).toEqual(regionsV2);
+    expect(regionsV2OrCompute({}, { ...input, detections: [] })).toEqual({ regionsV2: undefined, computed: false });
+    expect(regionsV2OrCompute(null, { ...input, detections: [] })).toEqual({ regionsV2: undefined, computed: false });
   });
 });

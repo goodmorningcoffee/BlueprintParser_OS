@@ -1,8 +1,9 @@
 /**
  * POST /api/admin/classifiers/preview — DRY RUN of one draft recipe over ≤ 20 pages of one project
  * (track 3 builder). Reads exactly what reprocess-classifiers.ts reads per page (stored YOLO rows,
- * regionsV2, pageZones, channels, parsedRegions, OCR words + tables ONE page at a time, csiCodes,
- * drawingNumber), runs the engine with ONLY the draft (forced enabled), and returns the proposals
+ * regionsV2 — computed on the fly when a YOLO page has none stored, like the run does — pageZones,
+ * channels, parsedRegions, OCR words + tables ONE page at a time, csiCodes, drawingNumber), runs
+ * the engine with ONLY the draft (forced enabled), and returns the proposals
  * with their contributions plus the AGREEMENT with the stored verdicts on those pages: per label
  * class, how many of the user's accept / reject / rename labels the draft would now agree with.
  * NO WRITES — nothing here holds a capability or a lease. Demo projects are refused for every role.
@@ -13,7 +14,6 @@ import { db } from "@/lib/db";
 import { annotations, pages, projects } from "@/lib/db/schema";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
-import { storedRegionsV2 } from "@/lib/region-classifier-v2";
 import type { PageZones } from "@/lib/page-zones";
 import type { CsiCode, KeynoteShapeData, TextractPageData } from "@/types";
 import {
@@ -22,7 +22,7 @@ import {
 } from "@/lib/classifier-engine";
 import { OTHER_SCHEDULE, scheduleKind } from "@/lib/classifier-engine/vocabulary";
 import { classifierBoxTagger } from "./classifier-proposals-write";
-import { storedChannelKind } from "./reprocess-classifiers";
+import { regionsV2OrCompute, storedChannelKind } from "./reprocess-classifiers";
 import { builderCompanyId } from "./classifier-builder";
 
 /** projects.public_id is a uuid; anything else can only be "not found" (and would fail the query). */
@@ -141,12 +141,12 @@ export async function previewClassifierRecipe(session: AuthSession, body: Record
       .select({ words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`, tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'` })
       .from(pages)
       .where(eq(pages.id, page.id));
+    const zones = existing.pageZones as PageZones | undefined;
+    const textractData = Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null;
+    const csiCodes = (page.csiCodes ?? []) as CsiCode[];
     const run = runClassifierEngine({
-      pageNumber: page.pageNumber, detections,
-      zones: existing.pageZones as PageZones | undefined,
-      textractData: Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null,
-      csiCodes: (page.csiCodes ?? []) as CsiCode[],
-      regionsV2: storedRegionsV2(existing),
+      pageNumber: page.pageNumber, detections, zones, textractData, csiCodes,
+      regionsV2: regionsV2OrCompute(existing, { pageNumber: page.pageNumber, detections, zones, textractData, csiCodes }).regionsV2,
       parsedRegions: existing.parsedRegions as ReadonlyArray<{ bbox?: readonly number[] | null }> | null | undefined,
       drawingNumber: page.drawingNumber,
       channelKind: storedChannelKind(existing),

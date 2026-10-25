@@ -29,6 +29,7 @@ import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
 import VisibilityEye, { type VisibilityState } from "./VisibilityEye";
+import ViewAllProposalsSection from "./ViewAllProposalsSection"; // [clf visibility 2026-10-25]
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { canPersist } from "@/lib/client-persist";
 
@@ -146,10 +147,7 @@ export default function ViewAllPanel() {
   // Drawing numbers per page — join into every row so users see "p.12 · A-201"
   // instead of just "p.12". Hydrated at project load, so no loading state needed.
   const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
-  const sheetLabel = (pn: number): string => {
-    const dn = pageDrawingNumbers[pn];
-    return dn ? `p.${pn} · ${dn}` : `p.${pn}`;
-  };
+  const sheetLabel = (pn: number): string => (pageDrawingNumbers[pn] ? `p.${pn} · ${pageDrawingNumbers[pn]}` : `p.${pn}`);
   // Pages touched per takeoff item — derived from takeoff-source annotations
   // that carry `takeoffItemId` in their data. Used to show "A-201, A-203"
   // next to each takeoff row (multi-page items show up to 3 sheets + "+N").
@@ -202,8 +200,7 @@ export default function ViewAllPanel() {
 
   // Section expand state — collapsed by default.
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const toggle = (k: string) =>
-    setExpanded((s) => ({ ...s, [k]: !s[k] }));
+  const toggle = (k: string) => setExpanded((s) => ({ ...s, [k]: !s[k] }));
 
   // Master-eye memento: when user master-hides, snapshot exact visibility state
   // so the subsequent master-show restores that state (not a full reveal of
@@ -1540,6 +1537,9 @@ export default function ViewAllPanel() {
               );
             })}
         </TreeSection>
+
+        {/* ─── Proposed tables (classifier) ───────────────── */}
+        <ViewAllProposalsSection isExpanded={!!expanded.proposals} onToggleExpand={() => toggle("proposals")} sheetLabel={sheetLabel} />
 
         {/* ─── CSI codes ──────────────────────────────────── */}
         {/* CSI codes have no per-code canvas visibility state (activeCsiFilter

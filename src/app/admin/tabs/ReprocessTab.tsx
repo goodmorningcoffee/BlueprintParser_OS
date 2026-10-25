@@ -219,6 +219,7 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
     setRunning(true);
     setRunLabels(steps.map((s) => s.label));
     setLog([`Starting ${steps.length} stage${steps.length === 1 ? "" : "s"}${debug ? " (debug on)" : ""}...`]);
+    let allRan = true;
     try {
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
@@ -237,10 +238,12 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
         } catch (err) {
           append(`Failed: ${err instanceof Error ? err.message : "unknown"}`);
           append(`Stopped at stage ${i + 1}/${steps.length}; later stages did not run.`);
+          allRan = false;
           break;
         }
       }
-      append("All stages complete.");
+      // [clf visibility 2026-10-25] only when every stage ran — a broken loop used to print this too.
+      if (allRan) append("All stages complete.");
     } finally {
       setStageIndex(-1);
       setRunning(false);

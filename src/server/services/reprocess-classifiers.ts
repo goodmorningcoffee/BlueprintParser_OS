@@ -1,18 +1,25 @@
 // [classifier engine 2a 2026-10-24] Admin › Reprocess "Classifiers" (POST /api/admin/reprocess
-// ?scope=classifiers): the classifier ENGINE only — no YOLO, no OCR, no region v2 recompute. For
-// every page with stored YOLO rows it rebuilds `pageIntelligence.classifierProposals` from what is
-// already there (regionsV2, pageZones, channels, parsedRegions, textract words / tables read ONE
-// page at a time, csiCodes, drawingNumber) with the company's effective recipes, writes only pages
-// whose record changed (jsonb merge of that ONE key — user-owned `proposalVerdicts` and every other
-// key untouched), drops the record of a page whose YOLO rows are gone, then refreshes
+// ?scope=classifiers, also POST /api/admin/classifiers/run): the classifier ENGINE only — no YOLO,
+// no OCR. For every page with stored YOLO rows it rebuilds `pageIntelligence.classifierProposals`
+// from what is already there (regionsV2, pageZones, channels, parsedRegions, textract words / tables
+// read ONE page at a time, csiCodes, drawingNumber) with the company's effective recipes, writes only
+// pages whose record changed (jsonb merge — user-owned `proposalVerdicts` and every other key
+// untouched), drops the record of a page whose YOLO rows are gone, then refreshes
 // `projectIntelligence.proposals`. A sibling of reprocess.ts (zero line headroom there, and its
 // per-project loop count is pinned); this loop carries its own per-project guard.
+//
+// [clf visibility 2026-10-25] A page with YOLO rows but NO stored `regionsV2` (its Intelligence has
+// not been re-run since regions v2 shipped) used to yield zero candidates, so the owner's run wrote
+// zero proposals with no explanation. Now the regions are computed here with the same call the
+// Intelligence reprocess uses and persisted beside `classifierProposals` in the same write; each
+// project ends with one `classifiers` line (pages / with YOLO / regions computed now / proposals)
+// and a `warning` when it has no YOLO detections at all.
 
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { annotations, pages } from "@/lib/db/schema";
 import { logger } from "@/lib/logger";
-import { storedRegionsV2 } from "@/lib/region-classifier-v2";
+import { classifyRegionsV2, storedRegionsV2, type RegionClassifierInput, type RegionsV2 } from "@/lib/region-classifier-v2";
 import type { ChannelKind } from "@/lib/pdf-channels/types";
 import type { PageZones } from "@/lib/page-zones";
 import type { CsiCode, KeynoteShapeData, TextractPageData } from "@/types";
@@ -30,7 +37,19 @@ export interface ClassifiersReprocessCounters {
   /** Pages with YOLO rows whose record was unchanged, or without YOLO rows and without a record. */
   skipped: number;
   total: number;
+  /** Proposals the engine produced on every page with YOLO rows this run (written or unchanged). */
   proposals: number;
+}
+
+/** The stored `regionsV2`, or — when the page has detections and none is stored — a fresh one (`computed`), undefined if that throws. */
+export function regionsV2OrCompute(pageIntelligence: unknown, input: RegionClassifierInput): { regionsV2: RegionsV2 | undefined; computed: boolean } {
+  const stored = storedRegionsV2(pageIntelligence);
+  if (stored || !input.detections.length) return { regionsV2: stored, computed: false };
+  try { return { regionsV2: classifyRegionsV2(input), computed: true }; }
+  catch (err) {
+    logger.error(`[reprocess-classifiers] classifyRegionsV2 failed for page ${input.pageNumber}:`, err);
+    return { regionsV2: undefined, computed: false };
+  }
 }
 
 /** `pageIntelligence.channels.kind` when the census ran on this page. */
@@ -73,6 +92,7 @@ export async function reprocessClassifiersScope(args: {
           (byPage.get(a.pageNumber) ?? byPage.set(a.pageNumber, []).get(a.pageNumber)!).push({ name: a.name, minX: a.minX, minY: a.minY, maxX: a.maxX, maxY: a.maxY, confidence: data?.confidence ?? 0, modelName: data?.modelName });
         }
         const proposalPages: Array<{ pageNumber: number; pageIntelligence: unknown }> = [];
+        const per = { yoloPages: 0, regionsComputed: 0 };
         for (const page of rows) {
           c.total++;
           const existing = (page.pageIntelligence ?? {}) as Record<string, unknown>;
@@ -92,6 +112,7 @@ export async function reprocessClassifiersScope(args: {
             proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: rest });
             continue;
           }
+          per.yoloPages++;
           // ONE page's OCR at a time, and only the two keys the engine reads (never `lines`).
           const [ocr] = await db
             .select({
@@ -100,34 +121,41 @@ export async function reprocessClassifiersScope(args: {
             })
             .from(pages)
             .where(eq(pages.id, page.id));
+          const zones = existing.pageZones as PageZones | undefined;
+          const textractData = Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null;
+          const csiCodes = (page.csiCodes ?? []) as CsiCode[];
+          const regions = regionsV2OrCompute(existing, { pageNumber: page.pageNumber, detections, zones, textractData, csiCodes });
+          if (regions.computed) per.regionsComputed++;
           const next = computeClassifierProposals({
-            pageNumber: page.pageNumber, detections,
-            zones: existing.pageZones as PageZones | undefined,
-            textractData: Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null,
-            csiCodes: (page.csiCodes ?? []) as CsiCode[],
-            regionsV2: storedRegionsV2(existing),
+            pageNumber: page.pageNumber, detections, zones, textractData, csiCodes,
+            regionsV2: regions.regionsV2,
             parsedRegions: existing.parsedRegions as ClassifierPageInputParsed,
             drawingNumber: page.drawingNumber,
             channelKind: storedChannelKind(existing),
             keynotes: (page.keynotes ?? null) as readonly KeynoteShapeData[] | null,
           }, recipes);
-          if (!next || stableStringify(next) === stableStringify(existing.classifierProposals)) {
+          if (next) c.proposals += next.proposals.length;
+          // The patch: freshly computed regions always land; the proposals record only when it changed.
+          const patch: Record<string, unknown> = {};
+          if (regions.computed) patch.regionsV2 = regions.regionsV2;
+          if (next && stableStringify(next) !== stableStringify(existing.classifierProposals)) patch.classifierProposals = next;
+          if (!Object.keys(patch).length) {
             c.skipped++;
             proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: existing });
             continue;
           }
           await withProjectWrite(capability, project.id, async (tx) => {
             await tx.update(pages)
-              .set({ pageIntelligence: sql`COALESCE(${pages.pageIntelligence}, '{}'::jsonb) || ${JSON.stringify({ classifierProposals: next })}::jsonb` })
+              .set({ pageIntelligence: sql`COALESCE(${pages.pageIntelligence}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb` })
               .where(eq(pages.id, page.id));
           });
           c.updated++;
-          c.proposals += next.proposals.length;
-          proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: { ...existing, classifierProposals: next } });
+          proposalPages.push({ pageNumber: page.pageNumber, pageIntelligence: { ...existing, ...patch } });
         }
         const summary = await writeProjectProposals(capability, project.id, proposalPages);
         debug("project.classifiers", { project: project.name, proposals: summary.total, truncated: summary.truncated });
-        send({ type: "progress", updated: c.updated, skipped: c.skipped, total: c.total, project: project.name, proposals: summary.total });
+        if (per.yoloPages === 0 && rows.length > 0) send({ type: "warning", project: project.name, message: "no YOLO detections — run YOLO load first" });
+        send({ type: "classifiers", project: project.name, pages: rows.length, yoloPages: per.yoloPages, regionsComputed: per.regionsComputed, proposals: summary.total, truncated: summary.truncated });
       });
     } catch (err) {
       // Per-project guard — see reprocess.ts page-names scope for why (S8 / TILE_015 C1).

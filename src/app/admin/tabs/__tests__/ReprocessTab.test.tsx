@@ -127,6 +127,26 @@ describe("ReprocessTab", () => {
     expect(String(vi.mocked(window.confirm).mock.calls[0][0])).toMatch(/^Run CSI \+ text annotations → Intelligence \+ project analysis on 2 projects — every non-demo project of Acme/u);
   });
 
+  it("[clf visibility] a stage that throws stops the run without printing 'All stages complete.'", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u === "/api/admin/reprocess/scope") return { ok: true, status: 200, json: async () => SCOPE };
+      if (u.startsWith("/api/admin/reprocess?scope=full")) throw new TypeError("Failed to fetch");
+      return ndjson([{ type: "start", projects: 2 }, { type: "done", updated: 3, skipped: 0 }]);
+    });
+    renderTab();
+    await screen.findByText(/"All" runs on 2 projects/u);
+    fireEvent.click(box("full"));
+    fireEvent.click(screen.getByText("Preview"));
+    await screen.findByTestId("reprocess-preview");
+    fireEvent.click(screen.getByText("Run 2 stages"));
+    await waitFor(() => expect(screen.getByText("Stopped at stage 1/2; later stages did not run.")).toBeTruthy());
+    await waitFor(() => expect(screen.queryByTestId("reprocess-preview")).toBeNull()); // the run's finally cleared the preview
+    expect(screen.getByText("Failed: Failed to fetch")).toBeTruthy();
+    expect(screen.queryByText("All stages complete.")).toBeNull();
+    expect(posts("/api/admin/reprocess").map(([u]) => u)).toEqual(["/api/admin/reprocess?scope=full"]);
+  });
+
   it("Select… sends explicit ids and drops demo and other-company projects (root)", async () => {
     renderTab({ isRootAdmin: true });
     await screen.findByText(/"All" runs on 2 projects/u);

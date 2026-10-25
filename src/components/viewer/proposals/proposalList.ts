@@ -55,15 +55,16 @@ function groupRank(key: string): number {
   return i === -1 ? GROUP_ORDER.length : i;
 }
 
+/** `filter` absent = every verdict state (the View All section lists everything). */
 export function buildProposalGroups(
   items: readonly ProposalSummaryItem[],
-  opts: { scope: ProposalScope; pageNumber: number; filter: ProposalFilter; keepId?: string | null },
+  opts: { scope: ProposalScope; pageNumber: number; filter?: ProposalFilter; keepId?: string | null },
 ): ProposalGroup[] {
   const groups = new Map<string, Map<string, ProposalSummaryItem[]>>();
   for (const item of items) {
     if (opts.scope === "page" && item.pageNumber !== opts.pageNumber) continue;
     // The focused row stays listed after its verdict moves it out of the filter, so Undo stays reachable.
-    if (!matchesFilter(item, opts.filter) && item.id !== opts.keepId) continue;
+    if (opts.filter && !matchesFilter(item, opts.filter) && item.id !== opts.keepId) continue;
     const g = groupKeyOf(item);
     const kinds = groups.get(g) ?? new Map<string, ProposalSummaryItem[]>();
     groups.set(g, kinds);

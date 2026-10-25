@@ -65,6 +65,8 @@ export function formatReprocessEvent(e: ReprocessEvent): string | null {
       return `  project analysis saved (${str(e.project)})`;
     case "project-summaries":
       return `  project summaries saved (${str(e.project)})`;
+    case "classifiers": // [clf visibility 2026-10-25] one line per project from the classifiers scope
+      return `  ${str(e.project)}: ${num(e.pages)} pages, ${num(e.yoloPages)} with YOLO, regions computed now on ${num(e.regionsComputed)}, ${num(e.proposals)} proposals${e.truncated ? " (list truncated)" : ""}`;
     case "heartbeat":
       return null; // keep-alive during a long Lambda fan-out
     case "debug":
@@ -74,6 +76,7 @@ export function formatReprocessEvent(e: ReprocessEvent): string | null {
       if ("empty" in e || "failed" in e) {
         line += ` (${num(e.empty)} scanned with no shapes, ${num(e.failed)} failed — failed pages kept their previous shapes)`;
       }
+      if ("proposals" in e) line += ` ${num(e.proposals)} proposals.`;
       return line;
     }
     default:

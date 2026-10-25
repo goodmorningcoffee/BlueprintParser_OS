@@ -1,11 +1,13 @@
 "use client";
 
-// [classifier-builder 2026-10-24] "Proposed tables" in the Tables panel (Auto Parse tab): the classifier's
-// proposals from projectIntelligence.proposals, This page / All pages, filtered by verdict, grouped by
+// [classifier-builder 2026-10-24] "Proposed tables" in the Tables panel (All Tables + Auto Parse tabs): the
+// classifier's proposals from projectIntelligence.proposals, This page / All pages, filtered by verdict, grouped by
 // discipline then kind. Hover a row → soft outline on the canvas; click → go to its page and FOCUS it (green
 // box, other annotations dimmed, viewport fitted; Esc or Clear ends it). Actions on the focused row: Parse
 // this table (prefills the Auto Parse region, records accept), Not a table (reject), Rename (kind menu, free
 // name for "Other schedule"), Undo (deletes the verdict). Demo projects are read-only: no verdict buttons.
+// [clf visibility 2026-10-25] No summary / no items renders a short empty state (it used to render nothing, which
+// read the same as "wrong tab"); the scope defaults to All pages while the current page has no proposals.
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -113,13 +115,20 @@ export default function ProposedTablesSection() {
   const setHover = useProposalFocusStore((s) => s.setHover);
   const focusProposal = useProposalFocusStore((s) => s.focusProposal);
   const clearFocus = useProposalFocusStore((s) => s.clearFocus);
-  const [scope, setScope] = useState<ProposalScope>("page");
+  const [scopeChoice, setScopeChoice] = useState<ProposalScope | null>(null);
   const [filter, setFilter] = useState<ProposalFilter>("unreviewed");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!summary) return null;
+  if (!summary || summary.items.length === 0) {
+    return (
+      <section aria-label="Proposed tables" className="px-1 py-1 text-[10px] text-[var(--muted)]">
+        No proposed tables yet — run Admin › Reprocess › Classifiers (or Intelligence) on this project.
+      </section>
+    );
+  }
+  const scope: ProposalScope = scopeChoice ?? (summary.items.some((i) => i.pageNumber === pageNumber) ? "page" : "all");
   const counts = filterCounts(summary.items, scope, pageNumber);
   const focusedId = focus && focus.publicId === publicId ? focus.proposalId : null;
   const groups = buildProposalGroups(summary.items, { scope, pageNumber, filter, keepId: focusedId });
@@ -176,10 +185,10 @@ export default function ProposedTablesSection() {
           Proposed tables ({summary.total})
         </span>
         <div className="flex gap-1" role="group" aria-label="Scope">
-          <button type="button" aria-pressed={scope === "page"} onClick={() => setScope("page")} className={toggleClass(scope === "page")}>
+          <button type="button" aria-pressed={scope === "page"} onClick={() => setScopeChoice("page")} className={toggleClass(scope === "page")}>
             This page
           </button>
-          <button type="button" aria-pressed={scope === "all"} onClick={() => setScope("all")} className={toggleClass(scope === "all")}>
+          <button type="button" aria-pressed={scope === "all"} onClick={() => setScopeChoice("all")} className={toggleClass(scope === "all")}>
             All pages
           </button>
         </div>

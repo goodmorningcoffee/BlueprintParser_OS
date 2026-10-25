@@ -31,6 +31,7 @@ vi.mock("@/stores/sessionStore", async (importOriginal) => {
 
 import ProposedTablesSection from "@/components/viewer/ProposedTablesSection";
 import ProposalFocusLayer, { ProposalDimGroup } from "@/components/viewer/ProposalFocusLayer";
+import ViewAllProposalsSection from "@/components/viewer/ViewAllProposalsSection";
 import { buildProposalGroups } from "@/components/viewer/proposals/proposalList";
 import { centerDelta, fitScaleForBox } from "@/components/viewer/proposals/proposalViewport";
 import { queryKeys } from "@/queries/queryKeys";
@@ -82,7 +83,7 @@ beforeEach(() => {
   project.value = { publicId: "pub-1", isDemo: false, projectId: 1 };
   useSessionStore.setState({ publicId: "pub-1" } as never);
   useViewerCoreStore.setState({ pageNumber: 1, scale: 1 } as never);
-  useProposalFocusStore.setState({ hover: null, focus: null, fitRequest: 0 });
+  useProposalFocusStore.setState({ hover: null, focus: null, fitRequest: 0, outlinesVisible: false });
   seedProposalsFromBootstrap(qc, "pub-1", { proposals: SUMMARY });
   for (const fn of Object.values(commands)) fn.mockReset();
   persistence.persistFetch.mockReset();
@@ -115,10 +116,26 @@ describe("buildProposalGroups", () => {
 });
 
 describe("ProposedTablesSection", () => {
-  it("renders nothing without a summary", () => {
+  // [clf visibility 2026-10-25] "nothing" used to read like the wrong tab; now it says what to run.
+  it("renders the empty state without a summary and with an empty one", () => {
     seedProposalsFromBootstrap(qc, "pub-1", {});
-    const { container } = mount(<ProposedTablesSection />);
-    expect(container.innerHTML).toBe("");
+    const { unmount } = mount(<ProposedTablesSection />);
+    expect(screen.getByText(/No proposed tables yet — run Admin › Reprocess › Classifiers/u)).toBeInTheDocument();
+    unmount();
+    seedProposalsFromBootstrap(qc, "pub-1", { proposals: { ...SUMMARY, total: 0, items: [] } });
+    mount(<ProposedTablesSection />);
+    expect(screen.getByText(/No proposed tables yet/u)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All pages" })).toBeNull();
+  });
+
+  it("defaults the scope to All pages while the current page has no proposals; a click still wins", () => {
+    useViewerCoreStore.setState({ pageNumber: 3 } as never);
+    mount(<ProposedTablesSection />);
+    const rows = () => screen.getAllByRole("button").filter((b) => b.hasAttribute("data-proposal-row"));
+    expect(screen.getByRole("button", { name: "All pages" })).toHaveAttribute("aria-pressed", "true");
+    expect(rows().map((r) => r.getAttribute("data-proposal-row"))).toEqual(["a", "c", "b", "d"]);
+    fireEvent.click(screen.getByRole("button", { name: "This page" }));
+    expect(screen.getByText("No unreviewed proposals on this page.")).toBeInTheDocument();
   });
 
   it("lists this page's unreviewed proposals as buttons with page and score; toggles scope and filter", () => {
@@ -252,5 +269,68 @@ describe("ProposedTablesSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Parse this table" }));
     expect(commands.acceptTableParseRegion).toHaveBeenCalled();
     expect(persistence.persistFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("ViewAllProposalsSection + ProposalOutlinesLayer", () => {
+  const sheet = (pn: number) => `p.${pn}`;
+  const mountSection = (expanded = true) =>
+    mount(
+      <>
+        <ViewAllProposalsSection isExpanded={expanded} onToggleExpand={() => {}} sheetLabel={sheet} />
+        <div style={{ position: "relative" }}><ProposalFocusLayer pageNumber={1} /></div>
+      </>,
+    );
+
+  it("renders discipline → kind groups with counts over every verdict state; a row click focuses like the Tables list", () => {
+    mountSection();
+    const section = screen.getByText("Proposed tables").closest("div")!.parentElement!;
+    expect(within(section).getByText("6")).toBeInTheDocument(); // summary.total badge
+    const sub = (label: string) => screen.getByText(label, { selector: "span" }).closest("button")!;
+    expect(["Architectural", "Electrical", "Other"].map((l) => sub(l).textContent)).toEqual(["▶Architectural4", "▶Electrical1", "▶Other1"]);
+    fireEvent.click(sub("Architectural"));
+    expect(sub("Door schedule").textContent).toBe("▶Door schedule3"); // a, e (rejected), f (renamed)
+    expect(sub("Window / glazing schedule").textContent).toBe("▶Window / glazing schedule1");
+    fireEvent.click(sub("Door schedule"));
+    const rows = () => Array.from(document.querySelectorAll("[data-proposal-row]")).map((r) => r.getAttribute("data-proposal-row"));
+    expect(rows()).toEqual(["a", "e", "f"]);
+    const rejected = document.querySelector('[data-proposal-row="e"] button') as HTMLElement;
+    expect(rejected.className).toContain("line-through");
+    expect(within(rejected).getByText("not a table")).toBeInTheDocument();
+    fireEvent.click(document.querySelector('[data-proposal-row="a"] button')!);
+    expect(commands.navigateViewerPage).not.toHaveBeenCalled();
+    expect(useProposalFocusStore.getState().focus?.proposalId).toBe("a");
+    expect(document.querySelector('[data-proposal-focus="a"]')).not.toBeNull();
+    fireEvent.click(sub("Window / glazing schedule"));
+    fireEvent.click(document.querySelector('[data-proposal-row="c"] button')!);
+    expect(commands.navigateViewerPage).toHaveBeenCalledWith(2);
+  });
+
+  it("the section eye draws every proposal on the current page as a dashed outline, verdicted ones dimmed, the focused one left to the focus box", () => {
+    mountSection(false);
+    expect(document.querySelector("[data-proposal-outlines]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Draw all proposals on the current page \(4 here\)/u }));
+    expect(useProposalFocusStore.getState().outlinesVisible).toBe(true);
+    const outlines = () => Array.from(document.querySelectorAll("[data-proposal-outline]")) as HTMLElement[];
+    expect(outlines().map((o) => o.getAttribute("data-proposal-outline"))).toEqual(["a", "b", "d", "e"]);
+    const a = outlines()[0];
+    expect(a.style.border).toContain("dashed");
+    expect(a.style.left).toBe("10%");
+    expect(a.style.opacity).toBe("0.9");
+    expect(within(a).getByText("Door schedule")).toBeInTheDocument();
+    const e = outlines()[3];
+    expect(e.style.opacity).toBe("0.35");
+    expect(within(e).getByText("Door schedule · not a table")).toBeInTheDocument();
+    act(() => useProposalFocusStore.getState().focusProposal({ publicId: "pub-1", proposalId: "a", pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6] }));
+    expect(outlines().map((o) => o.getAttribute("data-proposal-outline"))).toEqual(["b", "d", "e"]);
+    fireEvent.click(screen.getByRole("button", { name: "Hide proposal outlines on the canvas" }));
+    expect(document.querySelector("[data-proposal-outlines]")).toBeNull();
+  });
+
+  it("empty summary: the section says what to run and has no eye", () => {
+    seedProposalsFromBootstrap(qc, "pub-1", {});
+    mountSection();
+    expect(screen.getByText(/No proposed tables yet — run Admin › Reprocess › Classifiers/u)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Draw all proposals/u })).toBeNull();
   });
 });

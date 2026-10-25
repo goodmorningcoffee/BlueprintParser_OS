@@ -8,6 +8,8 @@
 //                       condition cannot be extended in place: AnnotationOverlay.tsx and
 //                       render/existingAnnotations.ts are whole-file SHA-256 frozen, so the alpha is applied
 //                       to the overlay as a group instead of per annotation.
+//   ProposalOutlinesLayer (sibling file) is mounted inside this layer's root, beneath the hover / focus boxes,
+//                       so PDFPage.tsx (pinned by several topology freezes) needs no new import.
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { useProposalFocusStore, type ProposalFocusTarget } from "@/stores/proposalFocusStore";
@@ -15,6 +17,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { isEditableKeyboardTarget } from "@/lib/keyboard-target";
 import { centerDelta, findScrollContainer, fitScaleForBox } from "./proposals/proposalViewport";
+import ProposalOutlinesLayer from "./ProposalOutlinesLayer";
 
 export const FOCUS_COLOR = "#00E676";
 export const DIM_ALPHA = 0.25;
@@ -112,6 +115,7 @@ export default function ProposalFocusLayer({ pageNumber }: { pageNumber: number 
       data-proposal-layer=""
       style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
     >
+      <ProposalOutlinesLayer pageNumber={pageNumber} focusedId={focused?.proposalId ?? null} />
       {hovered && (
         <div
           data-proposal-hover={hovered.proposalId}

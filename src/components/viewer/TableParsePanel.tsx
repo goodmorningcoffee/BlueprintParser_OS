@@ -670,6 +670,7 @@ export default function TableParsePanel() {
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2">
         {/* ════════ TAB: All Tables ════════ */}
+        {tableParseTab === "all" && <ProposedTablesSection />}
         {tableParseTab === "all" && (
           <div className="space-y-1">
             {allParsedTables.length === 0 ? (

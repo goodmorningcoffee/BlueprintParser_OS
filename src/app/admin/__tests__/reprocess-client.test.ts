@@ -34,6 +34,13 @@ describe("formatReprocessEvent", () => {
       .toBe("Done! 4 pages updated, 3 skipped. (2 scanned with no shapes, 1 failed — failed pages kept their previous shapes)");
     expect(formatReprocessEvent({ type: "done", updated: 1, skipped: 0, total: 1 })).toBe("Done! 1 pages updated, 0 skipped.");
   });
+  it("[clf visibility] renders the classifiers per-project line and the proposals total on done", () => {
+    expect(formatReprocessEvent({ type: "classifiers", project: "P1", pages: 12, yoloPages: 9, regionsComputed: 9, proposals: 4, truncated: false }))
+      .toBe("  P1: 12 pages, 9 with YOLO, regions computed now on 9, 4 proposals");
+    expect(formatReprocessEvent({ type: "classifiers", project: "P2", pages: 3, yoloPages: 0, regionsComputed: 0, proposals: 0, truncated: true }))
+      .toBe("  P2: 3 pages, 0 with YOLO, regions computed now on 0, 0 proposals (list truncated)");
+    expect(formatReprocessEvent({ type: "done", updated: 2, skipped: 1, total: 3, proposals: 0 })).toBe("Done! 2 pages updated, 1 skipped. 0 proposals.");
+  });
 });
 
 describe("runReprocess", () => {
