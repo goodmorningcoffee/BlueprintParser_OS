@@ -33,17 +33,19 @@ import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from 
 
 const dbUp = inject("dbUp") as boolean;
 
+// [2026-10-25 root hardening] Both methods are ROOT ONLY (global GPU kill-switch + quota bypass).
 async function makeAdmin() {
   const company = await createCompany();
-  const admin = await createUser(company.id, { role: "admin" });
+  const admin = await createUser(company.id, { isRootAdmin: true });
+  const companyAdmin = await createUser(company.id, { role: "admin" });
   const member = await createUser(company.id);
-  return { admin, member };
+  return { admin, companyAdmin, member };
 }
 
 const getReq = () => makeReq("/api/admin/toggles", { method: "GET" });
 const put = (body: unknown) => makeReq("/api/admin/toggles", { method: "PUT", body });
 const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S055 fold: A applied]
-const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S055 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [2026-10-25 root-only]
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -56,8 +58,8 @@ beforeEach(() => {
 });
 
 describe.skipIf(!dbUp)("admin/toggles (TG)", () => {
-  it("TG-1 auth: GET+PUT signed-out→401, member→403", async () => {
-    const { member } = await makeAdmin();
+  it("TG-1 auth: GET+PUT signed-out→401, member→403, company admin→403 (root only)", async () => {
+    const { member, companyAdmin } = await makeAdmin();
     let r = await readJson(await tgGET(getReq()));
     expect(r.status).toBe(401);
     expect(r.body).toEqual(UNAUTH); // [S055 fold: A applied]
@@ -67,7 +69,15 @@ describe.skipIf(!dbUp)("admin/toggles (TG)", () => {
     asUser(member);
     r = await readJson(await tgGET(getReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S055 fold: A applied]
+    expect(r.body).toEqual(ROOT_ONLY);
+    asUser(companyAdmin);
+    for (const call of [tgGET(getReq()), tgPUT(put({ toggle: "sagemaker", enabled: true, password: "x" })), tgPUT(put({ action: "set-password", newPassword: "secret123" }))]) {
+      r = await readJson(await call);
+      expect(r.status).toBe(403);
+      expect(r.body).toEqual(ROOT_ONLY);
+    }
+    expect(h.setToggle).not.toHaveBeenCalled();
+    expect(h.setTogglePassword).not.toHaveBeenCalled();
   });
 
   it("TG-2 GET → {sagemakerEnabled, quotaEnabled, hasPassword}", async () => {

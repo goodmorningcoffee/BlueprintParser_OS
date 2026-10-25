@@ -20,6 +20,8 @@ import { db } from "@/lib/db";
 import { companies, users, projects } from "@/lib/db/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
+import { audit } from "@/lib/audit";
+import type { AuthSession } from "@/lib/api-utils";
 
 // ── usage GET ─────────────────────────────────────────────────────────────────
 
@@ -87,7 +89,7 @@ export async function getUsage(): Promise<unknown> {
 
 // ── usage PUT ─────────────────────────────────────────────────────────────────
 
-export async function updateUsage(rawBody: Record<string, unknown>): Promise<unknown> {
+export async function updateUsage(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   const body = rawBody as { target?: unknown; id?: unknown; action?: unknown; value?: unknown };
   const target = body?.target;
   const id = Number(body?.id);
@@ -96,13 +98,22 @@ export async function updateUsage(rawBody: Record<string, unknown>): Promise<unk
   if ((target !== "company" && target !== "user") || !Number.isInteger(id) || id <= 0) {
     throw new ApiError("VALIDATION", "target ('company'|'user') and a numeric id are required");
   }
+  // [2026-10-25] Every page-limit / window change is a root money decision: one audit row each,
+  // with the value it replaced.
+  const before = target === "company"
+    ? (await db.select({ sagemaker: companies.sagemakerPageLimit, textract: companies.textractPageLimit, windowStart: companies.usageWindowStart }).from(companies).where(eq(companies.id, id)).limit(1))[0]
+    : (await db.select({ sagemaker: users.sagemakerPageLimit, windowStart: users.usageWindowStart }).from(users).where(eq(users.id, id)).limit(1))[0];
+  const record = (after: Record<string, unknown>) =>
+    audit("usage_limit_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { target, id, action, before: before ?? null, after } });
 
   if (action === "reset") {
+    const windowStart = new Date();
     if (target === "company") {
-      await db.update(companies).set({ usageWindowStart: new Date() }).where(eq(companies.id, id));
+      await db.update(companies).set({ usageWindowStart: windowStart }).where(eq(companies.id, id));
     } else {
-      await db.update(users).set({ usageWindowStart: new Date() }).where(eq(users.id, id));
+      await db.update(users).set({ usageWindowStart: windowStart }).where(eq(users.id, id));
     }
+    record({ windowStart });
     return { success: true };
   }
 
@@ -117,6 +128,7 @@ export async function updateUsage(rawBody: Record<string, unknown>): Promise<unk
     } else {
       await db.update(companies).set({ textractPageLimit: value }).where(eq(companies.id, id));
     }
+    record({ [action === "setSagemakerLimit" ? "sagemaker" : "textract"]: value });
     return { success: true };
   }
 
@@ -132,6 +144,7 @@ export async function updateUsage(rawBody: Record<string, unknown>): Promise<unk
       }
     }
     await db.update(users).set({ sagemakerPageLimit: value }).where(eq(users.id, id));
+    record({ sagemaker: value });
     return { success: true };
   }
 

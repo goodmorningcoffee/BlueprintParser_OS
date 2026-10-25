@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
+import { audit } from "@/lib/audit";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrites } from "@/server/api/project-write-capability";
 
@@ -71,5 +72,6 @@ export async function purgeYolo(session: AuthSession): Promise<unknown> {
       .returning({ id: annotations.id }),
   );
 
+  audit("yolo_purged", { userId: session.user.dbId, companyId: session.user.companyId, details: { projects: ids.length, deleted: deleted.length } });
   return { deleted: deleted.length };
 }

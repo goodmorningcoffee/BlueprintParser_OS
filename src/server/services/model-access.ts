@@ -18,6 +18,7 @@ import { models, modelAccess, companies, users } from "@/lib/db/schema";
 import { and, eq, isNull, desc } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
+import { audit } from "@/lib/audit";
 
 export async function getModelAccess(session: AuthSession): Promise<unknown> {
   // Models root uploaded (owned by root's company).
@@ -96,6 +97,7 @@ export async function grantModelAccess(rawBody: Record<string, unknown>, session
   } else {
     await db.insert(modelAccess).values({ modelId, companyId, userId, enabled: true, grantedBy: session.user.dbId });
   }
+  audit("model_access_granted", { userId: session.user.dbId, companyId: session.user.companyId, details: { modelId, targetCompanyId: companyId, targetUserId: userId, existed: !!existing } });
 
   return { success: true };
 }
@@ -113,11 +115,12 @@ export async function revokeModelAccess(rawBody: Record<string, unknown>, sessio
     throw new ApiError("NOT_FOUND", "Model not found");
   }
 
-  await db.delete(modelAccess).where(and(
+  const removed = await db.delete(modelAccess).where(and(
     eq(modelAccess.modelId, modelId),
     eq(modelAccess.companyId, companyId),
     userId === null ? isNull(modelAccess.userId) : eq(modelAccess.userId, userId)
-  ));
+  )).returning({ id: modelAccess.id });
+  audit("model_access_revoked", { userId: session.user.dbId, companyId: session.user.companyId, details: { modelId, targetCompanyId: companyId, targetUserId: userId, removed: removed.length } });
 
   return { success: true };
 }

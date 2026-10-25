@@ -29,6 +29,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { encryptApiKey, maskApiKey, decryptApiKey } from "@/lib/crypto";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+import { audit } from "@/lib/audit";
 // [refactor jul23 P4.1 U11] companies-row FOR-UPDATE write wrapper for the PUT sink.
 import { updatePipelineConfig } from "./company-config";
 
@@ -147,6 +148,7 @@ export async function upsertLlmConfig(session: AuthSession, body: Record<string,
       updates.encryptedApiKey = encrypted;
     }
     await db.update(llmConfigs).set(updates).where(eq(llmConfigs.id, existing.id));
+    audit("llm_config_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { configId: existing.id, targetCompanyId: companyId, targetUserId: userId ?? null, before: { provider: existing.provider, model: existing.model, hasKey: !!existing.encryptedApiKey }, after: { provider, model, hasKey: !!(apiKey || existing.encryptedApiKey) } } });
 
     return {
       id: existing.id,
@@ -180,6 +182,7 @@ export async function upsertLlmConfig(session: AuthSession, body: Record<string,
       config: config || null,
     })
     .returning();
+  audit("llm_config_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { configId: created.id, targetCompanyId: companyId, targetUserId: userId ?? null, before: null, after: { provider, model, hasKey: !!apiKey } } });
 
   return {
     id: created.id,
@@ -220,6 +223,7 @@ export async function deleteLlmConfig(session: AuthSession, body: Record<string,
   }
 
   await db.delete(llmConfigs).where(eq(llmConfigs.id, id));
+  audit("llm_config_deleted", { userId: session.user.dbId, companyId: session.user.companyId, details: { configId: id, targetCompanyId: config.companyId, before: { provider: config.provider, model: config.model, hasKey: !!config.encryptedApiKey } } });
   return { success: true };
 }
 

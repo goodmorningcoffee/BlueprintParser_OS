@@ -18,6 +18,8 @@ import { companies } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import crypto from "crypto";
 import { ApiError } from "@/server/api/envelope";
+import { audit } from "@/lib/audit";
+import type { AuthSession } from "@/lib/api-utils";
 
 export async function getCompanies(): Promise<unknown> {
   const allCompanies = await db.select().from(companies).orderBy(companies.name);
@@ -50,7 +52,7 @@ export async function getCompanies(): Promise<unknown> {
   };
 }
 
-export async function createCompany(rawBody: Record<string, unknown>): Promise<unknown> {
+export async function createCompany(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   const { name } = rawBody as { name?: string };
   if (!name?.trim()) {
     throw new ApiError("VALIDATION", "Company name required");
@@ -70,6 +72,7 @@ export async function createCompany(rawBody: Record<string, unknown>): Promise<u
       subscription: 0,
     })
     .returning();
+  audit("company_created", { userId: session.user.dbId, companyId: session.user.companyId, details: { createdCompanyId: created.id, name: created.name } });
 
   return {
     id: created.id,
@@ -80,7 +83,7 @@ export async function createCompany(rawBody: Record<string, unknown>): Promise<u
   };
 }
 
-export async function updateCompany(rawBody: Record<string, unknown>): Promise<unknown> {
+export async function updateCompany(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   const { companyId, name, regenerateKey } = rawBody as { companyId?: number; name?: string; regenerateKey?: boolean };
   if (!companyId) throw new ApiError("VALIDATION", "companyId required");
 
@@ -88,13 +91,16 @@ export async function updateCompany(rawBody: Record<string, unknown>): Promise<u
   if (name?.trim()) updates.name = name.trim();
   if (regenerateKey) updates.accessKey = crypto.randomBytes(16).toString("hex");
 
+  const [before] = await db.select({ name: companies.name }).from(companies).where(eq(companies.id, companyId)).limit(1);
   await db.update(companies).set(updates).where(eq(companies.id, companyId));
+  // The access key itself is never written to the log — only that it was rotated.
+  audit("company_updated", { userId: session.user.dbId, companyId: session.user.companyId, details: { targetCompanyId: companyId, before: { name: before?.name ?? null }, after: { name: updates.name ?? before?.name ?? null }, accessKeyRegenerated: !!regenerateKey } });
 
   const [updated] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
   return { company: updated };
 }
 
-export async function deleteCompany(rawBody: Record<string, unknown>): Promise<unknown> {
+export async function deleteCompany(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   const { companyId } = rawBody as { companyId?: number };
   if (!companyId) throw new ApiError("VALIDATION", "companyId required");
 
@@ -111,5 +117,6 @@ export async function deleteCompany(rawBody: Record<string, unknown>): Promise<u
   }
 
   await db.delete(companies).where(eq(companies.id, companyId));
+  audit("company_deleted", { userId: session.user.dbId, companyId: session.user.companyId, details: { targetCompanyId: companyId } });
   return { success: true };
 }

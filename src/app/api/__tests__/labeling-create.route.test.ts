@@ -451,20 +451,19 @@ describe.skipIf(!dbUp)("POST /api/labeling/create", () => {
     expect(await rowsFor(quotaProject.id)).toHaveLength(10);
   });
 
-  it("role 'admin' bypasses the rate limit: 10 seeded → still 200 success (FQ-5 other arm)", async () => {
+  it("[2026-10-25] role 'admin' is CAPPED like a member (Label Studio is owner-hosted): 10 seeded → 429, no 11th row", async () => {
     const { company, project } = await createWorld();
     const admin = await createUser(company.id, { role: "admin" });
     await seedSessions(project, 10);
     asUser(admin);
     stubLsEnv();
-    lsMocks.createProject.mockResolvedValueOnce({ id: 91002 });
-    lsMocks.importTasks.mockResolvedValueOnce(undefined);
     const { status, body } = await readJson(
       await post({ projectId: project.publicId }),
     );
-    expect(status).toBe(200);
-    expect(body.success).toBe(true);
-    expect(await rowsFor(project.id)).toHaveLength(11); // the 11th row was created
+    expect(status).toBe(429);
+    expect(body.error).toEqual({ code: "RATE_LIMITED", message: "Daily labeling limit reached (10 projects/day)" });
+    expect(await rowsFor(project.id)).toHaveLength(10);
+    expect(lsMocks.createProject).not.toHaveBeenCalled();
   });
 
   it("owner ruling 2026-10-21: a MEMBER-role root admin bypasses the daily labeling limit (10 seeded → reaches the env check)", async () => {

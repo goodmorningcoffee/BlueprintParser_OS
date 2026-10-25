@@ -83,9 +83,25 @@ beforeEach(() => {
 });
 
 describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-swap)", () => {
+  it("[2026-10-25 root-only] scope=shape-parse with Lambda CV enabled refuses a company admin (403) before any lease or fan-out; with Lambda off it runs locally", async () => {
+    const { company, project } = await createWorld();
+    const companyAdmin = await createUser(company.id, { role: "admin" });
+    await pageWithOldShapes(project.id, 1);
+    lambdaMocks.isLambdaCvEnabled.mockReturnValue(true);
+    asUser(companyAdmin);
+    const refused = await POST(makeReq("/api/admin/reprocess?scope=shape-parse", { method: "POST" }));
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error).toEqual({ code: "FORBIDDEN", message: "Root admin only: this scope fans out owner-billed Lambda invocations" });
+    expect(lambdaMocks.fanOutShapeParse).not.toHaveBeenCalled();
+    lambdaMocks.isLambdaCvEnabled.mockReturnValue(false);
+    const lines = await runShapeParse();
+    expect(lines.find((l) => l.type === "config")).toEqual({ type: "config", useLambda: false });
+    expect(lines.find((l) => l.type === "done")).toBeTruthy();
+  });
+
   it("OWNER SCENARIO: fan-out returns zero results with every page failed → NOT success; local fallback writes the page", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     await pageWithOldShapes(project.id, 1);
     const key = `${project.dataUrl}/pages/page_0001.png`;
     lambdaMocks.isLambdaCvEnabled.mockReturnValue(true);
@@ -112,7 +128,7 @@ describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-s
 
   it("fan-out AND local fallback both fail → page counted failed, previous keynotes + annotations untouched", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     await pageWithOldShapes(project.id, 1);
     const key = `${project.dataUrl}/pages/page_0001.png`;
     lambdaMocks.isLambdaCvEnabled.mockReturnValue(true);
@@ -132,7 +148,7 @@ describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-s
 
   it("a failure MID-PROJECT leaves that page's previous rows intact while the other pages are swapped", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     await pageWithOldShapes(project.id, 1);
     await pageWithOldShapes(project.id, 2);
     await pageWithOldShapes(project.id, 3);
@@ -156,7 +172,7 @@ describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-s
 
   it("a page the fan-out CONFIRMED scanned with no shapes is cleared (keynotes NULL, rows removed) and counted empty", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     await pageWithOldShapes(project.id, 1);
     const key = `${project.dataUrl}/pages/page_0001.png`;
     lambdaMocks.isLambdaCvEnabled.mockReturnValue(true);
@@ -175,7 +191,7 @@ describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-s
 
   it("Debug (?trace=1) streams Lambda config, each invocation, and rows written per page; off by default", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     await createPage(project.id, 1, {});
     const key = `${project.dataUrl}/pages/page_0001.png`;
     lambdaMocks.isLambdaCvEnabled.mockReturnValue(true);
@@ -210,7 +226,7 @@ describe.skipIf(!dbUp)("admin reprocess — shape-parse persists (compute-then-s
 describe.skipIf(!dbUp)("admin reprocess — other scopes persist", () => {
   it("full: CSI write re-applies the loaded models' CURRENT class config and drops stale YOLO-class codes", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     const [model] = await db.insert(models).values({
       companyId: company.id, name: `doors-${project.id}`, type: "yolo", s3Path: "models/x.pt",
       config: { classCsiCodes: { door: ["08 11 13"] } } as never,
@@ -241,7 +257,7 @@ describe.skipIf(!dbUp)("admin reprocess — other scopes persist", () => {
 
   it("page-names: a user-typed page name survives; the drawing number is still refreshed", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     const page = await createPage(project.id, 1, {
       name: "Owner's renamed sheet", drawingNumber: "X-9", textractData: { lines: [], words: [] } as never,
     });
@@ -258,7 +274,7 @@ describe.skipIf(!dbUp)("admin reprocess — other scopes persist", () => {
 
   it("intelligence: writes pageIntelligence per page and the debug stream reports the keys written", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     const page = await createPage(project.id, 1, { textractData: { lines: [], words: [] } as never, rawText: "" });
 
     asUser(admin);

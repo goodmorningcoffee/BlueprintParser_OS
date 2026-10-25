@@ -14,6 +14,9 @@ import {
   verifyTogglePassword,
 } from "@/lib/toggles";
 import { ApiError } from "@/server/api/envelope";
+import { audit } from "@/lib/audit";
+import type { AuthSession } from "@/lib/api-utils";
+import { requireVerifiedRoot } from "@/server/api/root-authority";
 
 export async function getTogglesStatus(): Promise<unknown> {
   const toggles = await getToggles();
@@ -26,7 +29,10 @@ export async function getTogglesStatus(): Promise<unknown> {
   };
 }
 
-export async function updateToggle(body: Record<string, unknown>): Promise<unknown> {
+export async function updateToggle(body: Record<string, unknown>, session: AuthSession): Promise<unknown> {
+  // [2026-10-25] Root only (verified 2FA) — the shell is auth:"root"; this is the in-service re-check.
+  requireVerifiedRoot(session);
+  const actor = { userId: session.user.dbId, companyId: session.user.companyId };
   // Set or change the toggle password
   if (body.action === "set-password") {
     const { newPassword, currentPassword } = body as { newPassword?: string; currentPassword?: string };
@@ -37,6 +43,7 @@ export async function updateToggle(body: Record<string, unknown>): Promise<unkno
     if (!result.success) {
       throw new ApiError("UNAUTHORIZED", result.error ?? "Unauthorized");
     }
+    audit("toggle_password_changed", actor);
     return { success: true };
   }
 
@@ -63,7 +70,9 @@ export async function updateToggle(body: Record<string, unknown>): Promise<unkno
   }
 
   const key = toggle === "sagemaker" ? "sagemakerEnabled" : "quotaEnabled";
+  const before = await getToggles(true);
   const updated = await setToggle(key, enabled);
+  audit("toggle_changed", { ...actor, details: { toggle: key, before: before[key], after: updated[key] } });
 
   return {
     success: true,

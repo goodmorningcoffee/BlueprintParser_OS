@@ -31,6 +31,8 @@ import {
   PROVIDER_JOB_STATUS_AUTHORITIES,
   PUBLIC_DEMO_SHARED_DEPENDENCIES,
   PUBLIC_DEMO_SURFACES,
+  ROOT_AUDITED_MUTATIONS,
+  ROOT_ONLY_SURFACES,
   ROOT_TWO_FACTOR_POLICY,
   TOMBSTONED_HTTP_SURFACES,
 } from "./project-security-policy-manifest.mjs";
@@ -9665,6 +9667,93 @@ async function validateRootTwoFactorPolicy() {
   }
 }
 
+/**
+ * [2026-10-25 root hardening] The root-only list and the audit list. (a) Every ROOT_ONLY_SURFACES
+ * method is a shell whose auth literal is "root" (default) or the declared lower level with a named
+ * service function that re-checks the verified-root claim (requireVerifiedRoot / isVerifiedRoot or
+ * the projected session.user.isRootAdmin); (b) no route shell outside the list carries auth:"root"
+ * (so the list IS the inventory); (c) every ROOT_AUDITED_MUTATIONS function contains its literal
+ * audit("<action>" call.
+ */
+async function validateRootOnlySurfaces() {
+  const listed = new Set();
+  for (const surface of ROOT_ONLY_SURFACES) {
+    let route;
+    try {
+      route = await parsed(surface.routeFile);
+    } catch {
+      report("ROOT_ONLY_SURFACE_MISSING", `${surface.route} must exist as a route shell`, surface.routeFile);
+      continue;
+    }
+    const shellAuth = surface.shellAuth ?? "root";
+    for (const method of surface.methods) {
+      listed.add(`${surface.routeFile}:${method}`);
+      if (routeAuthLiteral(route, method) !== shellAuth) {
+        report(
+          "ROOT_ONLY_SURFACE_AUTH_DRIFT",
+          `${method} ${surface.route} must be an auth:"${shellAuth}" shell`,
+          surface.routeFile,
+          exportedRouteHandler(route, method) ?? route.source,
+        );
+      }
+    }
+    if (surface.inService) {
+      const [serviceFile, serviceFunction] = surface.inService;
+      const service = await parsed(serviceFile);
+      const fn = functionFor(service, serviceFunction);
+      const text = fn ? fn.getText(service.source) : "";
+      const checks =
+        hasCall(fn, ["requireVerifiedRoot", "isVerifiedRoot"]) ||
+        textHasAll(text, ["session.user.isRootAdmin"]) ||
+        textHasAll(text, ["args.isRootAdmin"]);
+      if (!fn || !checks) {
+        report(
+          "ROOT_ONLY_IN_SERVICE_DRIFT",
+          `${serviceFunction} must re-check the verified-root claim in service (requireVerifiedRoot / isVerifiedRoot / session.user.isRootAdmin)`,
+          serviceFile,
+          fn ?? service.source,
+        );
+      }
+    } else if (shellAuth !== "root") {
+      report("ROOT_ONLY_SURFACE_AUTH_DRIFT", `${surface.route}: a non-root shell must name its in-service root check`, surface.routeFile);
+    }
+  }
+  const routeFiles = (await walk("src/app/api")).filter((file) => file.endsWith("/route.ts")).sort();
+  for (const routeFile of routeFiles) {
+    const route = await parsed(routeFile);
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+      if (routeAuthLiteral(route, method) === "root" && !listed.has(`${routeFile}:${method}`)) {
+        report(
+          "ROOT_ONLY_SURFACE_UNLISTED",
+          `${method} ${routeFile} is auth:"root" but missing from ROOT_ONLY_SURFACES (the root-only inventory)`,
+          routeFile,
+          exportedRouteHandler(route, method) ?? route.source,
+        );
+      }
+    }
+  }
+  for (const entry of ROOT_AUDITED_MUTATIONS) {
+    const service = await parsed(entry.serviceFile);
+    const fn = functionFor(service, entry.serviceFunction);
+    // Either the fire-and-forget helper or an in-transaction auditLog insert naming the action.
+    const auditTexts = [
+      `audit("${entry.action}"`,
+      `action: "${entry.action}"`,
+      ...(entry.actionConstant ? [`audit(${entry.actionConstant}`, `action: ${entry.actionConstant}`] : []),
+    ];
+    const fnText = fn ? fn.getText(service.source) : "";
+    const actionDeclared = !entry.actionConstant || textHasAll(service.source.getText(), [`${entry.actionConstant} = "${entry.action}"`]);
+    if (!fn || !actionDeclared || !auditTexts.some((marker) => fnText.includes(marker))) {
+      report(
+        "ROOT_MUTATION_UNAUDITED",
+        `${entry.serviceFunction} must write audit("${entry.action}", …)`,
+        entry.serviceFile,
+        fn ?? service.source,
+      );
+    }
+  }
+}
+
 async function validateProviderJobStatusAuthorities() {
   for (const authority of PROVIDER_JOB_STATUS_AUTHORITIES) {
     const route = await parsed(authority.routeFile);
@@ -14625,6 +14714,7 @@ await validateMiddlewareRateLimitIdentityPolicy();
 await validateEdgeClientIpPolicy();
 await validateProviderJobStatusAuthorities();
 await validateRootTwoFactorPolicy();
+await validateRootOnlySurfaces();
 await validateLabelingExternalAuthority();
 await validateTriggerInventory();
 await validateCanonicalDbErrorMapping();

@@ -21,5 +21,5 @@ export const GET = defineRoute({
 export const PUT = defineRoute({
   auth: "root",
   body: zLooseBody,
-  handler: ({ body }) => updateUsage(body),
+  handler: ({ body, session }) => updateUsage(body, session!),
 });

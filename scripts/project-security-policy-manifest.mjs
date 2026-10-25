@@ -1338,3 +1338,108 @@ export const ROOT_TWO_FACTOR_POLICY = {
     routeFile: `src/app/api${surface.route.slice("/api".length)}/route.ts`,
   })),
 };
+
+/**
+ * [2026-10-25 root hardening] THE root-only list. Owner rule: only root — with 2FA — may change
+ * quotas / limits / usage caps, compute / infra / GPU settings and cost-bearing app settings, grant
+ * or revoke model or feature access, change roles to admin, or trigger owner-billed bulk spend.
+ * Every entry is either a shell with `auth: "root"` (the shell goes through requireVerifiedRoot) or
+ * a shell at a lower level whose named service function re-checks the verified-root claim in
+ * service (`inService`: the function calls requireVerifiedRoot / isVerifiedRoot, or reads the
+ * projected `session.user.isRootAdmin`, which is the same claim — server/api/root-authority.ts).
+ * A `conditional` entry is root-only for the condition named, admin-level otherwise.
+ */
+const rootOnly = (route, methods, extra = {}) => ({
+  route,
+  methods,
+  routeFile: `src/app/api${route.slice("/api".length)}/route.ts`,
+  ...extra,
+});
+export const ROOT_ONLY_SURFACES = [
+  // quotas, limits, usage caps
+  rootOnly("/api/admin/quota-overrides", ["GET", "PUT"], { inService: ["src/server/services/quota-overrides.ts", "putQuotaOverride"] }),
+  rootOnly("/api/admin/usage", ["GET", "PUT"]),
+  rootOnly("/api/admin/toggles", ["GET", "PUT"], { inService: ["src/server/services/toggles.ts", "updateToggle"] }),
+  // compute / infra / GPU settings and cost-bearing app settings
+  rootOnly("/api/admin/upload-compute", ["GET", "PUT"], { inService: ["src/server/services/upload-compute.ts", "putUploadComputePreset"] }),
+  rootOnly("/api/admin/yolo-instance", ["GET", "PUT"], { inService: ["src/server/services/yolo-instance.ts", "putYoloInstanceType"] }),
+  rootOnly("/api/admin/yolo-instance/options", ["GET"]),
+  rootOnly("/api/admin/yolo-runtime", ["PUT"], { inService: ["src/server/services/yolo-instance.ts", "putYoloMaxRuntime"] }),
+  rootOnly("/api/admin/tiles", ["GET", "PUT"], { inService: ["src/server/services/tiles-setting.ts", "putTilesSetting"] }),
+  rootOnly("/api/admin/app-settings", ["PUT"], { shellAuth: "admin", inService: ["src/server/services/app-settings.ts", "putAppSetting"] }),
+  // model / feature access and roles
+  rootOnly("/api/admin/model-access", ["GET", "POST", "DELETE"]),
+  rootOnly("/api/admin/models", ["POST"], { shellAuth: "admin", inService: ["src/server/services/models.ts", "registerModel"] }),
+  rootOnly("/api/admin/models", ["PATCH"], { shellAuth: "admin", inService: ["src/server/services/models.ts", "shareModel"], conditional: "enabling access (non-root may only disable its own)" }),
+  rootOnly("/api/admin/users", ["POST"], { shellAuth: "admin", inService: ["src/server/services/admin-users.ts", "createUser"], conditional: "role admin" }),
+  rootOnly("/api/admin/users", ["PUT"], { shellAuth: "admin", inService: ["src/server/services/admin-users.ts", "updateUser"], conditional: "role / company moves" }),
+  rootOnly("/api/admin/users/reset-password", ["POST"], { shellAuth: "admin", inService: ["src/server/services/users-reset-password.ts", "resetUserPassword"] }),
+  rootOnly("/api/admin/companies", ["GET", "POST", "PUT", "DELETE"]),
+  // owner-billed spend
+  rootOnly("/api/yolo/run", ["POST"], { shellAuth: "none", inService: ["src/server/services/yolo-root-gate.ts", "requireYoloRoot"] }),
+  rootOnly("/api/yolo/load", ["POST"], { shellAuth: "none", inService: ["src/server/services/yolo-root-gate.ts", "requireYoloRoot"] }),
+  rootOnly("/api/yolo/run-batch", ["POST"]),
+  rootOnly("/api/pages/textract-rerun", ["POST"], { inService: ["src/server/services/pages.ts", "rerunPageTextract"] }),
+  rootOnly("/api/admin/reprocess", ["POST"], { shellAuth: "admin", inService: ["src/server/services/reprocess-admission.ts", "admitReprocess"], conditional: "scope=shape-parse with Lambda CV enabled" }),
+  rootOnly("/api/processing/dev", ["POST"], { shellAuth: "none", inService: ["src/server/services/processing-routes.ts", "processingDev"] }),
+  rootOnly("/api/admin/yolo-purge", ["DELETE"]),
+  rootOnly("/api/admin/yolo-status", ["GET"]),
+  rootOnly("/api/admin/yolo-debug", ["GET"]),
+  rootOnly("/api/admin/stuck-jobs/stop", ["POST"], { inService: ["src/server/services/stuck-jobs.ts", "stopStuckExecution"] }),
+  rootOnly("/api/admin/stuck-jobs/force-release", ["POST"], { inService: ["src/server/services/stuck-jobs.ts", "forceReleaseStuckLeases"] }),
+  rootOnly("/api/admin/stuck-jobs/yolo-stop", ["POST"]),
+  rootOnly("/api/admin/stuck-jobs/yolo-fix", ["POST"]),
+  rootOnly("/api/admin/classifiers/fit", ["POST"]),
+  // cross-company data / security
+  rootOnly("/api/admin/projects", ["GET"]),
+  rootOnly("/api/admin/project-duplicates/scan", ["POST"]),
+  rootOnly("/api/admin/project-duplicates/delete", ["POST"]),
+  rootOnly("/api/admin/duplicates/delete-hidden", ["POST"]),
+  rootOnly("/api/admin/annotation-cleanup", ["GET", "POST"]),
+  rootOnly("/api/admin/logs/accounts", ["GET"]),
+  rootOnly("/api/admin/logs/alert-count", ["GET"]),
+  rootOnly("/api/admin/logs/engagement", ["GET"]),
+  rootOnly("/api/admin/logs/monitor", ["GET"]),
+  rootOnly("/api/admin/logs/security", ["GET"]),
+  rootOnly("/api/admin/logs/visitors", ["GET"]),
+  rootOnly("/api/admin/logs/ban-ip", ["POST"]),
+  rootOnly("/api/admin/logs/unban-ip", ["POST"]),
+  rootOnly("/api/auth/2fa/disable", ["POST"]),
+  rootOnly("/api/auth/2fa/backup-codes", ["POST"]),
+];
+
+/**
+ * [2026-10-25] Every root (or cost-relevant) mutation writes one audit_log row: the named service
+ * function must contain a literal `audit("<action>"` call. Who / what / before → after ride in
+ * `details` (checked by reading, not pinned here).
+ */
+export const ROOT_AUDITED_MUTATIONS = [
+  ["src/server/services/toggles.ts", "updateToggle", "toggle_changed"],
+  ["src/server/services/admin-usage.ts", "updateUsage", "usage_limit_changed"],
+  ["src/server/services/app-settings.ts", "putAppSetting", "app_setting_changed"],
+  ["src/server/services/quota-overrides.ts", "putQuotaOverride", "quota_override_changed", "QUOTA_OVERRIDE_AUDIT_ACTION"],
+  ["src/server/services/upload-compute.ts", "putUploadComputePreset", "upload_compute_preset_changed", "UPLOAD_COMPUTE_AUDIT_ACTION"],
+  ["src/server/services/yolo-instance.ts", "putYoloInstanceType", "yolo_instance_type_changed", "YOLO_INSTANCE_AUDIT_ACTION"],
+  ["src/server/services/yolo-instance.ts", "putYoloMaxRuntime", "yolo_max_runtime_changed", "YOLO_RUNTIME_AUDIT_ACTION"],
+  ["src/server/services/tiles-setting.ts", "putTilesSetting", "tiles_setting_changed", "TILES_AUDIT_ACTION"],
+  ["src/server/services/companies.ts", "createCompany", "company_created"],
+  ["src/server/services/companies.ts", "updateCompany", "company_updated"],
+  ["src/server/services/companies.ts", "deleteCompany", "company_deleted"],
+  ["src/server/services/model-access.ts", "grantModelAccess", "model_access_granted"],
+  ["src/server/services/model-access.ts", "revokeModelAccess", "model_access_revoked"],
+  ["src/server/services/models.ts", "shareModel", "model_access_shared"],
+  ["src/server/services/admin-users.ts", "createUser", "user_created"],
+  ["src/server/services/admin-users.ts", "updateUser", "user_updated"],
+  ["src/server/services/admin-users.ts", "deleteUser", "user_deleted"],
+  ["src/server/services/users-reset-password.ts", "resetUserPassword", "user_password_force_reset"],
+  ["src/server/services/change-password.ts", "changePassword", "password_changed"],
+  ["src/server/services/yolo-admin.ts", "purgeYolo", "yolo_purged"],
+  ["src/server/services/llm-config.ts", "upsertLlmConfig", "llm_config_changed"],
+  ["src/server/services/llm-config.ts", "deleteLlmConfig", "llm_config_deleted"],
+  ["src/server/services/company-settings.ts", "putPipelineConfig", "pipeline_config_changed"],
+  ["src/server/services/reprocess-admission.ts", "admitReprocess", "admin.reprocess"],
+  ["src/server/services/labeling.ts", "createLabelingSessions", "labeling_session_created"],
+  ["src/server/services/pages.ts", "rerunPageTextract", "textract_rerun"],
+  ["src/server/services/root-two-factor.ts", "disableRootTwoFactor", "root_2fa_disabled"],
+  ["src/server/services/root-two-factor.ts", "revokeRootTwoFactorSessions", "root_2fa_sessions_revoked"],
+].map(([serviceFile, serviceFunction, action, actionConstant]) => ({ serviceFile, serviceFunction, action, actionConstant }));

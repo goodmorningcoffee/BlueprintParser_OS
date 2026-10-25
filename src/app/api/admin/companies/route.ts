@@ -21,17 +21,17 @@ export const GET = defineRoute({
 export const POST = defineRoute({
   auth: "root",
   body: zLooseBody,
-  handler: ({ body }) => createCompany(body),
+  handler: ({ body, session }) => createCompany(body, session!),
 });
 
 export const PUT = defineRoute({
   auth: "root",
   body: zLooseBody,
-  handler: ({ body }) => updateCompany(body),
+  handler: ({ body, session }) => updateCompany(body, session!),
 });
 
 export const DELETE = defineRoute({
   auth: "root",
   body: zLooseBody,
-  handler: ({ body }) => deleteCompany(body),
+  handler: ({ body, session }) => deleteCompany(body, session!),
 });

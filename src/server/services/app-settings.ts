@@ -21,6 +21,7 @@ import { YOLO_INSTANCE_SETTING_KEY, YOLO_MAX_RUNTIME_SETTING_KEY } from "@/lib/y
 import { UPLOAD_COMPUTE_SETTING_KEY } from "@/lib/upload-compute";
 import { TILES_SETTING_KEY } from "@/lib/tiles/settings";
 import { isRootTwoFactorSettingKey } from "@/lib/root-two-factor-claims";
+import { audit } from "@/lib/audit";
 
 // [2026-10-21] The quota-overrides document lives in this table but is ROOT-ONLY to read and is
 // written only through /api/admin/quota-overrides (strict validation + one audit row per change).
@@ -89,6 +90,8 @@ export async function putAppSetting(rawBody: Record<string, unknown>, session: A
   } else {
     await db.insert(appSettings).values({ key, value: value as Record<string, unknown>, updatedBy: session.user.dbId });
   }
+  // [2026-10-25] Root mutation → audit row with the value it replaced.
+  audit("app_setting_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { key, before: existing?.value ?? null, after: value } });
 
   return { success: true };
 }

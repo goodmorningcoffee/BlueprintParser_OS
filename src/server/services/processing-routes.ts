@@ -27,6 +27,7 @@ import type { Block } from "@aws-sdk/client-textract";
 import { logger } from "@/lib/logger";
 import { processProject } from "@/lib/processing";
 import { ApiError } from "@/server/api/envelope";
+import { requireVerifiedRoot } from "@/server/api/root-authority";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
 import { zPublicId } from "@/server/api/schemas";
@@ -190,6 +191,9 @@ export async function processingDev(rawBody: Record<string, unknown>): Promise<u
   if (!session?.user) {
     throw new ApiError("UNAUTHORIZED", "Unauthorized");
   }
+  // [2026-10-25] Even with the flag on, running the pipeline in the web task (Textract per page +
+  // Lambda shape-parse, no quota) is ROOT ONLY (verified 2FA).
+  requireVerifiedRoot(session);
 
   if (!projectId) {
     throw new ApiError("VALIDATION", "projectId required");
