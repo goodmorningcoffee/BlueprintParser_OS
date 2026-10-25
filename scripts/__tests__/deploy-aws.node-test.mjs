@@ -56,6 +56,9 @@ case "$service $action" in
   "pricing get-products")
     if [ -n "\${MOCK_PRICES:-}" ]; then cat "\${MOCK_PRICES}"; else exit 254; fi ;;
   "lambda get-account-settings") echo "1000" ;;
+  "lambda update-function-code") echo "codesha256" ;;
+  "lambda wait") : ;;
+  "lambda get-function") echo "\${MOCK_LAMBDA_STATUS:-Successful}" ;;
   "acm list-certificates") printf '{"CertificateSummaryList":[{"CertificateArn":"${CERT_ARN}","DomainName":"*.${DOMAIN}","Status":"%s"}]}\\n' "\${MOCK_CERT_STATUS:-ISSUED}" ;;
   "acm describe-certificate")
     if [ -n "$query" ]; then echo "\${MOCK_CERT_STATUS:-ISSUED}"; else
@@ -433,6 +436,72 @@ test("release stops before update-service when the schema check fails; the old r
   const lines = await logLines();
   assert.ok(!lines.some((l) => l.includes("ecs update-service")));
 });
+
+test("lambda: amd64 single-manifest build → push → update-function-code on :latest → wait, and the head is recorded", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  const result = runTool(["lambda", "--yes", "--allow-unverified"]);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const lines = await logLines();
+  const build = lines.find((l) => l.startsWith("docker build") && l.includes("Dockerfile.lambda"));
+  assert.ok(build, "built the Lambda image");
+  assert.match(build, /--platform linux\/amd64/u);
+  assertBefore(lines, "docker push", "lambda update-function-code");
+  const update = lines.find((l) => l.includes("lambda update-function-code"));
+  assert.match(update, /--function-name beaver-cv-pipeline/u);
+  assert.match(update, /beaver-cv-lambda:latest/u, "the tag lambda.tf declares, so terraform sees no drift");
+  assertBefore(lines, "lambda update-function-code", "lambda wait function-updated-v2");
+  assert.ok(!lines.some((l) => l.includes("deploy.sh publish")), "the app image is not touched");
+  assert.equal((await readFile(path.join(home, ".blueprintparser-deploy", "lambda-head"), "utf8")).trim(), head);
+});
+
+test("lambda refuses an image index before touching the function", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  const result = runTool(["lambda", "--yes", "--allow-unverified"], { MOCK_LAMBDA_MEDIA_TYPE: "application/vnd.oci.image.index.v1+json" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /image INDEX/u);
+  assert.ok(!(await logLines()).some((l) => l.includes("lambda update-function-code")));
+});
+
+test("lambda honours the GREEN_HEADS gate", async () => {
+  await resetState();
+  await writeFile(tfvarsPath, tfvars("live"));
+  await writeFile(path.join(fixture, "GREEN_HEADS"), "0000000000000000000000000000000000000000 nothing\n");
+  const refused = runTool(["lambda", "--yes"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /GREEN_HEADS/u);
+  assert.ok(!(await logLines()).some((l) => l.startsWith("docker build")));
+});
+
+for (const [label, lambdaHead, expectUpdate] of [
+  ["unchanged since the recorded Lambda head → no Lambda build", "HEAD", false],
+  ["changed (recorded head unknown here) → Lambda rebuilt after the app rolls", "f".repeat(40), true],
+]) {
+  test(`release ships the CV Lambda only when its inputs changed: ${label}`, async () => {
+    await resetState();
+    const head = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+    await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
+    await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
+      JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
+    await writeFile(path.join(home, ".blueprintparser-deploy", "lambda-head"), `${lambdaHead === "HEAD" ? head : lambdaHead}\n`);
+    await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
+    await writeFile(path.join(fixture, "state", "rev"), "7");
+    await writeFile(path.join(fixture, "state", "desired"), "1");
+    await writeFile(path.join(fixture, "state", "running"), "1");
+    const result = runTool(["release", "--yes", "--allow-unverified"], { MOCK_PUBLISH_DIGEST: NEXT_DIGEST, MOCK_REGISTERED_DIGEST: NEXT_DIGEST });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const lines = await logLines();
+    if (expectUpdate) {
+      assertBefore(lines, "ecs update-service", "lambda update-function-code");
+      assert.equal((await readFile(path.join(home, ".blueprintparser-deploy", "lambda-head"), "utf8")).trim(), head);
+    } else {
+      assert.ok(!lines.some((l) => l.includes("lambda update-function-code")), "no Lambda update");
+      assert.ok(!lines.some((l) => l.startsWith("docker build") && l.includes("Dockerfile.lambda")), "no Lambda build");
+    }
+  });
+}
 
 test("release honours the GREEN_HEADS gate unless --allow-unverified", async () => {
   await resetState();
