@@ -242,6 +242,17 @@ variable "root_admin_email" {
   }
 }
 
+variable "root_2fa_enforce" {
+  description = "Mandatory root two-factor. \"1\" (default) enforces; \"0\" is the emergency off-switch and must never be left on after an incident"
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = contains(["0", "1"], var.root_2fa_enforce)
+    error_message = "root_2fa_enforce must be \"1\" (enforce) or \"0\" (emergency off-switch)."
+  }
+}
+
 variable "label_studio_instance_generation" {
   description = "Operator-controlled Label Studio database generation; increment whenever the provider database is reinitialized or replaced, even if its EFS filesystem survives"
   type        = string

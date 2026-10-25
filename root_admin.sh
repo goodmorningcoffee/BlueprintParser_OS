@@ -13,6 +13,12 @@ set -euo pipefail
 # Usage:  ./root_admin.sh                 interactive menu
 #         ./root_admin.sh 2fa-reset <email>
 #         ./root_admin.sh help
+#
+# [2026-10-25] Root two-factor is MANDATORY in the app: a promoted root holds no access until it
+# has enrolled an authenticator app (password + code) in /admin; 2fa-reset returns an account to
+# that enrollment gate (it does NOT grant password-only root). Every mutation here also inserts an
+# app audit_log row (action root_admin_sh_<operation>) inside the same transaction. The only
+# password-only root path is the emergency task-definition switch ROOT_2FA_ENFORCE=0.
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly DEPLOY_ENV_FILE="${BP_ROOT_ADMIN_ENV_FILE:-${SCRIPT_DIR}/.deploy.env}"
@@ -331,7 +337,11 @@ run_fixed_operation() {
     if(spec.mutation&&result.rowCount!==1){
       throw new Error('safety check refused the update: expected exactly one changed user row (demotion also requires another root admin; 2fa-reset requires an existing enrollment)');
     }
-    if(spec.mutation)await client.query('COMMIT');
+    if(spec.mutation){
+      // [2026-10-25] Every break-glass mutation leaves an app audit_log row in the same transaction.
+      await client.query('INSERT INTO public.audit_log (action, user_id, company_id, details) SELECT \\\$1, id, company_id, \\\$2::jsonb FROM public.users WHERE email = \\\$3',['root_admin_sh_'+operation,JSON.stringify({operation,via:'ecs-exec',email}),email]);
+      await client.query('COMMIT');
+    }
     for(const row of result.rows||[]){
       console.log(JSON.stringify({email:row.email,isRootAdmin:row.is_root_admin===true}));
     }
@@ -372,8 +382,12 @@ show_help() {
   echo -e "  ${CYAN}./root_admin.sh${NC}                      interactive menu (choices 1-5 below)"
   echo -e "  ${CYAN}./root_admin.sh 2fa-reset <email>${NC}    delete that root user's two-factor (TOTP)"
   echo -e "                                        enrollment row (app_settings key root-2fa:<id>)"
-  echo -e "                                        after typing RESET-2FA; the next sign-in needs"
-  echo -e "                                        no code and the user can enrol again in /admin."
+  echo -e "                                        after typing RESET-2FA. Root 2FA is MANDATORY:"
+  echo -e "                                        the next sign-in lands on the /admin enrollment"
+  echo -e "                                        gate (account password + authenticator app) and"
+  echo -e "                                        holds NO access until enrolled and verified."
+  echo -e "                                        Rotate the account password at the same time if"
+  echo -e "                                        it may be known to anyone else."
   echo -e "  ${CYAN}./root_admin.sh help${NC}                 this text"
   echo ""
   echo -e "  1  List user emails and root-admin status"

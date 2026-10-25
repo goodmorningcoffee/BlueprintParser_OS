@@ -20,6 +20,7 @@ import { sendPasswordResetEmail } from "@/lib/email";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
+import { revokeRootTwoFactorSessions } from "@/server/services/root-two-factor";
 
 export async function forgotPassword(rawBody: Record<string, unknown>): Promise<unknown> {
   const { email } = rawBody as { email?: unknown };
@@ -77,7 +78,7 @@ export async function resetPassword(rawBody: Record<string, unknown>): Promise<u
 
   // Hash the incoming token and find matching user
   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-  const [user] = await db.select({ id: users.id, email: users.email, companyId: users.companyId })
+  const [user] = await db.select({ id: users.id, email: users.email, companyId: users.companyId, isRootAdmin: users.isRootAdmin })
     .from(users)
     .where(and(
       eq(users.passwordResetToken, hashedToken),
@@ -97,6 +98,8 @@ export async function resetPassword(rawBody: Record<string, unknown>): Promise<u
     passwordResetExpires: null,
   }).where(eq(users.id, user.id));
 
+  // [2026-10-25] A root's verified sessions must re-prove a code after an email-token reset.
+  if (user.isRootAdmin) await revokeRootTwoFactorSessions(user.id, "password_reset");
   audit("password_reset", { userId: user.id, companyId: user.companyId, details: { email: user.email } });
 
   return { success: true };

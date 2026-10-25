@@ -11,7 +11,7 @@ import { trustedClientIp } from "@/lib/trusted-client-ip";
 // encrypted token; the session projects isRootAdmin=false while a root login is still unverified.
 // Claim model: lib/root-two-factor-claims.ts; storage + the server-side verified marker:
 // server/services/root-two-factor.ts.
-import { projectRootAuthority } from "@/lib/root-two-factor-claims";
+import { projectRootAuthority, type RootTwoFactorGate } from "@/lib/root-two-factor-claims";
 import {
   refreshJwtSessionClaims,
   stampRootTwoFactorAtSignIn,
@@ -46,9 +46,12 @@ declare module "next-auth" {
       canRunModels: boolean;
       /** EFFECTIVE root authority: false while a root login still owes a two-factor code. */
       isRootAdmin: boolean;
-      /** Root in the database with an active enrollment, this login not yet verified. */
-      rootTwoFactorPending: boolean;
     };
+    /**
+     * [2026-10-25] Set — and `user` ABSENT — while a root login still owes enrollment ("enroll")
+     * or a code ("verify"). Every server check then sees a signed-out caller; /admin shows the gate.
+     */
+    twoFactorGate?: RootTwoFactorGate | null;
   }
 }
 
@@ -355,18 +358,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
     async session({ session, token }) {
+      // [2026-10-25 root hardening] A root login that still owes enrollment or its code has NO
+      // authority anywhere a session is consulted: the session goes out WITHOUT a user, carrying
+      // only the gate, so the route shell, the project-access engine and every service that calls
+      // auth() itself all fail closed as signed-out. The /admin page renders the gate from it.
+      const rootAuthority = projectRootAuthority(token);
+      if (rootAuthority.rootTwoFactorGate !== null) {
+        return {
+          expires: session.expires,
+          twoFactorGate: rootAuthority.rootTwoFactorGate,
+        } as unknown as typeof session;
+      }
       if (session.user) {
         session.user.companyId = token.companyId;
         session.user.dbId = token.dbId;
         session.user.username = token.username;
         session.user.role = token.role;
         session.user.canRunModels = token.canRunModels;
-        // A root login that still owes its two-factor code is NOT root anywhere a session is
-        // consulted (route shell, in-service gates, the admin UI) but keeps admin powers.
-        const rootAuthority = projectRootAuthority(token);
         session.user.isRootAdmin = rootAuthority.isRootAdmin;
-        session.user.rootTwoFactorPending = rootAuthority.rootTwoFactorPending;
       }
+      session.twoFactorGate = null;
       return session;
     },
   },

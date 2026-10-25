@@ -1290,32 +1290,49 @@ export const EXPLICIT_NON_PUBLIC_DEMO_SURFACES = [
 ];
 
 /**
- * [2026-10-23] Root authenticator-app (TOTP) two-factor. Every surface is a defineRoute shell over
- * ONE service module; the shell's `auth` literal is the whole admission policy. A root login whose
- * enrollment is active but unverified is projected as isRootAdmin=false by the session callback,
- * so the "root" surfaces are unreachable until the one "session" surface (verify) has proven a
- * code; verify is bounded by its own user-keyed middleware rule from which root is never exempt.
- * The enrollment document lives in app_settings under `settingKeyPrefix`, hidden from and
- * unwritable through the generic settings route; the only other writer is the break-glass
- * operation in root_admin.sh.
+ * [2026-10-25] Root authenticator-app (TOTP) two-factor — MANDATORY. Every surface is a defineRoute
+ * shell over ONE service module. A root login that has not enrolled ("enroll") or not proved a code
+ * in this session ("verify") is projected by the session callback as a session WITHOUT a user, so
+ * every auth level fails closed; the four GATED surfaces (status / enroll / confirm / verify) are
+ * therefore auth:"none" shells whose service identifies the caller from the encrypted cookie
+ * (`callerFunction`, which re-reads users.isRootAdmin). Enroll, disable and regenerate also require
+ * the account password (`password: true`). Every code/password-taking surface is bounded by its own
+ * user-keyed middleware rule that root is never exempt from, plus the persistent lockout ladder in
+ * the enrollment row. The enrollment document lives in app_settings under `settingKeyPrefix`,
+ * hidden from and unwritable through the generic settings route; the only other writer is the
+ * break-glass operation in root_admin.sh, which now also inserts an audit_log row. `enforceEnv`=0
+ * is the logged emergency off-switch (lib/root-two-factor-claims.ts rootTwoFactorEnforced).
  */
 export const ROOT_TWO_FACTOR_POLICY = {
   settingKeyPrefix: "root-2fa:",
+  enforceEnv: "ROOT_2FA_ENFORCE",
   claimsFile: "src/lib/root-two-factor-claims.ts",
   serviceFile: "src/server/services/root-two-factor.ts",
   authFile: "src/lib/auth.ts",
   routeShellFile: "src/server/api/defineRoute.ts",
+  rootAuthorityFile: "src/server/api/root-authority.ts",
+  apiUtilsFile: "src/lib/api-utils.ts",
   appSettingsServiceFile: "src/server/services/app-settings.ts",
   rateRuleFile: "src/lib/middleware-rate-limit.ts",
+  callerFunction: "requireRootTwoFactorCaller",
+  passwordFunction: "assertAccountPassword",
   verifyRoute: "/api/auth/2fa/verify",
+  /** Code/password-taking POST surfaces: exact user-keyed rule, limit ≤ 10, root never exempt. */
+  throttledRoutes: [
+    "/api/auth/2fa/verify",
+    "/api/auth/2fa/enroll",
+    "/api/auth/2fa/confirm",
+    "/api/auth/2fa/disable",
+    "/api/auth/2fa/backup-codes",
+  ],
   breakGlass: { file: "root_admin.sh", operation: "reset2fa" },
   surfaces: [
-    { id: "root-2fa-status", route: "/api/auth/2fa/status", method: "GET", auth: "root", serviceFunction: "getRootTwoFactorStatus" },
-    { id: "root-2fa-enroll", route: "/api/auth/2fa/enroll", method: "POST", auth: "root", serviceFunction: "beginRootTwoFactorEnrollment" },
-    { id: "root-2fa-confirm", route: "/api/auth/2fa/confirm", method: "POST", auth: "root", serviceFunction: "confirmRootTwoFactorEnrollment" },
-    { id: "root-2fa-verify", route: "/api/auth/2fa/verify", method: "POST", auth: "session", serviceFunction: "verifyRootTwoFactor" },
-    { id: "root-2fa-disable", route: "/api/auth/2fa/disable", method: "POST", auth: "root", serviceFunction: "disableRootTwoFactor" },
-    { id: "root-2fa-backup-codes", route: "/api/auth/2fa/backup-codes", method: "POST", auth: "root", serviceFunction: "regenerateRootTwoFactorBackupCodes" },
+    { id: "root-2fa-status", route: "/api/auth/2fa/status", method: "GET", auth: "none", gated: true, password: false, serviceFunction: "getRootTwoFactorStatus" },
+    { id: "root-2fa-enroll", route: "/api/auth/2fa/enroll", method: "POST", auth: "none", gated: true, password: true, serviceFunction: "beginRootTwoFactorEnrollment" },
+    { id: "root-2fa-confirm", route: "/api/auth/2fa/confirm", method: "POST", auth: "none", gated: true, password: false, serviceFunction: "confirmRootTwoFactorEnrollment" },
+    { id: "root-2fa-verify", route: "/api/auth/2fa/verify", method: "POST", auth: "none", gated: true, password: false, serviceFunction: "verifyRootTwoFactor" },
+    { id: "root-2fa-disable", route: "/api/auth/2fa/disable", method: "POST", auth: "root", gated: false, password: true, serviceFunction: "disableRootTwoFactor" },
+    { id: "root-2fa-backup-codes", route: "/api/auth/2fa/backup-codes", method: "POST", auth: "root", gated: false, password: true, serviceFunction: "regenerateRootTwoFactorBackupCodes" },
   ].map((surface) => ({
     ...surface,
     routeFile: `src/app/api${surface.route.slice("/api".length)}/route.ts`,

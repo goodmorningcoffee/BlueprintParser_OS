@@ -6,6 +6,7 @@ import { recordAbuseEvent } from "@/lib/admin-logs/record-abuse";
 import { isManuallyBanned } from "@/lib/admin-logs/manual-ban-cache";
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { getToken } from "next-auth/jwt";
+import { rootTwoFactorPending, type RootTwoFactorClaims } from "@/lib/root-two-factor-claims";
 import {
   apiIpBackstopForRule,
   confirmedRootUserId,
@@ -576,6 +577,17 @@ export async function middleware(request: NextRequest) {
           ),
         );
       }
+    }
+  }
+
+  // [2026-10-25 root hardening] A root login that still owes enrollment or its code has no
+  // session user, so every page but the gate host would render as signed-out. Send it to /admin,
+  // which shows "Set up your authenticator app" (enroll) or the code prompt (verify). UX only:
+  // the security boundary is the user-less session projection in lib/auth.ts.
+  if (!pathname.startsWith("/api") && pathname !== "/admin" && pathname !== "/login") {
+    const token = await verifiedAuthToken;
+    if (token && rootTwoFactorPending(token as RootTwoFactorClaims)) {
+      return finalize(NextResponse.redirect(new URL("/admin", request.url)));
     }
   }
 

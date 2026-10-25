@@ -618,9 +618,11 @@ export default function AdminPage() {
     return <div className="min-h-screen flex items-center justify-center text-[var(--muted)]">Loading...</div>;
   }
 
-  // [2026-10-23] A root login that still owes its TOTP code (isRootAdmin is projected false, and the
-  // bootstrap root may be a plain member) gets the code prompt before any other admin check.
-  if (session?.user?.rootTwoFactorPending) return <RootTwoFactorGate />;
+  // [2026-10-25] Root 2FA is mandatory: a root login that still owes enrollment or its code holds a
+  // user-less session carrying only `twoFactorGate`; it gets the enrollment panel or the code prompt
+  // before any other check, and nothing else on this page until the gate clears.
+  const twoFactorGate = (session as { twoFactorGate?: "enroll" | "verify" | null } | null)?.twoFactorGate;
+  if (twoFactorGate === "enroll" || twoFactorGate === "verify") return <RootTwoFactorGate gate={twoFactorGate} />;
 
   if (!canOpenAdmin(session)) {
     return <div className="min-h-screen flex items-center justify-center text-red-400">Admin access required</div>;

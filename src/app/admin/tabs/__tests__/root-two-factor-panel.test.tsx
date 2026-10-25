@@ -36,9 +36,17 @@ afterEach(() => {
 
 async function enrollAndSubmit(code: string) {
   render(<RootTwoFactorPanel />);
+  // [2026-10-25] Enrolling asks for the account password first; the button stays disabled without it.
+  const enable = await screen.findByRole("button", { name: "Enable two-factor" });
+  expect((enable as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByPlaceholderText("Account password"), { target: { value: "hunter2-hunter2" } });
   await act(async () => {
-    fireEvent.click(await screen.findByRole("button", { name: "Enable two-factor" }));
+    fireEvent.click(enable);
   });
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/auth/2fa/enroll",
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ password: "hunter2-hunter2" }) }),
+  );
   fireEvent.change(await screen.findByPlaceholderText("6-digit code"), { target: { value: code } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Activate" }));

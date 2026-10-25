@@ -45,7 +45,9 @@ import {
   verifiedRootUserId,
 } from "@/lib/middleware-rate-limit";
 
-const ROOT = { dbId: 9001, isRootAdmin: true };
+// [2026-10-25] Mandatory 2FA: a root token is root here only when enrolled AND verified.
+const VERIFIED = { twoFactorRequired: true, twoFactorVerified: true, twoFactorNonce: "n" };
+const ROOT = { dbId: 9001, isRootAdmin: true, ...VERIFIED };
 
 function req(path: string, ip: string, method = "POST", cookie = "tok"): NextRequest {
   return new NextRequest(`http://localhost${path}`, {
@@ -70,6 +72,7 @@ beforeEach(() => {
   h.recordAbuseEvent.mockClear();
   h.refreshJwtUserAuthority.mockReset();
   h.refreshJwtUserAuthority.mockImplementation(async (token) => ({ ...token, isRootAdmin: true }));
+
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -77,14 +80,17 @@ afterEach(() => {
 
 describe("verifiedRootUserId (claim parsing)", () => {
   it("accepts only isRootAdmin === true with a positive safe-integer dbId", () => {
-    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 7 })).toBe(7);
-    expect(verifiedRootUserId({ isRootAdmin: "true", dbId: 7 })).toBeNull();
-    expect(verifiedRootUserId({ isRootAdmin: 1, dbId: 7 })).toBeNull();
-    expect(verifiedRootUserId({ isRootAdmin: false, dbId: 7 })).toBeNull();
-    expect(verifiedRootUserId({ isRootAdmin: true, dbId: "7" })).toBeNull();
-    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 0 })).toBeNull();
-    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 1.5 })).toBeNull();
-    expect(verifiedRootUserId({ isRootAdmin: true })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 7, ...VERIFIED })).toBe(7);
+    // Unenrolled or unverified root: nobody (mandatory 2FA).
+    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 7 })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 7, ...VERIFIED, twoFactorVerified: false })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: "true", dbId: 7, ...VERIFIED })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: 1, dbId: 7, ...VERIFIED })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: false, dbId: 7, ...VERIFIED })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: true, dbId: "7", ...VERIFIED })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 0, ...VERIFIED })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: true, dbId: 1.5, ...VERIFIED })).toBeNull();
+    expect(verifiedRootUserId({ isRootAdmin: true, ...VERIFIED })).toBeNull();
     expect(verifiedRootUserId(null)).toBeNull();
     expect(verifiedRootUserId("root")).toBeNull();
   });
@@ -142,7 +148,7 @@ describe("middleware: root admin exemption", () => {
   it("parser lane: root is never cooled down or banned; a plain 429 past the per-user ceiling", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-21T00:00:00.000Z"));
-    h.getToken.mockResolvedValue({ dbId: 9003, isRootAdmin: true });
+    h.getToken.mockResolvedValue({ dbId: 9003, isRootAdmin: true, ...VERIFIED });
     const ip = "203.0.113.235";
     const s = await statuses(ROOT_PARSER_LANE_LIMIT, () => req("/api/table-parse", ip));
     expect(s).toEqual(Array(ROOT_PARSER_LANE_LIMIT).fill(200)); // far past the anonymous 5/10 s
@@ -168,7 +174,7 @@ describe("middleware: root admin exemption", () => {
     const anon = await statuses(6, () => req("/api/shape-parse", ip, "POST", ""));
     expect(anon.slice(0, 5)).toEqual(Array(5).fill(200));
     expect(anon[5]).toBe(429); // anonymous: today's cooldown
-    h.getToken.mockResolvedValue({ dbId: 9004, isRootAdmin: true });
+    h.getToken.mockResolvedValue({ dbId: 9004, isRootAdmin: true, ...VERIFIED });
     expect((await middleware(req("/api/shape-parse", ip))).status).toBe(200); // root: own lane
   });
 });
@@ -185,7 +191,7 @@ describe("confirmedRootUserId (database re-confirmation of the root claim)", () 
   it("caches a confirmation for the window, then re-reads and sees a demotion", async () => {
     let isRoot = true;
     const lookup = vi.fn(async () => isRoot);
-    const token = { dbId: 7102, isRootAdmin: true };
+    const token = { dbId: 7102, isRootAdmin: true, ...VERIFIED };
     const t0 = 5_000_000;
     expect(await confirmedRootUserId(token, lookup, t0)).toBe(7102);
     isRoot = false; // demoted in the DB; the cookie still claims root
@@ -198,7 +204,7 @@ describe("confirmedRootUserId (database re-confirmation of the root claim)", () 
 
   it("shares one read between concurrent requests", async () => {
     const lookup = vi.fn(async () => true);
-    const token = { dbId: 7103, isRootAdmin: true };
+    const token = { dbId: 7103, isRootAdmin: true, ...VERIFIED };
     const out = await Promise.all([1, 2, 3, 4].map(() => confirmedRootUserId(token, lookup, 9_000)));
     expect(out).toEqual([7103, 7103, 7103, 7103]);
     expect(lookup).toHaveBeenCalledTimes(1);
@@ -208,18 +214,18 @@ describe("confirmedRootUserId (database re-confirmation of the root claim)", () 
     const rejects = vi.fn(async (): Promise<boolean> => {
       throw new Error("db down");
     });
-    expect(await confirmedRootUserId({ dbId: 7104, isRootAdmin: true }, rejects, 1_000)).toBeNull();
-    expect(await confirmedRootUserId({ dbId: 7104, isRootAdmin: true }, rejects, 2_000)).toBeNull();
+    expect(await confirmedRootUserId({ dbId: 7104, isRootAdmin: true, ...VERIFIED }, rejects, 1_000)).toBeNull();
+    expect(await confirmedRootUserId({ dbId: 7104, isRootAdmin: true, ...VERIFIED }, rejects, 2_000)).toBeNull();
     expect(rejects).toHaveBeenCalledTimes(1);
     const throwsSync = vi.fn((): Promise<boolean> => {
       throw new Error("sync throw");
     });
-    expect(await confirmedRootUserId({ dbId: 7105, isRootAdmin: true }, throwsSync, 1_000)).toBeNull();
+    expect(await confirmedRootUserId({ dbId: 7105, isRootAdmin: true, ...VERIFIED }, throwsSync, 1_000)).toBeNull();
   });
 
   it("a clock that moved backwards forces a re-read", async () => {
     const lookup = vi.fn(async () => true);
-    const token = { dbId: 7106, isRootAdmin: true };
+    const token = { dbId: 7106, isRootAdmin: true, ...VERIFIED };
     await confirmedRootUserId(token, lookup, 50_000);
     await confirmedRootUserId(token, lookup, 40_000);
     expect(lookup).toHaveBeenCalledTimes(2);
@@ -228,7 +234,7 @@ describe("confirmedRootUserId (database re-confirmation of the root claim)", () 
 
 describe("middleware: a stale root claim (demoted or deleted in the DB) is not exempt", () => {
   it("demoted root with an unrefreshed cookie: route rule binds again (11th /api/projects → 429)", async () => {
-    h.getToken.mockResolvedValue({ dbId: 9010, isRootAdmin: true });
+    h.getToken.mockResolvedValue({ dbId: 9010, isRootAdmin: true, ...VERIFIED });
     h.refreshJwtUserAuthority.mockImplementation(async (token) => ({ ...token, isRootAdmin: false }));
     const s = await statuses(11, () => req("/api/projects", "203.0.113.240"));
     expect(s.slice(0, 10)).toEqual(Array(10).fill(200));
@@ -239,7 +245,7 @@ describe("middleware: a stale root claim (demoted or deleted in the DB) is not e
   });
 
   it("deleted user with an unrefreshed root cookie: the IP backstop binds again", async () => {
-    h.getToken.mockResolvedValue({ dbId: 9011, isRootAdmin: true });
+    h.getToken.mockResolvedValue({ dbId: 9011, isRootAdmin: true, ...VERIFIED });
     h.refreshJwtUserAuthority.mockResolvedValue(null);
     const s = await statuses(121, () => req("/api/annotations-anything", "203.0.113.241", "GET"));
     expect(s.slice(0, 120).every((status) => status === 200)).toBe(true);
@@ -249,7 +255,7 @@ describe("middleware: a stale root claim (demoted or deleted in the DB) is not e
   it("database failure: the root claim fails closed to today's parser cooldown", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-21T02:00:00.000Z"));
-    h.getToken.mockResolvedValue({ dbId: 9012, isRootAdmin: true });
+    h.getToken.mockResolvedValue({ dbId: 9012, isRootAdmin: true, ...VERIFIED });
     h.refreshJwtUserAuthority.mockRejectedValue(new Error("db down"));
     const s = await statuses(6, () => req("/api/symbol-search", "203.0.113.242"));
     expect(s.slice(0, 5)).toEqual(Array(5).fill(200));

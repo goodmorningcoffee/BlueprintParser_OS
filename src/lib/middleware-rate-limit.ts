@@ -170,6 +170,13 @@ const RATE_RULES: RateRule[] = [
     keyType: "user",
     exact: true,
   },
+  // [2026-10-25] The other code/password-taking 2FA routes are bounded the same way, so a stolen
+  // VERIFIED cookie cannot brute-force a code into /disable and re-enroll its own device (root is
+  // never exempt from these either). The persistent per-row lockout ladder backs these buckets.
+  { pattern: "/api/auth/2fa/enroll", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "user", exact: true },
+  { pattern: "/api/auth/2fa/confirm", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "user", exact: true },
+  { pattern: "/api/auth/2fa/disable", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "user", exact: true },
+  { pattern: "/api/auth/2fa/backup-codes", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "user", exact: true },
   // Public and synchronous: one request can hold the event loop for about a second at its input
   // cap, so the 120/min backstop alone would let one address block most of every minute.
   {
@@ -414,6 +421,10 @@ const ROOT_NEVER_EXEMPT_RULE_PATTERNS: ReadonlySet<string> = new Set([
   // A verified root re-proving a code is bounded like everyone else: the rule exists to bound
   // guessing against the root account, and the guesser may hold a root cookie.
   "/api/auth/2fa/verify",
+  "/api/auth/2fa/enroll",
+  "/api/auth/2fa/confirm",
+  "/api/auth/2fa/disable",
+  "/api/auth/2fa/backup-codes",
 ]);
 
 /** Whether a root caller skips this route rule AND the IP backstop for the same request. */

@@ -46,13 +46,17 @@ export interface AuthSession {
     username: string;
     role: string;
     canRunModels: boolean;
-    /** Effective root authority — false while a root login still owes a two-factor code. */
+    /**
+     * Effective root authority — the ONLY root claim a session carries. [2026-10-25] A root login
+     * that still owes enrollment or a code has no `user` at all (lib/auth.ts); see
+     * server/api/root-authority.ts for the single "is this a verified root" check.
+     */
     isRootAdmin: boolean;
-    /** [2026-10-23] Root with active 2FA, not yet verified: admin powers only, no root. */
-    rootTwoFactorPending?: boolean;
     email?: string | null;
     name?: string | null;
   };
+  /** [2026-10-25] "enroll" | "verify" on a user-less gated-root session; null/absent otherwise. */
+  twoFactorGate?: "enroll" | "verify" | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -86,11 +90,7 @@ export async function requireAdmin(): Promise<
   if (!session?.user) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  if (
-    session.user.role !== "admin" &&
-    !session.user.isRootAdmin &&
-    session.user.rootTwoFactorPending !== true
-  ) {
+  if (session.user.role !== "admin" && !session.user.isRootAdmin) {
     return { session: null, error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
   }
   return { session: session as unknown as AuthSession, error: null };

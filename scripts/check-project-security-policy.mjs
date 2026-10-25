@@ -9348,16 +9348,22 @@ async function validateEdgeClientIpPolicy() {
 }
 
 /**
- * [2026-10-23] Root TOTP 2FA. The manifest names every route, its shell auth literal and the one
- * service function it delegates to; this pins (a) each shell's auth + delegation, (b) the session
- * projection that turns a pending root into a non-root, (c) the JWT callbacks' sign-in stamp and
- * refresh re-check, (d) the middleware root exemption refusing a pending root, (e) the verify
- * route's user-keyed rate rule that root is never exempt from, (f) the generic settings route
- * hiding and refusing the enrollment prefix, and (g) the break-glass operation staying the sole
- * other writer of that prefix.
+ * [2026-10-25] Root TOTP 2FA — MANDATORY. The manifest names every route, its shell auth literal and
+ * the one service function it delegates to; this pins (a) each shell's auth + delegation, with the
+ * GATED shells (auth:"none") delegating to a service function that identifies the caller through
+ * the cookie-bound root re-read (`callerFunction`) and the password-taking ones calling the
+ * password check, (b) the claim model's three-state gate and its logged off-switch, (c) the session
+ * projection that returns a USER-LESS session while gated, (d) the JWT callbacks' sign-in stamp and
+ * the non-sticky marker re-check on every refresh, (e) the route shell and api-utils admitting no
+ * "pending" root and auth:"root" going through the single verified-root helper, (f) the middleware
+ * root exemption refusing a gated root and every code/password-taking route keeping an exact
+ * user-keyed rule root is never exempt from, (g) the generic settings route hiding and refusing the
+ * enrollment prefix, and (h) the break-glass operation staying the sole other writer of that prefix,
+ * audited, and documented as returning the account to the enrollment gate.
  */
 async function validateRootTwoFactorPolicy() {
   const policy = ROOT_TWO_FACTOR_POLICY;
+  const service = await parsed(policy.serviceFile);
   const seen = new Set();
   for (const surface of policy.surfaces) {
     const key = `${surface.route}:${surface.method}`;
@@ -9380,64 +9386,97 @@ async function validateRootTwoFactorPolicy() {
             call.symbol === surface.serviceFunction,
         )
       : false;
+    const handlerText = handler ? handler.getText(route.source) : "";
+    const serviceFunction = functionFor(service, surface.serviceFunction);
+    const serviceText = serviceFunction ? serviceFunction.getText(service.source) : "";
+    const identifiesCaller = surface.gated
+      ? textHasAll(handlerText, ["req"]) && hasCall(serviceFunction, [policy.callerFunction])
+      : textHasAll(handlerText, ["session!"]) && !hasCall(serviceFunction, [policy.callerFunction]);
+    const checksPassword = !surface.password || textHasAll(serviceText, [`${policy.passwordFunction}(`]);
     if (
       seen.has(key) ||
       routeAuthLiteral(route, surface.method) !== surface.auth ||
+      (surface.gated ? surface.auth !== "none" : surface.auth !== "root") ||
       !handler ||
       !delegates ||
-      !textHasAll(handler.getText(route.source), ["session!"])
+      !serviceFunction ||
+      !identifiesCaller ||
+      !checksPassword
     ) {
       report(
         "ROOT_TWO_FACTOR_SURFACE_DRIFT",
-        `${surface.method} ${surface.route} must be a unique auth:"${surface.auth}" shell delegating to ${surface.serviceFunction} with the shell session`,
+        `${surface.method} ${surface.route} must be a unique auth:"${surface.auth}" shell delegating to ${surface.serviceFunction}${surface.gated ? ` which identifies the caller through ${policy.callerFunction}` : " with the shell session"}${surface.password ? ` and requires the account password (${policy.passwordFunction})` : ""}`,
         surface.routeFile,
         handler ?? route.source,
       );
     }
     seen.add(key);
   }
-  const verifySurface = policy.surfaces.find((surface) => surface.route === policy.verifyRoute);
+  const gatedRoutes = policy.surfaces.filter((surface) => surface.gated).map((surface) => surface.route);
   if (
-    !verifySurface ||
-    verifySurface.auth !== "session" ||
-    policy.surfaces.some((surface) => surface !== verifySurface && surface.auth !== "root")
+    !gatedRoutes.includes(policy.verifyRoute) ||
+    gatedRoutes.length !== 4 ||
+    policy.surfaces.some((surface) => surface.gated !== (surface.auth === "none"))
   ) {
     report(
       "ROOT_TWO_FACTOR_SURFACE_AUTH_POLICY",
-      "verify is the only session-level two-factor surface; every other surface must be root",
+      "exactly status, enroll, confirm and verify are the gated (auth:\"none\", cookie-identified) surfaces; every other surface must be root",
+    );
+  }
+  const caller = functionFor(service, policy.callerFunction);
+  const decoder = functionFor(service, "decodeRequestToken");
+  if (
+    !caller ||
+    !hasCall(caller, ["decodeRequestToken"]) ||
+    !decoder ||
+    !hasCall(decoder, ["getToken"]) ||
+    !textHasAll(caller.getText(service.source), ["isRootAdmin: users.isRootAdmin", "if (!user.isRootAdmin) throw"])
+  ) {
+    report(
+      "ROOT_TWO_FACTOR_CALLER_DRIFT",
+      `${policy.callerFunction} must decode the request's encrypted token and refuse a caller who is not root in the database right now`,
+      policy.serviceFile,
+      caller ?? service.source,
     );
   }
 
-  const [claims, service, auth, shell, settings, ratePolicy] = await Promise.all([
+  const [claims, auth, shell, rootAuthority, apiUtils, settings, ratePolicy] = await Promise.all([
     parsed(policy.claimsFile),
-    parsed(policy.serviceFile),
     parsed(policy.authFile),
     parsed(policy.routeShellFile),
+    parsed(policy.rootAuthorityFile),
+    parsed(policy.apiUtilsFile),
     parsed(policy.appSettingsServiceFile),
     parsed(policy.rateRuleFile),
   ]);
   const prefix = variableInitializer(claims.source, "ROOT_TWO_FACTOR_KEY_PREFIX");
+  const gateFn = functionFor(claims, "rootTwoFactorGate");
+  const enforced = functionFor(claims, "rootTwoFactorEnforced");
   const pending = functionFor(claims, "rootTwoFactorPending");
   const projection = functionFor(claims, "projectRootAuthority");
   if (
     !prefix ||
     literalValue(prefix) !== policy.settingKeyPrefix ||
     !isExportedDeclaration(claims.source, "ROOT_TWO_FACTOR_KEY_PREFIX") ||
-    !pending ||
-    !textHasAll(pending.getText(claims.source), [
-      "claims.isRootAdmin === true",
-      "claims.twoFactorRequired === true",
-      "claims.twoFactorVerified !== true",
+    !gateFn ||
+    !textHasAll(claims.source.getText(), [
+      'if (claims.isRootAdmin !== true) return null;',
+      'if (claims.twoFactorRequired !== true) return "enroll";',
+      'if (claims.twoFactorVerified !== true) return "verify";',
+      `export const ROOT_TWO_FACTOR_ENFORCE_ENV = "${policy.enforceEnv}";`,
     ]) ||
+    !hasCall(gateFn, ["rootTwoFactorEnforced"]) ||
+    !textHasAll(gateFn.getText(claims.source), ["console.error(", "[SECURITY]"]) ||
+    !enforced ||
+    !pending ||
+    !hasCall(pending, ["rootTwoFactorGate"]) ||
     !projection ||
-    !hasCall(projection, ["rootTwoFactorPending"]) ||
-    !textHasAll(projection.getText(claims.source), [
-      'claims?.isRootAdmin === true && !pending',
-    ])
+    !hasCall(projection, ["rootTwoFactorGate"]) ||
+    !textHasAll(projection.getText(claims.source), ["claims?.isRootAdmin === true && !pending"])
   ) {
     report(
       "ROOT_TWO_FACTOR_CLAIM_MODEL_DRIFT",
-      "a pending root (root, enrollment active, login unverified) must project to isRootAdmin=false",
+      "a root login must be gated as \"enroll\" (no active enrollment) or \"verify\" (unverified) and project to isRootAdmin=false; the off-switch must be read server-side and logged",
       policy.claimsFile,
       projection ?? claims.source,
     );
@@ -9453,21 +9492,25 @@ async function validateRootTwoFactorPolicy() {
   const sessionText = sessionMethods.length === 1 ? sessionMethods[0].getText(auth.source) : "";
   if (
     !textHasAll(jwtText, [
-      'if (trigger === "signIn") {\n        await stampRootTwoFactorAtSignIn(token);\n      }'.replace(/\\n/g, "\n"),
-      'if (trigger !== "signIn") {\n        return refreshJwtSessionClaims(token);\n      }'.replace(/\\n/g, "\n"),
+      'if (trigger === "signIn") {\n        await stampRootTwoFactorAtSignIn(token);\n      }',
+      'if (trigger !== "signIn") {\n        return refreshJwtSessionClaims(token);\n      }',
     ]) ||
     !textHasAll(sessionText, [
       "const rootAuthority = projectRootAuthority(token);",
+      "if (rootAuthority.rootTwoFactorGate !== null) {",
+      "twoFactorGate: rootAuthority.rootTwoFactorGate,",
       "session.user.isRootAdmin = rootAuthority.isRootAdmin;",
-      "session.user.rootTwoFactorPending = rootAuthority.rootTwoFactorPending;",
     ]) ||
     sessionText.includes("session.user.isRootAdmin = token.isRootAdmin") ||
+    sessionText.includes("rootTwoFactorPending") ||
+    // The gated return carries no user: only `expires` and the gate.
+    !/return \{\s*expires: session\.expires,\s*twoFactorGate: rootAuthority\.rootTwoFactorGate,\s*\}/u.test(sessionText) ||
     // 2FA claims are derived only inside refreshJwtSessionClaims, after the authority re-read.
     jwtText.includes("refreshRootTwoFactorClaims")
   ) {
     report(
       "ROOT_TWO_FACTOR_JWT_PROJECTION_DRIFT",
-      "the JWT callback must stamp claims at sign-in and re-check the server-side marker on every refresh, and the session must project root authority through projectRootAuthority",
+      "the JWT callback must stamp claims at sign-in and re-check the server-side marker on every refresh, and the session must project a USER-LESS session while the root login is gated",
       policy.authFile,
       jwtMethods[0] ?? auth.source,
     );
@@ -9497,6 +9540,7 @@ async function validateRootTwoFactorPolicy() {
       sessionRefresh ?? service.source,
     );
   }
+  const refreshText = refresh ? refresh.getText(service.source) : "";
   if (
     !stamp ||
     !textHasAll(stamp.getText(service.source), [
@@ -9504,35 +9548,47 @@ async function validateRootTwoFactorPolicy() {
       "token.twoFactorVerified = false;",
     ]) ||
     !refresh ||
-    !textHasAll(refresh.getText(service.source), [
+    !textHasAll(refreshText, [
       "token.twoFactorRequired = row !== null && isActive(row);",
       "row.verified?.[nonce]",
-      "if (typeof expiresAt === \"number\" && expiresAt > now) token.twoFactorVerified = true;",
+      'token.twoFactorVerified = token.twoFactorRequired && typeof expiresAt === "number" && expiresAt > now;',
     ]) ||
+    // Never sticky: the cookie's previous verified flag is not consulted.
+    refreshText.includes("token.twoFactorVerified === true") ||
     descendants(refresh, ts.isTryStatement).length > 0 ||
     !nonceReader ||
-    !hasCall(nonceReader, ["getToken"]) ||
     !textHasAll(nonceReader.getText(service.source), ["token.dbId !== expectedDbId"])
   ) {
     report(
       "ROOT_TWO_FACTOR_MARKER_DRIFT",
-      "verified may be set only from the server-side marker keyed by the login's own nonce, read from the encrypted token bound to the signed-in user, failing closed on database errors",
+      "verified must be re-derived on EVERY refresh from the server-side marker keyed by the login's own nonce (never carried over from the cookie), failing closed on database errors",
       policy.serviceFile,
       refresh ?? service.source,
     );
   }
 
   const requireSession = functionFor(shell, "requireSession");
+  const requireSessionText = requireSession ? requireSession.getText(shell.source) : "";
+  const isVerifiedRoot = functionFor(rootAuthority, "isVerifiedRoot");
+  const requireVerifiedRoot = functionFor(rootAuthority, "requireVerifiedRoot");
   if (
     !requireSession ||
-    !textHasAll(requireSession.getText(shell.source), [
-      'minRole === "root" && !session.user.isRootAdmin',
-      'throw new ApiError("FORBIDDEN", "Root admin only")',
-    ])
+    !textHasAll(requireSessionText, [
+      'if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");',
+      'if (minRole === "root") requireVerifiedRoot(session);',
+    ]) ||
+    requireSessionText.includes("rootTwoFactorPending") ||
+    shell.source.getText().includes("rootTwoFactorPending") ||
+    !isVerifiedRoot ||
+    !textHasAll(isVerifiedRoot.getText(rootAuthority.source), ["session?.user?.isRootAdmin === true"]) ||
+    !requireVerifiedRoot ||
+    !hasCall(requireVerifiedRoot, ["isVerifiedRoot"]) ||
+    !textHasAll(requireVerifiedRoot.getText(rootAuthority.source), ['throw new ApiError("FORBIDDEN", ROOT_ONLY_MESSAGE)']) ||
+    apiUtils.source.getText().includes("rootTwoFactorPending")
   ) {
     report(
       "ROOT_TWO_FACTOR_ROUTE_SHELL_DRIFT",
-      'auth:"root" must fail closed on the session\'s effective isRootAdmin',
+      'auth:"root" must fail closed through requireVerifiedRoot (the single verified-root check) and no shell or api-utils level may admit a "pending" root',
       policy.routeShellFile,
       requireSession ?? shell.source,
     );
@@ -9541,25 +9597,33 @@ async function validateRootTwoFactorPolicy() {
   const rootHelper = functionFor(ratePolicy, "verifiedRootUserId");
   const generalRules = variableInitializer(ratePolicy.source, "RATE_RULES");
   const neverExempt = variableInitializer(ratePolicy.source, "ROOT_NEVER_EXEMPT_RULE_PATTERNS");
-  const verifyRule = generalRules
-    ? descendants(generalRules, ts.isObjectLiteralExpression).find(
-        (object) => literalValue(propertyInitializer(object, "pattern")) === policy.verifyRoute,
-      )
-    : null;
+  const ruleFor = (route) =>
+    generalRules
+      ? descendants(generalRules, ts.isObjectLiteralExpression).find(
+          (object) => literalValue(propertyInitializer(object, "pattern")) === route,
+        )
+      : null;
+  const throttled = policy.throttledRoutes.every((route) => {
+    const rule = ruleFor(route);
+    return (
+      rule &&
+      literalValue(propertyInitializer(rule, "method")) === "POST" &&
+      literalValue(propertyInitializer(rule, "keyType")) === "user" &&
+      literalValue(propertyInitializer(rule, "exact")) === true &&
+      numericConstantValue(propertyInitializer(rule, "limit")) <= 10 &&
+      neverExempt &&
+      hasStringLiteral(neverExempt, [route])
+    );
+  });
   if (
     !rootHelper ||
     !textHasAll(rootHelper.getText(ratePolicy.source), ["!rootTwoFactorPending(claims)"]) ||
-    !verifyRule ||
-    literalValue(propertyInitializer(verifyRule, "method")) !== "POST" ||
-    literalValue(propertyInitializer(verifyRule, "keyType")) !== "user" ||
-    literalValue(propertyInitializer(verifyRule, "exact")) !== true ||
-    !(numericConstantValue(propertyInitializer(verifyRule, "limit")) <= 10) ||
-    !neverExempt ||
-    !hasStringLiteral(neverExempt, [policy.verifyRoute])
+    !policy.throttledRoutes.includes(policy.verifyRoute) ||
+    !throttled
   ) {
     report(
       "ROOT_TWO_FACTOR_MIDDLEWARE_DRIFT",
-      "a pending root must not be root in middleware, and the verify route must keep an exact user-keyed POST rule (≤10) that root is never exempt from",
+      "a gated root must not be root in middleware, and every code/password-taking 2FA route must keep an exact user-keyed POST rule (≤10) that root is never exempt from",
       policy.rateRuleFile,
       rootHelper ?? ratePolicy.source,
     );
@@ -9588,11 +9652,14 @@ async function validateRootTwoFactorPolicy() {
       `${policy.breakGlass.operation}:Object.freeze({text:'DELETE FROM public.app_settings AS setting USING public.users AS owner WHERE owner.email = `,
       "Type RESET-2FA to confirm",
       "2fa-reset <email>",
+      "INSERT INTO public.audit_log (action, user_id, company_id, details)",
+      "'root_admin_sh_'+operation",
+      "Root 2FA is MANDATORY",
     ])
   ) {
     report(
       "ROOT_TWO_FACTOR_BREAK_GLASS_DRIFT",
-      "root_admin.sh must keep the confirmed, exact-email 2fa-reset operation on the same prefix",
+      "root_admin.sh must keep the confirmed, exact-email, audited 2fa-reset operation on the same prefix and document that it returns the account to the enrollment gate",
       policy.breakGlass.file,
     );
   }

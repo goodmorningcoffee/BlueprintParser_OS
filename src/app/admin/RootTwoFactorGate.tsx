@@ -1,15 +1,21 @@
 "use client";
 
-// [2026-10-23] Root TOTP 2FA — the code prompt /admin shows to a root user whose login is still
-// PENDING (session.user.rootTwoFactorPending). POST /api/auth/2fa/verify stores the server-side
-// marker; session.update() then makes the JWT callback re-check it and re-issue the cookie with
-// twoFactorVerified=true, after which the page re-renders with full root.
+// [2026-10-25] Root TOTP 2FA is MANDATORY — the gate /admin shows to a root login that still owes
+// its second factor (session.twoFactorGate, set by lib/auth.ts on a session WITHOUT a user):
+//   "enroll"  no active enrollment → "Set up your authenticator app to use root tools" + the
+//             enrollment panel (password → key/QR → code → backup codes shown once);
+//   "verify"  enrolled, this login unverified → the code prompt. POST /api/auth/2fa/verify stores
+//             the server-side marker; session.update() makes the JWT callback re-check it and
+//             re-issue the cookie, after which the page re-renders with full root.
+// Until then this account has NO access at all (not even member): only these routes, sign-out and
+// this page work. Sign-out is offered here because the header renders nothing without a user.
 
 import { useState } from "react";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import { apiErrorMessage } from "@/lib/client-persist";
+import RootTwoFactorPanel from "./tabs/RootTwoFactorPanel";
 
-export default function RootTwoFactorGate() {
+export default function RootTwoFactorGate({ gate }: { gate: "enroll" | "verify" }) {
   const { update } = useSession();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -40,6 +46,35 @@ export default function RootTwoFactorGate() {
     }
   }
 
+  const signOutButton = (
+    <button
+      type="button"
+      onClick={() => signOut({ callbackUrl: "/" })}
+      className="text-sm text-[var(--muted)] hover:text-[var(--fg)] underline"
+    >
+      Sign out
+    </button>
+  );
+
+  if (gate === "enroll") {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="w-full max-w-lg space-y-4">
+          <div className="p-6 bg-[var(--surface)] border border-yellow-500/40 rounded space-y-2">
+            <h1 className="text-lg font-semibold">Set up your authenticator app to use root tools</h1>
+            <p className="text-sm text-[var(--muted)]">
+              Two-factor authentication is required for every root admin. This account has no
+              access — not even ordinary member access — until an authenticator app is enrolled and
+              a code has been entered. Enrolling asks for your account password first.
+            </p>
+            {signOutButton}
+          </div>
+          <RootTwoFactorPanel onEnrolled={() => update()} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <form
@@ -49,7 +84,7 @@ export default function RootTwoFactorGate() {
         <h1 className="text-lg font-semibold">Root admin verification</h1>
         <p className="text-sm text-[var(--muted)]">
           Enter the 6-digit code from your authenticator app, or one of your backup codes. Until
-          then this account has ordinary admin access only.
+          then this account has no access.
         </p>
         <input
           autoFocus
@@ -68,6 +103,7 @@ export default function RootTwoFactorGate() {
         >
           {busy ? "Verifying..." : "Verify"}
         </button>
+        {signOutButton}
       </form>
     </div>
   );

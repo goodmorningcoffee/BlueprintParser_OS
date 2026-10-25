@@ -126,6 +126,8 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "LABEL_STUDIO_INSTANCE_ID", value = "${aws_efs_file_system.label_studio.id}:${var.label_studio_instance_generation}" },
         { name = "AWS_ACCOUNT", value = data.aws_caller_identity.current.account_id },
         { name = "ROOT_ADMIN_EMAIL", value = var.root_admin_email },
+        # Mandatory root 2FA; "0" is the emergency off-switch (every bypass is logged). Default on.
+        { name = "ROOT_2FA_ENFORCE", value = var.root_2fa_enforce },
         { name = "YOLO_ECR_IMAGE", value = "${aws_ecr_repository.beaver_yolo_pipeline.repository_url}@${var.beaver_yolo_image_digest}" },
         { name = "SAGEMAKER_ROLE_ARN", value = aws_iam_role.beaver_sagemaker_role.arn },
         { name = "LAMBDA_CV_ENABLED", value = "true" },
