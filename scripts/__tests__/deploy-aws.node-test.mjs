@@ -478,6 +478,7 @@ test("lambda honours the GREEN_HEADS gate", async () => {
 for (const [label, lambdaHead, expectUpdate] of [
   ["unchanged since the recorded Lambda head → no Lambda build", "HEAD", false],
   ["changed (recorded head unknown here) → Lambda rebuilt after the app rolls", "f".repeat(40), true],
+  ["no Lambda build recorded (first release after bootstrap) → rebuilt once, even though the app HEAD is unchanged", null, true],
 ]) {
   test(`release ships the CV Lambda only when its inputs changed: ${label}`, async () => {
     await resetState();
@@ -485,7 +486,7 @@ for (const [label, lambdaHead, expectUpdate] of [
     await mkdir(path.join(home, ".blueprintparser-deploy"), { recursive: true });
     await writeFile(path.join(home, ".blueprintparser-deploy", "releases.jsonl"),
       JSON.stringify({ at: "x", event: "bootstrap", digest: APP_DIGEST, previous: "-", head }) + "\n");
-    await writeFile(path.join(home, ".blueprintparser-deploy", "lambda-head"), `${lambdaHead === "HEAD" ? head : lambdaHead}\n`);
+    if (lambdaHead !== null) await writeFile(path.join(home, ".blueprintparser-deploy", "lambda-head"), `${lambdaHead === "HEAD" ? head : lambdaHead}\n`);
     await writeFile(tfvarsPath, tfvars("live", NEXT_DIGEST));
     await writeFile(path.join(fixture, "state", "rev"), "7");
     await writeFile(path.join(fixture, "state", "desired"), "1");

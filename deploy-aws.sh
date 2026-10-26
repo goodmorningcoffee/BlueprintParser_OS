@@ -874,7 +874,7 @@ cmd_release() {
 
   if [ "${OUTAGE}" = 1 ]; then release_outage "${digest}" "${previous}" "${head}"; else release_rolling "${digest}" "${previous}" "${head}"; fi
 
-  if lambda_inputs_changed "${head}" "${dh}"; then
+  if lambda_inputs_changed "${head}"; then
     announce "the CV Lambda's code changed since it was last built: build + push beaver-cv-lambda:latest from ${head:0:12}, then update ${LAMBDA_FUNCTION}"
     info "the app is already released; if this step fails, rerun: ./deploy-aws.sh lambda"
     update_lambda "${head}"
@@ -973,11 +973,11 @@ update_lambda() { # update_lambda <head>: push the image, point the function at 
   ok "${LAMBDA_FUNCTION} now runs the image built from ${head:0:12}"
 }
 
-# Did the Lambda's inputs change since what it last ran? Base = the head recorded by update_lambda,
-# else the deployed app HEAD (Lambda and app were last built together at bootstrap). Unknown → yes.
-lambda_inputs_changed() { # lambda_inputs_changed <head> <deployed head or "">
+# Did the Lambda's inputs change since what it last ran? Base = the head recorded by update_lambda.
+# No record → yes: app releases since bootstrap never rebuilt the Lambda, so the deployed app HEAD says
+# nothing about the Lambda's image (it would hide every Lambda commit since bootstrap). Unknown → yes.
+lambda_inputs_changed() { # lambda_inputs_changed <head>
   local base=""; [ -f "${LAMBDA_HEAD_FILE}" ] && base=$(head -1 "${LAMBDA_HEAD_FILE}")
-  [ -n "${base}" ] || base="$2"
   [ -n "${base}" ] && git -C "${PROJECT_DIR}" cat-file -e "${base}^{commit}" 2>/dev/null || return 0
   ! git -C "${PROJECT_DIR}" diff --quiet "${base}" "$1" -- "${LAMBDA_INPUTS[@]}"
 }
