@@ -30,6 +30,7 @@
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { sessionIsGated } from "@/lib/root-two-factor-claims";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -46,18 +47,31 @@ export interface AuthSession {
     username: string;
     role: string;
     canRunModels: boolean;
-    /** Effective root authority — false while a root login still owes a two-factor code. */
+    /**
+     * Effective root authority — the ONLY root claim a session carries. [2026-10-25] A root login
+     * that still owes enrollment or a code has no `user` at all (lib/auth.ts); see
+     * server/api/root-authority.ts for the single "is this a verified root" check.
+     */
     isRootAdmin: boolean;
-    /** [2026-10-23] Root with active 2FA, not yet verified: admin powers only, no root. */
-    rootTwoFactorPending?: boolean;
     email?: string | null;
     name?: string | null;
   };
+  /** [2026-10-25] "enroll" | "verify" on a user-less gated-root session; null/absent otherwise. */
+  twoFactorGate?: "enroll" | "verify" | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Auth utilities
 // ═══════════════════════════════════════════════════════════════════
+
+/**
+ * [2026-10-25 fix round] A gated root login (lib/root-session-projection.ts sends it out with
+ * `user: null` + `twoFactorGate`) is signed-out everywhere here. This is the defence in depth
+ * behind that projection: whatever `user` such a session carries, the engine never sees it.
+ */
+function withoutGatedAuthority<T extends { twoFactorGate?: unknown }>(session: T | null): T | null {
+  return session && sessionIsGated(session) ? null : session;
+}
 
 /**
  * Require authenticated session. Returns typed session or error response.
@@ -70,7 +84,7 @@ export async function requireAuth(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
 > {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
   return { session: session as unknown as AuthSession, error: null };
@@ -83,14 +97,10 @@ export async function requireAdmin(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
 > {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  if (
-    session.user.role !== "admin" &&
-    !session.user.isRootAdmin &&
-    session.user.rootTwoFactorPending !== true
-  ) {
+  if (session.user.role !== "admin" && !session.user.isRootAdmin) {
     return { session: null, error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
   }
   return { session: session as unknown as AuthSession, error: null };
@@ -106,7 +116,7 @@ export async function requireRootAdmin(): Promise<
   { session: AuthSession; error: null } | { session: null; error: NextResponse }
 > {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
   if (!session.user.isRootAdmin) {
@@ -171,7 +181,7 @@ export async function resolveProjectAccess(
   lookup: ProjectLookup,
   options?: { allowDemo?: boolean }
 ): Promise<ProjectAccessSuccess | ProjectAccessDemoSuccess | ProjectAccessFailure> {
-  const session = await auth();
+  const session = withoutGatedAuthority(await auth());
 
   // Look up project
   const where = "publicId" in lookup
@@ -259,7 +269,7 @@ export async function checkProjectAccess(
   | { session: AuthSession | null; scope: "demo"; error: null }
   | { session: null; scope: null; error: NextResponse }
 > {
-  const session = await auth();
+  const session = withoutGatedAuthority(await auth());
 
   if (project.isDemo && options?.allowDemo) {
     return {

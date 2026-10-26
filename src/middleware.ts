@@ -6,6 +6,8 @@ import { recordAbuseEvent } from "@/lib/admin-logs/record-abuse";
 import { isManuallyBanned } from "@/lib/admin-logs/manual-ban-cache";
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { getToken } from "next-auth/jwt";
+import { rootTwoFactorEnforced, rootTwoFactorPending, type RootTwoFactorClaims } from "@/lib/root-two-factor-claims";
+import { rootTwoFactorMarkerLive } from "@/server/services/root-two-factor-store";
 import {
   apiIpBackstopForRule,
   confirmedRootUserId,
@@ -52,9 +54,14 @@ const SESSION_TTL_SEC = 24 * 60 * 60;
 
 // Root re-confirmation: the same users read Auth.js runs on every session refresh, on a fresh
 // object so the decoded token (reused by the visit log) is never mutated.
-const isRootInDatabase = async (userId: number): Promise<boolean> => {
+// [2026-10-25 fix round — verifier L2] The cookie's twoFactorVerified is a hint too: it is re-encoded
+// only by /api/auth/session, so after a marker revocation (disable, password change, 12 h expiry)
+// an unrefreshed cookie would keep the root exemption. Re-check the live marker as well (same
+// cache window as the root flag). With the enforce switch off the flag alone decides, as before.
+const isRootInDatabase = async (userId: number, nonce: string | null): Promise<boolean> => {
   const fresh: { dbId: number; isRootAdmin?: boolean } = { dbId: userId };
-  return (await refreshJwtUserAuthority(fresh))?.isRootAdmin === true;
+  if ((await refreshJwtUserAuthority(fresh))?.isRootAdmin !== true) return false;
+  return rootTwoFactorEnforced() ? rootTwoFactorMarkerLive(userId, nonce) : true;
 };
 
 // Known deprecated/removed routes — any hit is a signal (often a scanner
@@ -576,6 +583,17 @@ export async function middleware(request: NextRequest) {
           ),
         );
       }
+    }
+  }
+
+  // [2026-10-25 root hardening] A root login that still owes enrollment or its code has no
+  // session user, so every page but the gate host would render as signed-out. Send it to /admin,
+  // which shows "Set up your authenticator app" (enroll) or the code prompt (verify). UX only:
+  // the security boundary is the user-less session projection in lib/auth.ts.
+  if (!pathname.startsWith("/api") && pathname !== "/admin" && pathname !== "/login") {
+    const token = await verifiedAuthToken;
+    if (token && rootTwoFactorPending(token as RootTwoFactorClaims)) {
+      return finalize(NextResponse.redirect(new URL("/admin", request.url)));
     }
   }
 

@@ -11,7 +11,8 @@ import { trustedClientIp } from "@/lib/trusted-client-ip";
 // encrypted token; the session projects isRootAdmin=false while a root login is still unverified.
 // Claim model: lib/root-two-factor-claims.ts; storage + the server-side verified marker:
 // server/services/root-two-factor.ts.
-import { projectRootAuthority } from "@/lib/root-two-factor-claims";
+import type { RootTwoFactorGate } from "@/lib/root-two-factor-claims";
+import { projectSessionFromToken } from "@/lib/root-session-projection";
 import {
   refreshJwtSessionClaims,
   stampRootTwoFactorAtSignIn,
@@ -46,9 +47,12 @@ declare module "next-auth" {
       canRunModels: boolean;
       /** EFFECTIVE root authority: false while a root login still owes a two-factor code. */
       isRootAdmin: boolean;
-      /** Root in the database with an active enrollment, this login not yet verified. */
-      rootTwoFactorPending: boolean;
     };
+    /**
+     * [2026-10-25] Set — and `user` ABSENT — while a root login still owes enrollment ("enroll")
+     * or a code ("verify"). Every server check then sees a signed-out caller; /admin shows the gate.
+     */
+    twoFactorGate?: RootTwoFactorGate | null;
   }
 }
 
@@ -193,6 +197,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                   ?.acquired === true;
               if (!acquired) return "busy" as const;
 
+              // [2026-10-25] ONE-SHOT: the bootstrap exists to seat the FIRST root on a fresh
+              // database. Once any root exists, root is designated only by root_admin.sh, so a
+              // CLI demote is never undone at the next login and a later registration of this
+              // address (unverified by design) never becomes root.
+              const [existingRoot] = await tx
+                .select({ id: users.id })
+                .from(users)
+                .where(eq(users.isRootAdmin, true))
+                .limit(1);
+              if (existingRoot) return "root-exists" as const;
+
               const [promoted] = await tx
                 .update(users)
                 .set({ isRootAdmin: true })
@@ -212,12 +227,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 : ("missing" as const);
             });
             if (promotion === "busy" || promotion === "missing") return null;
-            isRootAdmin = true;
-            audit("root_admin_bootstrap", {
-              userId: user.id,
-              companyId: user.companyId,
-              details: { email },
-            });
+            if (promotion === "root-exists") {
+              audit("root_admin_bootstrap_skipped", {
+                userId: user.id,
+                companyId: user.companyId,
+                details: { email, reason: "a root admin already exists; use root_admin.sh promote" },
+              });
+            } else {
+              isRootAdmin = true;
+              audit("root_admin_bootstrap", {
+                userId: user.id,
+                companyId: user.companyId,
+                details: { email },
+              });
+            }
           } catch {
             return null;
           }
@@ -247,10 +270,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ user, account, profile }) {
       // OAuth: create or link user on sign-in
       if (account?.provider === "google" && user.email) {
         const oauthEmail = user.email.toLowerCase().trim();
+        // [2026-10-25] Google is disabled in prod today; if it is ever enabled, an account is
+        // linked only on a VERIFIED email claim, and a linked account accepts only the Google
+        // account it was linked to.
+        if ((profile as { email_verified?: unknown } | undefined)?.email_verified !== true) {
+          return "/login?error=oauth-unverified";
+        }
         try {
           const [existing] = await db
             .select()
@@ -258,6 +287,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             .where(eq(users.email, oauthEmail))
             .limit(1);
           if (existing) {
+            if (existing.oauthProvider && existing.oauthProviderId !== account.providerAccountId) {
+              return "/login?error=oauth-mismatch";
+            }
+            // Never auto-link a privileged account: root and company admins sign in with their password.
+            if (!existing.oauthProvider && (existing.isRootAdmin || existing.role === "admin")) {
+              return "/login?error=oauth-link-refused";
+            }
             // Link OAuth to existing account if not already linked
             if (!existing.oauthProvider) {
               await db
@@ -355,19 +391,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.companyId = token.companyId;
-        session.user.dbId = token.dbId;
-        session.user.username = token.username;
-        session.user.role = token.role;
-        session.user.canRunModels = token.canRunModels;
-        // A root login that still owes its two-factor code is NOT root anywhere a session is
-        // consulted (route shell, in-service gates, the admin UI) but keeps admin powers.
-        const rootAuthority = projectRootAuthority(token);
-        session.user.isRootAdmin = rootAuthority.isRootAdmin;
-        session.user.rootTwoFactorPending = rootAuthority.rootTwoFactorPending;
-      }
-      return session;
+      // [2026-10-25 root hardening] Pure projection in lib/root-session-projection.ts: a gated root
+      // login goes out as `user: null` + `twoFactorGate` (explicit null — the next-auth server
+      // wrapper falls back to the raw token when `user` is merely absent), a verified one with the
+      // effective root flag. Tested through the real Auth.js session path.
+      return projectSessionFromToken(session, token);
     },
   },
 });

@@ -174,13 +174,18 @@ describe.skipIf(!dbUp)("POST /api/processing/dev (PQ5-3)", () => {
     r = await readJson(await dev({ projectId: "x" }));
     expect(r.status).toBe(401);
     expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S035 fold: A applied]
-    const { user, project } = await createWorld();
+    const { company, user, project } = await createWorld();
+    // [2026-10-25] ROOT ONLY (verified 2FA) once signed in: a member is refused before validation.
     asUser(user);
+    r = await readJson(await dev({}));
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Root admin only" } });
+    asUser(await createUser(company.id, { isRootAdmin: true }));
     r = await readJson(await dev({}));
     expect(r.status).toBe(400);
     expect(r.body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S035 fold: A applied]
     const other = await createCompany();
-    asUser(await createUser(other.id));
+    asUser(await createUser(other.id, { isRootAdmin: true }));
     r = await readJson(await dev({ projectId: project.publicId }));
     expect(r.status).toBe(404);
     expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S035 fold: A applied]
@@ -201,8 +206,8 @@ describe.skipIf(!dbUp)("POST /api/processing/dev (PQ5-3)", () => {
   });
 
   it("happy spreads processProject's result; throw → LEAKY 500", async () => {
-    const { user, project } = await createWorld();
-    asUser(user);
+    const { company, project } = await createWorld();
+    asUser(await createUser(company.id, { isRootAdmin: true }));
     let r = await readJson(await dev({ projectId: project.publicId }));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true, pagesProcessed: 3 }); // spread pinned

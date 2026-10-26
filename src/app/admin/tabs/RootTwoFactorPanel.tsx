@@ -1,11 +1,14 @@
 "use client";
 
-// [2026-10-23] Root TOTP 2FA management (Settings tab, root only — the routes are auth:"root").
-// Enroll: POST /enroll shows the base32 key + otpauth:// URI (copyable; paste into any
-// authenticator app) → a valid code to POST /confirm activates it and shows the 10 backup codes
-// ONCE, and session.update() re-issues the cookie with the enrolling login marked verified (the
-// server-side marker is short-lived). Disable and "new backup codes" each need a current code. Break-glass if the device is
-// lost: `./root_admin.sh 2fa-reset <email>` (deletes the enrollment row over ECS Exec).
+// [2026-10-25] Root TOTP 2FA management — MANDATORY for root. Hosted by the Settings tab (verified
+// root) and by RootTwoFactorGate (a root login that has not enrolled yet; it has no session user,
+// and status/enroll/confirm identify it from the cookie).
+// Enroll: the ACCOUNT PASSWORD → POST /enroll shows the base32 key + otpauth:// URI (copyable;
+// paste into any authenticator app) → a valid code to POST /confirm activates it and shows the 10
+// backup codes ONCE; `onEnrolled` (session.update()) re-issues the cookie with the enrolling login
+// marked verified. Disable and "new backup codes" each need a current code AND the password.
+// Break-glass if the device is lost: `./root_admin.sh 2fa-reset <email>` (deletes the enrollment
+// row over ECS Exec; the next sign-in lands on the enrollment gate).
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -29,12 +32,13 @@ type CodeResponse = { backupCodes?: string[] };
 async function postCode(
   path: string,
   code: string,
+  password?: string,
 ): Promise<{ ok: true; body: CodeResponse } | { ok: false; error: string }> {
   try {
     const res = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: code.trim() }),
+      body: JSON.stringify(password === undefined ? { code: code.trim() } : { code: code.trim(), password }),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, error: apiErrorMessage(body) || `Request failed (${res.status})` };
@@ -89,12 +93,13 @@ function BackupCodes({ codes }: { codes: string[] }) {
   );
 }
 
-export default function RootTwoFactorPanel() {
+export default function RootTwoFactorPanel({ onEnrolled }: { onEnrolled?: () => Promise<unknown> } = {}) {
   const { update } = useSession();
   const [status, setStatus] = useState<Status | null>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -128,13 +133,18 @@ export default function RootTwoFactorPanel() {
     run(async () => {
       setBackupCodes(null);
       try {
-        const res = await fetch("/api/auth/2fa/enroll", { method: "POST" });
+        const res = await fetch("/api/auth/2fa/enroll", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
         const body = await res.json().catch(() => null);
         if (!res.ok) {
           setError(apiErrorMessage(body) || `Request failed (${res.status})`);
           return;
         }
         setEnrollment(body);
+        setPassword("");
         setCode("");
       } catch {
         setError("Network error");
@@ -152,33 +162,37 @@ export default function RootTwoFactorPanel() {
       setBackupCodes(r.body.backupCodes ?? []);
       setCode("");
       setMessage("Two-factor authentication is now active for your root account.");
-      // Pick up the verified marker now, as RootTwoFactorGate does after verify; otherwise this
-      // login would turn pending once the marker expires.
-      await update().catch(() => {});
+      // Pick up the verified marker now (the enrolling login is marked verified server-side);
+      // from the gate this is what turns the user-less session into a root session.
+      await (onEnrolled ? onEnrolled() : update()).catch(() => {});
       await refresh();
     });
 
   const disable = () =>
     run(async () => {
-      const r = await postCode("/api/auth/2fa/disable", code);
+      const r = await postCode("/api/auth/2fa/disable", code, password);
       if (!r.ok) {
         setError(r.error);
         return;
       }
       setCode("");
+      setPassword("");
       setBackupCodes(null);
-      setMessage("Two-factor authentication disabled.");
+      setMessage("Two-factor authentication disabled. Root tools are locked until you enroll again.");
       await refresh();
+      // The row is gone: this login is now gated; re-read the session so the page shows the gate.
+      await update().catch(() => {});
     });
 
   const regenerate = () =>
     run(async () => {
-      const r = await postCode("/api/auth/2fa/backup-codes", code);
+      const r = await postCode("/api/auth/2fa/backup-codes", code, password);
       if (!r.ok) {
         setError(r.error);
         return;
       }
       setCode("");
+      setPassword("");
       setBackupCodes(r.body.backupCodes ?? []);
       setMessage("Backup codes replaced. The old ones no longer work.");
       await refresh();
@@ -193,14 +207,25 @@ export default function RootTwoFactorPanel() {
       className="px-3 py-1.5 rounded bg-[var(--bg)] border border-[var(--border)] font-mono text-sm w-48"
     />
   );
+  const passwordInput = (
+    <input
+      type="password"
+      value={password}
+      onChange={(e) => setPassword(e.target.value)}
+      autoComplete="current-password"
+      placeholder="Account password"
+      className="px-3 py-1.5 rounded bg-[var(--bg)] border border-[var(--border)] text-sm w-48"
+    />
+  );
 
   return (
     <section>
       <h2 className="text-lg font-semibold mb-3">Root Two-Factor Authentication</h2>
       <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded space-y-4">
         <p className="text-[10px] text-[var(--muted)]">
-          Authenticator-app (TOTP) code required at every root sign-in. Applies to this root
-          account only; company-admin access never needs it. Lost device: the owner runs
+          Authenticator-app (TOTP) code required at every root sign-in — mandatory for every root
+          account; company-admin access never needs it. Enrolling, disabling and replacing backup
+          codes all ask for your account password. Lost device: the owner runs
           <code className="mx-1">./root_admin.sh 2fa-reset &lt;email&gt;</code> from his machine.
         </p>
 
@@ -257,9 +282,10 @@ export default function RootTwoFactorPanel() {
         ) : status?.enrolled ? (
           <div className="flex gap-2 items-center flex-wrap">
             {codeInput}
+            {passwordInput}
             <button
               type="button"
-              disabled={busy || code.trim().length === 0}
+              disabled={busy || code.trim().length === 0 || password.length === 0}
               onClick={regenerate}
               className="px-3 py-1.5 text-sm rounded border border-[var(--border)] disabled:opacity-50"
             >
@@ -267,7 +293,7 @@ export default function RootTwoFactorPanel() {
             </button>
             <button
               type="button"
-              disabled={busy || code.trim().length === 0}
+              disabled={busy || code.trim().length === 0 || password.length === 0}
               onClick={disable}
               className="px-3 py-1.5 text-sm rounded border border-red-500/50 text-red-400 disabled:opacity-50"
             >
@@ -275,14 +301,17 @@ export default function RootTwoFactorPanel() {
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={startEnrollment}
-            className="px-3 py-1.5 text-sm rounded bg-[var(--accent)] text-white disabled:opacity-50"
-          >
-            {status?.pendingEnrollment ? "Restart enrollment" : "Enable two-factor"}
-          </button>
+          <div className="flex gap-2 items-center flex-wrap">
+            {passwordInput}
+            <button
+              type="button"
+              disabled={busy || password.length === 0}
+              onClick={startEnrollment}
+              className="px-3 py-1.5 text-sm rounded bg-[var(--accent)] text-white disabled:opacity-50"
+            >
+              {status?.pendingEnrollment ? "Restart enrollment" : "Enable two-factor"}
+            </button>
+          </div>
         )}
       </div>
     </section>

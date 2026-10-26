@@ -691,29 +691,37 @@ classes:
     expect(perUser.enabled).toBe(true); // per-user row untouched
   });
 
-  it("MD-17 PATCH upsert: enabled omitted toggles existing; insert defaults true; root shares cross-company; own-company companyId allowed", async () => {
+  it("MD-17 PATCH upsert: [2026-10-25] non-root may only DISABLE (omitted/true → 403); root toggles, inserts and shares cross-company", async () => {
     const { company, admin, root } = await makeWorld();
     const m = await seedModel(company.id);
     const targetCo = await createCompany();
     asUser(admin);
-    // no existing company grant → INSERT enabled ?? true, grantedBy actor
-    let r = await readJson(
-      await mdPATCH(patchReq({ modelId: m.id, companyId: company.id })),
-    ); // own companyId → allowed for non-root
+    // non-root: enabling (explicit or by omission) is root-only — nothing is written
+    const ENABLE_ROOT_ONLY = A.forbidden("Root admin only: enabling model access");
+    let r = await readJson(await mdPATCH(patchReq({ modelId: m.id, companyId: company.id })));
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual(ENABLE_ROOT_ONLY);
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, enabled: true })));
+    expect(r.status).toBe(403);
+    expect(await companyGrant(m.id, company.id)).toBeUndefined();
+    // non-root: explicit disable on an own model → INSERT enabled:false, grantedBy actor
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, enabled: false })));
     expect(r.status).toBe(200);
-    expect(await companyGrant(m.id, company.id)).toMatchObject({
-      enabled: true,
-      grantedBy: admin.id,
-    });
-    // existing + enabled omitted → TOGGLE (!existing.enabled)
-    r = await readJson(await mdPATCH(patchReq({ modelId: m.id })));
-    expect((await companyGrant(m.id, company.id))!.enabled).toBe(false);
-    r = await readJson(await mdPATCH(patchReq({ modelId: m.id })));
+    expect(await companyGrant(m.id, company.id)).toMatchObject({ enabled: false, grantedBy: admin.id });
+    // root: existing + enabled omitted → TOGGLE (!existing.enabled); explicit → set
+    asUser(root);
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, companyId: company.id })));
     expect((await companyGrant(m.id, company.id))!.enabled).toBe(true);
-    // existing + enabled explicit → set
-    r = await readJson(
-      await mdPATCH(patchReq({ modelId: m.id, enabled: false })),
-    );
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, companyId: company.id })));
+    expect((await companyGrant(m.id, company.id))!.enabled).toBe(false);
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, companyId: company.id, enabled: true })));
+    expect((await companyGrant(m.id, company.id))!.enabled).toBe(true);
+    // a company admin cannot flip root's grant back on, only off
+    asUser(admin);
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, enabled: false })));
+    expect((await companyGrant(m.id, company.id))!.enabled).toBe(false);
+    r = await readJson(await mdPATCH(patchReq({ modelId: m.id, enabled: true })));
+    expect(r.status).toBe(403);
     expect((await companyGrant(m.id, company.id))!.enabled).toBe(false);
     // root shares to ANOTHER company → new grant there
     asUser(root);

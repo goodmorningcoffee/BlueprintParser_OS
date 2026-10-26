@@ -33,7 +33,8 @@ vi.mock("@/lib/auth", async () => {
 
 import { GET as lcGET, POST as lcPOST, PUT as lcPUT, DELETE as lcDELETE } from "@/app/api/admin/llm-config/route";
 import { db } from "@/lib/db";
-import { llmConfigs, companies } from "@/lib/db/schema";
+import { llmConfigs, companies, appSettings } from "@/lib/db/schema";
+import { LLM_OWNER_KEY_GRANTS_KEY } from "@/lib/llm/owner-key-grant";
 import { eq } from "drizzle-orm";
 import { encryptApiKey, maskApiKey } from "@/lib/crypto";
 import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from "@/test/harness";
@@ -60,6 +61,12 @@ async function seedConfig(companyId: number, over: Partial<typeof llmConfigs.$in
     .returning();
   return row;
 }
+/** [2026-10-25] "no apiKey ⇒ the owner pays" is a root grant per company; these upsert-shape cases need it. */
+async function grantOwnerKeys(...companyIds: number[]) {
+  await db.insert(appSettings).values({ key: LLM_OWNER_KEY_GRANTS_KEY, value: { companies: companyIds }, updatedBy: null })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: { companies: companyIds } } });
+}
+
 async function configById(id: number) {
   const [row] = await db.select().from(llmConfigs).where(eq(llmConfigs.id, id)).limit(1);
   return row;
@@ -291,6 +298,7 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
     const rootCo = await createCompany();
     const root = await createUser(rootCo.id, { isRootAdmin: true });
     const targetCo = await createCompany();
+    await grantOwnerKeys(ownCo.id);
     // root → writes to targetCompanyId
     asUser(root);
     let r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m", targetCompanyId: targetCo.id })));
@@ -301,8 +309,9 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
     expect((await configById(r.body.id)).companyId).toBe(ownCo.id);
   });
 
-  it("LC-12 POST no apiKey → encrypted null, maskedKey null, hasKey false", async () => {
-    const { admin } = await makeWorld();
+  it("LC-12 POST no apiKey (company GRANTED the owner's keys) → encrypted null, maskedKey null, hasKey false", async () => {
+    const { company, admin } = await makeWorld();
+    await grantOwnerKeys(company.id);
     asUser(admin);
     const r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m" })));
     expect(r.body).toMatchObject({ maskedKey: null, hasKey: false });
@@ -310,6 +319,27 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
   });
 
   // ── DELETE ─────────────────────────────────────────────────────────────────────
+  it("LC-22 [2026-10-25] no apiKey without the owner-key grant → 400; with its own key → 200; root may store keyless configs; model is an identifier", async () => {
+    const { company, admin } = await makeWorld();
+    asUser(admin);
+    let r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m" })));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "An API key is required: this company is not allowed to use the owner's LLM keys" } });
+    r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m", apiKey: "gsk_company_own_key" })));
+    expect(r.status).toBe(200);
+    expect(r.body.hasKey).toBe(true);
+    // "unchanged" keeps the stored key, so it stays allowed
+    r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m2", apiKey: "unchanged" })));
+    expect(r.status).toBe(200);
+    r = await readJson(await lcPOST(postReq({ provider: "groq", model: "bad model name!", apiKey: "k" })));
+    expect(r.status).toBe(400);
+    const root = await createUser((await createCompany()).id, { isRootAdmin: true });
+    asUser(root);
+    r = await readJson(await lcPOST(postReq({ provider: "anthropic", model: "claude-sonnet-4-6", targetCompanyId: company.id, isDemo: true })));
+    expect(r.status).toBe(200);
+    expect(r.body.hasKey).toBe(false);
+  });
+
   it("LC-13 DELETE validation: missing id → 400 'id required'", async () => {
     const { admin } = await makeWorld();
     asUser(admin);
@@ -385,6 +415,7 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
 
   it("LC-19 POST userId-scoped upsert: user row created/targeted, company-wide row NOT clobbered", async () => {
     const { company, admin } = await makeWorld();
+    await grantOwnerKeys(company.id);
     const companyWide = await seedConfig(company.id, { provider: "groq", model: "company-model" });
     asUser(admin);
     // userId present → the upsert match keys on eq(userId), NOT isNull → separate row
@@ -401,6 +432,7 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
 
   it("LC-20 POST isDemo=true vs same-company isDemo=false: SEPARATE row (isDemo participates in the upsert match)", async () => {
     const { company, admin } = await makeWorld();
+    await grantOwnerKeys(company.id);
     const nonDemo = await seedConfig(company.id, { provider: "groq", model: "live-model" });
     asUser(admin);
     const r = await readJson(await lcPOST(postReq({ provider: "groq", model: "demo-model", isDemo: true })));

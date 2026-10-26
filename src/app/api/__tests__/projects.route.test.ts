@@ -203,10 +203,16 @@ describe.skipIf(!dbUp)("POST /api/projects (create)", () => {
       })
       .where(eq(projects.id, project.id));
 
+    // [2026-10-25 M2] publishing a demo is root-only, so the running-job policy is reached by a
+    // verified root of the same company; the upload above and the DELETE below stay company-admin.
+    const root = await createUser(company.id, { isRootAdmin: true });
+    asUser(root);
+    const rootSession = sessionState.current!;
+    asUser(admin);
     await expect(
       manageDemo(
         { projectId: project.publicId, isDemo: true },
-        sessionState.current!,
+        rootSession,
       ),
     ).rejects.toMatchObject({
       code: "CONFLICT",

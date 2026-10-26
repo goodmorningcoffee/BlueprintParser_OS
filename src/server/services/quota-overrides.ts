@@ -36,6 +36,7 @@ export const zQuotaOverridePut = z
         uploadsPerDay: zLimit.optional(),
         yoloJobsPerDay: zLimit.optional(),
         chatMessagesPerDay: zLimit.optional(),
+        lambdaPagesPerDay: zLimit.optional(),
       })
       .strict(),
   })

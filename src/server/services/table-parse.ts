@@ -55,6 +55,8 @@ import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { ApiError } from "@/server/api/envelope";
 import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
+import { audit } from "@/lib/audit";
+import { checkTextractCap, recordComputeUsage } from "@/lib/compute-usage";
 
 /**
  * Crop a PNG buffer to a normalized region [x0, y0, x1, y1] using sharp.
@@ -166,7 +168,7 @@ async function resolveTextractTables(
   dataUrl: string,
   pageNumber: number,
   regionBbox: [number, number, number, number],
-  allowLiveTextract: boolean,
+  allowLiveTextract: () => Promise<boolean>,
 ): Promise<MethodResult> {
   // Cache hit: only if at least one cached table actually overlaps the region
   if (
@@ -179,8 +181,9 @@ async function resolveTextractTables(
 
   // Demo projects are anonymous. The caller picks the region, so the caller picks the cache
   // miss, and every miss below is a paid AnalyzeDocument call. Demo is cache-only; the other
-  // three methods still run.
-  if (!allowLiveTextract) return methodTextractTables(undefined, regionBbox);
+  // three methods still run. [2026-10-25] For everyone else the callback charges ONE Textract
+  // page against the company cap (lib/compute-usage.ts) and refuses past it — cache-only then.
+  if (!(await allowLiveTextract())) return methodTextractTables(undefined, regionBbox);
 
   try {
     const s3Key = `${dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
@@ -256,12 +259,25 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     throw new ApiError("VALIDATION", "Invalid regionBbox: values must be finite numbers in [0,1] with min < max");
   }
 
-  const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
+  const { project, session } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 
   if (project.isDemo) {
     const gate = await assertDemoFeatureEnabled(project.companyId, "tableParse");
     if (gate) return gate; // flat 403 passthrough — does NOT flip here (TQ-1)
   }
+  // [2026-10-25] Owner-billed live Textract on a cache miss: never for demo; capped per company
+  // for members (root is exempt from the cap but its usage is still recorded).
+  const allowLiveTextract = async (): Promise<boolean> => {
+    if (project.isDemo) return false;
+    const isRoot = session?.user?.isRootAdmin === true;
+    const cap = isRoot ? { allowed: true } : await checkTextractCap(project.companyId, 1);
+    if (!cap.allowed) {
+      audit("textract_cap_hit", { userId: session?.user?.dbId, companyId: project.companyId, details: { projectId: project.id, pageNumber, surface: "table-parse" } });
+      return false;
+    }
+    await recordComputeUsage({ companyId: project.companyId, userId: session?.user?.dbId ?? null, projectId: project.id, resource: "textract", pages: 1 }).catch(() => {});
+    return true;
+  };
 
   // [refactor jul9 P2-A C1 · DETECTOR closer jul9] Resolve the company CSI context AFTER the
   // demo 403 gate (was before it): a disabled-tableParse demo project no longer does the PK
@@ -376,7 +392,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
 
   const methodPromises: Promise<MethodResult | MethodResult[]>[] = [
     timed(Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode }))),
-    timed(resolveTextractTables(textractData, project.dataUrl || "", pageNumber, regionBbox, !project.isDemo)),
+    timed(resolveTextractTables(textractData, project.dataUrl || "", pageNumber, regionBbox, allowLiveTextract)),
     pagePngBuffer && pdfBuffer
       ? timed(methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance }))
       : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0, error: skippedReason("page image") } as MethodResult),

@@ -93,6 +93,8 @@ import { tmpdir } from "os";
 import { templateMatch } from "@/lib/template-match";
 import { cropTemplateRegion } from "@/lib/template-crop";
 import { isLambdaCvEnabled, fanOutTemplateMatch, TEMPLATE_MATCH_BATCH_SIZE } from "@/lib/lambda-cv";
+import { checkLambdaQuota } from "@/lib/quotas";
+import { recordComputeUsage } from "@/lib/compute-usage";
 import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import type { TemplateMatchProgress, SymbolSearchMatch, TextractPageData, BboxMinMax } from "@/types";
 import { logger } from "@/lib/logger";
@@ -230,6 +232,10 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
 
     // ─── Lambda path: fan out across Lambda workers ─────────
     if (isLambdaCvEnabled()) {
+      // [2026-10-25] Owner-billed fan-out: one Lambda page per searched page, inside the root-set
+      // daily quota (root exempt, usage still recorded below).
+      const lambdaQuota = await checkLambdaQuota(project.companyId, session?.user?.isRootAdmin === true, session?.user?.dbId, pageNumbers.length);
+      if (!lambdaQuota.allowed) throw new ApiError("RATE_LIMITED", lambdaQuota.message ?? "Daily Lambda page limit reached");
       try {
         const templateBuffer = await readFile(templatePath);
         const pageS3Keys = pageNumbers.map(
@@ -262,6 +268,7 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
               // not a bug worth "fixing". The client UI shows pageIndex/totalPages.
               let cumulativeMatches = 0;
               let batchesDone = 0;
+              await recordComputeUsage({ companyId: project.companyId, userId: session?.user?.dbId ?? null, projectId: project.id, resource: "lambda_cv", pages: pageNumbers.length }).catch(() => {});
               const { results, failedPages } = await fanOutTemplateMatch({
                 templateBuffer,
                 pageS3Keys,

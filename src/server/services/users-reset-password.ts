@@ -13,7 +13,9 @@ import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import type { AuthSession } from "@/lib/api-utils";
+import { audit } from "@/lib/audit";
 import { ApiError } from "@/server/api/envelope";
+import { revokeRootTwoFactorSessions } from "@/server/services/root-two-factor";
 
 export async function resetUserPassword(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   if (!session.user.isRootAdmin) {
@@ -44,13 +46,19 @@ export async function resetUserPassword(rawBody: Record<string, unknown>, sessio
 
   // Verify target user exists
   const [targetUser] = await db
-    .select({ id: users.id })
+    .select({ id: users.id, companyId: users.companyId, isRootAdmin: users.isRootAdmin })
     .from(users)
     .where(eq(users.id, Number(userId)))
     .limit(1);
 
   if (!targetUser) {
     throw new ApiError("NOT_FOUND", "User not found");
+  }
+  // [2026-10-25] Another root's password is never force-reset from the app: that is the one move
+  // that would let one compromised root take over every other root. Self-service /api/admin/password
+  // and the owner's break-glass remain.
+  if (targetUser.isRootAdmin && targetUser.id !== session.user.dbId) {
+    throw new ApiError("FORBIDDEN", "A root admin's password cannot be force-reset; use self-service or break-glass");
   }
 
   // Reset the target user's password
@@ -59,6 +67,13 @@ export async function resetUserPassword(rawBody: Record<string, unknown>, sessio
     .update(users)
     .set({ passwordHash: newHash, updatedAt: new Date() })
     .where(eq(users.id, targetUser.id));
+
+  if (targetUser.isRootAdmin) await revokeRootTwoFactorSessions(targetUser.id, "password_force_reset");
+  audit("user_password_force_reset", {
+    userId: session.user.dbId,
+    companyId: session.user.companyId,
+    details: { targetUserId: targetUser.id, targetCompanyId: targetUser.companyId },
+  });
 
   return { success: true };
 }

@@ -49,6 +49,8 @@ import {
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
+import { isVerifiedRoot } from "@/server/api/root-authority";
+import { isReservedRootBootstrapEmail } from "@/lib/root-bootstrap-email";
 import type { AuthSession } from "@/lib/api-utils";
 import { assertProjectWritable } from "@/server/api/access";
 import {
@@ -218,19 +220,36 @@ export async function createUser(
   if (existing) {
     throw new ApiError("VALIDATION", "Email already exists");
   }
+  // [2026-10-25] The ROOT_ADMIN_EMAIL bootstrap address is reserved: only root may create it.
+  if (isReservedRootBootstrapEmail(email) && !isVerifiedRoot(session)) {
+    throw new ApiError("FORBIDDEN", "This email address is reserved");
+  }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  // [2026-10-25] role is an enum, and the admin tier is ROOT-GRANTED: a company admin can no
+  // longer mint further company admins (each admin inherits the company-scoped levers).
+  if (role !== undefined && role !== "member" && role !== "admin") {
+    throw new ApiError("VALIDATION", "role must be 'member' or 'admin'");
+  }
   const isAdmin = role === "admin";
+  if (isAdmin && !isVerifiedRoot(session)) {
+    throw new ApiError("FORBIDDEN", "Root admin only: creating a company admin");
+  }
+  const passwordHash = await bcrypt.hash(password, 12);
 
   // [S058 diff B] legacy caught insert errors and returned err.message@500 (DR002 users:109
   // leak) — retired: an insert throw now propagates to the shell's generic INTERNAL 500.
-  await db.insert(users).values({
+  const [created] = await db.insert(users).values({
     username,
     email,
     passwordHash,
     role: isAdmin ? "admin" : "member",
     canRunModels: isAdmin,
     companyId: targetCompanyId,
+  }).returning({ id: users.id });
+  audit("user_created", {
+    userId: session.user.dbId,
+    companyId: session.user.companyId,
+    details: { createdUserId: created?.id, role: isAdmin ? "admin" : "member", targetCompanyId, byRoot: isVerifiedRoot(session) },
   });
 
   return { success: true };
@@ -319,8 +338,21 @@ export async function updateUser(
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (typeof canRunModels === "boolean") updates.canRunModels = canRunModels;
+    // [2026-10-25] role is an enum (a free string left the target in no tier at all).
+    if (role !== undefined && role !== "member" && role !== "admin") {
+      throw new ApiError("VALIDATION", "role must be 'member' or 'admin'");
+    }
     if (role && actor.isRootAdmin) updates.role = role; // Only root admin can change roles
     if (companyId && actor.isRootAdmin) updates.companyId = companyId; // Only root admin can move between companies
+    audit("user_updated", {
+      userId: actor.id,
+      companyId: actor.companyId,
+      details: {
+        targetUserId: target.id,
+        before: { role: target.role, companyId: target.companyId },
+        after: { role: updates.role ?? target.role, companyId: updates.companyId ?? target.companyId, canRunModels: updates.canRunModels },
+      },
+    });
 
     // [S058 diff B] legacy caught update errors with the FIXED literal "Update failed"@500 —
     // retired: an update throw now propagates to the shell's generic INTERNAL 500.

@@ -76,6 +76,7 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import { ApiError, notFound } from "@/server/api/envelope";
 import { zPublicId } from "@/server/api/schemas";
 import { auth } from "@/lib/auth";
+import { audit } from "@/lib/audit";
 import {
   configuredLabelStudioProvider,
   createProject,
@@ -503,10 +504,10 @@ export async function createLabelingSessions(
     writeCapability,
     { kind: "labeling-session-create", idempotencyKey: String(project.id) },
     async (mutationLease) => {
-      // Rate limit: max 10 labeling sessions per company per day (admin and root bypass).
-      // FQ-5: root joined the bypass by owner ruling 2026-10-21 (root is exempt from every
-      // quota). FQ-6: rolling 24h window despite the "/day" wording.
-      if (session.user.role !== "admin" && !session.user.isRootAdmin) {
+      // Rate limit: max 10 labeling sessions per company per day. [2026-10-25] ROOT is the only
+      // bypass (Label Studio is owner-hosted); company admins are capped like members.
+      // FQ-6: rolling 24h window despite the "/day" wording.
+      if (!session.user.isRootAdmin) {
         const todayCount = await db.execute(
           sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions
           WHERE company_id = ${session.user.companyId}
@@ -1090,6 +1091,7 @@ export async function createLabelingSessions(
         });
       }
 
+      audit("labeling_session_created", { userId: session.user.dbId, companyId: session.user.companyId, details: { projectId: project.id, sessions: sessions.length } });
       return { success: true, sessions };
     },
   );

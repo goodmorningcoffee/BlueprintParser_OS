@@ -309,7 +309,7 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
   });
 
   it("US-6 POST happy: member default vs role admin; email normalized; bcrypt(12) verifies; {success:true}", async () => {
-    const { company, admin } = await makeWorld();
+    const { company, admin, root } = await makeWorld();
     asUser(admin);
     const email = `New-${Date.now()}@X.Test`;
     const r = await readJson(
@@ -335,8 +335,18 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
       companyId: company.id,
     });
     expect(await bcrypt.compare("longenough", row.passwordHash!)).toBe(true);
-    // role:"admin" → admin + canRunModels
+    // [2026-10-25] role:"admin" is ROOT-GRANTED: a company admin gets 403, root creates admin + canRunModels
     const email2 = `adm-${Date.now()}@x.test`;
+    const refused = await readJson(
+      await usPOST(postReq({ username: "adminette", email: email2, password: "longenough", role: "admin" })),
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.body).toEqual({ error: { code: "FORBIDDEN", message: "Root admin only: creating a company admin" } });
+    const bogus = await readJson(
+      await usPOST(postReq({ username: "adminette", email: email2, password: "longenough", role: "owner" })),
+    );
+    expect(bogus.status).toBe(400);
+    asUser(root);
     await readJson(
       await usPOST(
         postReq({
@@ -344,6 +354,7 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
           email: email2,
           password: "longenough",
           role: "admin",
+          companyId: company.id,
         }),
       ),
     );

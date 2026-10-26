@@ -29,6 +29,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { encryptApiKey, maskApiKey, decryptApiKey } from "@/lib/crypto";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+import { audit } from "@/lib/audit";
+import { isOwnerKeyGranted } from "@/lib/llm/resolve";
 // [refactor jul23 P4.1 U11] companies-row FOR-UPDATE write wrapper for the PUT sink.
 import { updatePipelineConfig } from "./company-config";
 
@@ -114,6 +116,10 @@ export async function upsertLlmConfig(session: AuthSession, body: Record<string,
   if (!provider || !model) {
     throw new ApiError("VALIDATION", "provider and model required");
   }
+  // [2026-10-25] A model name is an identifier, not free text (it is sent to the provider verbatim).
+  if (typeof model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/u.test(model)) {
+    throw new ApiError("VALIDATION", "model must be a provider model identifier (letters, digits, . _ : / -)");
+  }
 
   // Root admin can set configs for any company/user
   const companyId = (targetCompanyId && session.user.isRootAdmin) ? targetCompanyId : session.user.companyId;
@@ -132,6 +138,14 @@ export async function upsertLlmConfig(session: AuthSession, body: Record<string,
     )
     .limit(1);
 
+  // [2026-10-25] "No key ⇒ the owner pays" is a ROOT GRANT (lib/llm/owner-key-grant.ts): without
+  // it a non-root admin must store the company's own key (or keep the one already stored).
+  const bringsKey = !!apiKey && apiKey !== "unchanged";
+  const keepsKey = apiKey === "unchanged" && !!existing?.encryptedApiKey;
+  if (!session.user.isRootAdmin && provider !== "custom" && !bringsKey && !keepsKey && !(await isOwnerKeyGranted(companyId))) {
+    throw new ApiError("VALIDATION", "An API key is required: this company is not allowed to use the owner's LLM keys");
+  }
+
   if (existing) {
     // Update existing
     const updates: Record<string, unknown> = {
@@ -147,6 +161,7 @@ export async function upsertLlmConfig(session: AuthSession, body: Record<string,
       updates.encryptedApiKey = encrypted;
     }
     await db.update(llmConfigs).set(updates).where(eq(llmConfigs.id, existing.id));
+    audit("llm_config_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { configId: existing.id, targetCompanyId: companyId, targetUserId: userId ?? null, before: { provider: existing.provider, model: existing.model, hasKey: !!existing.encryptedApiKey }, after: { provider, model, hasKey: !!(apiKey || existing.encryptedApiKey) } } });
 
     return {
       id: existing.id,
@@ -180,6 +195,7 @@ export async function upsertLlmConfig(session: AuthSession, body: Record<string,
       config: config || null,
     })
     .returning();
+  audit("llm_config_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { configId: created.id, targetCompanyId: companyId, targetUserId: userId ?? null, before: null, after: { provider, model, hasKey: !!apiKey } } });
 
   return {
     id: created.id,
@@ -220,6 +236,7 @@ export async function deleteLlmConfig(session: AuthSession, body: Record<string,
   }
 
   await db.delete(llmConfigs).where(eq(llmConfigs.id, id));
+  audit("llm_config_deleted", { userId: session.user.dbId, companyId: session.user.companyId, details: { configId: id, targetCompanyId: config.companyId, before: { provider: config.provider, model: config.model, hasKey: !!config.encryptedApiKey } } });
   return { success: true };
 }
 

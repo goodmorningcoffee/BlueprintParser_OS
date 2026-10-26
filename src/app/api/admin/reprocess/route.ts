@@ -13,12 +13,15 @@
  * Solo fold (char: admin-reprocess.route.test.ts + admin-reprocess-g3.route.test.ts).
  */
 
+// [2026-10-25 root hardening] admitReprocess (services/reprocess-admission.ts) runs first: the
+// shape-parse scope with Lambda CV on is ROOT ONLY (owner-billed fan-out), and every scope is audited.
 import { defineRoute } from "@/server/api/defineRoute";
 import { reprocessProjects } from "@/server/services/reprocess";
+import { admitReprocess } from "@/server/services/reprocess-admission";
 
 export const POST = defineRoute({
   auth: "admin",
   kind: "stream",
   rawBody: true,
-  handler: ({ req, session }) => reprocessProjects(req, session!),
+  handler: ({ req, session }) => reprocessProjects(req, admitReprocess(session!, req)),
 });

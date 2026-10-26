@@ -17,6 +17,7 @@ db_password = "GENERATE_A_STRONG_PASSWORD"
 
 # Session & webhook secrets (use: openssl rand -base64 32)
 nextauth_secret           = "GENERATE_ME"
+root_2fa_key              = "GENERATE_ME" # >= 32 chars; root TOTP seed key, never rotate without a 2fa-reset planned
 processing_webhook_secret = "GENERATE_ME"
 
 # API keys

@@ -20,6 +20,8 @@ import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+import { audit } from "@/lib/audit";
+import { revokeRootTwoFactorSessions } from "@/server/services/root-two-factor";
 
 export async function changePassword(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
   const { currentPassword, newPassword } = body as { currentPassword?: string; newPassword?: string };
@@ -53,6 +55,10 @@ export async function changePassword(session: AuthSession, body: Record<string, 
     .update(users)
     .set({ passwordHash: newHash, updatedAt: new Date() })
     .where(eq(users.id, user.id));
+
+  // [2026-10-25] A root's other verified sessions must re-prove a code after a password change.
+  if (session.user.isRootAdmin) await revokeRootTwoFactorSessions(user.id, "password_changed");
+  audit("password_changed", { userId: user.id, companyId: session.user.companyId });
 
   return { success: true };
 }

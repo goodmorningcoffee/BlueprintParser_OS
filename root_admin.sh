@@ -13,6 +13,14 @@ set -euo pipefail
 # Usage:  ./root_admin.sh                 interactive menu
 #         ./root_admin.sh 2fa-reset <email>
 #         ./root_admin.sh help
+#
+# [2026-10-25] Root two-factor is MANDATORY in the app: a promoted root holds no access until it
+# has enrolled an authenticator app (password + code) in /admin; 2fa-reset returns an account to
+# that enrollment gate (it does NOT grant password-only root). The remote channel is frozen to
+# exactly BEGIN / advisory lock / one allowlisted statement / COMMIT by the schema-cutover gate, so
+# the audit trail for these operations is AWS-side: the CloudTrail ExecuteCommand event and ECS
+# Exec session logging (owner runbook). The only password-only root path is the emergency
+# task-definition switch ROOT_2FA_ENFORCE=0.
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly DEPLOY_ENV_FILE="${BP_ROOT_ADMIN_ENV_FILE:-${SCRIPT_DIR}/.deploy.env}"
@@ -372,8 +380,12 @@ show_help() {
   echo -e "  ${CYAN}./root_admin.sh${NC}                      interactive menu (choices 1-5 below)"
   echo -e "  ${CYAN}./root_admin.sh 2fa-reset <email>${NC}    delete that root user's two-factor (TOTP)"
   echo -e "                                        enrollment row (app_settings key root-2fa:<id>)"
-  echo -e "                                        after typing RESET-2FA; the next sign-in needs"
-  echo -e "                                        no code and the user can enrol again in /admin."
+  echo -e "                                        after typing RESET-2FA. Root 2FA is MANDATORY:"
+  echo -e "                                        the next sign-in lands on the /admin enrollment"
+  echo -e "                                        gate (account password + authenticator app) and"
+  echo -e "                                        holds NO access until enrolled and verified."
+  echo -e "                                        Rotate the account password at the same time if"
+  echo -e "                                        it may be known to anyone else."
   echo -e "  ${CYAN}./root_admin.sh help${NC}                 this text"
   echo ""
   echo -e "  1  List user emails and root-admin status"

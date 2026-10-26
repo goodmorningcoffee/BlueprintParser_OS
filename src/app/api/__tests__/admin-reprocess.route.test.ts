@@ -162,6 +162,9 @@ const richTextract = (() => {
 beforeEach(() => {
   // clear call history; keep the default implementations set in vi.hoisted above
   vi.clearAllMocks();
+  // [2026-10-25] three Lambda cases pin the flag ON for the whole request (the root-only admission
+  // reads it before the service does); put it back for everyone else.
+  lambdaMocks.isLambdaCvEnabled.mockReturnValue(false);
 });
 
 describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
@@ -569,6 +572,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const { company, project } = await createWorld({ numPages: 1 });
     await ageProjectForPublication(project.id);
     const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser(company.id, { isRootAdmin: true }); // [fix round M2] publishing a demo is root-only
     let signalUploadStarted!: () => void;
     let releaseUpload!: () => void;
     const uploadStarted = new Promise<void>((resolve) => { signalUploadStarted = resolve; });
@@ -584,6 +588,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     );
     await uploadStarted;
 
+    asUser(root); // [fix round M2] publishing a demo is root-only
     const publish = await readJson(await demoPOST(makeReq("/api/admin/demo", {
       method: "POST",
       body: { projectId: project.publicId, isDemo: true },
@@ -593,6 +598,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
       error: { code: "CONFLICT", message: "Project has an active mutation lease" },
     });
 
+    asUser(admin);
     releaseUpload();
     const lines = await drain(reprocessResponse);
     expect(lines[lines.length - 1]).toEqual({
@@ -673,9 +679,9 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
 
   it("scope=shape-parse lambda: config useLambda:true, W3/W4 writes, progress INCLUDES skipped (case 13)", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     const page = await createPage(project.id, 1, {});
-    lambdaMocks.isLambdaCvEnabled.mockReturnValueOnce(true);
+    lambdaMocks.isLambdaCvEnabled.mockReturnValue(true); // [2026-10-25] read by the root-only admission too
     const key = `${project.dataUrl}/pages/page_0001.png`;
     lambdaMocks.fanOutShapeParse.mockResolvedValueOnce({
       results: [{ pageS3Key: key, shape: "cloud", bbox: [5, 6, 7, 8], text: "L1", contour: [[1, 1]] }],
@@ -703,9 +709,9 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
 
   it("scope=shape-parse lambda THROW: verbatim warning line, sequential fallback runs (case 13b)", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
     await createPage(project.id, 1, {});
-    lambdaMocks.isLambdaCvEnabled.mockReturnValueOnce(true);
+    lambdaMocks.isLambdaCvEnabled.mockReturnValue(true); // [2026-10-25] read by the root-only admission too
     lambdaMocks.fanOutShapeParse.mockRejectedValueOnce(new Error("lambda-down"));
     // fallback: default extractKeynotes → {keynotes:[]} → skipped++
 
@@ -785,9 +791,9 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
 
     it("fan-out MALFORMED (shapeType number via fanOutShapeParse) → row STILL persists + ONE warn {sink:reprocess.shapeParse.fanout, kind:shape-parse}", async () => {
       const { company, project } = await createWorld();
-      const admin = await createUser(company.id, { role: "admin" });
+      const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25] Lambda shape-parse is root-only
       await createPage(project.id, 1, {});
-      lambdaMocks.isLambdaCvEnabled.mockReturnValueOnce(true);
+      lambdaMocks.isLambdaCvEnabled.mockReturnValue(true); // [2026-10-25] read by the root-only admission too
       lambdaMocks.fanOutShapeParse.mockResolvedValueOnce({
         results: [
           {
@@ -822,6 +828,7 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
       projectIntelligence: { disciplines: ["stale-normal"] } as any,
     });
     const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser(company.id, { isRootAdmin: true });
     const demoProj = await createProject(company.id, user.id, {
       isDemo: false,
       projectIntelligence: { curated: "demo-content" } as any,
@@ -830,11 +837,12 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     await createPage(demoProj.id, 1, { textractData: emptyTextract, rawText: "" });
     await ageProjectForPublication(demoProj.id);
 
-    asUser(admin);
+    asUser(root); // [fix round M2] publishing a demo is root-only
     expect((await readJson(await demoPOST(makeReq("/api/admin/demo", {
       method: "POST",
       body: { projectId: demoProj.publicId, isDemo: true },
     })))).status).toBe(200);
+    asUser(admin);
     const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
     const lines = await drain(res);
     expect(lines[0]).toEqual({ type: "start", projects: 1 }); // demo project NOT counted

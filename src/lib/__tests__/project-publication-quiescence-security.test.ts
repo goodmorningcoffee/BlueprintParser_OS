@@ -169,7 +169,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
   it("does not let a caller-declared terminal status retire a still-external running-job blocker", async () => {
     const { company, project } = await createWorld();
     await ageProjectPastUploadPublicationFence(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     asUser(admin);
     const adminSession = sessionState.current!;
 
@@ -207,7 +207,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
   it("does not let an ingestion webhook retire an unrelated running YOLO job", async () => {
     const { company, project } = await createWorld();
     await ageProjectPastUploadPublicationFence(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     asUser(admin);
     const adminSession = sessionState.current!;
 
@@ -251,7 +251,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
     const runner = await createUser(company.id, { canRunModels: true });
     const project = await createProject(company.id, runner.id, { numPages: 5 });
     await ageProjectPastUploadPublicationFence(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const modelName = `security-witness-${project.id}`;
     const [model] = await db
       .insert(models)
@@ -302,7 +302,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
   it("uses the database clock so publisher clock skew cannot expire a live mutation lease", async () => {
     const { company, project } = await createWorld();
     await ageProjectPastUploadPublicationFence(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const capability = assertProjectWritable(project);
     const lease = await acquireProjectMutationLease(capability, {
       kind: "clock-skew-security-witness",
@@ -342,7 +342,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
   it("fails closed when an active mutation lease has missed its heartbeat deadline", async () => {
     const { company, project } = await createWorld();
     await ageProjectPastUploadPublicationFence(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const capability = assertProjectWritable(project);
     const idempotencyKey = `missed-heartbeat-security-witness-${project.id}`;
     const lease = await acquireProjectMutationLease(capability, {
@@ -398,7 +398,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
 
   it("waits out all project upload authority before allowing publication", async () => {
     const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     asUser(admin);
     const adminSession = sessionState.current!;
 
@@ -430,7 +430,7 @@ describe.skipIf(!dbUp)("project publication quiescence", () => {
   it("requires linked Label Studio state to be retired before publication or deletion", async () => {
     const { company, project } = await createWorld();
     await ageProjectPastUploadPublicationFence(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const capability = assertProjectWritable(project);
     const labelingSession = await createLabelingSessionFixture(project, {
       labelStudioProjectId: 880_000 + project.id,

@@ -39,6 +39,7 @@ import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import type { AuthSession } from "@/lib/api-utils";
+import { audit } from "@/lib/audit";
 import { ApiError } from "@/server/api/envelope";
 import type { CsiConfigPutBody } from "@/server/api/schemas"; // [refactor jul9 P2-A C1]
 import { BUILT_IN_RULES, withoutRetiredBuiltIns } from "@/lib/heuristic-rules";
@@ -122,7 +123,10 @@ export async function putPipelineConfig(session: AuthSession, rawBody: Record<st
   // [fix 2026-10-24 T1a] the tab sends disabledSteps/ensemble inside `pipeline`; their readers
   // read the top level, so move them there (lib/pipeline-toggles.ts) in the same atomic write.
   const { pipeline: rest, topLevel } = hoistPipelineToggles(pipeline as Record<string, unknown>);
+  const before = await readPipelineConfig(session.user.companyId);
   await writePipelineConfig(session.user.companyId, { pipeline: rest, ...topLevel });
+  // [2026-10-25] disabledSteps / ensemble can re-enable default-on spend steps: audited (admin-level stays).
+  audit("pipeline_config_changed", { userId: session.user.dbId, companyId: session.user.companyId, details: { before: foldPipelineToggles(before), after: { ...rest, ...topLevel } } });
   return { success: true };
 }
 

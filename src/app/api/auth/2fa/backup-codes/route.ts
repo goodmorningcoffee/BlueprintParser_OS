@@ -1,18 +1,19 @@
 /**
- * POST /api/auth/2fa/backup-codes  { code }  (ROOT ONLY, verified)
+ * POST /api/auth/2fa/backup-codes  { code, password }  (ROOT ONLY, verified)
  *
- * [2026-10-23] Thin shell — services/root-two-factor.ts (regenerateRootTwoFactorBackupCodes).
- * Requires a current code; replaces all backup codes and returns the new set once.
+ * [2026-10-25] Thin shell — services/root-two-factor.ts (regenerateRootTwoFactorBackupCodes).
+ * Requires a current code AND the account password; replaces all backup codes and returns the
+ * new set once.
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
 import {
   regenerateRootTwoFactorBackupCodes,
-  zTwoFactorCodeBody,
+  zTwoFactorCodeAndPasswordBody,
 } from "@/server/services/root-two-factor";
 
 export const POST = defineRoute({
   auth: "root",
-  body: zTwoFactorCodeBody,
+  body: zTwoFactorCodeAndPasswordBody,
   handler: ({ body, session }) => regenerateRootTwoFactorBackupCodes(session!, body),
 });

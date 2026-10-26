@@ -16,13 +16,14 @@ import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
 import { yoloLoad, yoloRun } from "@/server/services/yolo";
 import { assertDemoYoloTargetReadOnly } from "@/server/services/yolo-demo-target";
+import { sessionIsGated } from "@/lib/root-two-factor-claims";
 
 export const YOLO_ROOT_ONLY_MESSAGE = "Root admin only";
 
 async function requireYoloRoot(projectId: unknown, signedOut: "UNAUTHORIZED" | "FORBIDDEN"): Promise<void> {
   await assertDemoYoloTargetReadOnly(projectId);
   const session = (await auth()) as unknown as AuthSession | null;
-  if (!session?.user) {
+  if (!session?.user || sessionIsGated(session)) {
     throw signedOut === "UNAUTHORIZED"
       ? new ApiError("UNAUTHORIZED", "Unauthorized")
       : new ApiError("FORBIDDEN", YOLO_ROOT_ONLY_MESSAGE);

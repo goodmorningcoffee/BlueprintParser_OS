@@ -126,7 +126,7 @@ describe.skipIf(!dbUp)("project write capability lifecycle", () => {
   it("B3: manageDemo cannot publish between capability validation and a child-table write", async () => {
     const { company, project } = await createWorld();
     await ageProjectForPublication(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const pageIntelligence = {
       parsedRegions: [
         {
@@ -217,7 +217,7 @@ describe.skipIf(!dbUp)("project write capability lifecycle", () => {
     const before = { summaries: { allTrades: ["BEFORE"] } };
     const { company, project } = await createWorld({ projectIntelligence: before as never });
     await ageProjectForPublication(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const lifecycleInstant = new Date("2035-04-05T06:07:08.123Z");
     await db
       .update(projects)
@@ -263,7 +263,7 @@ describe.skipIf(!dbUp)("project write capability lifecycle", () => {
   it("a live mutation lease blocks publication and duplicate idempotency keys", async () => {
     const { company, project } = await createWorld();
     await ageProjectForPublication(project.id);
-    const admin = await createUser(company.id, { role: "admin" });
+    const admin = await createUser(company.id, { role: "admin", isRootAdmin: true }); // [2026-10-25 M2] publishing a demo is root-only
     const capability = assertProjectWritable(project);
     const lease = await acquireProjectMutationLease(capability, {
       kind: "security-freeze",

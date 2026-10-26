@@ -242,6 +242,28 @@ variable "root_admin_email" {
   }
 }
 
+variable "root_2fa_key" {
+  description = "Dedicated keying material for the root TOTP seed (lib/secret-box.ts): any long random string, >= 32 chars. Never rotate it without a `./root_admin.sh 2fa-reset` planned — the old value is kept nowhere"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.root_2fa_key) >= 32
+    error_message = "root_2fa_key must be at least 32 characters (e.g. `openssl rand -base64 48`)."
+  }
+}
+
+variable "root_2fa_enforce" {
+  description = "Mandatory root two-factor. \"1\" (default) enforces; \"0\" is the emergency off-switch and must never be left on after an incident"
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = contains(["0", "1"], var.root_2fa_enforce)
+    error_message = "root_2fa_enforce must be \"1\" (enforce) or \"0\" (emergency off-switch)."
+  }
+}
+
 variable "label_studio_instance_generation" {
   description = "Operator-controlled Label Studio database generation; increment whenever the provider database is reinitialized or replaced, even if its EFS filesystem survives"
   type        = string

@@ -38,6 +38,7 @@ import { models, modelAccess, companies } from "@/lib/db/schema";
 import { eq, and, or, isNull, sql } from "drizzle-orm";
 import { uploadToS3, createModelUploadPresignedPost } from "@/lib/s3";
 import { ApiError } from "@/server/api/envelope";
+import { audit } from "@/lib/audit";
 import type { AuthSession } from "@/lib/api-utils";
 import { isCanonicalModelStoragePath } from "@/lib/model-storage-authority";
 
@@ -441,6 +442,12 @@ export async function shareModel(
         .limit(1);
       if (!hasAccess) throw new ApiError("NOT_FOUND", "Not found");
     }
+    // [2026-10-25] ENABLING a grant is root-only (/api/admin/model-access): a company admin may
+    // only switch its own company's access OFF. Before this, a company could re-enable a grant
+    // root had disabled, because hasAccess ignored `enabled`.
+    if (enabled !== false) {
+      throw new ApiError("FORBIDDEN", "Root admin only: enabling model access");
+    }
   }
 
   // Upsert the COMPANY-level grant (user_id NULL). Per-user grants are managed
@@ -470,6 +477,11 @@ export async function shareModel(
       grantedBy: session.user.dbId,
     });
   }
+  audit("model_access_shared", {
+    userId: session.user.dbId,
+    companyId: session.user.companyId,
+    details: { modelId, targetCompanyId: effectiveCompanyId, before: existing?.enabled ?? null, after: existing ? (enabled ?? !existing.enabled) : (enabled ?? true) },
+  });
 
   return { success: true };
 }

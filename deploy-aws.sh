@@ -9,6 +9,7 @@
 #   ./deploy-aws.sh release --outage     a release that carries a schema change (~10 min down)
 #   ./deploy-aws.sh rollback             re-bind the previous digest (no schema change across it)
 #   ./deploy-aws.sh restart              same-image restart after a config/secret change (deploy.sh activate)
+#   ./deploy-aws.sh lambda               rebuild + push the CV Lambda image and update the function (release does this when its code changed)
 #   ./deploy-aws.sh logs                 tail the app log
 #   ./deploy-aws.sh unlock-login <email> clear a login lockout (the owner's own, typically)
 #   ./deploy-aws.sh sagemaker-quotas     read-only: SageMaker processing-job quotas + on-demand $/h, YOLO fit
@@ -529,6 +530,17 @@ phase_ecr() {
   info "terraform: only the three ECR repositories"
   tf_apply -target=aws_ecr_repository.beaver_app -target=aws_ecr_repository.beaver_cv_lambda -target=aws_ecr_repository.beaver_yolo_pipeline
 }
+# Build + push the CV Lambda image (amd64, single manifest). Bootstrap needs it before the function
+# exists; `lambda` and `release` re-push it when its inputs changed.
+push_lambda_image() { # push_lambda_image <ecr base>
+  local base="$1"
+  # explicit checks: callers may run this where errexit is suspended
+  run "${DOCKER_BIN}" build --platform linux/amd64 -f "${PROJECT_DIR}/Dockerfile.lambda" -t "${base}/beaver-cv-lambda:latest" "${PROJECT_DIR}" || die "docker build of the Lambda image failed"
+  run "${DOCKER_BIN}" push "${base}/beaver-cv-lambda:latest" || die "docker push of the Lambda image failed"
+  local mt; mt=$(aws_ro ecr describe-images --repository-name beaver-cv-lambda --image-ids imageTag=latest --region "${AWS_REGION}" --query 'imageDetails[0].imageManifestMediaType' --output text)
+  case "${mt}" in *index*|*list*) die "the Lambda image was pushed as an image INDEX (${mt}); Lambda rejects that. Docker Desktop attestations are still on." ;; esac
+  ok "Lambda image is a single manifest (${mt})"
+}
 docker_manifest_digest() { "${DOCKER_BIN}" manifest inspect --verbose "$1" 2>/dev/null | json 'j && (Array.isArray(j) ? j.find(m=>m.Descriptor.platform.architecture==="amd64") : j).Descriptor.digest' || true; }
 
 phase_images() {
@@ -537,11 +549,7 @@ phase_images() {
   local base; base=$(ecr_base)
   capture_redacted "aws ecr get-login-password" "${AWS_BIN}" ecr get-login-password --region "${AWS_REGION}" | "${DOCKER_BIN}" login --username AWS --password-stdin "${base}" >/dev/null
   announce "build + push beaver-cv-lambda:latest (Lambda needs it at create time; single manifest, amd64)"
-  run "${DOCKER_BIN}" build --platform linux/amd64 -f "${PROJECT_DIR}/Dockerfile.lambda" -t "${base}/beaver-cv-lambda:latest" "${PROJECT_DIR}"
-  run "${DOCKER_BIN}" push "${base}/beaver-cv-lambda:latest"
-  local mt; mt=$(aws_ro ecr describe-images --repository-name beaver-cv-lambda --image-ids imageTag=latest --region "${AWS_REGION}" --query 'imageDetails[0].imageManifestMediaType' --output text)
-  case "${mt}" in *index*|*list*) die "the Lambda image was pushed as an image INDEX (${mt}); Lambda rejects that. Docker Desktop attestations are still on." ;; esac
-  ok "Lambda image is a single manifest (${mt})"
+  push_lambda_image "${base}"
 
   announce "./deploy-yolo.sh (immutable tag, prints the YOLO digest)"
   run_to_file "${STATE_DIR}/last-yolo-publish.txt" "${DEPLOY_YOLO_SH}"
@@ -865,6 +873,14 @@ cmd_release() {
   ok "published ${digest}"
 
   if [ "${OUTAGE}" = 1 ]; then release_outage "${digest}" "${previous}" "${head}"; else release_rolling "${digest}" "${previous}" "${head}"; fi
+
+  if lambda_inputs_changed "${head}" "${dh}"; then
+    announce "the CV Lambda's code changed since it was last built: build + push beaver-cv-lambda:latest from ${head:0:12}, then update ${LAMBDA_FUNCTION}"
+    info "the app is already released; if this step fails, rerun: ./deploy-aws.sh lambda"
+    update_lambda "${head}"
+  else
+    ok "CV Lambda inputs unchanged; ${LAMBDA_FUNCTION} keeps its image"
+  fi
 }
 
 apply_digest() { # apply_digest <digest> <tuple>
@@ -932,6 +948,49 @@ cmd_rollback() {
   roll_service "${new_td}" 1
   release_record rollback "${previous}" "${current}" "${ph}"
   ok "rolled back"
+}
+
+# The CV Lambda (template match + shape parse) runs beaver-cv-lambda:latest, which `release` did not
+# rebuild before 2026-10-25: Lambda-side commits never reached AWS. Its image is built from these files
+# only (Dockerfile.lambda COPY lines); keep the list in step with that Dockerfile.
+LAMBDA_FUNCTION="${BP_LAMBDA_FUNCTION:-beaver-cv-pipeline}"
+LAMBDA_INPUTS=(Dockerfile.lambda scripts/template_match.py scripts/extract_keynotes.py scripts/lambda_handler.py)
+LAMBDA_HEAD_FILE="${STATE_DIR}/lambda-head"
+
+update_lambda() { # update_lambda <head>: push the image, point the function at it, wait, record the head
+  local head="$1" base; base=$(ecr_base)
+  capture_redacted "aws ecr get-login-password" "${AWS_BIN}" ecr get-login-password --region "${AWS_REGION}" | "${DOCKER_BIN}" login --username AWS --password-stdin "${base}" >/dev/null
+  push_lambda_image "${base}"
+  # :latest, as lambda.tf declares, so the next terraform apply sees no drift; Lambda resolves the tag now.
+  run "${AWS_BIN}" lambda update-function-code --function-name "${LAMBDA_FUNCTION}" --image-uri "${base}/beaver-cv-lambda:latest" --region "${AWS_REGION}" --query CodeSha256 --output text \
+    || die "lambda update-function-code failed; the function keeps its previous image"
+  run "${AWS_BIN}" lambda wait function-updated-v2 --function-name "${LAMBDA_FUNCTION}" --region "${AWS_REGION}" \
+    || die "the Lambda update did not settle; check: aws lambda get-function --function-name ${LAMBDA_FUNCTION}"
+  local st; st=$(aws_ro lambda get-function --function-name "${LAMBDA_FUNCTION}" --region "${AWS_REGION}" --query Configuration.LastUpdateStatus --output text)
+  [ "${st}" = "Successful" ] || die "Lambda LastUpdateStatus is ${st:-unknown}, not Successful"
+  mkdir -p "${STATE_DIR}"; printf '%s\n' "${head}" >"${LAMBDA_HEAD_FILE}"
+  log_line "lambda ${LAMBDA_FUNCTION} updated from ${head}"
+  ok "${LAMBDA_FUNCTION} now runs the image built from ${head:0:12}"
+}
+
+# Did the Lambda's inputs change since what it last ran? Base = the head recorded by update_lambda,
+# else the deployed app HEAD (Lambda and app were last built together at bootstrap). Unknown → yes.
+lambda_inputs_changed() { # lambda_inputs_changed <head> <deployed head or "">
+  local base=""; [ -f "${LAMBDA_HEAD_FILE}" ] && base=$(head -1 "${LAMBDA_HEAD_FILE}")
+  [ -n "${base}" ] || base="$2"
+  [ -n "${base}" ] && git -C "${PROJECT_DIR}" cat-file -e "${base}^{commit}" 2>/dev/null || return 0
+  ! git -C "${PROJECT_DIR}" diff --quiet "${base}" "$1" -- "${LAMBDA_INPUTS[@]}"
+}
+
+cmd_lambda() {
+  load_config; require_config AWS_ACCOUNT AWS_REGION
+  section "CV Lambda (${LAMBDA_FUNCTION})"
+  local head; head=$(git -C "${PROJECT_DIR}" rev-parse HEAD)
+  require_clean_tree
+  [ "$(caller_account)" = "${AWS_ACCOUNT}" ] || die "aws caller account is not ${AWS_ACCOUNT}"
+  require_green_head "${head}"
+  announce "build + push beaver-cv-lambda:latest from ${head:0:12} (amd64, single manifest), then update ${LAMBDA_FUNCTION}"
+  update_lambda "${head}"
 }
 
 cmd_restart() {
@@ -1070,6 +1129,7 @@ case "${cmd}" in
   release) cmd_release ;;
   rollback) cmd_rollback ;;
   restart) cmd_restart ;;
+  lambda) cmd_lambda ;;
   logs) cmd_logs ;;
   unlock-login) cmd_unlock_login "${POSITIONAL}" ;;
   sagemaker-quotas) cmd_sagemaker_quotas ;;

@@ -74,6 +74,10 @@ import { downloadFromS3 } from "@/lib/s3";
 import { assertCurrentProjectAssetRead } from "@/server/services/project-assets";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { logger } from "@/lib/logger";
+import { audit } from "@/lib/audit";
+import { recordComputeUsage } from "@/lib/compute-usage";
+import type { AuthSession } from "@/lib/api-utils";
+import { requireVerifiedRoot } from "@/server/api/root-authority";
 // [refactor jul23 P4.1 U10] log-mode region-data shape observation (never throws, no v-gate).
 import { observeRegionDataBatch } from "@/server/services/region-data-observe";
 import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
@@ -617,7 +621,9 @@ export async function getPageThumbnail(idParam: string, pageParam: string): Prom
  *  field 400 → access → demo 403 → no-dataUrl 404 → page-not-found 404 → S3 download → Textract →
  *  write → success. The S3-download 500 keeps its specific (non-leaking) wording; the Textract
  *  catch drops its err.message leak (sanctioned diff B). */
-export async function rerunPageTextract(body: Record<string, unknown>) {
+export async function rerunPageTextract(body: Record<string, unknown>, session: AuthSession) {
+  // [2026-10-25] Root only (verified 2FA): a paid full-page AnalyzeDocument per call.
+  requireVerifiedRoot(session);
   const { projectId, publicId, pageNumber } = body as {
     projectId?: number;
     publicId?: string;
@@ -667,6 +673,9 @@ export async function rerunPageTextract(body: Record<string, unknown>) {
     throw new ApiError("INTERNAL", "Internal server error");
   }
   const durationMs = Date.now() - start;
+  // [2026-10-25] Metered (root bypasses the cap, usage is still recorded) and audited.
+  await recordComputeUsage({ companyId: project.companyId, userId: session.user.dbId, projectId: project.id, resource: "textract", pages: 1 }).catch(() => {});
+  audit("textract_rerun", { userId: session.user.dbId, companyId: project.companyId, details: { projectId: project.id, pageNumber, durationMs } });
 
   // Textract is a long external await. The final parent-first boundary revalidates the lifecycle,
   // so a request admitted before publication cannot resume and write into the public generation.

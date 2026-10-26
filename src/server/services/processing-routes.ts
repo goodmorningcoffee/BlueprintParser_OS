@@ -27,6 +27,8 @@ import type { Block } from "@aws-sdk/client-textract";
 import { logger } from "@/lib/logger";
 import { processProject } from "@/lib/processing";
 import { ApiError } from "@/server/api/envelope";
+import { requireVerifiedRoot } from "@/server/api/root-authority";
+import { recordComputeUsage } from "@/lib/compute-usage";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
 import { zPublicId } from "@/server/api/schemas";
@@ -68,7 +70,7 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
   }
   const writeCapability = assertProjectWritable(project);
 
-  return withProjectWrite(writeCapability, project.id, async (tx) => {
+  const result = await withProjectWrite(writeCapability, project.id, async (tx) => {
 
   // Process each page's Textract results
   for (const pageData of payload.pages) {
@@ -157,6 +159,16 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
 
   return { success: true };
   });
+
+  // [2026-10-25] The pipeline ran Textract on every page in this batch: charge the company ledger so
+  // the root-set cap (lib/compute-usage.ts checkTextractCap) and the Usage tab see real numbers.
+  // [fix round L6] Charged only AFTER the write was accepted, so a redelivery the write capability
+  // refuses (stale epoch, withdrawn capability) is not charged again. Never fails the webhook: a
+  // ledger hiccup must not lose the results. A redelivery that is accepted still charges once more.
+  if (Array.isArray(payload.pages) && payload.pages.length > 0) {
+    await recordComputeUsage({ companyId: project.companyId, userId: project.authorId ?? null, projectId: project.id, resource: "textract", pages: payload.pages.length }).catch((err) => logger.error("[webhook] textract usage ledger failed", err));
+  }
+  return result;
 }
 
 export async function processingDev(rawBody: Record<string, unknown>): Promise<unknown> {
@@ -190,6 +202,9 @@ export async function processingDev(rawBody: Record<string, unknown>): Promise<u
   if (!session?.user) {
     throw new ApiError("UNAUTHORIZED", "Unauthorized");
   }
+  // [2026-10-25] Even with the flag on, running the pipeline in the web task (Textract per page +
+  // Lambda shape-parse, no quota) is ROOT ONLY (verified 2FA).
+  requireVerifiedRoot(session);
 
   if (!projectId) {
     throw new ApiError("VALIDATION", "projectId required");

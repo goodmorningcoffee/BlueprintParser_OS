@@ -43,6 +43,7 @@ resource "aws_iam_role_policy" "beaver_ecs_execution_secrets" {
         Resource = [
           aws_secretsmanager_secret.database_url.arn,
           aws_secretsmanager_secret.nextauth_secret.arn,
+          aws_secretsmanager_secret.root_2fa_key.arn,
           aws_secretsmanager_secret.processing_webhook_secret.arn,
           aws_secretsmanager_secret.anthropic_api_key.arn,
           aws_secretsmanager_secret.groq_api_key.arn,

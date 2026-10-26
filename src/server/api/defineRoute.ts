@@ -29,6 +29,8 @@ import {
 import { logger } from "@/lib/logger";
 import { ApiError, errorResponse } from "./envelope";
 import { resolveProjectOrThrow } from "./access";
+import { requireVerifiedRoot } from "./root-authority";
+import { sessionIsGated } from "@/lib/root-two-factor-claims";
 import { isDemoWriteProtectionError } from "./project-write-errors";
 import { zPublicId } from "./schemas";
 
@@ -183,7 +185,7 @@ async function preAuthBodyCap(req: Request): Promise<number> {
     return DEFAULT_MAX_BODY_BYTES;
   }
   const session = await auth().catch(() => null);
-  return session?.user ? AUTHENTICATED_MAX_BODY_BYTES : DEFAULT_MAX_BODY_BYTES;
+  return session?.user && !sessionIsGated(session) ? AUTHENTICATED_MAX_BODY_BYTES : DEFAULT_MAX_BODY_BYTES;
 }
 
 const bodyTooLarge = () => new ApiError("BAD_REQUEST", "Request body too large", 413);
@@ -247,23 +249,18 @@ function checkWebhookSecret(req: Request): void {
   }
 }
 
-// [2026-10-23] Root 2FA: `session.user.isRootAdmin` is the EFFECTIVE authority — the session
-// callback (lib/auth.ts) projects it false while a root login still owes its code, so auth:"root"
-// fails closed here with no extra branch. `rootTwoFactorPending` keeps that user's admin powers.
+// [2026-10-25] Root 2FA is mandatory: a root login that still owes enrollment or its code holds a
+// session WITHOUT a user (lib/auth.ts), so every level here — "session" included — fails closed
+// with UNAUTHORIZED and no extra branch. auth:"root" goes through requireVerifiedRoot, the single
+// "is this a verified root" check that in-service gates share (server/api/root-authority.ts).
 async function requireSession(minRole?: "admin" | "root"): Promise<AuthSession> {
   const session = (await auth()) as unknown as AuthSession | null;
-  if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");
-  if (
-    minRole === "admin" &&
-    session.user.role !== "admin" &&
-    !session.user.isRootAdmin &&
-    session.user.rootTwoFactorPending !== true
-  ) {
+  // [fix round] `sessionIsGated` is the belt behind the projection's `user: null` braces.
+  if (!session?.user || sessionIsGated(session)) throw new ApiError("UNAUTHORIZED", "Unauthorized");
+  if (minRole === "admin" && session.user.role !== "admin" && !session.user.isRootAdmin) {
     throw new ApiError("FORBIDDEN", "Admin only");
   }
-  if (minRole === "root" && !session.user.isRootAdmin) {
-    throw new ApiError("FORBIDDEN", "Root admin only");
-  }
+  if (minRole === "root") requireVerifiedRoot(session);
   return session;
 }
 

@@ -1,14 +1,16 @@
 /**
- * GET /api/auth/2fa/status  (ROOT ONLY — and, since a pending root is projected as non-root, verified)
+ * GET /api/auth/2fa/status  (ROOT in the database — reachable while GATED)
  *
- * [2026-10-23] Thin shell — behavior lives in services/root-two-factor.ts (getRootTwoFactorStatus).
- * Returns { enrolled, enrolledAt, backupCodesRemaining, pendingEnrollment } for the signed-in root.
+ * [2026-10-25] auth:"none" shell: a root login that still owes enrollment or its code has no
+ * session user, so the service identifies the caller from the encrypted cookie and re-reads
+ * users.isRootAdmin (requireRootTwoFactorCaller). Returns { enrolled, enrolledAt,
+ * backupCodesRemaining, pendingEnrollment }.
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
 import { getRootTwoFactorStatus } from "@/server/services/root-two-factor";
 
 export const GET = defineRoute({
-  auth: "root",
-  handler: ({ session }) => getRootTwoFactorStatus(session!),
+  auth: "none",
+  handler: ({ req }) => getRootTwoFactorStatus(req),
 });
