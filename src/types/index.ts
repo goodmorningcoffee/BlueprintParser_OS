@@ -927,8 +927,8 @@ export interface ParsedTableSummaryEntry {
   pageNum: number;
   name: string;
   category: string;
-  rowCount: number;
-  colCount: number;
+  rowCount: number; colCount: number;
+  regionId?: string; // K11: the ParsedRegion's id; absent in summaries computed before TP-1
 }
 
 export interface AnnotationSummary {

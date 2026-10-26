@@ -119,7 +119,7 @@ export default function KeynoteItem({
     const allKeynotes = store.parsedKeynoteData;
     if (allKeynotes) {
       const updated = allKeynotes.map((kn) => {
-        if (kn.pageNumber === keynote.pageNumber && kn.tableName === oldName) {
+        if (keynote.regionId ? kn.regionId === keynote.regionId : kn.pageNumber === keynote.pageNumber && kn.tableName === oldName) {
           return { ...kn, tableName: trimmed };
         }
         return kn;
@@ -136,8 +136,8 @@ export default function KeynoteItem({
     let matchedData: Record<string, any> | null = null;
     const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
       if (r.type !== "keynote") return r;
-      if (matchedId === null &&
-          (r.data?.tableName === oldName || (!r.data?.tableName && r.category === "keynote-table"))) {
+      if (matchedId === null && (region?.id ? r.id === region.id : // K01: by id; legends can share a name
+          (r.data?.tableName === oldName || (!r.data?.tableName && r.category === "keynote-table")))) {
         matchedId = r.id;
         matchedBbox = r.bbox || null;
         matchedCsiTags = r.csiTags || [];
@@ -280,7 +280,7 @@ export default function KeynoteItem({
                         headers: grid.headers,
                         rows: grid.rows,
                         tagColumn: grid.tagColumn,
-                        tableName: keynote.tableName || "Keynotes",
+                        tableName: keynote.tableName || "Keynotes", regionId: region.id,
                       },
                       meta: null,
                       region: region.bbox || null,
@@ -555,7 +555,7 @@ export default function KeynoteItem({
                       const allKeynotes = store.parsedKeynoteData;
                       if (allKeynotes) {
                         const updated = allKeynotes.map((kn) => {
-                          if (kn.pageNumber !== keynote.pageNumber || kn.tableName !== keynote.tableName) return kn;
+                          if (keynote.regionId ? kn.regionId !== keynote.regionId : kn.pageNumber !== keynote.pageNumber || kn.tableName !== keynote.tableName) return kn;
                           return {
                             ...kn,
                             keys: kn.keys.map((key, ki) => {

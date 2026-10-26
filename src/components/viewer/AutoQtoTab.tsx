@@ -35,6 +35,7 @@ import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
 import { computeScheduleDetections } from "@/lib/auto-qto/schedule-detections";
+import { findSummaryRegion } from "@/lib/parsed-table-summary";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import TakeoffCsvModal from "./TakeoffCsvModal";
 
@@ -196,7 +197,7 @@ export default function AutoQtoTab() {
 
   // Find already-parsed schedules — merge pageIntelligence (user-parsed, has full data) + summaries (pre-computed, all pages)
   const parsedSchedules = useMemo(() => {
-    const schedules: { pageNum: number; region: any; name: string; rowCount: number; colCount: number; category: string }[] = [];
+    const schedules: { pageNum: number; region: any; regionId?: string; name: string; rowCount: number; colCount: number; category: string }[] = [];
     const seen = new Set<string>();
 
     // Source 1: pageIntelligence (includes user-parsed during this session, has region with data)
@@ -230,7 +231,7 @@ export default function AutoQtoTab() {
         seen.add(key);
         schedules.push({
           pageNum: pt.pageNum,
-          region: null,
+          region: null, regionId: pt.regionId,
           name: pt.name,
           rowCount: pt.rowCount,
           colCount: pt.colCount,
@@ -517,9 +518,7 @@ export default function AutoQtoTab() {
                           publicId,
                           s.pageNum,
                         ) as any;
-                        const localPr = localIntel?.parsedRegions?.find((r: any) =>
-                          r.data?.tableName === s.name || r.category === s.category
-                        );
+                        const localPr = findSummaryRegion<any>(localIntel?.parsedRegions, s);
                         if (localPr?.data) {
                           headers = localPr.data.headers || [];
                           rows = localPr.data.rows || [];
@@ -563,11 +562,9 @@ export default function AutoQtoTab() {
                               canAdopt: ownsDetailOperation,
                             });
                             if (!ownsDetailOperation()) return;
-                            const pr = detailIntel?.parsedRegions?.find((r: any) =>
-                              r.data?.tableName === s.name || r.category === s.category
-                            );
+                            const pr = findSummaryRegion(detailIntel?.parsedRegions, s);
                             if (pr?.data) {
-                              // The category/table-name predicate above is the runtime schedule
+                              // The summary-identity match above is the runtime schedule
                               // discriminator. ParsedRegion's legacy union is not itself tagged by
                               // `data`, so keep this compatibility read explicit and narrow.
                               const scheduleData = pr.data as {

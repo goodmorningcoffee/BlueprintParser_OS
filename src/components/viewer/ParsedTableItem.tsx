@@ -132,14 +132,14 @@ export default memo(function ParsedTableItem({
       clearCellStructure();
       return;
     }
-    if (!publicId || !table.region?.bbox) return;
+    if (!useSessionStore.getState().projectId || !table.region?.bbox) return;
     navigateViewerPage(table.pageNum);
     void detectCellStructure({
-      projectId: publicId,
+      projectId: useSessionStore.getState().projectId, // numeric db id: the route resolves { dbId } (K18)
       pageNumber: table.pageNum,
       regionBbox: table.region.bbox,
     }, cellOperationKey);
-  }, [cellsDetectedHere, clearCellStructure, detectCellStructure, publicId,
+  }, [cellsDetectedHere, clearCellStructure, detectCellStructure,
     table.pageNum, table.region?.bbox, cellOperationKey]);
 
   // Auto-expand and scroll into view when focused from double-click on canvas
@@ -569,7 +569,7 @@ export default memo(function ParsedTableItem({
                         headers: table.region.data?.headers || [],
                         rows: table.region.data?.rows || [],
                         tagColumn: table.region.data?.tagColumn,
-                        tableName: table.name,
+                        tableName: table.name, regionId: table.region.id,
                       },
                       meta: null,
                       region: table.region.bbox || null,

@@ -18,7 +18,7 @@ import { useProject } from "@/stores/sessionStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
 // [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
 // for cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both).
-import { apiErrorMessage } from "@/lib/client-persist";
+import { apiErrorMessage, regionIdFor } from "@/lib/client-persist";
 import { consumeTableParseHints } from "@/stores/tableParseHintStore";
 import { PARSE_OPTION_DEFAULTS as DEFAULTS, type ParseOptions } from "./autoParseOptions";
 import HelpTooltip from "./HelpTooltip";
@@ -236,22 +236,23 @@ export default function AutoParseTab({
           mergedRows = [...mergedRows, ...(result.rows || [])];
         }
 
-        const grid = {
-          headers: mergedHeaders,
-          rows: mergedRows,
-          tagColumn,
-          csiTags: [],
-          tableName: targetRegions.length > 1 ? `Merged (${targetRegions.length} regions)` : undefined,
-          // Only include boundaries for single-region parse (multi-region merges invalidate positions)
-          ...(targetRegions.length === 1 && firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
-          ...(targetRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
-        };
         const reviewRegion: ProposedRegion = [
           Math.min(...targetRegions.map((r) => r[0])),
           Math.min(...targetRegions.map((r) => r[1])),
           Math.max(...targetRegions.map((r) => r[2])),
           Math.max(...targetRegions.map((r) => r[3])),
         ];
+        const grid = {
+          headers: mergedHeaders,
+          rows: mergedRows,
+          tagColumn,
+          csiTags: [],
+          tableName: targetRegions.length > 1 ? `Merged (${targetRegions.length} regions)` : undefined,
+          regionId: regionIdFor(targetPageNumber, reviewRegion), // the id detectCsiAndPersist saves under (K01)
+          // Only include boundaries for single-region parse (multi-region merges invalidate positions)
+          ...(targetRegions.length === 1 && firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
+          ...(targetRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
+        };
         const reviewMeta = targetRegions.length === 1 &&
             lastMethodResults && lastMergerNotes?.baseMethod
           ? {

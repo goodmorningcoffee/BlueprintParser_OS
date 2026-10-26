@@ -115,7 +115,8 @@ function seedModal(label: string): void {
     tagColumn: "Tag",
     tableName: `${label} Schedule`,
   };
-  useParseFlowStore.setState({ tableParseRegion: BBOX, tableParsedGrid: grid });
+  // [TP-1 WP-1.A K01] Every opener now names the region it edits; Done refuses a grid without one.
+  useParseFlowStore.setState({ tableParseRegion: BBOX, tableParsedGrid: { ...grid, regionId: `region-${label}` } });
   queryClient.setQueryData(queryKeys.pagesWindow.active(PUBLIC_ID), {
     ...EMPTY_ACTIVE_PAGE_WINDOW,
     pageIntelligence: {

@@ -373,7 +373,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         headers: grid.headers,
         rows: grid.rows,
         tagColumn: grid.tagColumn,
-        tableName: grid.tableName,
+        tableName: grid.tableName, regionId: parsed.id,
       },
       meta: null,
     };
@@ -538,7 +538,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         const admitted = commitParseOperation(token, () => {
           setKeynoteSaveError(null);
           addParsedKeynote({
-            pageNumber: target.pageNumber,
+            pageNumber: target.pageNumber, regionId: regionIdFor(target.pageNumber, target.bbox),
             keys: targetKeys,
             yoloClass: targetYoloClass
               ? `${targetYoloClass.model}:${targetYoloClass.className}`
@@ -637,7 +637,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           const completionPublished = commitParseOperation(token, () => {
             setKeynoteSaveError(null);
             addParsedKeynote({
-              pageNumber: target.pageNumber,
+              pageNumber: target.pageNumber, regionId: regionIdFor(target.pageNumber, target.bbox),
               keys: targetKeys,
               tableName,
             });
@@ -886,7 +886,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       if (keys.length > 0) {
         const appendPublished = commitParseOperation(token, () => {
           addParsedKeynote({
-            pageNumber: target.pageNumber,
+            pageNumber: target.pageNumber, regionId,
             keys,
             tableName: `Keynotes p.${target.pageNumber}`,
           });
@@ -1106,9 +1106,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 {[...parsedKeynoteData]
                   .sort((a, b) => (a.pageNumber === pageNumber ? -1 : b.pageNumber === pageNumber ? 1 : a.pageNumber - b.pageNumber))
                   .map((kn, i) => {
-                    // Find matching parsedRegion for this keynote
-                    const matchingRegion = allParsedKeynotes.find(
-                      (pk) => pk.pageNum === kn.pageNumber && (pk.name === kn.tableName || pk.name === "Keynotes")
+                    // The region this entry was saved as (K01: by id; two legends can share a name)
+                    const matchingRegion = allParsedKeynotes.find((pk) => pk.pageNum === kn.pageNumber &&
+                      (kn.regionId ? pk.region?.id === kn.regionId : (pk.name === kn.tableName || pk.name === "Keynotes"))
                     )?.region || null;
                     return (
                       <KeynoteItem
@@ -1128,7 +1128,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                           const all = store.parsedKeynoteData;
                           if (all) {
                             store.setParsedKeynoteData(all.filter((entry) =>
-                              !(entry.pageNumber === kn.pageNumber && entry.tableName === kn.tableName)
+                              !(kn.regionId ? entry.regionId === kn.regionId : entry.pageNumber === kn.pageNumber && entry.tableName === kn.tableName)
                             ));
                           }
                         }}
