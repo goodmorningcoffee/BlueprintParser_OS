@@ -102,7 +102,9 @@ interface ParseHistoryEntry {
 
 // ─── Main component ─────────────────────────────────────────
 
-export default function TableParseTab() {
+// [TP-1 WP-1.C fix, K08] Recent parses is root-only (op_log spans every company), so the card is
+// shown to root only; a company admin would just see the route's 403.
+export default function TableParseTab({ isRootAdmin = false }: { isRootAdmin?: boolean }) {
   return (
     <div className="space-y-6">
       <div>
@@ -114,7 +116,7 @@ export default function TableParseTab() {
       </div>
 
       <ContainerHealthCard />
-      <RecentParsesCard />
+      {isRootAdmin && <RecentParsesCard />}
       <DebugToggleCard />
     </div>
   );
@@ -266,7 +268,8 @@ function RecentParsesCard() {
   async function clearAll() {
     if (!confirm("Clear all recent parse history?")) return;
     try {
-      await fetch("/api/admin/recent-parses", { method: "DELETE" });
+      const res = await fetch("/api/admin/recent-parses", { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setEntries([]);
       setExpandedId(null);
     } catch {

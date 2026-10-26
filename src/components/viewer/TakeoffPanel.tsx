@@ -14,6 +14,7 @@ import { takeoffRedo, takeoffUndo, useAnnotations } from "@/queries/useAnnotatio
 import { AREA_UNIT_MAP } from "@/types";
 import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
+import { csvQuotedSafe } from "@/lib/csv-safe";
 import { selectActiveToolKey } from "@/lib/active-tool-state";
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 import CountTab from "./CountTab";
@@ -247,7 +248,7 @@ export default function TakeoffPanel() {
         }
         const cals = Object.values(scaleCalibrations);
         const unitSq: AreaUnitSq = cals.length > 0 ? AREA_UNIT_MAP[cals[0].unit] : "SF";
-        rows.push(`"${item.name.replace(/"/g, '""')}",area,polygon,${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}","${(item.notes || "").replace(/"/g, '""')}",${item.color}`);
+        rows.push(`${csvQuotedSafe(item.name)},area,polygon,${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${csvQuotedSafe(item.notes || "")},${item.color}`);
       } else if (item.shape === "linear") {
         let totalLength = 0;
         const pages = new Set<number>();
@@ -260,7 +261,7 @@ export default function TakeoffPanel() {
         }
         const cals = Object.values(scaleCalibrations);
         const unit = cals.length > 0 ? cals[0].unit : "ft";
-        rows.push(`"${item.name.replace(/"/g, '""')}",linear,linear,${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}","${(item.notes || "").replace(/"/g, '""')}",${item.color}`);
+        rows.push(`${csvQuotedSafe(item.name)},linear,linear,${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${csvQuotedSafe(item.notes || "")},${item.color}`);
       } else {
         let count = 0;
         const pages = new Set<number>();
@@ -272,7 +273,7 @@ export default function TakeoffPanel() {
           count++;
           pages.add(ann.pageNumber);
         }
-        rows.push(`"${item.name.replace(/"/g, '""')}",count,${item.shape},${count},EA,"${Array.from(pages).sort((a, b) => a - b).join("; ")}","${(item.notes || "").replace(/"/g, '""')}",${item.color}`);
+        rows.push(`${csvQuotedSafe(item.name)},count,${item.shape},${count},EA,"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${csvQuotedSafe(item.notes || "")},${item.color}`);
       }
     }
     const csv = ["Item Name,Type,Shape,Quantity,Unit,Pages,Notes,Color", ...rows].join("\n");

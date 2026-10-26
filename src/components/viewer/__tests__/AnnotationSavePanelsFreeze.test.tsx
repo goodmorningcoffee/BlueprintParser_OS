@@ -616,10 +616,13 @@ describe("SymbolSearchPanel annotation-save — guard, raw-fetch failure, and ap
 
   it("is server-first, appends the returned annotation, then clears the search pending UI", async () => {
     const initial = survivor();
+    // [TP-1 WP-1.C, K12] the save replaces only rows the new match covers (same page, same spot),
+    // so the replacement bait sits where the match lands; page-wide deletion is gone.
     const samePageReplacementBait = annotation({
       id: 3,
       name: "old-same-page-symbol",
       source: "symbol-search",
+      bbox: [0.26, 0.26, 0.5, 0.5],
       data: { modelName: "old-symbol-same", confidence: 0.8 },
     });
     const otherPageSymbolBait = annotation({
@@ -677,7 +680,7 @@ describe("SymbolSearchPanel annotation-save — guard, raw-fetch failure, and ap
         },
       ],
       deleteSource: "symbol-search",
-      deletePageNumbers: [1],
+      deleteIds: [3],
     });
 
     // Symbol save also captures `store.annotations` before await. Freeze the visible lost-update
@@ -686,7 +689,7 @@ describe("SymbolSearchPanel annotation-save — guard, raw-fetch failure, and ap
       seedAnnotations(qc, [initial, samePageReplacementBait, otherPageSymbolBait, concurrent()]);
     });
     expect(readSeededAnnotations(qc).map((row) => row.id)).toEqual([1, 3, 4, 2]);
-    response.resolve({ ok: true, json: async () => ({ annotations: [saved] }) });
+    response.resolve({ ok: true, json: async () => ({ annotations: [saved], deletedIds: [3] }) });
 
     await waitFor(() => expect(screen.getByText("3 detections shown")).toBeInTheDocument());
     expect(readSeededAnnotations(qc).map((row) => row.id)).toEqual([1, 4, 84]);

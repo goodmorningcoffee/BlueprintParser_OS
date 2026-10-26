@@ -20,9 +20,9 @@ import {
   invalidateToolTailAuthority,
   ownsLatestToolOperation,
 } from "@/lib/parse-tool-authority";
-// [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
-// apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
+// [refactor jun17 P1.3] apiErrorMessage reads the {error:{code,message}} envelope and legacy {error:string}.
 import { apiErrorMessage } from "@/lib/client-persist";
+import { symbolSaveReplaceIds } from "@/lib/symbol-save";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 interface SymbolSearchPanelProps {
@@ -842,7 +842,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                         templateSourcePage: symbolSearchResults?.sourcePageNumber,
                       },
                     }));
-                    const pageNums = [...new Set(annInputs.map((a) => a.pageNumber))];
+                    const deleteIds = symbolSaveReplaceIds(capturedAnnotations, annInputs); // K12: same-spot rows only
                     const res = await fetch("/api/annotations", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
@@ -850,7 +850,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                         projectId: capturedPublicId,
                         annotations: annInputs,
                         deleteSource: "symbol-search",
-                        deletePageNumbers: pageNums,
+                        deleteIds,
                       }),
                     });
                     if (!res.ok) {
@@ -860,7 +860,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                     const data = await res.json();
                     if (data.annotations) {
                       if (!canAdoptLifecycle()) return;
-                      const cleaned = capturedAnnotations.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
+                      const cleaned = capturedAnnotations.filter((a) => !(data.deletedIds ?? []).includes(a.id));
                       queryClient.setQueryData(
                         capturedAnnotationsKey,
                         [...cleaned, ...data.annotations],

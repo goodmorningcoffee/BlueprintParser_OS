@@ -204,6 +204,36 @@ describe("ReprocessTab", () => {
     expect(screen.getByText("Done! 12 annotation(s) deleted across 1 project(s).")).toBeTruthy();
   });
 
+  // [TP-1 WP-1.C, K75] A failed scope GET used to drop the company pin, and the cleanup then ran in
+  // every company. The server now refuses an unscoped cleanup, and the tab will not run a deletion
+  // whose dry run failed.
+  it("K75: when the scope GET fails, the unscoped cleanup is refused and the plan cannot run", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u === "/api/admin/reprocess/scope") {
+        return { ok: false, status: 500, json: async () => ({ error: { code: "INTERNAL", message: "scope down" } }) };
+      }
+      if (u.startsWith("/api/admin/reprocess")) return ndjson([{ type: "done", updated: 0, skipped: 0 }]);
+      if (u === "/api/admin/annotation-cleanup") {
+        return { ok: false, status: 400, json: async () => ({ error: { code: "VALIDATION", message: "Pick a company, or choose all companies explicitly" } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    renderTab({ isRootAdmin: true });
+    fireEvent.click(box("purge-yolo"));
+    fireEvent.click(screen.getByText("Preview"));
+    const preview = await screen.findByTestId("reprocess-preview");
+    expect(posts("/api/admin/annotation-cleanup").map(([u]) => u)).toEqual(["/api/admin/annotation-cleanup"]);
+    expect(bodyOf(posts("/api/admin/annotation-cleanup")[0])).not.toHaveProperty("allCompanies");
+    expect(within(preview).getByText(/dry run failed: Pick a company/u)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("confirm phrase"), { target: { value: "DELETE" } });
+    const run = screen.getByText("Run 4 stages") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    fireEvent.click(run);
+    expect(posts("/api/admin/annotation-cleanup")).toHaveLength(1);
+    expect(posts("/api/admin/reprocess")).toHaveLength(0);
+  });
+
   it("non-root cannot tick root-only stages; placeholders and Re-OCR are disabled; the company picker is root-only and disabled; handoffs open their tab", async () => {
     const { onOpenTab } = renderTab();
     expect(box("purge-yolo").disabled).toBe(true);

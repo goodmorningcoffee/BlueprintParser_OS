@@ -731,7 +731,7 @@ export default function AdminPage() {
         {activeTab === "page-intelligence" && <PageIntelligenceTab onOpenReprocess={openReprocess} />}
 
         {activeTab === "table-parse" && (
-          <TableParseTab />
+          <TableParseTab isRootAdmin={session?.user?.isRootAdmin === true} />
         )}
 
         {activeTab === "ai-rbac" && session?.user?.isRootAdmin && (

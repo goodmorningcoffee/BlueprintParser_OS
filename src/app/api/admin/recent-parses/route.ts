@@ -12,19 +12,22 @@
  * "recent parses" depending on which task served the request. Acceptable for MVP.
  *
  * [refactor jul6 S044] Thin shells — behavior lives in services/recent-parses.ts
- * (getRecentParses / clearRecentParses). auth:"admin" (A). No body on either method → no E;
+ * (getRecentParses / clearRecentParses). No body on either method → no E;
  * no catch-500 literal → no B. Solo fold (char: admin-recent-parses.route.test.ts RP-*).
+ *
+ * [TP-1 WP-1.C, K08] auth:"root". op_log holds every company's parse requests (method grids carry
+ * cell text) and DELETE wipes all of them, so a company admin may neither read nor clear it.
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
 import { getRecentParses, clearRecentParses } from "@/server/services/recent-parses";
 
 export const GET = defineRoute({
-  auth: "admin",
+  auth: "root",
   handler: () => getRecentParses(),
 });
 
 export const DELETE = defineRoute({
-  auth: "admin",
+  auth: "root",
   handler: () => clearRecentParses(),
 });

@@ -1,10 +1,10 @@
-/** Escape a CSV cell value (handles commas, quotes, newlines). */
-export function escCsv(val: string): string {
-  if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-    return `"${val.replace(/"/g, '""')}"`;
-  }
-  return val;
-}
+import { escCsvSafe } from "@/lib/csv-safe";
+
+/**
+ * Escape a CSV cell value (commas, quotes, line breaks) and neutralise a leading formula
+ * character (`= + - @`, tab, CR) so a spreadsheet shows it as text (TP-1 WP-1.C, K64).
+ */
+export const escCsv: (val: string) => string = escCsvSafe;
 
 /** Download a parsed grid as a CSV file. */
 export function exportTableCsv(

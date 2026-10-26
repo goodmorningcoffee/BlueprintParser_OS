@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LogsRange } from "./LogsTab";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
+import { escCsvSafe } from "@/lib/csv-safe"; // [TP-1 WP-1.C fix, K64] userAgent is visitor-supplied
 
 interface VisitorRow {
   ip: string;
@@ -169,7 +170,7 @@ export default function LogsVisitors({ range }: { range: LogsRange }) {
     if (!data) return;
     const header = "ip,country,requests,firstSeen,lastSeen,durationMs,uniquePaths,uniqueSessions,authed,userAgent\n";
     const rows = data.visitors.map((v) =>
-      [v.ip, v.country, v.requests, v.firstSeen || "", v.lastSeen || "", v.durationMs, v.uniquePaths, v.uniqueSessions, v.authed, JSON.stringify(v.userAgent)].join(","),
+      [escCsvSafe(v.ip), escCsvSafe(v.country), v.requests, v.firstSeen || "", v.lastSeen || "", v.durationMs, v.uniquePaths, v.uniqueSessions, v.authed, escCsvSafe(v.userAgent ?? "")].join(","),
     );
     const blob = new Blob([header + rows.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);

@@ -60,6 +60,12 @@ interface Preview {
   projectCount: number | null;
   cleanup: Partial<Record<StageId, CleanupDryRun>>;
   scopeError: string | null;
+  /**
+   * [TP-1 WP-1.C, K75] The company the preview was counted for. Run uses THIS, never the live
+   * scope state, so a later failed scope reload cannot turn the cleanup cross-company. null =
+   * unknown: the cleanup route then refuses (it needs a company or an explicit allCompanies).
+   */
+  companyId: number | null;
 }
 
 interface CleanupResult {
@@ -157,10 +163,11 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
     setPreviewing(true);
     try {
       const fresh = await serverScope.reload();
-      const projectIds = resolveProjectIds(scopeMode, projects, statuses, picked, fresh.scope?.companyId ?? null);
+      const companyId = fresh.scope?.companyId ?? null;
+      const projectIds = resolveProjectIds(scopeMode, projects, statuses, picked, companyId);
       const projectCount = projectIds ? projectIds.length : fresh.scope?.projects ?? null;
       const cleanup: Partial<Record<StageId, CleanupDryRun>> = {};
-      const steps = buildRunSteps(plan, { projectIds, companyId: fresh.scope?.companyId ?? null }, { clearPageCsi });
+      const steps = buildRunSteps(plan, { projectIds, companyId }, { clearPageCsi });
       for (const step of steps) {
         if (step.kind !== "cleanup") continue;
         try {
@@ -177,7 +184,7 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
           cleanup[step.id] = { total: 0, pagesCsiCleared: 0, confirmPhrase: "", projects: 0, error: err instanceof Error ? err.message : String(err) };
         }
       }
-      setPreview({ projectIds, projectCount, cleanup, scopeError: fresh.error });
+      setPreview({ projectIds, projectCount, cleanup, scopeError: fresh.error, companyId });
     } finally {
       setPreviewing(false);
     }
@@ -206,7 +213,7 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
 
   async function run() {
     if (!preview || plan.run.length === 0) return;
-    const steps = buildRunSteps(plan, { projectIds: preview.projectIds, companyId: ownCompanyId }, { clearPageCsi });
+    const steps = buildRunSteps(plan, { projectIds: preview.projectIds, companyId: preview.companyId }, { clearPageCsi });
     if (plan.confirmPhrase) {
       if (confirmText.trim() !== plan.confirmPhrase) return;
     } else {
@@ -252,7 +259,9 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
     }
   }
 
-  const canRun = !!preview && !running && plan.run.length > 0 && (!plan.confirmPhrase || confirmText.trim() === plan.confirmPhrase);
+  // [TP-1 WP-1.C, K75] A deletion whose dry run failed (e.g. no company scope) never runs.
+  const cleanupBlocked = !!preview && Object.values(preview.cleanup).some((c) => !!c?.error);
+  const canRun = !!preview && !running && !cleanupBlocked && plan.run.length > 0 && (!plan.confirmPhrase || confirmText.trim() === plan.confirmPhrase);
   const whose = serverScope.scope?.companyName ?? (serverScope.scope ? `company #${serverScope.scope.companyId}` : "your company");
 
   return (
@@ -512,6 +521,9 @@ export default function ReprocessTab({ projects, isRootAdmin, presetRequest, onO
                 <span>Type {plan.confirmPhrase} to confirm the deletion stage(s):</span>
                 <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} aria-label="confirm phrase" className="bg-[var(--bg)] border border-[var(--border)] rounded px-1 w-24" />
               </div>
+            )}
+            {cleanupBlocked && (
+              <div className="text-xs text-red-400">A deletion stage&rsquo;s dry run failed, so this plan cannot run. Fix the cause and preview again.</div>
             )}
             <button
               disabled={!canRun}

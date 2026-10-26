@@ -11,6 +11,9 @@
 //         delete — every matching row; optional clearPageCsi also sets pages.csi_codes = NULL.
 // User-made sources (user-drawn markup, takeoff, symbol-search saves) are excluded unless the
 // caller names them explicitly. Demo projects are never in scope (same rule as yolo-purge).
+// [TP-1 WP-1.C, K75] POST with no company scope (no ?companyId) refuses unless the body says
+// `allCompanies: true`. A caller that meant one company and lost its company id (the Reprocess tab
+// when GET /reprocess/scope fails) used to delete in EVERY company; now it gets a 400.
 import { z } from "zod";
 import { and, asc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
@@ -37,6 +40,8 @@ export const zCleanupBody = z.object({
   projectPublicIds: z.array(zPublicId).max(MAX_PROJECTS).optional(),
   sources: z.array(z.string().min(1).max(50)).max(50).optional(),
   clearPageCsi: z.boolean().optional(),
+  /** Required (true) when no ?companyId is given: an every-company run must be chosen, never a fallback. */
+  allCompanies: z.boolean().optional(),
   dryRun: z.boolean(),
   confirm: z.string().max(40).optional(),
 });
@@ -147,6 +152,9 @@ export async function runAnnotationCleanup(
     throw new ApiError("VALIDATION", `Type ${phrase} to confirm`);
   }
   const companyId = resolveCompanyScope(session, query.companyId);
+  if (companyId === null && body.allCompanies !== true) {
+    throw new ApiError("VALIDATION", "Pick a company, or choose all companies explicitly");
+  }
   const inScope = await scopeProjects(companyId, body.all ? null : (body.projectPublicIds ?? []));
   const sources = await resolveSources(body, inScope.map((p) => p.id));
 
