@@ -437,6 +437,23 @@ export function isRootExemptRule(rule: RateRule | undefined): boolean {
   return !rule || !ROOT_NEVER_EXEMPT_RULE_PATTERNS.has(rule.pattern);
 }
 
+// [TP-1 WP-1.D, K21] Parser burst buckets are keyed by route prefix (`/api/table-parse`), so Guided's
+// slider re-proposals (300 ms debounce) used to spend the SAME 5/10 s burst as real table parses, and
+// the second breach banned the IP from every parser route for an hour. `/propose` reads stored words
+// only (no Lambda, no Python, no Textract, signed-in only), so it gets its own bucket with a ceiling a
+// debounced slider cannot reach. A breach of it still escalates exactly like any other parser burst.
+export const PARSER_OWN_BURST_BUCKETS: Readonly<Record<string, number>> = {
+  "/api/table-parse/propose": 40,
+};
+
+/** The burst bucket (route key + per-window limit) a parser request is counted against. */
+export function parserBurstBucket(pathname: string, defaultLimit: number): { route: string; limit: number } {
+  for (const [route, limit] of Object.entries(PARSER_OWN_BURST_BUCKETS)) {
+    if (pathname === route || pathname.startsWith(`${route}/`)) return { route, limit };
+  }
+  return { route: pathname.split("/").slice(0, 3).join("/"), limit: defaultLimit };
+}
+
 // The parser routes (symbol-search, shape-parse, table-parse, table-structure, bucket-fill) start
 // local Ghostscript/python children on a 4 GB task, and signed-in callers skip the heavy-process
 // gate. So root gets a PRIORITY LANE, not unlimited admission: he never touches the IP ban,

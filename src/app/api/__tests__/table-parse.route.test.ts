@@ -383,6 +383,22 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pipeline happy path (TQ-4/5/7)
     expect(status).toBe(200); // soft-fail, parse continues
     expect(h.methodTextractTables).toHaveBeenCalledWith(undefined, BBOX);
   });
+
+  it("[TP-1 K17] op_log history write failure after a paid live Textract call → still 200 with the result", async () => {
+    const { user, project } = await world(TEXTRACT_NO_TABLES);
+    asUser(user);
+    h.analyzePageImage.mockResolvedValue({ tables: [] });
+    h.addToHistory.mockRejectedValueOnce(new Error("op_log down"));
+    const { status, body } = await readJson(await call(bodyFor(project.id)));
+    expect(h.analyzePageImage).toHaveBeenCalledTimes(1); // the paid call ran
+    expect(h.addToHistory).toHaveBeenCalledTimes(1);
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ...MERGED,
+      csiTags: [{ code: "08 00 00", description: "Openings" }],
+      infraErrors: [],
+    });
+  });
 });
 
 describe.skipIf(!dbUp)("POST /api/table-parse — infra failures (TQ-6) + debug (TQ-3/4)", () => {
