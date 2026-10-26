@@ -199,8 +199,9 @@ export async function createAnnotation(body: Record<string, unknown>) {
  *  Order (frozen): projectId-required → AUTH → per-annotation bbox → delete-before-insert+insert.
  *  [TP-1 WP-1.C, K12] `deleteIds` (with `deleteSource`) replaces exactly the named rows, and only
  *  those of this project, that source AND the caller's own creatorId; the response then carries
- *  `deletedIds`. The page-wide `deletePageNumbers` path is unchanged and is no longer used by the
- *  symbol-search save (it erased every template's and every user's rows on the saved pages). */
+ *  `deletedIds`. The page-wide `deletePageNumbers` path erased every template's and every user's
+ *  rows on the saved pages, so it is REFUSED for `symbol-search` (a tab from an older bundle gets a
+ *  400 that says to reload); other sources keep it. */
 async function createAnnotationBatch(body: Record<string, unknown>) {
   const {
     projectId,
@@ -231,6 +232,9 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
     if (err) throw new ApiError("VALIDATION", `Invalid annotation: ${err}`);
   }
   const deleteIds = parseDeleteIds(body.deleteIds, deleteSource);
+  if (deleteSource === "symbol-search" && deletePageNumbers !== undefined) {
+    throw new ApiError("VALIDATION", "Symbol matches now save by id. Reload the page and save again.");
+  }
 
   // [refactor jul23 P4.1 U5] Rows are built + merged BEFORE the tx (mergeAutoCsi is pure;
   // every field is tx-independent — the d120d42 batch freeze pins byte-identical behavior)

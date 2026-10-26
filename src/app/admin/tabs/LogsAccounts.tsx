@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from "react";
 import type { LogsRange } from "./LogsTab";
 import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
+import { escCsvSafe } from "@/lib/csv-safe"; // [TP-1 WP-1.C fix, K64] names/emails/companies are user-typed
 
 interface ToolHit {
   tool: string;
@@ -115,13 +116,13 @@ export default function LogsAccounts({ range }: { range: LogsRange }) {
     const header = "user,email,company,role,totalActions,uniqueTools,topTools,firstSeen,lastSeen\n";
     const rows = data.accounts.map((a) =>
       [
-        label(a),
-        a.email || "",
-        a.companyName || "",
-        a.role || "",
+        escCsvSafe(label(a)),
+        escCsvSafe(a.email || ""),
+        escCsvSafe(a.companyName || ""),
+        escCsvSafe(a.role || ""),
         a.totalActions,
         a.uniqueTools,
-        JSON.stringify(a.topTools.map((t) => `${t.tool}:${t.hits}`).join("; ")),
+        escCsvSafe(a.topTools.map((t) => `${t.tool}:${t.hits}`).join("; ")),
         a.firstSeen,
         a.lastSeen,
       ].join(","),

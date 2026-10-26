@@ -2,7 +2,8 @@
 // [TP-1 WP-1.C, K12] POST /api/annotations batch with `deleteIds`: the symbol-search Save replaces
 // exactly the rows it names, and only those of this project, the named source and the caller's own
 // creatorId. Before, the Save sent `deletePageNumbers` and erased every symbol-search row on the
-// saved pages: other templates' matches and other users' saves included. DB-backed.
+// saved pages: other templates' matches and other users' saves included. That legacy path is now
+// refused for symbol-search (other sources keep it; annotations.route.test pins yolo). DB-backed.
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -90,5 +91,30 @@ describe.skipIf(!dbUp)("POST /api/annotations — symbol-search replace by id (K
     expect(noSource.status).toBe(400);
     expect(noSource.body.error.message).toBe("deleteIds requires deleteSource");
     expect(await annotationsFor(project.id)).toHaveLength(0);
+  });
+
+  it("refuses the legacy page-wide deletePageNumbers for symbol-search: every row survives, nothing is inserted", async () => {
+    const { company, user, project } = await createWorld();
+    const colleague = await createUser(company.id);
+    asUser(user);
+    const mine = (await save(project.publicId, [match(4, A1, "A")], [])).body.annotations[0].id as number;
+    asUser(colleague);
+    const theirs = (await save(project.publicId, [match(4, A2, "B")], [])).body.annotations[0].id as number;
+
+    // What a tab still running the pre-K12 bundle sends.
+    asUser(user);
+    for (const deletePageNumbers of [[4], []] as number[][]) {
+      const res = await readJson(await POST(makeReq("/api/annotations", {
+        body: { projectId: project.publicId, annotations: [match(4, B1, "C")], deleteSource: "symbol-search", deletePageNumbers },
+      })));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toEqual({
+        code: "VALIDATION",
+        message: "Symbol matches now save by id. Reload the page and save again.",
+      });
+    }
+    expect((await annotationsFor(project.id)).map((r) => r.id).sort((a, b) => a - b)).toEqual(
+      [mine, theirs].sort((a, b) => a - b),
+    );
   });
 });

@@ -444,11 +444,11 @@ describe.skipIf(!dbUp)("[P4.1 U0] PUT /api/annotations/[id] — updateAnnotation
 });
 
 describe.skipIf(!dbUp)("[P4.1 U0] POST /api/annotations batch — createAnnotationBatch sink", () => {
-  it("symbol-search blob persists verbatim; delete-before-insert replaces prior symbol-search rows on the named pages (annotations.ts:231-243)", async () => {
+  it("symbol-search blob persists verbatim; delete-before-insert replaces the named prior symbol-search rows (deleteIds)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     // Seed an existing symbol-search row on page 4 (plain append, no delete).
-    await postAnnotations({
+    const seeded = await postAnnotations({
       projectId: project.publicId,
       annotations: [
         {
@@ -474,7 +474,8 @@ describe.skipIf(!dbUp)("[P4.1 U0] POST /api/annotations batch — createAnnotati
     const { status, body } = await postAnnotations({
       projectId: project.publicId,
       deleteSource: "symbol-search",
-      deletePageNumbers: [4],
+      // [TP-1 WP-1.C fix, K12] symbol-search replaces by id; page-wide deletePageNumbers is refused.
+      deleteIds: [seeded.body.annotations[0].id],
       annotations: [
         {
           pageNumber: 4,

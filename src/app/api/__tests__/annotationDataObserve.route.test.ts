@@ -622,12 +622,13 @@ describe.skipIf(!dbUp)("[P4.1 U5] observeAnnotationData — symbol-search at the
     const { user, project } = await createWorld();
     asUser(user);
     // Seed an existing symbol-search row on page 4 (plain append).
-    await postSymbolBatch(project.publicId, VALID_SYMBOL);
+    const seeded = await postSymbolBatch(project.publicId, VALID_SYMBOL);
     // Rejected batch that WOULD have deleted page 4's symbol-search rows first.
     const { status, body } = await postSymbolBatch(
       project.publicId,
       { ...VALID_SYMBOL, v: 1, method: 5 },
-      { deleteSource: "symbol-search", deletePageNumbers: [4] },
+      // [TP-1 WP-1.C fix, K12] symbol-search replaces by id (deletePageNumbers is refused for it).
+      { deleteSource: "symbol-search", deleteIds: [seeded.body.annotations[0].id] },
     );
     expect(status).toBe(400);
     expect(body.error.code).toBe("VALIDATION");
