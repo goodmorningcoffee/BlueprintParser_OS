@@ -192,7 +192,7 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
       { method: "PUT", path: "/api/admin/models/[id]", auth: "admin", desc: "Update model config (confidence, IoU, classes, class→CSI map)." },
       { method: "POST", path: "/api/admin/models/reprocess-csi", auth: "admin", desc: "Re-run CSI assignment on all annotations (after editing class→CSI mappings)." },
       { method: "POST", path: "/api/admin/reprocess", auth: "admin", desc: "Re-trigger the processing pipeline for a project." },
-      { method: "GET", path: "/api/admin/recent-parses", auth: "admin", desc: "Recent parsing job history." },
+      { method: "GET", path: "/api/admin/recent-parses", auth: "root", desc: "Recent parsing job history (every company; root admin only)." },
       { method: "GET", path: "/api/admin/running-jobs", auth: "admin", desc: "Currently-running YOLO and processing jobs." },
       { method: "POST", path: "/api/admin/users/reset-password", auth: "admin", desc: "Reset a user's password." },
     ],

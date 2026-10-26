@@ -176,4 +176,33 @@ describe.skipIf(!dbUp)("admin annotation cleanup", () => {
     const named = await post(w.company.id, { mode: "delete", projectPublicIds: [w.p2.publicId], dryRun: true });
     expect(named.status).toBe(404);
   });
+
+  // [TP-1 WP-1.C, K75] The Reprocess tab pins the cleanup to the root's company via ?companyId. When
+  // its scope GET failed it used to send no companyId, and the server read that as "every company".
+  it("K75: root with no company scope is refused unless allCompanies is chosen; nothing is deleted", async () => {
+    const w = await world();
+    const other = await world();
+    await seed(w.p1.id, [{ source: "yolo" }]);
+    await seed(other.p1.id, [{ source: "yolo" }]);
+    asUser(w.root);
+    const unscoped = (body: Record<string, unknown>) =>
+      POST(makeReq("/api/admin/annotation-cleanup", { body })).then(readJson);
+
+    for (const dryRun of [true, false]) {
+      const res = await unscoped({ mode: "delete", all: true, sources: ["yolo"], dryRun, ...(dryRun ? {} : { confirm: "DELETE" }) });
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toBe("Pick a company, or choose all companies explicitly");
+    }
+    const explicitFalse = await unscoped({ mode: "delete", all: true, allCompanies: false, sources: ["yolo"], dryRun: false, confirm: "DELETE" });
+    expect(explicitFalse.status).toBe(400);
+    expect(await rowsOf(w.p1.id)).toHaveLength(1);
+    expect(await rowsOf(other.p1.id)).toHaveLength(1);
+
+    // Chosen on purpose, the every-company scope still works (named projects keep the test isolated).
+    const chosen = await unscoped({
+      mode: "delete", allCompanies: true, projectPublicIds: [w.p1.publicId, other.p1.publicId], sources: ["yolo"], dryRun: true,
+    });
+    expect(chosen.status).toBe(200);
+    expect(chosen.body.total).toBe(2);
+  });
 });

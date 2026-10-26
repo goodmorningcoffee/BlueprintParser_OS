@@ -85,7 +85,9 @@ export default function DataToolsAnnotationCleanup({ isRootAdmin, onOpenReproces
     ...(allProjects ? { all: true } : { projectPublicIds: [...picked] }),
     sources: [...pickedSources],
     clearPageCsi: mode === "delete" && clearPageCsi,
-  }), [mode, allProjects, picked, pickedSources, clearPageCsi]);
+    // [TP-1 WP-1.C, K75] "All companies" is picked here on purpose; the server refuses it otherwise.
+    ...(companyId ? {} : { allCompanies: true }),
+  }), [mode, allProjects, picked, pickedSources, clearPageCsi, companyId]);
 
   if (!isRootAdmin) return null;
 

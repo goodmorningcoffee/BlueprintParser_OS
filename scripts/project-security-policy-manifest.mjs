@@ -1399,6 +1399,7 @@ export const ROOT_ONLY_SURFACES = [
   rootOnly("/api/admin/project-duplicates/delete", ["POST"]),
   rootOnly("/api/admin/duplicates/delete-hidden", ["POST"]),
   rootOnly("/api/admin/annotation-cleanup", ["GET", "POST"]),
+  rootOnly("/api/admin/recent-parses", ["GET", "DELETE"]), // TP-1 WP-1.C (K08): op_log spans every company
   rootOnly("/api/admin/logs/accounts", ["GET"]),
   rootOnly("/api/admin/demo", ["POST"], { shellAuth: "admin", inService: ["src/server/services/demo.ts", "manageDemo"], conditional: "isDemo:true publication (withdrawal and refresh stay company-admin)" }),
   rootOnly("/api/admin/logs/alert-count", ["GET"]),

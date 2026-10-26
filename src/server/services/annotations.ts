@@ -195,8 +195,12 @@ export async function createAnnotation(body: Record<string, unknown>) {
   return createAnnotationSingle(body);
 }
 
-/** Batch mode: { projectId, annotations: [...], deleteSource?, deletePageNumbers? }.
- *  Order (frozen): projectId-required → AUTH → per-annotation bbox → delete-before-insert+insert. */
+/** Batch mode: { projectId, annotations: [...], deleteSource?, deletePageNumbers?, deleteIds? }.
+ *  Order (frozen): projectId-required → AUTH → per-annotation bbox → delete-before-insert+insert.
+ *  [TP-1 WP-1.C, K12] `deleteIds` (with `deleteSource`) replaces exactly the named rows, and only
+ *  those of this project, that source AND the caller's own creatorId; the response then carries
+ *  `deletedIds`. The page-wide `deletePageNumbers` path is unchanged and is no longer used by the
+ *  symbol-search save (it erased every template's and every user's rows on the saved pages). */
 async function createAnnotationBatch(body: Record<string, unknown>) {
   const {
     projectId,
@@ -226,6 +230,7 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
     const err = validateBbox(ann.bbox);
     if (err) throw new ApiError("VALIDATION", `Invalid annotation: ${err}`);
   }
+  const deleteIds = parseDeleteIds(body.deleteIds, deleteSource);
 
   // [refactor jul23 P4.1 U5] Rows are built + merged BEFORE the tx (mergeAutoCsi is pure;
   // every field is tx-independent — the d120d42 batch freeze pins byte-identical behavior)
@@ -257,11 +262,25 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
 
   // delete-before-insert + insert wrapped in ONE tx so a failed insert can't leave a source's
   // annotations deleted-but-not-replaced (sanctioned scope-add; happy path identical — P1.2 precedent).
+  const deletedIds: number[] = [];
   const inserted = await withProjectWrite(
     writeCapability,
     project.id,
     async (tx) => {
-      if (deleteSource && deletePageNumbers?.length) {
+      if (deleteIds) {
+        const gone = deleteIds.length === 0 ? [] : await tx
+          .delete(annotations)
+          .where(
+            and(
+              eq(annotations.projectId, project.id),
+              eq(annotations.source, deleteSource as string),
+              eq(annotations.creatorId, session.user.dbId),
+              inArray(annotations.id, deleteIds),
+            ),
+          )
+          .returning({ id: annotations.id });
+        deletedIds.push(...gone.map((r) => r.id).sort((a, b) => a - b));
+      } else if (deleteSource && deletePageNumbers?.length) {
         for (const pn of deletePageNumbers) {
           await tx
             .delete(annotations)
@@ -281,7 +300,26 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
   return {
     count: inserted.length,
     annotations: inserted.map(toClientAnnotation),
+    ...(deleteIds ? { deletedIds } : {}),
   };
+}
+
+const MAX_DELETE_IDS = 10_000;
+
+/** [TP-1 WP-1.C, K12] undefined = no id-scoped replace; otherwise positive int ids + a source. */
+function parseDeleteIds(raw: unknown, deleteSource: string | undefined): number[] | undefined {
+  if (raw === undefined) return undefined;
+  if (
+    !Array.isArray(raw) ||
+    raw.length > MAX_DELETE_IDS ||
+    !raw.every((id) => Number.isInteger(id) && id > 0 && id <= POSTGRES_INTEGER_MAX)
+  ) {
+    throw new ApiError("VALIDATION", "deleteIds must be an array of annotation ids");
+  }
+  if (typeof deleteSource !== "string" || !deleteSource) {
+    throw new ApiError("VALIDATION", "deleteIds requires deleteSource");
+  }
+  return [...new Set(raw as number[])];
 }
 
 /** Single-record mode (backward compatible): { projectId, pageNumber, name, bbox, note?, source?, data? }.
