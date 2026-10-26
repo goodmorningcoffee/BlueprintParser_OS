@@ -156,7 +156,7 @@ describe("A2b Table cell-structure operation authority", () => {
     expect(useViewerCoreStore.getState().pageNumber).toBe(2);
     expect(detect).toHaveBeenCalledTimes(1);
     expect(detect).toHaveBeenCalledWith({
-      projectId: PUBLIC_ID,
+      projectId: 41, // [TP-1 WP-1.A K18] the route resolves { dbId }; the publicId never matched
       pageNumber: 2,
       regionBbox: BBOX,
     }, "retained:2:retained-region-2");

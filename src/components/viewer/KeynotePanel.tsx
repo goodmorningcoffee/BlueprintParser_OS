@@ -373,7 +373,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         headers: grid.headers,
         rows: grid.rows,
         tagColumn: grid.tagColumn,
-        tableName: grid.tableName,
+        tableName: grid.tableName, regionId: parsed.id,
       },
       meta: null,
     };

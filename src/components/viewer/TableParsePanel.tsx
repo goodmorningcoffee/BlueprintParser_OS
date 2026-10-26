@@ -492,6 +492,7 @@ export default function TableParsePanel() {
           rows: d.rows || [],
           tagColumn: d.tagColumn,
           tableName: d.tableName,
+          regionId: parsed.id,
         },
         meta: null,
       };

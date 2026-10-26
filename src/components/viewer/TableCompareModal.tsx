@@ -433,17 +433,16 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     const store = useParseFlowStore.getState();
     const intel = readPageIntelligence(queryClient, publicId, pageNumber) || {};
 
-    // Locate the region being edited (match by headers, else by row-count) so
-    // we can upsert it by its stable id.
+    // Locate the region being edited by the id its opener put on the grid (K01). Never guess by
+    // headers or row count: two keynote legends both read ["Key","Description"].
+    const targetId = grid.regionId ?? null;
     let matchedId: string | null = null;
     let matchedBbox: [number, number, number, number] | null = null;
     let matchedType: "schedule" | "keynote" = "schedule";
     let matchedCsiTags: any[] = [];
     const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
       if (r.type !== "schedule" && r.type !== "keynote") return r;
-      if (matchedId === null &&
-          (JSON.stringify(r.data?.headers) === JSON.stringify(grid.headers) ||
-           r.data?.rows?.length === grid.rows.length)) {
+      if (matchedId === null && targetId !== null && r.id === targetId) {
         matchedId = r.id;
         matchedBbox = r.bbox || null;
         matchedType = r.type === "keynote" ? "keynote" : "schedule";
@@ -463,6 +462,13 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       }
       return r;
     });
+    if (matchedId === null) {
+      // Refuse rather than write a local-only copy that would read as saved and vanish on reload.
+      setSaveError(targetId === null
+        ? "This grid is not linked to a saved table. Reopen the table from its list to edit it."
+        : "This table is not saved on this page, so there is nothing to update. Nothing was saved.");
+      return;
+    }
     const updatedIntel = { ...intel, parsedRegions: regions };
 
     // Sync back to parsedKeynoteData if this was a keynote edit.

@@ -280,7 +280,7 @@ export default function KeynoteItem({
                         headers: grid.headers,
                         rows: grid.rows,
                         tagColumn: grid.tagColumn,
-                        tableName: keynote.tableName || "Keynotes",
+                        tableName: keynote.tableName || "Keynotes", regionId: region.id,
                       },
                       meta: null,
                       region: region.bbox || null,

@@ -71,6 +71,7 @@ export interface ParseFlowState {
     rows: Record<string, string>[];
     tagColumn?: string;
     tableName?: string;
+    regionId?: string; // the saved ParsedRegion this grid edits; Compare "Done" writes only that id (K01)
     csiTags?: { code: string; description: string }[];
     colBoundaries?: number[];
     rowBoundaries?: number[];

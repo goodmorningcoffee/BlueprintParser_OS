@@ -32,6 +32,7 @@ import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { onVisiblePage, visiblePage } from "@/lib/page-dedup";
+import { summaryTableName } from "@/lib/parsed-table-summary";
 import {
   assertProjectWriteCapability,
   type ProjectWriteCapability,
@@ -387,10 +388,11 @@ export async function computeProjectSummaries(
         if (pr.type === "schedule" || pr.type === "keynote") {
           parsedTables.push({
             pageNum: pn,
-            name: (pr.data as any)?.tableName || pr.category || "Unnamed Table",
+            name: summaryTableName(pr),
             category: pr.category,
             rowCount: (pr.data as any)?.rowCount || (pr.data as any)?.rows?.length || 0,
             colCount: (pr.data as any)?.columnCount || (pr.data as any)?.headers?.length || 0,
+            regionId: pr.id,
           });
         }
       }
