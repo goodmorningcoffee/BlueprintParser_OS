@@ -277,8 +277,13 @@ describe("[clf 2a] classifier engine after classifyRegionsV2", () => {
   const w = (text: string, x: number, y: number, h = 0.012) => ({ text, confidence: 99, bbox: [x, y, text.length * 0.007, h] as [number, number, number, number] });
   const words = [w("DOOR", 0.52, 0.19, 0.018), w("SCHEDULE", 0.57, 0.19, 0.018), ...["DOOR", "NO", "FRAME", "HDWR", "RATING", "SIZE"].map((t, i) => w(t, 0.51 + i * 0.07, 0.22))];
   for (let r = 0; r < 8; r++) words.push(w(`10${r}`, 0.51, 0.25 + r * 0.02), w("HM", 0.58, 0.25 + r * 0.02), w("WD", 0.65, 0.25 + r * 0.02), w("PR", 0.72, 0.25 + r * 0.02));
-  const dets: PostYoloDetection[] = [{ name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 }];
-  const page = (pageIntelligence: Record<string, unknown>) => ({ pageNumber: 7, rawText: "DOOR SCHEDULE", pageIntelligence, csiCodes: null, textractData: { words }, drawingNumber: "A-601" });
+  // [shape-tags fix 3] the fitted detect head weighs the yolo_primitive grid and the Textract TABLE, as real sheets carry them
+  const dets: PostYoloDetection[] = [
+    { name: "tables", modelName: "yolo_medium", confidence: 0.9, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 },
+    { name: "grid", modelName: "yolo_primitive", confidence: 0.6, minX: 0.5, minY: 0.21, maxX: 0.9, maxY: 0.45 },
+  ];
+  const tables = [{ bbox: [0.5, 0.21, 0.4, 0.24] as [number, number, number, number], cells: [], rowCount: 9, colCount: 6 }];
+  const page = (pageIntelligence: Record<string, unknown>) => ({ pageNumber: 7, rawText: "DOOR SCHEDULE", pageIntelligence, csiCodes: null, textractData: { words, tables }, drawingNumber: "A-601" });
 
   it("writes classifierProposals (computed) beside regionsV2, leaves proposalVerdicts alone, and skips the write when unchanged", () => {
     const first = enrichPageAfterYolo(page({ proposalVerdicts: { keep: { verdict: "accept" } } }), dets, opts([]));
@@ -287,6 +292,10 @@ describe("[clf 2a] classifier engine after classifyRegionsV2", () => {
     expect(stored.engineVersion).toBe("clf/0.1");
     expect(stored.proposals).toHaveLength(1);
     expect(stored.proposals[0]).toMatchObject({ recipeId: "schedules.v1", classId: "door", displayName: "Door schedule" });
+    // wiring: the page's Textract tables and yolo_primitive grid reach the engine (the fitted detect head depends on both)
+    const f = (stored.proposals[0] as unknown as { features: Record<string, number> }).features;
+    expect(f["detect.textract"]).toBeGreaterThan(0.9);
+    expect(f["detect.gridCover"]).toBeGreaterThan(0.9);
     expect(first.updated.proposalVerdicts).toEqual({ keep: { verdict: "accept" } });
     expect(first.updated.classifiedTables).toBeUndefined(); // legacy path untouched (no textRegions on this page)
     // same page again, with everything it just wrote: the record is byte-stable, so the sameJson guard keeps it
