@@ -79,7 +79,7 @@ export default function RecipeEditor({ draft, builtIn, catalog, onChange }: Reci
 
       {section === "table" && draft.tableHead && (
         <div className="space-y-1">
-          <p className="text-[10px] text-[var(--muted)]">p(candidate is a table: schedule, legend or keynote) = σ(bias + Σ weight × value). Shown on each proposal as "table NN %"; it does not pick the kind.</p>
+          <p className="text-[10px] text-[var(--muted)]">p(candidate is a table: schedule, legend or keynote) = σ(bias + Σ weight × value). Shown on each proposal as &ldquo;table NN %&rdquo;; it does not pick the kind.</p>
           <label className="text-[10px] text-[var(--muted)]">table-ness bias <input type="number" step={0.1} className={`${INPUT} w-16`} value={draft.tableHead.bias} aria-label="table-ness bias" onChange={(e) => draft.tableHead && onChange(updateRecipe(draft, { tableHead: { ...draft.tableHead, bias: Number(e.target.value) } }))} /></label>
           <HeadSignals signals={draft.tableHead.signals} builtIn={builtIn?.tableHead?.signals} catalog={catalog}
             onChange={headProps(TABLE).onChangeSignal} onReset={headProps(TABLE).onResetSignal} onDuplicate={headProps(TABLE).onDuplicateSignal} onRemove={headProps(TABLE).onRemoveSignal} onAdd={headProps(TABLE).onAddSignal} />
