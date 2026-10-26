@@ -59,6 +59,7 @@ export interface ParsedKeynoteEntry {
   keys: ParsedKeynoteKey[];
   yoloClass?: string;
   tableName?: string;
+  regionId?: string; // the parsedRegions id this entry was saved as (K01); absent on old entries
 }
 
 export interface ParseFlowState {

@@ -462,9 +462,11 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       }
       return r;
     });
-    if (matchedId === null) {
+    if (matchedId === null || (matchedBbox === null && canPersist(publicId, isDemo))) {
       // Refuse rather than write a local-only copy that would read as saved and vanish on reload.
-      setSaveError(targetId === null
+      setSaveError(matchedId !== null
+        ? "This table has no saved position, so it cannot be updated. Nothing was saved."
+        : targetId === null
         ? "This grid is not linked to a saved table. Reopen the table from its list to edit it."
         : "This table is not saved on this page, so there is nothing to update. Nothing was saved.");
       return;
@@ -479,7 +481,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       const descCols = grid.headers.filter((h: string) => h !== tagCol);
       updatedKeynoteData = knData.map((kn) => {
         if (kn.pageNumber !== pageNumber) return kn;
-        if (kn.tableName !== grid.tableName) return kn;
+        if (kn.regionId ? kn.regionId !== matchedId : kn.tableName !== grid.tableName) return kn;
         return {
           ...kn,
           keys: grid.rows.map((row: Record<string, string>, ri: number) => {
@@ -521,7 +523,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       if (!keynotePublished || !canPublishCompletion()) return;
 
       if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
-        // Demo / no publicId / no matching region — local-only write above.
+        // Demo / no publicId — local-only write above (no match / no bbox was refused before it).
         if (canPublishCompletion()) commitParseOperation(token, closeModal);
         return;
       }

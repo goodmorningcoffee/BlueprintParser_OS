@@ -224,6 +224,52 @@ describe("Compare/Edit Done writes only the named region (K01)", () => {
     await waitFor(() => expect(screen.getByText("modal closed")).toBeInTheDocument());
   });
 
+  it("[fix round] the Keynotes list entry of legend A keeps its keys when legend B is edited", async () => {
+    const keysOf = (prefix: string) => [{ key: "1", description: `${prefix} first item` }, { key: "2", description: `${prefix} second item` }];
+    useParseFlowStore.setState({
+      parsedKeynoteData: [
+        { pageNumber: PAGE, tableName: "Keynotes", regionId: "kn-A", keys: keysOf("alpha") },
+        { pageNumber: PAGE, tableName: "Keynotes", regionId: "kn-B", keys: keysOf("beta") },
+      ],
+    });
+    const editedB = { ...LEGEND_B.data, rows: [{ Key: "1", Description: "beta edited" }], regionId: "kn-B" };
+    fetchMock.mockImplementation(async () => promoteResponse({ ...LEGEND_B, data: { ...LEGEND_B.data, rows: editedB.rows } }));
+    openModalWith(editedB, BBOX_B);
+    render(<ModalHarness />, { wrapper });
+    await screen.findByText("grid");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    const entries = useParseFlowStore.getState().parsedKeynoteData ?? [];
+    expect(entries[0].keys).toEqual(keysOf("alpha"));
+    expect(entries[1].keys.map((k) => k.description)).toEqual(["beta edited"]);
+  });
+
+  it("[fix round] a matched region without a bbox is refused, not closed as saved", async () => {
+    const { bbox: _dropped, ...noBox } = LEGEND_B;
+    queryClient.setQueryData(queryKeys.pagesWindow.active(PUBLIC_ID), {
+      ...EMPTY_ACTIVE_PAGE_WINDOW,
+      pageIntelligence: { [PAGE]: { parsedRegions: [LEGEND_A, noBox] } },
+    });
+    openModalWith({ ...LEGEND_B.data, regionId: "kn-B" }, BBOX_B);
+    const before = readPageIntelligence(queryClient, PUBLIC_ID, PAGE);
+    render(<ModalHarness />, { wrapper });
+    await screen.findByText("grid");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await flush();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readPageIntelligence(queryClient, PUBLIC_ID, PAGE)).toBe(before);
+    expect(screen.getByText(/no saved position/)).toBeInTheDocument();
+    expect(useUiStore.getState().showTableCompareModal).toBe(true);
+  });
+
   it("a grid with no region id shows an error and writes nothing", async () => {
     openModalWith({ ...LEGEND_B.data }, BBOX_B);
     const before = readPageIntelligence(queryClient, PUBLIC_ID, PAGE);

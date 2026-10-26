@@ -158,6 +158,22 @@ describe("Auto-QTO summary-only schedule identity (K11)", () => {
     expect(schedule.tableName).toBe("Door Schedule (CONT.)");
   });
 
+  it("[fix round] two schedules with the SAME name are told apart by the summary's region id", async () => {
+    // The page holds two "Door Schedule" regions; the summary names the second. A name match
+    // would copy the first one's rows, so only the id path (summary → Source 2 → lookup) passes.
+    const twin = { ...SERVER_INTEL.parsedRegions[1], data: { ...SERVER_INTEL.parsedRegions[1].data, tableName: "Door Schedule" } };
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({
+        from: 9, to: 9, annotations: [],
+        pages: [{ pageNumber: 9, pageIntelligence: { parsedRegions: [SERVER_INTEL.parsedRegions[0], twin] } }],
+      }),
+    }) as Response);
+    await open(summariesWith([entry("Door Schedule", "pr-cont")]));
+    const schedule = await pick(/^Door Schedule/);
+    expect(schedule.rows).toEqual([{ TAG: "D-9", SIZE: "S9" }]);
+  });
+
   it("a summary computed before TP-1 (no regionId) still matches by name, not by category", async () => {
     await open(summariesWith([
       entry("Door Schedule", undefined),
