@@ -76,6 +76,7 @@ import {
 import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { assertDemoYoloTargetReadOnly } from "@/server/services/yolo-demo-target";
 import { enrichPageAfterYolo } from "./yolo-post-enrichment";
+import { pageIntelligenceDelta, writeComputedPageIntelligence } from "./page-intel-keyed-write";
 import { classifierRecipesFor, writeProjectProposals } from "./classifier-proposals-write";
 import { writeProjectTagFamilies } from "./tag-families-write";
 
@@ -786,40 +787,35 @@ export async function yoloLoad(
             // to code.substring(0,2), trade to "" — so this is an identity swap (pinned by
             // the pre-swap equivalence net in csi-utils.test.ts), and yolo now inherits the
             // separator-strip-only dedupe key for free instead of maintaining a parallel
-            // raw-code dedupe. Write-guard preserved verbatim: only persist when NEW codes
-            // were actually added (newCsi.length > existing.length).
-            let mergedCsiCodes: CsiCode[] | undefined;
+            // raw-code dedupe. Write-guard preserved: only persist when NEW codes are added.
+            // [TP-1 WP-1.B K02] The snapshot only decides WHETHER to write; the placeholders are
+            // unioned with the LIVE page CSI under the page row lock (writeComputedPageIntelligence),
+            // so page CSI a commit recomputed while this loop ran is never overwritten.
+            let yoloCsi: Array<{ code: string; description: string }> | undefined;
             const allYoloCsi = new Set<string>();
             for (const codes of Object.values(classCsiCodes)) {
               for (const code of codes) allYoloCsi.add(code);
             }
             if (allYoloCsi.size > 0) {
               const existingPageCsi = (page.csiCodes || []) as CsiCode[];
-              const newCsi = mergeCsiCodes(
-                existingPageCsi,
-                [...allYoloCsi].map((code) => ({
-                  code,
-                  description: "From YOLO class config",
-                })),
-              );
-              if (newCsi.length > existingPageCsi.length) {
-                mergedCsiCodes = newCsi;
+              const placeholders = [...allYoloCsi].map((code) => ({
+                code,
+                description: "From YOLO class config",
+              }));
+              if (mergeCsiCodes(existingPageCsi, placeholders).length > existingPageCsi.length) {
+                yoloCsi = placeholders;
               }
             }
 
-            if (pageChanged || mergedCsiCodes) {
-              await withProjectWrite(
+            // [TP-1 WP-1.B K02] Keyed write: only the keys the enrichment set or cleared, applied
+            // over the LIVE row — a user write that landed after the snapshot read survives.
+            if (pageChanged || yoloCsi) {
+              await writeComputedPageIntelligence(
                 writeCapability,
                 project.id,
-                async (tx) => {
-                  await tx
-                    .update(pages)
-                    .set({
-                      ...(pageChanged ? { pageIntelligence: updated } : {}),
-                      ...(mergedCsiCodes ? { csiCodes: mergedCsiCodes } : {}),
-                    })
-                    .where(eq(pages.id, page.id));
-                },
+                page.id,
+                pageIntelligenceDelta(page.pageIntelligence, updated),
+                yoloCsi,
               );
             }
           }

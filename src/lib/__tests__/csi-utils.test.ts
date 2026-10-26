@@ -130,7 +130,7 @@ describe("yolo placeholder merge — pre-swap equivalence net (Stage C identity)
 
   // [P4.1 tranche-review] The variant-collapse delta on the yolo path IS the U9 fix
   // propagating (review-adjudicated desired): a format-variant of an existing page code
-  // no longer grows the array, so yolo.ts's `newCsi.length > existing.length` write-guard
+  // no longer grows the array, so the yolo CSI write-guard (length grows? — yolo.ts + page-intel-keyed-write.ts)
   // SKIPS the write instead of persisting a duplicate. Pinned here at the merge level.
   it("format-variant yolo code collapses into the existing entry — length unchanged, so the yolo write-guard skips", () => {
     const existing: CsiCode[] = [

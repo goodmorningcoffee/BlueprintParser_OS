@@ -801,6 +801,14 @@ export const INTERNAL_MUTATION_SINKS = [
     "writeEvidence",
     "atomic-project-write",
   ],
+  // [TP-1 WP-1.B 2026-10-26] K02: YOLO load and the intelligence reprocess (each under its own lease)
+  // write only the page-intelligence keys they computed — `(live - clear) || set` over the live row —
+  // and union YOLO CSI into the live csi_codes under the page row lock, one withProjectWrite per page.
+  [
+    "src/server/services/page-intel-keyed-write.ts",
+    "writeComputedPageIntelligence",
+    "atomic-project-write",
+  ],
   // [tiles T9 2026-10-24] Reprocess "Tile images": merge the manifest pointer into
   // pageIntelligence.tiles (one page per tx) under the admin-reprocess lease.
   [

@@ -70,7 +70,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
       try {
         await persistFetch(
           "/api/pages/intelligence",
-          { publicId, pageNumber, intelligence: updated },
+          { publicId, pageNumber, intelligence: { rejectedTextRegionIds: pruned } },
           "PATCH",
         );
       } catch {
@@ -171,7 +171,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
       // persistFetch awaits + checks ok + throws — never silently swallows.
       await persistFetch(
         "/api/pages/intelligence",
-        { publicId, pageNumber, intelligence: updatedIntel },
+        { publicId, pageNumber, intelligence: { rejectedTextRegionIds: nextRejected } },
         "PATCH",
       );
     } catch (err) {

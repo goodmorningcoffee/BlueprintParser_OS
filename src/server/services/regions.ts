@@ -81,6 +81,8 @@ import { logger } from "@/lib/logger";
 // [refactor jul23 P4.1 U10] log-mode region-data shape observation (never throws, no v-gate —
 // no region write carries `v`; see region-data-observe.ts header).
 import { observeRegionData } from "@/server/services/region-data-observe";
+// [TP-1 WP-1.B K03] promote/delete responses carry the page-window projection (denylisted keys out), like GET /pages.
+import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 import type {
   TextractPageData,
   PageIntelligence,
@@ -353,7 +355,7 @@ export async function promoteRegion(body: Record<string, unknown>) {
   return {
     ok: true,
     parsedRegion: result.parsedRegion,
-    updatedIntelligence: result.updatedIntelligence,
+    updatedIntelligence: serializePageWindowIntelligence(result.updatedIntelligence),
     summaries,
   };
 }
@@ -420,7 +422,7 @@ export async function deleteParsedRegion(
   return {
     ok: true,
     deleted: result.deleted,
-    updatedIntelligence: result.updatedIntelligence,
+    updatedIntelligence: serializePageWindowIntelligence(result.updatedIntelligence),
     summaries,
   };
 }

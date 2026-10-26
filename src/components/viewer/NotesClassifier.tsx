@@ -34,7 +34,7 @@ type RowAction = "idle" | "promoting" | "rejecting";
  * Three actions per card:
  *   - Accept → POST /api/regions/promote (one-click promote path)
  *   - Edit   → seed notesParseRegion + notesType, switch to Parser tab
- *   - Reject → append id to rejectedTextRegionIds, PATCH intelligence
+ *   - Reject → append id to rejectedTextRegionIds, PATCH that one key (K03)
  */
 export default function NotesClassifier({ onEditInParser }: NotesClassifierProps) {
   const queryClient = useQueryClient();
@@ -85,7 +85,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
       try {
         await persistFetch(
           "/api/pages/intelligence",
-          { publicId, pageNumber, intelligence: updated },
+          { publicId, pageNumber, intelligence: { rejectedTextRegionIds: pruned } },
           "PATCH",
         );
       } catch {
@@ -190,7 +190,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
       // persistFetch awaits + checks ok + throws — never silently swallows.
       await persistFetch(
         "/api/pages/intelligence",
-        { publicId, pageNumber, intelligence: updatedIntel },
+        { publicId, pageNumber, intelligence: { rejectedTextRegionIds: nextRejected } },
         "PATCH",
       );
     } catch (err) {
