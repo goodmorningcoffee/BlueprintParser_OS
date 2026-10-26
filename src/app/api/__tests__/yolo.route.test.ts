@@ -150,6 +150,35 @@ vi.mock("@/lib/project-analysis", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/project-analysis")>()),
   computeProjectSummaries: h.computeProjectSummaries,
 }));
+// [TP-1 WP-1.B K02] Race seam: a concurrent user write runs right after a page's post-YOLO
+// enrichment (computed from the loop-start snapshot) and before that page's write. Passthrough
+// unless a test sets `race.write`; the hook fires on the first withProjectWrite after the enrichment.
+const race = vi.hoisted(() => ({ write: null as null | (() => Promise<void>), armed: false }));
+vi.mock("@/server/services/yolo-post-enrichment", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/server/services/yolo-post-enrichment")>();
+  return {
+    ...orig,
+    enrichPageAfterYolo: (...args: Parameters<typeof orig.enrichPageAfterYolo>) => {
+      race.armed = race.write !== null;
+      return orig.enrichPageAfterYolo(...args);
+    },
+  };
+});
+vi.mock("@/server/api/project-write-capability", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/server/api/project-write-capability")>();
+  return {
+    ...orig,
+    withProjectWrite: async (...args: Parameters<typeof orig.withProjectWrite>) => {
+      const concurrent = race.armed ? race.write : null;
+      if (concurrent) {
+        race.write = null;
+        race.armed = false;
+        await concurrent();
+      }
+      return orig.withProjectWrite(...args);
+    },
+  };
+});
 
 import { GET as statusGET } from "@/app/api/yolo/status/route";
 import { POST as runPOST } from "@/app/api/yolo/run/route";
@@ -157,6 +186,8 @@ import { POST as loadPOST } from "@/app/api/yolo/load/route";
 import { defineRoute } from "@/server/api/defineRoute";
 import { zLooseBody } from "@/server/api/schemas";
 import { yoloLoad, yoloRun } from "@/server/services/yolo";
+import { POST as verdictPOST } from "@/app/api/projects/[id]/proposals/verdict/route";
+import { PATCH as intelligencePATCH } from "@/app/api/pages/intelligence/route";
 import {
   asUser,
   createCompany,
@@ -165,6 +196,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  params,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -234,6 +266,8 @@ function seedS3Results(files: Array<{ key: string; body: unknown }>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  race.write = null;
+  race.armed = false;
   signedOut();
   h.getYoloJobStatus.mockResolvedValue({ status: "Completed", progress: 100 });
   h.createYoloJobName.mockReturnValue("job-abc");
@@ -1207,6 +1241,73 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
     expect(h.runHeuristicEngine).toHaveBeenCalled(); // the pass ran
     expect(h.computeYoloHeatmap).not.toHaveBeenCalled();
     expect(h.collectAllVotes).not.toHaveBeenCalled();
+  });
+
+  // [TP-1 WP-1.B K02] YOLO load used to write each page's WHOLE pageIntelligence (and csiCodes)
+  // from the snapshot read at loop start, erasing any user write that landed on the page meanwhile.
+  it("[K02] a proposal verdict recorded during YOLO load survives the page's post-YOLO write", async () => {
+    const w = await loadWorld();
+    const proposal = {
+      id: "schedule-kind:p1:0.1,0.1,0.5,0.4", recipeId: "schedule-kind", recipeVersion: 3, engineVersion: "clf/0.1",
+      pageNumber: 1, bbox: [0.1, 0.1, 0.5, 0.4], target: "schedule", p: 0.91, classId: "door", className: "Door schedule",
+      group: "arch", nameP: 0.8, margin: 0.4, displayName: "Door schedule", detectWhy: [], nameWhy: [], features: { "door.header": 1 },
+    };
+    const page = await createPage(w.project.id, 1, {
+      rawText: "text",
+      pageIntelligence: {
+        parsedRegions: [{ id: "user-region" }],
+        classifierProposals: { engineVersion: "clf/0.1", recipes: { "schedule-kind": 3 }, proposals: [proposal] },
+      } as never,
+    });
+    asUser(w.admin);
+    seedS3Results([detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET])]);
+    h.runHeuristicEngine.mockReturnValue([{ rule: "r1" }]); // the page changes → the write path runs
+    let verdictStatus = 0;
+    race.write = async () => {
+      const r = await verdictPOST(
+        makeReq(`/api/projects/${w.project.publicId}/proposals/verdict`, {
+          method: "POST", body: { pageNumber: 1, proposalId: proposal.id, verdict: "accept" },
+        }),
+        params({ id: w.project.publicId }),
+      );
+      verdictStatus = r.status;
+    };
+    const { status } = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
+    expect(status).toBe(200);
+    expect(race.write).toBeNull(); // the concurrent write ran inside the race window
+    expect(verdictStatus).toBe(200);
+    const [row] = await db.select({ pi: pagesTable.pageIntelligence }).from(pagesTable).where(eq(pagesTable.id, page.id));
+    const pi = row.pi as Record<string, any>;
+    expect(pi.proposalVerdicts?.[proposal.id]?.verdict).toBe("accept"); // the user's label survived
+    expect(pi.heuristicInferences).toEqual([{ rule: "r1" }]); // and the loop's own keys landed
+    expect(pi.parsedRegions).toEqual([{ id: "user-region" }]);
+  });
+
+  it("[K02 csiCodes] a commit-style CSI write during YOLO load survives: YOLO codes are unioned with the LIVE page CSI", async () => {
+    const w = await loadWorld();
+    const page = await createPage(w.project.id, 1, { rawText: "text", pageIntelligence: { textRegions: [{ t: 1 }] } as never });
+    asUser(w.admin);
+    seedS3Results([detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET])]);
+    let patchStatus = 0;
+    race.write = async () => {
+      const r = await intelligencePATCH(makeReq("/api/pages/intelligence", {
+        method: "PATCH",
+        body: {
+          publicId: w.project.publicId, pageNumber: 1,
+          intelligence: { parsedRegions: [{ id: "committed", csiTags: [{ code: "23 05 00", description: "commit tag" }] }] },
+        },
+      }));
+      patchStatus = r.status;
+    };
+    const { status } = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
+    expect(status).toBe(200);
+    expect(race.write).toBeNull();
+    expect(patchStatus).toBe(200);
+    const [row] = await db.select({ pi: pagesTable.pageIntelligence, csi: pagesTable.csiCodes }).from(pagesTable).where(eq(pagesTable.id, page.id));
+    expect((row.csi as Array<{ code: string }>).map((c) => c.code)).toEqual(["23 05 00", "08 11 00"]); // commit's code kept + YOLO's added
+    expect((row.pi as Record<string, any>).parsedRegions).toEqual([
+      { id: "committed", csiTags: [{ code: "23 05 00", description: "commit tag" }] },
+    ]); // the committed region survived too
   });
 
   it("[fix 2026-10-22] a re-registered model (new id, same name) REPLACES its old rows; other models and other projects survive", async () => {

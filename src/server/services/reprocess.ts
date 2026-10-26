@@ -42,7 +42,7 @@ import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
-import { carryNonComputedIntelligence, mergeProjectIntelligence } from "@/lib/intelligence-merge";
+import { carryNonComputedIntelligence, mergeProjectIntelligence, reprocessPageIntelligenceDelta, writeComputedPageIntelligence } from "./page-intel-keyed-write";
 import type { ClassifiedTable } from "@/types";
 import type { AuthSession } from "@/lib/api-utils";
 import { resolvePipelineToggles } from "@/lib/pipeline-toggles";
@@ -722,9 +722,8 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               );
               if (spatialMap) pageIntelligence.csiSpatialMap = spatialMap;
 
-              await withProjectWrite(writeCapability, project.id, async (tx) => {
-                await tx.update(pages).set({ pageIntelligence }).where(eq(pages.id, page.id));
-              });
+              // [TP-1 WP-1.B K02] keyed write over the LIVE row: a promote/verdict landing after the snapshot read survives.
+              await writeComputedPageIntelligence(writeCapability, project.id, page.id, reprocessPageIntelligenceDelta(page.storedIntelligence, pageIntelligence));
               // Flush classifier debug writes (if any). Errors inside the writer
               // are already logged; allSettled keeps a single write failure from
               // aborting the loop.
