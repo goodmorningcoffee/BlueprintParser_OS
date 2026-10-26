@@ -86,6 +86,23 @@ describe("ClassifiersTab", () => {
     expect(pane.getByText("1 (50%)")).toBeTruthy();
   });
 
+  it("edits the table-ness head (bias + a signal weight) and saves it as table.* keys", async () => {
+    const recipe = BUILT_IN_RECIPES.find((r) => r.id === "schedules.v1")!;
+    expect(recipe.tableHead).toBeTruthy();
+    const sig = recipe.tableHead!.signals[0];
+    render(<ClassifiersTab projects={PROJECTS} isRootAdmin={false} />);
+    expect(await screen.findByText("Schedules (kind)")).toBeTruthy();
+    fireEvent.click(screen.getByText(/Table-ness head \(/));
+    fireEvent.change(screen.getByLabelText("table-ness bias"), { target: { value: String(recipe.tableHead!.bias + 1) } });
+    fireEvent.change(screen.getByLabelText(`weight of ${sig.id}`), { target: { value: String(sig.weight + 0.5) } });
+    fireEvent.click(await screen.findByText("Save for company"));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u, i]) => String(u).includes("/overlay") && i?.method === "PUT")).toBe(true));
+    const [, putInit] = fetchMock.mock.calls.find(([u, i]) => String(u).includes("/overlay") && i?.method === "PUT")!;
+    const patch = JSON.parse(putInit.body as string).overlay.patches["schedules.v1"];
+    expect(patch.tableBias).toBe(recipe.tableHead!.bias + 1);
+    expect(patch.signals[`table.${sig.id}`]).toEqual({ weight: sig.weight + 0.5 });
+  });
+
   it("renders the error state when the load fails", async () => {
     fetchMock.mockImplementation(async () => ({ ok: false, status: 500, json: async () => ({}) }));
     render(<ClassifiersTab projects={[]} isRootAdmin={false} />);

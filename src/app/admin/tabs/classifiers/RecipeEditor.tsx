@@ -1,13 +1,13 @@
 "use client";
 
 // [classifier builder track 3] The recipe editor: header fields (name, enabled, target, thresholds,
-// margin, detect bias), scope + candidates, the detect head, the classes grouped by vocabulary group,
+// margin, detect bias), scope + candidates, the detect head, the table-ness head (when the recipe has one), the classes grouped by vocabulary group,
 // add class, reset recipe, and the diff view against the built-in. Every edit goes through draft-ops
 // (pure) and up through `onChange(nextDraft)`.
 
 import { useState } from "react";
 import {
-  DETECT, blankClass, describePatch, buildRecipePatch, resetClass, resetRecipe, resetSignal,
+  DETECT, TABLE, blankClass, describePatch, buildRecipePatch, resetClass, resetRecipe, resetSignal,
   type ClassifierRecipe, type SignalCatalog, type WeightedSignal, type ClassifierClass,
 } from "@/lib/classifier-engine";
 import { SCHEDULE_GROUP_NAMES } from "@/lib/classifier-engine/vocabulary";
@@ -28,7 +28,7 @@ export interface RecipeEditorProps {
 }
 
 export default function RecipeEditor({ draft, builtIn, catalog, onChange }: RecipeEditorProps) {
-  const [section, setSection] = useState<"detect" | "classes" | "scope" | "diff">("classes");
+  const [section, setSection] = useState<"detect" | "table" | "classes" | "scope" | "diff">("classes");
   const [newClass, setNewClass] = useState({ id: "", name: "", group: "other" });
   const patch = builtIn ? buildRecipePatch(builtIn, draft) : null;
   const diff = builtIn ? describePatch(builtIn, patch) : [];
@@ -66,7 +66,7 @@ export default function RecipeEditor({ draft, builtIn, catalog, onChange }: Reci
         <label className="text-[10px] text-[var(--muted)] flex items-center gap-1"><input type="checkbox" checked={draft.deriveName} disabled={!!builtIn} onChange={(e) => onChange(updateRecipe(draft, { deriveName: e.target.checked }))} /> derive the printed title</label>
       </div>
       <div className="flex border-b border-[var(--border)]">
-        {tab("classes", `Classes (${draft.classes.length})`)}{tab("detect", `Detect head (${draft.detect.signals.length})`)}{tab("scope", "Scope & candidates")}{tab("diff", `Diff vs built-in (${diff.length})`)}
+        {tab("classes", `Classes (${draft.classes.length})`)}{tab("detect", `Detect head (${draft.detect.signals.length})`)}{draft.tableHead && tab("table", `Table-ness head (${draft.tableHead.signals.length})`)}{tab("scope", "Scope & candidates")}{tab("diff", `Diff vs built-in (${diff.length})`)}
       </div>
 
       {section === "detect" && (
@@ -74,6 +74,15 @@ export default function RecipeEditor({ draft, builtIn, catalog, onChange }: Reci
           <p className="text-[10px] text-[var(--muted)]">p(candidate is the target) = σ(bias + Σ weight × value); a required signal at 0 or a veto above 0 drops the candidate.</p>
           <HeadSignals signals={draft.detect.signals} builtIn={builtIn?.detect.signals} catalog={catalog}
             onChange={headProps(DETECT).onChangeSignal} onReset={headProps(DETECT).onResetSignal} onDuplicate={headProps(DETECT).onDuplicateSignal} onRemove={headProps(DETECT).onRemoveSignal} onAdd={headProps(DETECT).onAddSignal} />
+        </div>
+      )}
+
+      {section === "table" && draft.tableHead && (
+        <div className="space-y-1">
+          <p className="text-[10px] text-[var(--muted)]">p(candidate is a table: schedule, legend or keynote) = σ(bias + Σ weight × value). Shown on each proposal as "table NN %"; it does not pick the kind.</p>
+          <label className="text-[10px] text-[var(--muted)]">table-ness bias <input type="number" step={0.1} className={`${INPUT} w-16`} value={draft.tableHead.bias} aria-label="table-ness bias" onChange={(e) => draft.tableHead && onChange(updateRecipe(draft, { tableHead: { ...draft.tableHead, bias: Number(e.target.value) } }))} /></label>
+          <HeadSignals signals={draft.tableHead.signals} builtIn={builtIn?.tableHead?.signals} catalog={catalog}
+            onChange={headProps(TABLE).onChangeSignal} onReset={headProps(TABLE).onResetSignal} onDuplicate={headProps(TABLE).onDuplicateSignal} onRemove={headProps(TABLE).onRemoveSignal} onAdd={headProps(TABLE).onAddSignal} />
         </div>
       )}
 
