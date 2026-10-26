@@ -1271,6 +1271,13 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
         params({ id: w.project.publicId }),
       );
       verdictStatus = r.status;
+      // [TP-1 gate] also change a key that IS in the loop's snapshot: a wrong snapshot at the YOLO
+      // call site would re-send the carried parsedRegions and erase this (WP-1.B VERIFY LOW-1 / M7).
+      const p = await intelligencePATCH(makeReq("/api/pages/intelligence", {
+        method: "PATCH",
+        body: { publicId: w.project.publicId, pageNumber: 1, intelligence: { parsedRegions: [{ id: "user-region" }, { id: "mid-run" }] } },
+      }));
+      expect(p.status).toBe(200);
     };
     const { status } = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
     expect(status).toBe(200);
@@ -1280,7 +1287,7 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
     const pi = row.pi as Record<string, any>;
     expect(pi.proposalVerdicts?.[proposal.id]?.verdict).toBe("accept"); // the user's label survived
     expect(pi.heuristicInferences).toEqual([{ rule: "r1" }]); // and the loop's own keys landed
-    expect(pi.parsedRegions).toEqual([{ id: "user-region" }]);
+    expect(pi.parsedRegions).toEqual([{ id: "user-region" }, { id: "mid-run" }]); // carried key not re-sent
   });
 
   it("[K02 csiCodes] a commit-style CSI write during YOLO load survives: YOLO codes are unioned with the LIVE page CSI", async () => {
