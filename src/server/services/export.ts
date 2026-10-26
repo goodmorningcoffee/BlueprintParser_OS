@@ -30,7 +30,8 @@
 //   FQ-2 ?omit fields are set to UNDEFINED → JSON.stringify DROPS the key entirely (NOT null) —
 //        external parsers may distinguish absent-vs-null; pinned by key-set assertions.
 //   FQ-3 parsePagesParam: "lo-hi" tolerates a SWAPPED range ("3-1" === "1-3"); junk parts are
-//        silently dropped; an all-junk param yields NULL (no filter → all pages).
+//        silently dropped; an all-junk param yields NULL (no filter → all pages). [TP-1 K53] A page
+//        number > 100000 is a 400 VALIDATION (the one sanctioned change; ranges are never expanded).
 //   FQ-4 safePresign catch → null URL (per-key, non-fatal, still 200).
 //   FQ-5 the PADDED page_NNNN.png key convention (String(n).padStart(4,"0")) — the engine's
 //        real key shape (contrast labeling's [LB-1] unpadded bug, preserved separately).
@@ -179,22 +180,31 @@ async function safePresign(key: string, expiresIn: number): Promise<string | nul
   }
 }
 
-/** Parse "1-50", "1,2,3", "1-10,20" into a Set of page numbers. Null if absent. (FQ-3) */
-function parsePagesParam(raw: string | null): Set<number> | null {
+/** Same bound as `assertPageNumber` (server/api/parser-input.ts): no plan set comes near it. */
+const MAX_EXPORT_PAGE_NUMBER = 100_000;
+
+/**
+ * Parse "1-50", "1,2,3", "1-10,20" into a page-number filter. Null if absent. (FQ-3)
+ * [TP-1 WP-1.D, K53] Ranges are kept as intervals and never expanded: `1-2000000000` used to fill a
+ * Set synchronously (7 s, 650 MB, then RangeError) for any project member. A page number above
+ * MAX_EXPORT_PAGE_NUMBER is a 400, checked before any work.
+ */
+function parsePagesParam(raw: string | null): { has(n: number): boolean } | null {
   if (!raw) return null;
-  const set = new Set<number>();
+  const spans: Array<[number, number]> = [];
   for (const part of raw.split(",")) {
     const t = part.trim();
     const range = t.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (range) {
-      const lo = Math.min(+range[1], +range[2]);
-      const hi = Math.max(+range[1], +range[2]);
-      for (let i = lo; i <= hi; i++) set.add(i);
-    } else if (/^\d+$/.test(t)) {
-      set.add(+t);
+    const single = /^\d+$/.test(t) ? +t : null;
+    const lo = range ? Math.min(+range[1], +range[2]) : single;
+    const hi = range ? Math.max(+range[1], +range[2]) : single;
+    if (lo === null || hi === null) continue;
+    if (hi > MAX_EXPORT_PAGE_NUMBER) {
+      throw new ApiError("VALIDATION", `pages: page numbers above ${MAX_EXPORT_PAGE_NUMBER} are not accepted`);
     }
+    spans.push([lo, hi]);
   }
-  return set.size ? set : null;
+  return spans.length ? { has: (n) => spans.some(([lo, hi]) => n >= lo && n <= hi) } : null;
 }
 
 // ── GET /api/projects/export-index ─────────────────────────────────────────────────────────────

@@ -202,6 +202,29 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
     expect(await nums("?pages=zzz")).toEqual([1, 2, 3]); // junk-only → null filter → all
   });
 
+  it("[TP-1 K53] ?pages= is bounded before any work: a huge range is a fast 400; ranges are never expanded", async () => {
+    const { user, project } = await createWorld();
+    for (const n of [1, 2, 3]) await createPage(project.id, n);
+    asUser(user);
+    s3Mocks.getPresignedGetUrl.mockResolvedValue("https://signed.test/k");
+    const nums = async (qs: string) =>
+      (await readJson(await exp(project.publicId, qs))).body.pages.map(
+        (p: { pageNumber: number }) => p.pageNumber,
+      );
+    // The bound itself is accepted, and a wide range filters exactly as a short one does.
+    expect(await nums("?pages=2-100000")).toEqual([2, 3]);
+    expect(await nums("?pages=3,1-1")).toEqual([1, 3]);
+
+    const started = performance.now();
+    const res = await exp(project.publicId, "?pages=1-1000000000");
+    const elapsedMs = performance.now() - started;
+    const { status, body } = await readJson(res);
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION");
+    expect(elapsedMs).toBeLessThan(50); // legacy: ~7 s of synchronous Set filling, then RangeError
+    expect((await readJson(await exp(project.publicId, "?pages=5,100001"))).status).toBe(400);
+  });
+
   it("presign failure → null url per key, still 200 (safePresign catch)", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);

@@ -15,6 +15,7 @@ import {
   isGeneralBucketExempt,
   isRateLimited,
   isRootExemptRule,
+  parserBurstBucket,
   pruneExpiredRateBuckets,
   rootParserLaneRetryAfter,
 } from "@/lib/middleware-rate-limit";
@@ -378,7 +379,7 @@ export async function middleware(request: NextRequest) {
     if (rootUserId !== null && isAbusiveRoute(pathname)) {
       const retryAfter = rootParserLaneRetryAfter(
         rootUserId,
-        pathname.split("/").slice(0, 3).join("/"),
+        parserBurstBucket(pathname, ABUSIVE_LIMIT).route,
         now,
       );
       if (retryAfter > 0) {
@@ -443,8 +444,9 @@ export async function middleware(request: NextRequest) {
       }
 
       // Apply the abusive-route burst limit. On breach, escalate.
-      const abusiveKey = `abusive:${ip}:${pathname.split("/").slice(0, 3).join("/")}`;
-      if (isRateLimited(abusiveKey, ABUSIVE_LIMIT, ABUSIVE_WINDOW_MS)) {
+      // K21: `/api/table-parse/propose` has its own bucket and limit (parserBurstBucket).
+      const burst = parserBurstBucket(pathname, ABUSIVE_LIMIT);
+      if (isRateLimited(`abusive:${ip}:${burst.route}`, burst.limit, ABUSIVE_WINDOW_MS)) {
         const existing = cooldownStore.get(ip);
         let violations: number;
         let firstViolationAt: number;

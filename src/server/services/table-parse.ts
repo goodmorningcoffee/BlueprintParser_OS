@@ -459,8 +459,13 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
   };
   // [refactor jul23 P5.4-C] addToHistory now writes op_log (async). Awaited so a
   // write failure surfaces rather than becoming an unhandled rejection; the
-  // response shape is unchanged.
-  await addToHistory(historyEntry);
+  // response shape is unchanged. [TP-1 WP-1.D, K17] It runs AFTER a possibly paid Textract
+  // call, so a failed admin-history insert is logged, never a 500 that discards the result.
+  try {
+    await addToHistory(historyEntry);
+  } catch (err) {
+    logger.warn(`[table-parse] op_log history write failed for page ${pageNumber}:`, err);
+  }
 
   // Phase D.1 + D-cleanup: per-method results are included only when the
   // client opts in via debugMode. Default response is merged + infraErrors —
