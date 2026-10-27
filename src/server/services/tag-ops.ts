@@ -17,10 +17,19 @@
  *                       tags that have ≥ 1 instance (matched by server key, ids kept); the region's
  *                       other rows — including 0-hit ones — are removed (K40). Rows of other regions
  *                       are untouched. `retireIds` names legacy (unlinked) rows the caller attributes
- *                       to this region; they are removed too.
+ *                       to this region; they are removed too. An incoming id already held by a
+ *                       surviving row outside the region (or by another incoming key) is never
+ *                       reused — the tag gets a fresh `<id>~<n>` id, read it back from `tags` (a
+ *                       collision would otherwise overwrite another region's row). An incoming hit
+ *                       with no `status` keeps the status its place had on the matched prior row, so
+ *                       a re-run does not discard confirm/reject review (manual hits that the re-run
+ *                       no longer produces are not carried; TP-4 re-anchoring owns that).
  *   set-instance-status {tagId, instance: {id} | {pageNumber, bbox}, status}
  *   add-instance        {tagId, instance: {pageNumber, bbox, annotationId?, confidence?}} → a
  *                       "confirmed" manual hit (an existing hit at the same place is confirmed instead).
+ *
+ * A stored row that fails `isYoloTagRow` (legacy PUT data) is never matched by key, region or
+ * instance and is carried through unchanged; `upsert`/`remove` by its id still replace or delete it.
  *
  * Demo projects are refused for every role (assertProjectWritable). Lock order: project row only.
  */
@@ -194,12 +203,49 @@ function instanceMatches(inst: ProjectedTagInstance, ref: InstanceRef): boolean 
   return inst.pageNumber === ref.pageNumber && tagInstanceKey(inst.pageNumber, inst.bbox) === tagInstanceKey(ref.pageNumber, ref.bbox);
 }
 
+/** The id of a stored row, if it has a string one (stored rows are not validated on read). */
+function idOf(row: unknown): string | undefined {
+  return row && typeof row === "object" && typeof (row as { id?: unknown }).id === "string"
+    ? (row as { id: string }).id
+    : undefined;
+}
+
+/** A fresh id derived from `base` that is not in `taken`. */
+function mintId(base: string, taken: ReadonlySet<string>): string {
+  const stem = base.slice(0, MAX_ID - 8);
+  for (let n = 2; ; n += 1) {
+    const id = `${stem}~${n}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** Incoming hits with no `status` take the status the same place has on the prior row. */
+function keepReviewStatus(
+  incoming: readonly ProjectedTagInstance[],
+  prior: readonly ProjectedTagInstance[],
+): ProjectedTagInstance[] {
+  const reviewed = new Map<string, ProjectedTagInstance["status"]>();
+  for (const inst of prior) {
+    if (inst.status && inst.status !== "auto") reviewed.set(tagInstanceKey(inst.pageNumber, inst.bbox), inst.status);
+  }
+  if (reviewed.size === 0) return [...incoming];
+  return incoming.map((inst) => {
+    if (inst.status !== undefined) return inst;
+    const status = reviewed.get(tagInstanceKey(inst.pageNumber, inst.bbox));
+    return status ? { ...inst, status } : inst;
+  });
+}
+
 /**
  * Pure: apply `ops` to `rows` in order. Never mutates its inputs. Rows keep their array position
  * when replaced; new rows are appended.
  */
 export function applyTagOpsToRows(rows: readonly StoredYoloTag[], ops: readonly TagOp[]): { rows: StoredYoloTag[] } & TagOpsResult {
   let next: StoredYoloTag[] = [...rows];
+  // Rows that fail the guard are carried through untouched (LOW-2: one bad legacy row must not 500
+  // every op on the project). `live` gates every match that reads more than the id.
+  const malformed = new Set<unknown>(rows.filter((row) => !isYoloTagRow(row)));
+  const live = (tag: StoredYoloTag) => !malformed.has(tag);
   const touched = new Map<string, StoredYoloTag>();
   const removed = new Set<string>();
   const replacedRegionIds: string[] = [];
@@ -216,14 +262,14 @@ export function applyTagOpsToRows(rows: readonly StoredYoloTag[], ops: readonly 
     for (const tag of next) {
       if (keep(tag)) kept.push(tag);
       else {
-        removed.add(tag.id);
+        removed.add(idOf(tag) ?? tag.id);
         touched.delete(tag.id);
       }
     }
     next = kept;
   };
   const editInstances = (index: number, tagId: string, edit: (instances: ProjectedTagInstance[]) => ProjectedTagInstance[] | null) => {
-    const at = next.findIndex((tag) => tag.id === tagId);
+    const at = next.findIndex((tag) => live(tag) && tag.id === tagId);
     if (at < 0) {
       skipped.push({ index, reason: "tag not found" });
       return;
@@ -239,41 +285,69 @@ export function applyTagOpsToRows(rows: readonly StoredYoloTag[], ops: readonly 
   ops.forEach((op, index) => {
     switch (op.op) {
       case "upsert": {
-        let at = next.findIndex((tag) => tag.id === op.tag.id);
+        let at = next.findIndex((tag) => idOf(tag) === op.tag.id);
         if (at < 0 && op.match === "key") {
           const key = yoloTagServerKey(op.tag);
-          at = next.findIndex((tag) => yoloTagServerKey(tag) === key);
+          at = next.findIndex((tag) => live(tag) && yoloTagServerKey(tag) === key);
         }
         put(at >= 0 ? { ...op.tag, id: next[at].id } : op.tag, at);
         break;
       }
       case "remove": {
-        if (!next.some((tag) => tag.id === op.id)) skipped.push({ index, reason: "tag not found" });
-        else drop((tag) => tag.id !== op.id);
+        if (!next.some((tag) => idOf(tag) === op.id)) skipped.push({ index, reason: "tag not found" });
+        else drop((tag) => idOf(tag) !== op.id);
         break;
       }
       case "replace-for-region": {
-        const inRegion = (tag: StoredYoloTag) => tag.links?.regionId === op.regionId;
-        const prior = new Map<string, string>();
+        const inRegion = (tag: StoredYoloTag) => live(tag) && tag.links?.regionId === op.regionId;
+        const retire = new Set(op.retireIds ?? []);
+        const retired = (tag: StoredYoloTag) => live(tag) && retire.has(tag.id) && tag.links?.regionId === undefined;
+        const prior = new Map<string, StoredYoloTag>();
         for (const tag of next) {
-          if (inRegion(tag) && !prior.has(yoloTagServerKey(tag))) prior.set(yoloTagServerKey(tag), tag.id);
+          if (inRegion(tag) && !prior.has(yoloTagServerKey(tag))) prior.set(yoloTagServerKey(tag), tag);
         }
+        // Collapse incoming duplicates by key (last content wins, first id kept).
         const incoming = new Map<string, StoredYoloTag>();
         for (const tag of op.tags) {
           if (tag.instances.length === 0) continue;
           const linked: StoredYoloTag = { ...tag, links: { ...tag.links, regionId: op.regionId } };
           const key = yoloTagServerKey(linked);
-          incoming.set(key, { ...linked, id: prior.get(key) ?? incoming.get(key)?.id ?? linked.id });
+          incoming.set(key, { ...linked, id: incoming.get(key)?.id ?? linked.id });
         }
-        const retire = new Set(op.retireIds ?? []);
+        // Ids: a key-matched prior row keeps its id. Any other incoming id must not belong to a row
+        // that survives this op outside the region, nor to another incoming key — else it is minted
+        // fresh (MED-1: reusing it overwrote another region's row and reported nothing).
+        const taken = new Set<string>();
+        for (const tag of next) {
+          const id = idOf(tag);
+          if (id !== undefined && !inRegion(tag) && !retired(tag)) taken.add(id);
+        }
+        for (const key of incoming.keys()) {
+          const matched = prior.get(key);
+          if (matched) taken.add(matched.id);
+        }
+        const allIds = new Set<string>([...next.map(idOf), ...op.tags.map((tag) => tag.id)].filter((id): id is string => id !== undefined));
+        for (const [key, tag] of incoming) {
+          const matched = prior.get(key);
+          let id: string;
+          if (matched) id = matched.id;
+          else if (taken.has(tag.id)) {
+            id = mintId(tag.id, allIds);
+            allIds.add(id);
+          } else id = tag.id;
+          taken.add(id);
+          const instances = matched
+            ? (keepReviewStatus(tag.instances as ProjectedTagInstance[], matched.instances as ProjectedTagInstance[]) as StoredYoloTag["instances"])
+            : tag.instances;
+          incoming.set(key, { ...tag, id, instances });
+        }
         const keepIds = new Set([...incoming.values()].map((tag) => tag.id));
         drop((tag) => {
           if (inRegion(tag)) return keepIds.has(tag.id);
-          if (retire.has(tag.id) && tag.links?.regionId === undefined) return false;
-          return true;
+          return !retired(tag);
         });
         for (const tag of incoming.values()) {
-          put(tag, next.findIndex((row) => row.id === tag.id));
+          put(tag, next.findIndex((row) => live(row) && row.id === tag.id));
         }
         replacedRegionIds.push(op.regionId);
         break;

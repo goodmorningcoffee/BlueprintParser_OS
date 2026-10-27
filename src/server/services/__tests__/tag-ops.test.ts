@@ -143,6 +143,81 @@ describe("applyTagOpsToRows", () => {
       expect(out.rows).toHaveLength(1);
       expect(out.rows[0].description).toBe("second wins");
     });
+    it("[MED-1] an incoming id held by another region's row gets a fresh id; that row is untouched", () => {
+      const x = r1(tag({ id: "X", tagText: "1" }));
+      const out = applyTagOpsToRows([x], [{ op: "replace-for-region", regionId: "pr-2", tags: [tag({ id: "X", tagText: "2" })] }]);
+      expect(out.rows).toHaveLength(2);
+      expect(out.rows[0]).toBe(x);
+      expect(out.rows[1]).toMatchObject({ id: "X~2", tagText: "2", links: { regionId: "pr-2" } });
+      expect(out.tags.map((r) => r.id)).toEqual(["X~2"]);
+      expect(out.removed).toEqual([]);
+    });
+
+    it("[MED-1] an incoming id held by an unlinked surviving row is minted too; a retired row's id may be reused", () => {
+      const legacy = tag({ id: "L", tagText: "QX-1" });
+      const retiredRow = tag({ id: "R", tagText: "QX-3" });
+      const out = applyTagOpsToRows([legacy, retiredRow], [{
+        op: "replace-for-region",
+        regionId: "pr-1",
+        tags: [tag({ id: "L", tagText: "QX-2" }), tag({ id: "R", tagText: "QX-3" })],
+        retireIds: [retiredRow.id],
+      }]);
+      expect(out.rows.map((r) => [r.id, r.tagText, r.links?.regionId])).toEqual([
+        ["L", "QX-1", undefined],
+        ["L~2", "QX-2", "pr-1"],
+        ["R", "QX-3", "pr-1"],
+      ]);
+      expect(out.removed).toEqual([]);
+    });
+
+    it("[MED-1] an incoming id that is another incoming key's matched prior id is minted, never merged", () => {
+      const y = r1(tag({ id: "Y", tagText: "QX-1" }));
+      const out = applyTagOpsToRows([y], [{
+        op: "replace-for-region",
+        regionId: "pr-1",
+        tags: [tag({ id: "Y", tagText: "QX-2" }), tag({ id: "Z", tagText: "QX-1" })],
+      }]);
+      expect(out.rows.map((r) => [r.id, r.tagText])).toEqual([["Y", "QX-1"], ["Y~2", "QX-2"]]);
+      expect(new Set(out.rows.map((r) => r.id)).size).toBe(2);
+    });
+
+    it("[LOW-3] a remap keeps the review status of a hit at the same place; an explicit status wins", () => {
+      const at = (x: number, status?: "auto" | "confirmed" | "rejected") => ({
+        pageNumber: 1, annotationId: -1, bbox: [x, 0.1, x + 0.02, 0.12] as [number, number, number, number], confidence: 1,
+        ...(status ? { status } : {}),
+      });
+      const prior = r1(tag({ tagText: "QX-1", instances: [at(0.1, "confirmed"), at(0.3, "rejected"), at(0.5, "confirmed")] }));
+      const out = applyTagOpsToRows([prior], [{
+        op: "replace-for-region",
+        regionId: "pr-1",
+        tags: [tag({ tagText: "QX-1", instances: [at(0.1000001), at(0.3), at(0.5, "auto"), at(0.7)] })],
+      }]);
+      expect(out.rows[0].instances.map((i) => (i as { status?: string }).status)).toEqual(["confirmed", "rejected", "auto", undefined]);
+    });
+  });
+
+  describe("[LOW-2] malformed stored rows are carried through, never matched", () => {
+    const broken = [null, { id: "nt", name: "x", source: "schedule", scope: "project", instances: [] }] as unknown as StoredYoloTag[];
+
+    it("every op still applies and the bad rows survive unchanged", () => {
+      const a = tag({ tagText: "QX-1", links: { regionId: "pr-1" } });
+      const out = applyTagOpsToRows([...broken, a], [
+        { op: "upsert", tag: tag({ tagText: "QX-1" }), match: "key" },
+        { op: "replace-for-region", regionId: "pr-1", tags: [tag({ tagText: "QX-2" })] },
+        { op: "set-instance-status", tagId: "nt", instance: { id: "x" }, status: "confirmed" },
+        { op: "add-instance", tagId: "nt", instance: { pageNumber: 1, bbox: [0, 0, 1, 1] } },
+      ]);
+      expect(out.rows.slice(0, 2)).toEqual(broken);
+      expect(out.skipped).toEqual([{ index: 2, reason: "tag not found" }, { index: 3, reason: "tag not found" }]);
+    });
+
+    it("upsert and remove by id still replace or delete a bad row that has an id", () => {
+      const fixed = applyTagOpsToRows(broken, [{ op: "upsert", tag: tag({ id: "nt" }) }]);
+      expect(fixed.rows[1]).toMatchObject({ id: "nt", tagText: "QX-1" });
+      const gone = applyTagOpsToRows(broken, [{ op: "remove", id: "nt" }]);
+      expect(gone.rows).toEqual([null]);
+      expect(gone.removed).toEqual(["nt"]);
+    });
   });
 
   describe("instance ops", () => {

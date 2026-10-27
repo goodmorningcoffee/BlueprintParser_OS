@@ -4,7 +4,7 @@
 // clears only its own region's 0-hit tags, demo refused for every role, signed-out 401 / cross-tenant
 // 404, validation 400 with nothing written.
 import { describe, expect, inject, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -15,7 +15,8 @@ import { POST } from "@/app/api/projects/[id]/tags/ops/route";
 import { PUT as projectPUT } from "@/app/api/projects/[id]/route";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
-import type { StoredYoloTag } from "@/server/services/tag-ops";
+import { assertProjectWritable, withProjectWrite } from "@/server/api/project-write-capability";
+import { applyTagOps, type StoredYoloTag } from "@/server/services/tag-ops";
 import {
   asUser,
   createCompany,
@@ -66,7 +67,41 @@ async function projectIntel(projectId: number) {
   return row.pi as Record<string, any>;
 }
 
+/** Wait until some backend is blocked on a lock held by backend `holderPid` (5 s bound). */
+async function waitForWaiterOn(holderPid: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await db.execute(sql`
+      SELECT 1 FROM pg_stat_activity
+       WHERE datname = current_database() AND wait_event_type = 'Lock'
+         AND ${holderPid}::int = ANY(pg_blocking_pids(pid))
+       LIMIT 1`);
+    if ((result as unknown as { rows: unknown[] }).rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for the second writer to block on the first");
+}
+
 describe.skipIf(!dbUp)("POST /api/projects/[id]/tags/ops", () => {
+  it("[K19] a writer that arrives while another holds the project waits, then both edits survive (deterministic)", async () => {
+    const { user, project } = await seeded([tag("a"), tag("b")]);
+    asUser(user);
+    const capability = assertProjectWritable(project);
+    let second: Promise<Response> | undefined;
+    await withProjectWrite(capability, project.id, async (tx) => {
+      await applyTagOps(tx, capability, [{ op: "upsert", tag: tag("a", { description: "first" }) }]);
+      const [{ pid }] = (await tx.execute(sql`SELECT pg_backend_pid() AS pid`) as unknown as { rows: { pid: number }[] }).rows;
+      second = post(project.publicId, { ops: [{ op: "upsert", tag: tag("b", { description: "second" }) }] });
+      // The second writer has to reach the database while the first still holds it; with the row
+      // lock it waits before reading, without it it reads the stale array and overwrites "first".
+      await waitForWaiterOn(pid);
+    });
+    expect((await second!).status).toBe(200);
+    const rows = await storedTags(project.id);
+    expect(rows.find((r) => r.id === "a")?.description).toBe("first");
+    expect(rows.find((r) => r.id === "b")?.description).toBe("second");
+  });
+
   it("[K19] two concurrent writers editing different tags both survive", async () => {
     const { user, project } = await seeded([tag("a"), tag("b")]);
     asUser(user);
