@@ -1283,6 +1283,20 @@ export const PUBLIC_DEMO_SURFACES = [
       "tools.workspace",
     ]),
   ),
+  // [TP-3 WP-3.E] Parse-engine parse: compute only (no project / page row is written). A demo call
+  // never writes the crop cache and is refused the paid `thorough` budget (run.ts cropCachePolicy,
+  // assertBudgetAllowed); the response is the demo page's own evidence-derived model.
+  publicSurface(
+    "parse-engine-parse",
+    "/api/projects/[id]/parse-engine/parse",
+    "POST",
+    "owner-threat-model-debt",
+    ["src/server/services/parse-engine/run.ts"],
+    debt(
+      "L5-public-parse-engine-parse",
+      "Owner-approved compute input/output policy remains explicit debt; demo calls are compute-only with no cache writes.",
+    ),
+  ),
 ];
 
 /** Shared helpers that intentionally query demo-only state for one of the public surfaces above. */
@@ -1409,6 +1423,7 @@ export const ROOT_ONLY_SURFACES = [
   rootOnly("/api/admin/yolo-instance/options", ["GET"]),
   rootOnly("/api/admin/yolo-runtime", ["PUT"], { inService: ["src/server/services/yolo-instance.ts", "putYoloMaxRuntime"] }),
   rootOnly("/api/admin/tiles", ["GET", "PUT"], { inService: ["src/server/services/tiles-setting.ts", "putTilesSetting"] }),
+  rootOnly("/api/admin/parse-engine", ["GET", "PUT"], { inService: ["src/server/services/parse-engine/flags-admin.ts", "putParseEngineFlags"] }), // TP-3 WP-3.E
   rootOnly("/api/admin/app-settings", ["PUT"], { shellAuth: "admin", inService: ["src/server/services/app-settings.ts", "putAppSetting"] }),
   // model / feature access and roles
   rootOnly("/api/admin/model-access", ["GET", "POST", "DELETE"]),
@@ -1468,6 +1483,7 @@ export const ROOT_AUDITED_MUTATIONS = [
   ["src/server/services/yolo-instance.ts", "putYoloInstanceType", "yolo_instance_type_changed", "YOLO_INSTANCE_AUDIT_ACTION"],
   ["src/server/services/yolo-instance.ts", "putYoloMaxRuntime", "yolo_max_runtime_changed", "YOLO_RUNTIME_AUDIT_ACTION"],
   ["src/server/services/tiles-setting.ts", "putTilesSetting", "tiles_setting_changed", "TILES_AUDIT_ACTION"],
+  ["src/server/services/parse-engine/flags-admin.ts", "putParseEngineFlags", "parse_engine_flags_changed", "PARSE_ENGINE_FLAGS_AUDIT_ACTION"],
   ["src/server/services/companies.ts", "createCompany", "company_created"],
   ["src/server/services/companies.ts", "updateCompany", "company_updated"],
   ["src/server/services/companies.ts", "deleteCompany", "company_deleted"],

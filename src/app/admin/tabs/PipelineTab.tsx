@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import CsiSpatialGridPicker from "./CsiSpatialGridPicker";
 import UploadComputePicker from "./UploadComputePicker";
 import TilesToggle from "./TilesToggle";
+import ParseEngineCard from "./pipeline/ParseEngineCard";
 import OpenReprocessLink from "./OpenReprocessLink";
 import type { ReprocessPreset } from "./reprocess-plan";
 
@@ -129,6 +130,7 @@ export default function PipelineTab({ onOpenReprocess, isRootAdmin = false }: Pi
 
         {isRootAdmin && <UploadComputePicker />}
         {isRootAdmin && <TilesToggle />}
+        {isRootAdmin && <ParseEngineCard />}
 
         {/* Page concurrency */}
         <div className="flex items-center gap-3 px-3 py-2 mb-3 rounded border border-[var(--border)] bg-[var(--surface)]">

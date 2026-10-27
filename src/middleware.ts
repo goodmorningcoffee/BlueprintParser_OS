@@ -13,6 +13,7 @@ import {
   confirmedRootUserId,
   findRateRule,
   isGeneralBucketExempt,
+  isParseEngineParsePath,
   isRateLimited,
   isRootExemptRule,
   parserBurstBucket,
@@ -171,7 +172,8 @@ interface BanEntry {
 const banStore = new Map<string, BanEntry>();
 
 function isAbusiveRoute(pathname: string): boolean {
-  return ABUSIVE_ROUTE_PREFIXES.some((p) => pathname.startsWith(p));
+  // [TP-3 WP-3.E] + the project-scoped parse-engine parse route, by exact regex (its burst key is the rule name).
+  return ABUSIVE_ROUTE_PREFIXES.some((p) => pathname.startsWith(p)) || isParseEngineParsePath(pathname);
 }
 
 // Clean expired entries every 5 min — includes the cooldown/ban stores

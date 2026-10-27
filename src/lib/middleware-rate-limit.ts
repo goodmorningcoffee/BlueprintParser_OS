@@ -109,6 +109,28 @@ export function isLabelAssetTransportRatePath(
   );
 }
 
+// [TP-3 WP-3.E, C1-M3] POST /api/projects/<id>/parse-engine/parse runs the parse engine (and, at the
+// standard / thorough budgets, crop methods: Python, a paid Textract crop). It is project-scoped, so a
+// prefix rule cannot name it and the first-3-segments burst key would lump it with every /api/projects
+// call. It is matched by an exact regex (like the page-window rule above), and both its route rule and
+// its parser burst bucket are keyed by the rule NAME, so rotating project ids buys a caller nothing.
+const PARSE_ENGINE_PARSE_RE = /^\/api\/projects\/[^/]+\/parse-engine\/parse$/i;
+export const PARSE_ENGINE_PARSE_RULE_NAME = "parse-engine-parse";
+/** The parse-engine parse route: a parser-lane route (middleware `isAbusiveRoute`) with its own rule. */
+export function isParseEngineParsePath(pathname: string): boolean {
+  return PARSE_ENGINE_PARSE_RE.test(pathname);
+}
+const PARSE_ENGINE_PARSE_RATE_RULE: RateRule = {
+  pattern: PARSE_ENGINE_PARSE_RULE_NAME,
+  method: "POST",
+  limit: 120,
+  windowMs: 60 * 1000,
+  keyType: "user",
+  exact: true,
+};
+/** Per-IP burst (per 10 s window) for the parse route: the workspace prefetches the next item, so 5 is too tight. */
+export const PARSE_ENGINE_PARSE_BURST_LIMIT = 20;
+
 const VIEWER_TRANSPORT_RATE_RULE: RateRule = {
   pattern: "viewer-transport",
   method: "GET|HEAD",
@@ -314,6 +336,9 @@ export function findRateRule(
   if (isLabelAssetTransportRatePath(pathname, method)) {
     return LABEL_ASSET_TRANSPORT_RATE_RULE;
   }
+  if (method === "POST" && isParseEngineParsePath(pathname)) {
+    return PARSE_ENGINE_PARSE_RATE_RULE;
+  }
   return RATE_RULES.find(
     (rule) =>
       (rule.exact
@@ -448,6 +473,7 @@ export const PARSER_OWN_BURST_BUCKETS: Readonly<Record<string, number>> = {
 
 /** The burst bucket (route key + per-window limit) a parser request is counted against. */
 export function parserBurstBucket(pathname: string, defaultLimit: number): { route: string; limit: number } {
+  if (isParseEngineParsePath(pathname)) return { route: PARSE_ENGINE_PARSE_RULE_NAME, limit: PARSE_ENGINE_PARSE_BURST_LIMIT };
   for (const [route, limit] of Object.entries(PARSER_OWN_BURST_BUCKETS)) {
     if (pathname === route || pathname.startsWith(`${route}/`)) return { route, limit };
   }

@@ -22,6 +22,7 @@ import { UPLOAD_COMPUTE_SETTING_KEY } from "@/lib/upload-compute";
 import { TILES_SETTING_KEY } from "@/lib/tiles/settings";
 import { isRootTwoFactorSettingKey } from "@/lib/root-two-factor-claims";
 import { LLM_OWNER_KEY_GRANTS_KEY } from "@/lib/llm/owner-key-grant";
+import { PARSE_ENGINE_SETTING_KEY } from "@/server/services/parse-engine/flags";
 import { audit } from "@/lib/audit";
 
 // [2026-10-21] The quota-overrides document lives in this table but is ROOT-ONLY to read and is
@@ -75,6 +76,10 @@ export async function putAppSetting(rawBody: Record<string, unknown>, session: A
   // [2026-10-25] Owner LLM key grants: validated + audited by their own root-only route.
   if (key === LLM_OWNER_KEY_GRANTS_KEY) {
     throw new ApiError("VALIDATION", "Use /api/admin/llm-owner-key to change owner LLM key grants");
+  }
+  // [TP-3 WP-3.E] The parse-engine flags: validated + audited by their own root-only route.
+  if (key === PARSE_ENGINE_SETTING_KEY) {
+    throw new ApiError("VALIDATION", "Use /api/admin/parse-engine to change the parse-engine flags");
   }
 
   // Normalize URLs in header_links to always include protocol
