@@ -370,7 +370,9 @@ describe.skipIf(!dbUp)("notes-parse — engine contract + response shapes (PQ-4/
     const { user, project } = await world();
     asUser(user);
     let r = await readJson(await call(ROUTES.notesPropose, bodyFor(project.id)));
-    expect(r.body).toEqual({ proposedRows: [0.12, 0.2], proposedCols: [0.18] });
+    // [table-pipeline WP-2.B, C04-03/K07] the binder's note tops are closed at the region bottom
+    // (BBOX y1 = 0.5), so Guided extraction keeps the last note. Was [0.12, 0.2].
+    expect(r.body).toEqual({ proposedRows: [0.12, 0.2, 0.5], proposedCols: [0.18] });
     h.parseNotesFromRegion.mockReturnValue({ headers: [], rows: [] }); // no boundaries
     r = await readJson(await call(ROUTES.notesPropose, bodyFor(project.id)));
     expect(r.body).toEqual({ proposedRows: [], proposedCols: [] }); // ?? [] coalesce

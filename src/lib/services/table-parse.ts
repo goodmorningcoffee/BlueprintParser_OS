@@ -12,6 +12,8 @@ import { detectTableLines } from "@/lib/table-lines";
 import type { MethodResult } from "@/lib/grid-merger";
 import type { TextractWord, TextractTable } from "@/types";
 import { logger } from "@/lib/logger";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
+import { uniqueHeaders } from "@/lib/table-headers";
 
 // ─── Method 1: OCR Word Positions ─────────────────────────
 
@@ -211,8 +213,10 @@ export function methodOcrPositions(
     }
   }
 
+  // [WP-2.B, K06] printed headers deduped after the blank fill, so two columns named alike keep
+  // separate keys (`X`, `X (2)`) instead of the second overwriting the first in every row.
   const headers = headerIdx >= 0
-    ? grid[headerIdx].map((c: string, i: number) => c.trim() || `Column ${i + 1}`)
+    ? uniqueHeaders(grid[headerIdx].map((c: string, i: number) => c.trim() || `Column ${i + 1}`))
     : colBounds.map((_, i) => `Column ${i + 1}`);
   const dataRows: Record<string, string>[] = [];
   for (let r = 0; r < grid.length; r++) {
@@ -545,7 +549,7 @@ export async function methodOpenCvLines(
           const cy = w.bbox[1] + w.bbox[3] / 2;
           return cx >= cellLeft && cx <= cellRight && cy >= cellTop && cy <= cellBottom;
         });
-        rowCells.push(cellWords.sort((a, b) => a.bbox[0] - b.bbox[0]).map((w) => w.text).join(" "));
+        rowCells.push(assembleText(lineWordsFromLtwh(cellWords))); // [WP-2.B, K07] line-aware; was x only
       }
       grid.push(rowCells);
     }

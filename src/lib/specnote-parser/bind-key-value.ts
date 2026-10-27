@@ -1,79 +1,63 @@
 import { KV_RIGHT_COL_MAX_LEN, KV_MIN_GAP_RATIO } from "@/lib/spatial-constants";
-import { median, type LineFeature } from "./shared";
+import type { LineFeature } from "./shared";
+import { kvPairs, type KvLine } from "@/lib/parse-engine/paragraphs/kv-pairs";
+import { ltwhToMinMax } from "@/lib/parse-engine/geometry";
 
 /**
- * Per-line K:V binding. Splits each line at its largest inter-word X-gap
- * (must exceed KV_MIN_GAP_RATIO of line width to qualify), emitting
- * {Key, Value} rows. Lines with no meaningful gap drop whole text into Key.
+ * K:V binding (K09). Lines that overlap vertically form one visual row (OCR often returns the key and
+ * the value as two separate LINEs), and each row splits at its largest inter-word X-gap (must exceed
+ * KV_MIN_GAP_RATIO of the row width to qualify), emitting {Key, Value} rows. Rows with no meaningful
+ * gap keep their whole text as the Key; a no-gap row lying wholly right of the median split (a
+ * wrapped value) is appended to the previous row's Value. The pairing itself is
+ * `parse-engine/paragraphs/kv-pairs.ts` (pure, MinMax); this adapter converts the LTWH line features.
  *
- * Derives `colBoundaries` from median split X across lines so the downstream
+ * Derives `colBoundaries` from median split X across rows so the downstream
  * ParsedRegion grid renders cleanly on canvas.
+ *
+ * Was per-LINE only (split *within* a LINE), so a legend whose keys and values are separate LINEs
+ * bound into key-only and value-only rows (`[{Key:"<key>",Value:""},{Key:"<value>",Value:""},…]`).
  */
 export function bindKeyValueGrid(
   lines: readonly LineFeature[],
 ): { headers: string[]; rows: Record<string, string>[]; rowBoundaries?: number[]; colBoundaries?: number[] } | undefined {
   if (lines.length === 0) return undefined;
-  const ysorted = [...lines].sort((a, b) => a.top - b.top);
-
-  const rows: Record<string, string>[] = [];
-  const rowBoundaries: number[] = [];
-  const splitXs: number[] = [];
-  let regionLeft = Infinity;
-  let regionRight = -Infinity;
-
-  for (const lf of ysorted) {
+  const kvLines: KvLine[] = [];
+  for (const lf of lines) {
     const words = lf.line.words;
     if (!words || words.length === 0) continue;
-    const sorted = [...words].sort((a, b) => a.bbox[0] - b.bbox[0]);
-
-    let maxGap = 0;
-    let splitIdx = -1;
-    for (let i = 1; i < sorted.length; i++) {
-      const prevRight = sorted[i - 1].bbox[0] + sorted[i - 1].bbox[2];
-      const curLeft = sorted[i].bbox[0];
-      const gap = curLeft - prevRight;
-      if (gap > maxGap) {
-        maxGap = gap;
-        splitIdx = i;
-      }
-    }
-
-    const lineWidth = lf.right - lf.left;
-    const meaningful = splitIdx > 0 && maxGap > lineWidth * KV_MIN_GAP_RATIO;
-
-    if (meaningful) {
-      const key = sorted.slice(0, splitIdx).map((w) => w.text).join(" ").trim();
-      const value = sorted.slice(splitIdx).map((w) => w.text).join(" ").trim();
-      // ⚠ BORROWED THRESHOLD — hidden coupling. `KV_RIGHT_COL_MAX_LEN` is a
-      // *text-region-classifier* threshold: there it gates `meanRightColLen` when deciding
-      // whether a region is `notes-key-value`. Here it is reused as a per-line KEY-length
-      // gate, a different quantity in a different module. Tuning the classifier's
-      // sensitivity therefore silently moves this binder's rendered column boundary, with
-      // nothing connecting the two.
-      // Note also that BOTH branches push the identical row — the guard's ONLY effect is
-      // whether `splitX` joins `splitXs`, and hence the median `colBoundaries` below.
-      if (key.length > 0 && key.length <= KV_RIGHT_COL_MAX_LEN) {
-        rows.push({ Key: key, Value: value });
-        const splitX = (sorted[splitIdx - 1].bbox[0] + sorted[splitIdx - 1].bbox[2] + sorted[splitIdx].bbox[0]) / 2;
-        splitXs.push(splitX);
-      } else {
-        rows.push({ Key: key, Value: value });
-      }
-    } else {
-      rows.push({ Key: lf.line.text.trim(), Value: "" });
-    }
-
-    rowBoundaries.push(lf.top);
-    regionLeft = Math.min(regionLeft, lf.left);
-    regionRight = Math.max(regionRight, lf.right);
+    kvLines.push({
+      text: lf.line.text,
+      b: [lf.left, lf.top, lf.right, lf.bottom],
+      words: words.map((w) => ({ t: w.text, b: ltwhToMinMax(w.bbox) })),
+    });
   }
 
-  if (rows.length === 0) return undefined;
+  // ⚠ BORROWED THRESHOLD — hidden coupling. `KV_RIGHT_COL_MAX_LEN` is a
+  // *text-region-classifier* threshold: there it gates `meanRightColLen` when deciding
+  // whether a region is `notes-key-value`. Here it is reused as a per-row KEY-length
+  // gate, a different quantity in a different module. Tuning the classifier's
+  // sensitivity therefore silently moves this binder's rendered column boundary, with
+  // nothing connecting the two. Its ONLY effect is whether a row's split x joins the
+  // median `colBoundaries` below (and hence which rows count as continuations).
+  const { pairs, medianSplitX } = kvPairs(kvLines, {
+    minGapRatio: KV_MIN_GAP_RATIO,
+    maxKeyLen: KV_RIGHT_COL_MAX_LEN,
+    mergeContinuations: true,
+  });
+  if (pairs.length === 0) return undefined;
+
+  const rows = pairs.map((p) => ({ Key: p.key, Value: p.value }));
+  const rowBoundaries = pairs.map((p) => p.top);
+  let regionLeft = Infinity;
+  let regionRight = -Infinity;
+  for (const l of kvLines) {
+    regionLeft = Math.min(regionLeft, l.b[0]);
+    regionRight = Math.max(regionRight, l.b[2]);
+  }
 
   let colBoundaries: number[] | undefined;
-  if (splitXs.length > 0 && isFinite(regionLeft) && isFinite(regionRight)) {
-    const medianSplit = median(splitXs);
-    colBoundaries = [regionLeft, medianSplit, regionRight];
+  if (medianSplitX !== null && isFinite(regionLeft) && isFinite(regionRight)) {
+    colBoundaries = [regionLeft, medianSplitX, regionRight];
   }
 
   return {

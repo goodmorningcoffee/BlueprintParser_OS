@@ -224,6 +224,22 @@ describe.skipIf(!dbUp)("pipeline (UQ-2/3/4/5/6)", () => {
     expect(h.rm).toHaveBeenCalledTimes(1); // finally: tempDir cleaned (UQ-6)
   });
 
+  it("[table-pipeline WP-2.B, K07] text-fill reads a two-line cell line by line (was x only)", async () => {
+    const { user, project } = await world();
+    // remapped cell [0.2,0.3,0.4,0.5]; two lines starting at the same-ish x: x-only read "GAMMA ALPHA DELTA BETA"
+    const twoLine = [
+      { text: "ALPHA", bbox: [0.22, 0.32, 0.05, 0.02] },
+      { text: "BETA", bbox: [0.3, 0.32, 0.05, 0.02] },
+      { text: "GAMMA", bbox: [0.205, 0.4, 0.05, 0.02] },
+      { text: "DELTA", bbox: [0.28, 0.4, 0.05, 0.02] },
+    ];
+    await createPage(project.id, 1, { textractData: { words: twoLine, lines: [] } as never });
+    asUser(user);
+    const { status, body } = await readJson(await call(bodyFor(project.id)));
+    expect(status).toBe(200);
+    expect(body.cells[0].text).toBe("ALPHA BETA GAMMA DELTA");
+  });
+
   it("confidenceThreshold passthrough; no page row → TATR's own cell text untouched", async () => {
     const { user, project } = await world(); // no page row created
     asUser(user);

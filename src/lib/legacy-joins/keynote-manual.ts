@@ -3,7 +3,9 @@
 // (PLAN §5 calls this file `keynote-guided.ts`; the code at KeynotePanel.tsx:500-518 is the Manual
 // tab — Keynote Guided already calls `extractCellsFromGrid`.) Byte-equal to the inline original;
 // WP-2.B changes it (K07) — record every output diff in eval/parse-engine/intended-diffs.md.
+// [WP-2.B] Cell text is line-aware (`assembleText`: lines top to bottom, words left to right); was x only.
 import type { TextractWord } from "@/types";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
 
 type MinMax = readonly [number, number, number, number];
 
@@ -12,7 +14,7 @@ export interface KeynoteKeyRow {
   description: string;
 }
 
-/** Column A = key; columns B+ = description (merged); words by centre, joined in x order. */
+/** Column A = key; columns B+ = description (merged); words by centre, line-aware reading order. */
 export function joinKeynoteIntersections(
   words: readonly TextractWord[],
   cols: readonly MinMax[],
@@ -27,7 +29,7 @@ export function joinKeynoteIntersections(
       const cy = w.bbox[1] + w.bbox[3] / 2;
       return cx >= cols[0][0] && cx <= cols[0][2] && cy >= rowBB[1] && cy <= rowBB[3];
     });
-    const tagText = tagWords.sort((a, b) => a.bbox[0] - b.bbox[0]).map((w) => w.text).join(" ");
+    const tagText = assembleText(lineWordsFromLtwh(tagWords));
 
     // Column B+ = description (all other columns merged)
     let descText = "";
@@ -37,7 +39,7 @@ export function joinKeynoteIntersections(
         const cy = w.bbox[1] + w.bbox[3] / 2;
         return cx >= cols[ci][0] && cx <= cols[ci][2] && cy >= rowBB[1] && cy <= rowBB[3];
       });
-      const text = descWords.sort((a, b) => a.bbox[0] - b.bbox[0]).map((w) => w.text).join(" ");
+      const text = assembleText(lineWordsFromLtwh(descWords));
       descText += (descText ? " " : "") + text;
     }
 

@@ -3,7 +3,9 @@
 // (PLAN §5 calls this file `notes-guided.ts`; the inline join at NotesParser.tsx ~:304 is the
 // Manual sub-mode — Notes Guided already calls `extractCellsFromGrid`.) Byte-equal to the inline
 // original; WP-2.B changes it (K07) — record every output diff in eval/parse-engine/intended-diffs.md.
+// [WP-2.B] Cell text is line-aware (`assembleText`: lines top to bottom, words left to right); was x only.
 import type { TextractWord } from "@/types";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
 
 type MinMax = readonly [number, number, number, number];
 
@@ -12,7 +14,7 @@ export interface NotesManualCells {
   rows: Record<string, string>[];
 }
 
-/** Headers Key | Note | ColN; words by centre in column × row BB, joined in x order. Null when every cell is empty. */
+/** Headers Key | Note | ColN; words by centre in column × row BB, line-aware reading order. Null when every cell is empty. */
 export function joinNotesManualCells(
   words: readonly TextractWord[],
   columns: readonly MinMax[],
@@ -30,8 +32,7 @@ export function joinNotesManualCells(
         const cy = wT + wH / 2;
         return cx >= xL && cx <= xR && cy >= yT && cy <= yB;
       });
-      cellWords.sort((a, b) => a.bbox[0] - b.bbox[0]);
-      row[headers[c]] = cellWords.map((w) => w.text).join(" ").trim();
+      row[headers[c]] = assembleText(lineWordsFromLtwh(cellWords));
     }
     builtRows.push(row);
   }

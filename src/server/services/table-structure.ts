@@ -17,7 +17,7 @@
 //     lib/template-crop.ts (P1-review dedup candidate; NOT consolidated in-fold);
 //     cropped image read via DYNAMIC import("fs/promises") (the mock seam);
 //     detectTableStructure(cropped, confidenceThreshold ?? 0.5).
-//   • UQ-5 MinMax remap + word-center-in-cell Textract text-fill (x-sorted, join " ");
+//   • UQ-5 MinMax remap + word-center-in-cell Textract text-fill (line-aware since WP-2.B, K07);
 //     no page row → TATR's own cell text untouched.
 //   • UQ-6 tempDir: mkdtemp pre-try; try/FINALLY-rm KEPT (rm runs on happy, soft-error,
 //     UQ-2 throw, and pipeline-throw paths alike — nothing escapes the try, so finally
@@ -35,6 +35,7 @@ import { rasterizePage } from "@/lib/pdf-rasterize";
 import { detectTableStructure } from "@/lib/tatr-structure";
 import type { TextractPageData, TextractWord } from "@/types";
 import { logger } from "@/lib/logger";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
 import { writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -157,10 +158,8 @@ cv2.imwrite(cfg["dst"], crop)
           const wcy = w.bbox[1] + w.bbox[3] / 2;
           return wcx >= cx0 && wcx <= cx1 && wcy >= cy0 && wcy <= cy1;
         });
-        cell.text = wordsInCell
-          .sort((a: TextractWord, b: TextractWord) => a.bbox[0] - b.bbox[0])
-          .map((w: TextractWord) => w.text)
-          .join(" ");
+        // [WP-2.B, K07] line-aware reading order (lines top to bottom); was x only
+        cell.text = assembleText(lineWordsFromLtwh(wordsInCell));
       }
     }
 
