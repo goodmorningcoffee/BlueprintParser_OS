@@ -40,9 +40,10 @@ const zColRole = z.enum(COL_ROLES as [ColRole, ...ColRole[]]);
 const zAxis = z.enum(["rows", "cols"]);
 const zCount = z.number().int().min(0);
 const zProb = z.number().finite().min(0).max(1);
-const zLines = z.array(zUnit).max(CAPS.rows + 1);
+const zLines = z.array(zUnit).max(CAPS.rows + 1); // the cols axis is capped tighter in `set-lines` (VERIFY LOW-3)
 const zIso = z.string().min(1).max(64);
-const CAPABILITY_IDS = [
+/** Runtime capability ids; the contract test ties this list to `CAPABILITIES` (version.ts). */
+export const CAPABILITY_IDS = [
   "evidence", "rows", "cols", "cells", "headers", "tagColumn", "title", "kind", "csi", "paragraphs", "refs", "tagMap",
 ] as const satisfies readonly Capability[];
 
@@ -145,7 +146,8 @@ export const zParseRequest = z.strictObject({
 
 export const zCorrectionOp = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("pin-source"), axis: zAxis, method: zMethod.nullable() }),
-  z.strictObject({ op: z.literal("set-lines"), axis: zAxis, at: zLines }),
+  z.strictObject({ op: z.literal("set-lines"), axis: zAxis, at: zLines })
+    .refine((o) => o.at.length <= (o.axis === "cols" ? CAPS.cols : CAPS.rows) + 1, { message: "set-lines: at most cap + 1 lines on that axis", path: ["at"] }),
   z.strictObject({ op: z.literal("move-line"), axis: zAxis, after: zId, at: zUnit }),
   z.strictObject({ op: z.literal("add-line"), axis: zAxis, at: zUnit }),
   z.strictObject({ op: z.literal("remove-line"), axis: zAxis, after: zId }),

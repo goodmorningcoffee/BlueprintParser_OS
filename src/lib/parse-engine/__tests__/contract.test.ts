@@ -8,6 +8,7 @@ import * as barrel from "@/lib/parse-engine";
 import { runParseEngine } from "@/lib/parse-engine/engine";
 import { applyOps } from "@/lib/parse-engine/ops";
 import {
+  CAPABILITY_IDS,
   zCorrectionOp,
   zCorrectionOps,
   zParseRequest,
@@ -18,7 +19,14 @@ import {
   zStructureTableModel,
 } from "@/lib/parse-engine/schema";
 import {
+  COL_ROLES,
+  METHOD_IDS,
   PARSE_ENGINE_CAPS,
+  STRUCTURE_KINDS,
+  type ColRole,
+  type LayoutKind,
+  type MethodId,
+  type StructureKind,
   PARSE_ENGINE_VERSION,
   ParseEngineNotImplementedError,
   type CorrectionOp,
@@ -30,7 +38,8 @@ import {
   type StructureParagraphDoc,
   type StructureTableModel,
 } from "@/lib/parse-engine/types";
-import { CAPABILITY_VERSIONS, staleCapabilities } from "@/lib/parse-engine/version";
+import { CAPABILITIES, CAPABILITY_VERSIONS, staleCapabilities } from "@/lib/parse-engine/version";
+import type { TextractLayoutKind } from "@/types/shapes/textract";
 
 // ── compile-time: schema output ≡ hand-written type (both directions) ────────────────────────────
 expectTypeOf<z.infer<typeof zParseRequest>>().toEqualTypeOf<ParseRequest>();
@@ -187,11 +196,42 @@ describe("parse-engine contract: refusals and caps", () => {
     expect(zStructureTableModel.safeParse({ ...table, notes: { ...para, paragraphs: many } }).success).toBe(false);
   });
 
+  it("set-lines is capped per axis: rows + 1 lines on rows, cols + 1 on cols (VERIFY LOW-3)", () => {
+    const at = (n: number) => Array.from({ length: n }, (_, i) => i / n);
+    expect(zCorrectionOp.safeParse({ op: "set-lines", axis: "rows", at: at(PARSE_ENGINE_CAPS.rows + 1) }).success).toBe(true);
+    expect(zCorrectionOp.safeParse({ op: "set-lines", axis: "rows", at: at(PARSE_ENGINE_CAPS.rows + 2) }).success).toBe(false);
+    expect(zCorrectionOp.safeParse({ op: "set-lines", axis: "cols", at: at(PARSE_ENGINE_CAPS.cols + 1) }).success).toBe(true);
+    expect(zCorrectionOp.safeParse({ op: "set-lines", axis: "cols", at: at(PARSE_ENGINE_CAPS.cols + 2) }).success).toBe(false);
+  });
+
   it(`ops are capped at ${PARSE_ENGINE_CAPS.ops}`, () => {
     const op: CorrectionOp = { op: "set-header-rows", n: 1 };
     expect(zCorrectionOps.safeParse(Array(PARSE_ENGINE_CAPS.ops).fill(op)).success).toBe(true);
     expect(zCorrectionOps.safeParse(Array(PARSE_ENGINE_CAPS.ops + 1).fill(op)).success).toBe(false);
     expect(zRegionDataExt.safeParse({ ops: Array(PARSE_ENGINE_CAPS.ops + 1).fill(op) }).success).toBe(false);
+  });
+});
+
+// ── the runtime id lists are complete and duplicate-free (VERIFY LOW-4). A Record over the union is a
+//    compile-time exhaustive list: a member missing from (or added to) the union fails tsc here.
+const ALL_METHODS: Record<MethodId, true> = {
+  "ocr-lines": true, "shape-centres": true, "textract-cells": true, layout: true, "primitive-grid": true,
+  "hanging-indent": true, "x-starts": true, rulings: true, img2table: true, tatr: true,
+};
+const ALL_KINDS: Record<StructureKind, true> = { schedule: true, keynote: true, legend: true, notes: true, spec: true };
+const ALL_ROLES: Record<ColRole, true> = { tag: true, qty: true, description: true, type: true, size: true, material: true, remarks: true, sheet: true, other: true };
+expectTypeOf<LayoutKind>().toEqualTypeOf<TextractLayoutKind>();
+
+describe("parse-engine contract: constant lists", () => {
+  it("METHOD_IDS, STRUCTURE_KINDS and COL_ROLES list every union member once", () => {
+    for (const [list, all] of [[METHOD_IDS, ALL_METHODS], [STRUCTURE_KINDS, ALL_KINDS], [COL_ROLES, ALL_ROLES]] as const) {
+      expect(new Set(list).size).toBe(list.length);
+      expect([...list].sort()).toEqual(Object.keys(all).sort());
+    }
+  });
+
+  it("the zod capability ids are exactly the versioned capabilities", () => {
+    expect([...CAPABILITY_IDS].sort()).toEqual([...CAPABILITIES].sort());
   });
 });
 

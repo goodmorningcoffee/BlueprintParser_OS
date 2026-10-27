@@ -14,6 +14,7 @@ import { GET as flagsGET } from "@/app/api/projects/[id]/parse-engine/flags/rout
 import { GET as textractGET } from "@/app/api/pages/textract/route";
 import { db } from "@/lib/db";
 import { appSettings } from "@/lib/db/schema";
+import { logger } from "@/lib/logger";
 import { PARSE_ENGINE_TOOL_IDS } from "@/lib/parse-engine/types";
 import {
   PARSE_ENGINE_FLAG_DEFAULTS,
@@ -85,6 +86,24 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/parse-engine/flags", () => {
     expect(r.body.tools.workspace).toBe("legacy");
     expect(r.body.tools.tablesRoute).toBe("legacy");
     expect(r.body.cropCache).toBe(false);
+  });
+
+  it("a stored document with invalid fields is logged once, not on every read (VERIFY LOW-5)", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await db.insert(appSettings).values({ key: PARSE_ENGINE_SETTING_KEY, value: { junkA: 1 } });
+      await readParseEngineFlags();
+      await readParseEngineFlags();
+      await readParseEngineFlags();
+      const ours = () => warn.mock.calls.filter((c) => String(c[0]).includes("app_settings.parseEngine")).length;
+      expect(ours()).toBe(1);
+      await db.update(appSettings).set({ value: { junkB: 1 } }).where(eq(appSettings.key, PARSE_ENGINE_SETTING_KEY));
+      await readParseEngineFlags();
+      await readParseEngineFlags();
+      expect(ours()).toBe(2); // a different bad document is logged again
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("demo: a signed-out viewer reads the same global flags", async () => {

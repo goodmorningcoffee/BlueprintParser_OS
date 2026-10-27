@@ -6,6 +6,8 @@
 // Geometry and words are synthetic (rule 12).
 import { describe, expect, it } from "vitest";
 import { buildPageEvidence, regionEvidenceHash, toClassifierPageInput, type PageEvidenceRow } from "@/server/services/parse-engine/evidence";
+import { computePageZones } from "@/lib/page-zones";
+import { classifyRegionsV2 } from "@/lib/region-classifier-v2";
 import type { TextractWord } from "@/types";
 
 const w = (text: string, x: number, y: number, wd = 0.03, h = 0.01, confidence = 90): TextractWord => ({ text, confidence, bbox: [x, y, wd, h] });
@@ -29,6 +31,7 @@ function row(over: Partial<PageEvidenceRow> = {}): PageEvidenceRow {
         { row: 1, col: 1, rowSpan: 1, colSpan: 1, text: "", bbox: [0.1, 0.1, 0.1, 0.02], confidence: 90, hdr: true },
         { row: 1, col: 2, rowSpan: 1, colSpan: 1, text: "", bbox: [0.2, 0.1, 0.1, 0.02], confidence: 90 },
         { row: 2, col: 1, rowSpan: 1, colSpan: 1, text: "", bbox: [0.1, 0.12, 0.1, 0.02], confidence: 90 },
+        { row: 2, col: 2, rowSpan: 1, colSpan: 1, text: "", bbox: [0.2, 0.12, 0.1, 0.02], confidence: 90 },
       ],
       merged: [{ r: 2, c: 1, rs: 1, cs: 2 }],
     }],
@@ -80,7 +83,29 @@ describe("buildPageEvidence", () => {
     const t = ev.textractTables[0];
     expect(t.b[2]).toBeCloseTo(0.3);
     expect(t.b[3]).toBeCloseTo(0.16);
-    expect(t.cells.map((c) => [c.r, c.c, c.rs, c.cs, c.hdr ?? false])).toEqual([[0, 0, 1, 1, true], [0, 1, 1, 1, false], [1, 0, 1, 2, false]]);
+    expect(t.cells.map((c) => [c.r, c.c, c.rs, c.cs, c.hdr ?? false])).toEqual([[0, 0, 1, 1, true], [0, 1, 1, 1, false], [1, 0, 1, 2, false], [1, 1, 1, 1, false]]);
+    // the spanning anchor's box is the union of the cells it covers (VERIFY LOW-2); the covered cell keeps its own
+    const [ax0, ay0, ax1, ay1] = t.cells[2].b;
+    expect([ax0, ay0, ax1, ay1].map((v) => +v.toFixed(6))).toEqual([0.1, 0.12, 0.3, 0.14]);
+    expect(t.cells[3].b.map((v) => +v.toFixed(6))).toEqual([0.2, 0.12, 0.3, 0.14]);
+    expect(t.cells[0].b.map((v) => +v.toFixed(6))).toEqual([0.1, 0.1, 0.2, 0.12]);
+  });
+
+  it("recompute: zones and regionsV2 come from the current detections, not the stored values (VERIFY MED-1)", () => {
+    const staleZones = { titleBlock: null, drawings: [], tables: [], legends: [], source: "detector" };
+    const staleRegions = { version: "stale", classesHash: "stale", regions: [], stats: {} }; // a well-formed stored regionsV2
+    const stored = buildPageEvidence(row({ pageZones: staleZones, regionsV2: staleRegions }));
+    expect(stored.sources.zones).toEqual(staleZones);
+    expect(stored.sources.regionsV2).toEqual(staleRegions);
+    const fresh = buildPageEvidence(row({ pageZones: staleZones, regionsV2: staleRegions }), { recompute: true });
+    expect(fresh.sources.zones).toEqual(computePageZones(fresh.sources.detections));
+    expect(fresh.zones).toEqual(fresh.sources.zones);
+    expect(fresh.sources.regionsV2).not.toEqual(staleRegions);
+    expect(fresh.sources.regionsV2).toEqual(classifyRegionsV2({ pageNumber: 3, detections: fresh.sources.detections, zones: fresh.sources.zones, textractData: fresh.sources.textractData, csiCodes: [] }));
+    // without detections there is nothing to recompute from: neither key, whatever is stored
+    const none = buildPageEvidence(row({ yolo: [], pageZones: staleZones, regionsV2: staleRegions }), { recompute: true });
+    expect(none.sources.zones).toBeUndefined();
+    expect(none.sources.regionsV2).toBeUndefined();
   });
 
   it("shapes: yolo_primitive tags with the text inside, classical shapes with the crop read; primitives and other detections apart", () => {

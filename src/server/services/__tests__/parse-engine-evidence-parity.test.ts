@@ -11,6 +11,12 @@
 // Each loader's input is captured at the classifier engine's door (computeClassifierProposals /
 // runClassifierEngine wrapped, passthrough). The engine reads only `textractData.words/tables`, so
 // the intelligence reprocess's full textractData is compared on those two keys.
+//
+// STORED vs FRESH (WP-2.E VERIFY MED-1). Loaders 1 and 2 read the stored pageZones / regionsV2; loaders
+// 3 and 4 recompute both from the current detections. With stored = fresh (case 1) all four match the
+// default loader. With a STALE stored regionsV2 / pageZones (case 2) loaders 1 and 2 still match the
+// default loader, loaders 3 and 4 match `loadPageEvidence(…, { recompute: true })`, and the default
+// loader provably differs from them: TP-5 must pass `recompute` when it rewires loaders 3 and 4.
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -111,93 +117,132 @@ function sessionOf(u: FixtureUser): AuthSession {
   return { user: { companyId: u.companyId, dbId: u.id, username: u.username, role: u.role, canRunModels: u.canRunModels, isRootAdmin: u.isRootAdmin, email: u.email } } as AuthSession;
 }
 
+type Input = Record<string, unknown>;
+interface Legs { ours: Map<number, Input>; fresh: Map<number, Input>; scope: Map<number, Input>; preview: Map<number, Input>; postYolo: Map<number, Input>; intel: Map<number, Input> }
+
+/**
+ * A five-page project from the fixtures, then every loader's classifier input, captured. `stale`: the
+ * stored regionsV2 / pageZones are computed from the first detection only (the yolo_medium box) with
+ * the fixed-zone fallback, as if detections had landed since they were stored.
+ */
+async function runLegs(stale: boolean): Promise<{ seeds: Array<{ n: number; f: Fixture }>; legs: Legs }> {
+  const { company, project } = await createWorld();
+  const admin = await createUser(company.id, { role: "admin" });
+  const seeds = FIXTURES.map((id, i) => ({ n: i + 1, f: loadFixture(id) }));
+  for (const { n, f } of seeds) {
+    const s = seedFor(f, n);
+    const storedZones = stale ? computePageZones([]) : s.zones;
+    const storedRegions = stale ? classifyRegionsV2({ pageNumber: n, detections: s.dets.slice(0, 1), zones: storedZones, textractData: s.ocr, csiCodes: s.csiCodes }) : s.regionsV2;
+    await createPage(project.id, n, {
+      drawingNumber: `QX-10${n}`,
+      rawText: "",
+      textractData: { ...f.page, lines: f.page.lines } as never,
+      keynotes: s.keynotes.length ? (s.keynotes as never) : null,
+      csiCodes: s.csiCodes as never,
+      pageIntelligence: {
+        pageZones: storedZones, regionsV2: storedRegions,
+        parsedRegions: n === 3 ? [{ id: "pr-x", type: "schedule", bbox: [f.region[0], f.region[1], f.region[2] - f.region[0], f.region[3] - f.region[1]], data: {} }] : undefined,
+        ...(n % 2 === 1 ? { channels: { v: 1, kind: n === 1 ? "vector" : "scanned" } } : {}),
+      } as never,
+    });
+    await db.insert(annotations).values(s.dets.map((d) => ({
+      projectId: project.id, pageNumber: n, name: d.name, minX: d.minX, minY: d.minY, maxX: d.maxX, maxY: d.maxY, source: "yolo", data: { confidence: d.confidence, modelName: d.modelName },
+    })) as never);
+  }
+
+  // the one loader, stored (default) and fresh (recompute) — read before loader 3 rewrites the stored keys
+  const ours = new Map<number, Input>();
+  const fresh = new Map<number, Input>();
+  for (const { n } of seeds) {
+    const ev = await loadPageEvidence(null, project.id, n);
+    const evFresh = await loadPageEvidence(null, project.id, n, { recompute: true });
+    expect(ev).not.toBeNull();
+    ours.set(n, toClassifierPageInput(ev!) as unknown as Input);
+    fresh.set(n, toClassifierPageInput(evFresh!) as unknown as Input);
+  }
+  expect([...ours.values()].map((i) => i.channelKind)).toEqual(["vector", null, "scanned", null, "scanned"]);
+
+  // 1. reprocess-classifiers
+  capture.proposals.length = 0;
+  const fake: ReprocessStream = { send: () => {}, debug: () => {}, isClosed: () => false, close: () => {}, debugEnabled: false };
+  await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set" }], withReprocessLease: (id, op) => op(assertProjectWritable({ ...project, id })), stream: fake, overlay: undefined });
+  const scope = byPage(capture.proposals);
+
+  // 2. classifier preview (built-in schedules recipe)
+  capture.engine.length = 0;
+  capture.engineOn = true;
+  await previewClassifierRecipe(sessionOf(admin), { projectId: project.publicId, pages: seeds.map((s) => s.n), recipe: BUILT_IN_RECIPES[0] });
+  capture.engineOn = false;
+  const preview = byPage(capture.engine);
+
+  // 4. post-YOLO enrichment, page selected as yoloLoad selects it
+  capture.proposals.length = 0;
+  const rows = await db.select({ id: pages.id, pageNumber: pages.pageNumber, rawText: pages.rawText, drawingNumber: pages.drawingNumber, pageIntelligence: pages.pageIntelligence, csiCodes: pages.csiCodes })
+    .from(pages).where(eq(pages.projectId, project.id));
+  const yolo = await db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo")));
+  for (const page of rows) {
+    const [ocr] = await db.select({
+      words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`,
+      tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'`,
+      keynotes: pages.keynotes,
+    }).from(pages).where(eq(pages.id, page.id));
+    const yoloDets = yolo.filter((a) => a.pageNumber === page.pageNumber).map((a) => {
+      const data = a.data as { confidence?: number; modelName?: string } | null;
+      return { name: a.name, minX: a.minX, minY: a.minY, maxX: a.maxX, maxY: a.maxY, confidence: data?.confidence ?? 0, modelName: data?.modelName };
+    });
+    const textractData = Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null;
+    enrichPageAfterYolo(
+      { pageNumber: page.pageNumber, rawText: page.rawText, pageIntelligence: page.pageIntelligence, csiCodes: page.csiCodes, textractData, keynotes: ocr?.keynotes ?? null, drawingNumber: page.drawingNumber },
+      yoloDets,
+      { rules: [], heatmapEnabled: false, ensembleEnabled: false, sheetNumbers: rows.map((r) => r.drawingNumber), classifierRecipes: classifierRecipesFor(undefined) },
+    );
+  }
+  const postYolo = byPage(capture.proposals);
+
+  // 3. intelligence reprocess (route; drains the stream)
+  capture.proposals.length = 0;
+  asUser(admin);
+  const res = await reprocessPOST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }) /* no body: every project of the (fresh) company */);
+  expect(res.status).toBe(200);
+  await res.text();
+  const intel = byPage(capture.proposals);
+  return { seeds, legs: { ours, fresh, scope, preview, postYolo, intel } };
+}
+
+/** Loader 3's input lacks channelKind (K47): assert that, then compare with the loader's channelKind put back. */
+function intelWithChannel(legs: Legs, n: number, id: string): Input {
+  const fromIntel = norm(legs.intel.get(n)!);
+  expect(fromIntel.channelKind, `${id}: the intelligence reprocess omits channelKind (K47)`).toBeUndefined();
+  return { ...fromIntel, channelKind: legs.ours.get(n)!.channelKind };
+}
+
 describe.skipIf(!dbUp)("page-evidence loader parity with the four classifier loaders (K47)", () => {
   it("toClassifierPageInput(loadPageEvidence) equals each hand-rolled loader's input, plus channelKind", async () => {
-    const { company, project } = await createWorld();
-    const admin = await createUser(company.id, { role: "admin" });
-    const seeds = FIXTURES.map((id, i) => ({ n: i + 1, f: loadFixture(id) }));
+    const { seeds, legs } = await runLegs(false);
     for (const { n, f } of seeds) {
-      const s = seedFor(f, n);
-      await createPage(project.id, n, {
-        drawingNumber: `QX-10${n}`,
-        rawText: "",
-        textractData: { ...f.page, lines: f.page.lines } as never,
-        keynotes: s.keynotes.length ? (s.keynotes as never) : null,
-        csiCodes: s.csiCodes as never,
-        pageIntelligence: {
-          pageZones: s.zones, regionsV2: s.regionsV2,
-          parsedRegions: n === 3 ? [{ id: "pr-x", type: "schedule", bbox: [f.region[0], f.region[1], f.region[2] - f.region[0], f.region[3] - f.region[1]], data: {} }] : undefined,
-          ...(n % 2 === 1 ? { channels: { v: 1, kind: n === 1 ? "vector" : "scanned" } } : {}),
-        } as never,
-      });
-      await db.insert(annotations).values(s.dets.map((d) => ({
-        projectId: project.id, pageNumber: n, name: d.name, minX: d.minX, minY: d.minY, maxX: d.maxX, maxY: d.maxY, source: "yolo", data: { confidence: d.confidence, modelName: d.modelName },
-      })) as never);
+      const mine = norm(legs.ours.get(n)!);
+      expect(norm(legs.fresh.get(n)!), `${f.id}: recompute = stored when the stored values are current`).toEqual(mine);
+      expect(norm(legs.scope.get(n)!), `${f.id}: reprocess-classifiers`).toEqual(mine);
+      expect(norm(legs.preview.get(n)!), `${f.id}: classifier preview`).toEqual(mine);
+      expect(norm(legs.postYolo.get(n)!), `${f.id}: post-YOLO enrichment`).toEqual(mine);
+      expect(intelWithChannel(legs, n, f.id), `${f.id}: intelligence reprocess`).toEqual(mine);
     }
+  }, 120_000);
 
-    // the one loader
-    const ours = new Map<number, Record<string, unknown>>();
-    for (const { n } of seeds) {
-      const ev = await loadPageEvidence(null, project.id, n);
-      expect(ev).not.toBeNull();
-      ours.set(n, toClassifierPageInput(ev!) as unknown as Record<string, unknown>);
-    }
-    expect([...ours.values()].map((i) => i.channelKind)).toEqual(["vector", null, "scanned", null, "scanned"]);
-
-    // 1. reprocess-classifiers
-    capture.proposals.length = 0;
-    const fake: ReprocessStream = { send: () => {}, debug: () => {}, isClosed: () => false, close: () => {}, debugEnabled: false };
-    await reprocessClassifiersScope({ projects: [{ id: project.id, name: "set" }], withReprocessLease: (id, op) => op(assertProjectWritable({ ...project, id })), stream: fake, overlay: undefined });
-    const scope = byPage(capture.proposals);
-
-    // 2. classifier preview (built-in schedules recipe)
-    capture.engine.length = 0;
-    capture.engineOn = true;
-    await previewClassifierRecipe(sessionOf(admin), { projectId: project.publicId, pages: seeds.map((s) => s.n), recipe: BUILT_IN_RECIPES[0] });
-    capture.engineOn = false;
-    const preview = byPage(capture.engine);
-
-    // 4. post-YOLO enrichment, page selected as yoloLoad selects it
-    capture.proposals.length = 0;
-    const rows = await db.select({ id: pages.id, pageNumber: pages.pageNumber, rawText: pages.rawText, drawingNumber: pages.drawingNumber, pageIntelligence: pages.pageIntelligence, csiCodes: pages.csiCodes })
-      .from(pages).where(eq(pages.projectId, project.id));
-    const yolo = await db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo")));
-    for (const page of rows) {
-      const [ocr] = await db.select({
-        words: sql<TextractPageData["words"] | null>`${pages.textractData}->'words'`,
-        tables: sql<TextractPageData["tables"] | null>`${pages.textractData}->'tables'`,
-        keynotes: pages.keynotes,
-      }).from(pages).where(eq(pages.id, page.id));
-      const yoloDets = yolo.filter((a) => a.pageNumber === page.pageNumber).map((a) => {
-        const data = a.data as { confidence?: number; modelName?: string } | null;
-        return { name: a.name, minX: a.minX, minY: a.minY, maxX: a.maxX, maxY: a.maxY, confidence: data?.confidence ?? 0, modelName: data?.modelName };
-      });
-      const textractData = Array.isArray(ocr?.words) ? { words: ocr.words, ...(ocr.tables ? { tables: ocr.tables } : {}) } : null;
-      enrichPageAfterYolo(
-        { pageNumber: page.pageNumber, rawText: page.rawText, pageIntelligence: page.pageIntelligence, csiCodes: page.csiCodes, textractData, keynotes: ocr?.keynotes ?? null, drawingNumber: page.drawingNumber },
-        yoloDets,
-        { rules: [], heatmapEnabled: false, ensembleEnabled: false, sheetNumbers: rows.map((r) => r.drawingNumber), classifierRecipes: classifierRecipesFor(undefined) },
-      );
-    }
-    const postYolo = byPage(capture.proposals);
-
-    // 3. intelligence reprocess (route; drains the stream)
-    capture.proposals.length = 0;
-    asUser(admin);
-    const res = await reprocessPOST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }) /* no body: every project of the (fresh) company */);
-    expect(res.status).toBe(200);
-    await res.text();
-    const intel = byPage(capture.proposals);
-
+  it("stale stored regionsV2 / pageZones: loaders 1–2 match the default loader, loaders 3–4 match { recompute: true } (MED-1)", async () => {
+    const { seeds, legs } = await runLegs(true);
+    let differs = 0;
     for (const { n, f } of seeds) {
-      const mine = norm(ours.get(n)!);
-      expect(norm(scope.get(n)!), `${f.id}: reprocess-classifiers`).toEqual(mine);
-      expect(norm(preview.get(n)!), `${f.id}: classifier preview`).toEqual(mine);
-      expect(norm(postYolo.get(n)!), `${f.id}: post-YOLO enrichment`).toEqual(mine);
-      const fromIntel = norm(intel.get(n)!);
-      expect(fromIntel.channelKind, `${f.id}: the intelligence reprocess omits channelKind (K47)`).toBeUndefined();
-      expect({ ...fromIntel, channelKind: mine.channelKind }, `${f.id}: intelligence reprocess`).toEqual(mine);
+      const stored = norm(legs.ours.get(n)!);
+      const fresh = norm(legs.fresh.get(n)!);
+      expect(norm(legs.scope.get(n)!), `${f.id}: reprocess-classifiers reads the stored values`).toEqual(stored);
+      expect(norm(legs.preview.get(n)!), `${f.id}: classifier preview reads the stored values`).toEqual(stored);
+      expect(norm(legs.postYolo.get(n)!), `${f.id}: post-YOLO enrichment recomputes`).toEqual(fresh);
+      expect(intelWithChannel(legs, n, f.id), `${f.id}: intelligence reprocess recomputes`).toEqual(fresh);
+      if (JSON.stringify(stored) !== JSON.stringify(fresh)) differs++;
     }
+    // the case bites: the default (stored) loader would have handed loaders 3–4 stale evidence
+    expect(differs).toBeGreaterThan(0);
   }, 120_000);
 
   it("returns null for a missing page and reads only the requested page's YOLO rows, in id order", async () => {

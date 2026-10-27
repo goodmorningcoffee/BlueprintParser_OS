@@ -15,6 +15,23 @@
  *
  * `buildPageEvidence(row)` is the pure half (tested without a DB). Deterministic (E-7): YOLO rows are
  * read in id order and the hash is over a key-sorted serialisation.
+ *
+ * STORED vs FRESH zones / regionsV2 (WP-2.E VERIFY MED-1). By default the loader reads the page's STORED
+ * `pageZones` and `regionsV2` (computing regionsV2 only when none is stored), exactly as the two
+ * read-only loaders do (Reprocess "Classifiers", the classifier preview): parity with them is exact.
+ * The intelligence reprocess and the post-YOLO enrichment instead RECOMPUTE both from the page's current
+ * detections. Parity with those two holds only while the stored values are current; after new
+ * detections land the stored ones are stale. Their callers pass `{ recompute: true }`: zones and
+ * regionsV2 are then computed from the detections as those two loaders compute them (none without
+ * detections), and parity is exact again (parse-engine-evidence-parity.test.ts, stale case). One
+ * residual difference: when `classifyRegionsV2` throws, the post-YOLO enrichment keeps the stored
+ * regionsV2 and the loader returns none.
+ *
+ * Capability ledger (E-6): `eval/parse-engine/capabilities/evidence.json` lists the modules that derive
+ * the engine view and the hash (this file, `lines.ts`, `geometry.ts`, the sheet-key rule in
+ * `shape-ensemble/text-rules.ts`; the hash serialiser is local). The classifiers and stored-key readers
+ * it calls (zones, regionsV2, stored proposals, channel kind) are upstream producers of its INPUT and are
+ * not in the set: a change there changes the evidence without forcing an `evidence` bump.
  */
 
 import { createHash } from "node:crypto";
@@ -23,8 +40,8 @@ import { db } from "@/lib/db";
 import { annotations, pages } from "@/lib/db/schema";
 import type { ClassifierPageInput } from "@/lib/classifier-engine";
 import { storedClassifierProposals } from "@/lib/classifier-engine/engine";
-import type { PageZones } from "@/lib/page-zones";
-import type { RegionDetection, RegionsV2 } from "@/lib/region-classifier-v2";
+import { computePageZones, type PageZones } from "@/lib/page-zones";
+import { classifyRegionsV2, type RegionDetection, type RegionsV2 } from "@/lib/region-classifier-v2";
 import { sheetKey } from "@/lib/shape-ensemble/text-rules";
 import { assembleText, wordsToLines } from "@/lib/parse-engine/lines";
 import { centreIn, ltwhToMinMax } from "@/lib/parse-engine/geometry";
@@ -40,7 +57,6 @@ import type {
 import type { CsiCode, KeynoteShapeData, TextractTable, TextractWord } from "@/types";
 import { TEXTRACT_LAYOUT_KINDS, type TextractLayoutKind } from "@/types/shapes/textract";
 import { regionsV2OrCompute, storedChannelKind } from "@/server/services/reprocess-classifiers";
-import { stableStringify } from "@/server/services/yolo-post-enrichment";
 
 /** Line split gap (× median word height) — the csi-detect rule, passed explicitly (WP-2.0b VERIFY LOW-1). */
 export const EVIDENCE_LINE_SPLIT_GAP = 1.2;
@@ -62,6 +78,15 @@ export interface PageEvidenceSources {
 
 export interface LoadedPageEvidence extends EnginePageEvidence {
   sources: PageEvidenceSources;
+}
+
+export interface PageEvidenceOptions {
+  /**
+   * Recompute `zones` and `regionsV2` from the page's current detections instead of reading the stored
+   * ones, as the intelligence reprocess and the post-YOLO enrichment do (see the header). Default false:
+   * the stored values, as the read-only loaders use them.
+   */
+  recompute?: boolean;
 }
 
 /** One page as `loadPageEvidence` selects it (each JSON slice is untrusted until checked here). */
@@ -135,6 +160,17 @@ function engineTables(tables: readonly TextractTable[]): EnginePageEvidence["tex
         ...((c as { hdr?: unknown }).hdr === true ? { hdr: true as const } : {}),
       });
     }
+    // A spanning anchor's box is the union of the cells it covers (VERIFY LOW-2): Textract's CELL box is
+    // the anchor's own grid cell, and the MERGED_CELL box is not stored.
+    for (const a of cells) {
+      if (a.rs === 1 && a.cs === 1) continue;
+      const b: BboxMinMax = [...a.b];
+      for (const x of cells) {
+        if (x.r < a.r || x.r >= a.r + a.rs || x.c < a.c || x.c >= a.c + a.cs) continue;
+        b[0] = Math.min(b[0], x.b[0]); b[1] = Math.min(b[1], x.b[1]); b[2] = Math.max(b[2], x.b[2]); b[3] = Math.max(b[3], x.b[3]);
+      }
+      a.b = b;
+    }
     out.push({ b: ltwhToMinMax(t.bbox), cells });
   }
   return out;
@@ -165,6 +201,16 @@ function engineProposals(pageIntelligence: Record<string, unknown>): EnginePropo
 
 const overlaps = (a: readonly number[], b: readonly number[]): boolean => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
 
+/** JSON with object keys sorted at every depth: the hash's serialisation, local so the `evidence` ledger covers it. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
 /**
  * sha1 over the evidence slices that touch `bbox` (every slice when bbox is the page), plus the sheet key
  * and channel kind. A region's hash changes only when evidence near it changes; the page hash is
@@ -184,11 +230,17 @@ export function regionEvidenceHash(ev: Omit<EnginePageEvidence, "evidenceHash">,
     detections: near(ev.detections),
     proposals: near(ev.proposals),
   };
-  return createHash("sha1").update(stableStringify(payload)).digest("hex");
+  return createHash("sha1").update(canonicalJson(payload)).digest("hex");
+}
+
+/** Fresh regionsV2 as the intelligence reprocess / post-YOLO enrichment compute it (none without detections or on a throw). */
+function freshRegionsV2(input: Parameters<typeof classifyRegionsV2>[0]): RegionsV2 | undefined {
+  if (!input.detections.length) return undefined;
+  try { return classifyRegionsV2(input); } catch { return undefined; }
 }
 
 /** The pure half of the loader: one selected page row → `LoadedPageEvidence`. */
-export function buildPageEvidence(row: PageEvidenceRow): LoadedPageEvidence {
+export function buildPageEvidence(row: PageEvidenceRow, opts: PageEvidenceOptions = {}): LoadedPageEvidence {
   // ── raw slices, mapped exactly as the classifier loaders map them ──
   const detections: RegionDetection[] = row.yolo.map((a) => {
     const data = a.data as { confidence?: number; modelName?: string } | null;
@@ -205,8 +257,11 @@ export function buildPageEvidence(row: PageEvidenceRow): LoadedPageEvidence {
     channels: row.channels ?? undefined,
     classifierProposals: row.classifierProposals ?? undefined,
   };
-  const zones = (row.pageZones ?? undefined) as PageZones | undefined;
-  const regionsV2 = regionsV2OrCompute(pi, { pageNumber: row.pageNumber, detections, zones, textractData, csiCodes }).regionsV2;
+  const zones = opts.recompute
+    ? (detections.length ? computePageZones(detections) : undefined)
+    : (row.pageZones ?? undefined) as PageZones | undefined;
+  const regionInput = { pageNumber: row.pageNumber, detections, zones, textractData, csiCodes };
+  const regionsV2 = opts.recompute ? freshRegionsV2(regionInput) : regionsV2OrCompute(pi, regionInput).regionsV2;
   const channelKind = storedChannelKind(pi);
   const keynotes = (row.keynotes ?? null) as readonly KeynoteShapeData[] | null;
   const sources: PageEvidenceSources = {
@@ -278,8 +333,11 @@ type PageReader = Pick<typeof db, "select">;
 /**
  * Load one page's evidence. `tx` (optional) reads inside a caller's transaction; heavy work never runs
  * inside a project write (rule 11), and this is a read. Returns null when the page does not exist.
+ * `opts.recompute`: fresh zones / regionsV2 from the current detections (the header, MED-1).
  */
-export async function loadPageEvidence(tx: PageReader | null | undefined, projectId: number, page: number): Promise<LoadedPageEvidence | null> {
+export async function loadPageEvidence(
+  tx: PageReader | null | undefined, projectId: number, page: number, opts: PageEvidenceOptions = {},
+): Promise<LoadedPageEvidence | null> {
   const q = tx ?? db;
   const [p] = await q
     .select({
@@ -305,5 +363,5 @@ export async function loadPageEvidence(tx: PageReader | null | undefined, projec
     .from(annotations)
     .where(and(eq(annotations.projectId, projectId), eq(annotations.source, "yolo"), eq(annotations.pageNumber, page)))
     .orderBy(asc(annotations.id));
-  return buildPageEvidence({ ...p, yolo });
+  return buildPageEvidence({ ...p, yolo }, opts);
 }

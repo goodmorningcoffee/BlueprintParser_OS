@@ -89,6 +89,9 @@ export function resolveParseEngineFlags(stored: unknown): { flags: ParseEngineFl
   return { flags: { killSwitch, tools, cropCache }, invalid };
 }
 
+/** The invalid-field list last logged: a bad row is logged once, not on every (public) read (VERIFY LOW-5). */
+let lastLoggedInvalid = "";
+
 /** Run-path reader. Never throws: a missing row is the defaults, a failed read is the defaults (logged). */
 export async function readParseEngineFlags(): Promise<ParseEngineFlags> {
   try {
@@ -98,7 +101,9 @@ export async function readParseEngineFlags(): Promise<ParseEngineFlags> {
       .where(eq(appSettings.key, PARSE_ENGINE_SETTING_KEY))
       .limit(1);
     const { flags, invalid } = resolveParseEngineFlags(row?.value);
-    if (invalid.length) logger.warn("[parse-engine] app_settings.parseEngine has fields that were ignored", { invalid });
+    const key = invalid.join(",");
+    if (key && key !== lastLoggedInvalid) logger.warn("[parse-engine] app_settings.parseEngine has fields that were ignored", { invalid });
+    lastLoggedInvalid = key;
     return flags;
   } catch (err) {
     logger.error("[parse-engine] reading app_settings.parseEngine failed; using the code defaults", { error: err });

@@ -4,12 +4,13 @@
   "modules": [
     "src/lib/parse-engine/geometry.ts",
     "src/lib/parse-engine/lines.ts",
+    "src/lib/shape-ensemble/text-rules.ts",
     "src/server/services/parse-engine/evidence.ts"
   ],
   "history": [
     {
       "version": 1,
-      "sha256": "5ad3e0b79b4ce63ae34c76aca5b75508636c69b200a3f7221542bd821d3cb34f"
+      "sha256": "401e57f30698d3472f9056840b459544a664f9f4c6659956eb95b28698e0ba1c"
     }
   ]
 }
