@@ -63,6 +63,47 @@ describe("K10: the schedule's own minority-format tags are never pattern-zeroed"
   });
 });
 
+describe("K10 fix round (MED-1): only members in the pattern's family pass, so the gate still works in map-tags", () => {
+  // map-tags infers the pattern from the very tags it then searches, so every searched tag is a member.
+  const D = [...Array.from({ length: 7 }, (_, i) => `D-10${i + 1}`), "TYP"];
+
+  it("a member outside the pattern's digit-length-free family (a stray word in the tag column) is not exempt", () => {
+    const p = inferTagPattern(D)!;
+    expect(p.strength).toBe("strong");
+    expect(patternAccepts(p, "TYP")).toBe(false);
+    expect(patternAccepts(p, "D-104")).toBe(true);
+    // a member with more digits in the same family passes; a weak digits-only pattern behaves the same way
+    expect(patternAccepts(inferTagPattern([...D, "D-1001"])!, "D-1001")).toBe(true);
+    const n = Array.from({ length: 12 }, (_, i) => `${i + 1}`);
+    const w = inferTagPattern([...n, "X"])!;
+    expect(w.strength).toBe("weak");
+    expect(patternAccepts(w, "12")).toBe(true);
+    expect(patternAccepts(w, "X")).toBe(false);
+  });
+
+  it("through findOccurrences with the pattern inferred from the searched tags: TYP is hard-zeroed, D-101 is not", () => {
+    const words = [mkWord("D-101", 0.2, 0.2), mkWord("TYP", 0.4, 0.4)];
+    const ctx: MatchContext = {
+      scope: allPagesScope(),
+      isPageScoped: false,
+      annotations: [],
+      textractData: { 1: { words, lines: [] } as TextractPageData },
+      classifiedRegionsByPage: { 1: drawings() },
+      pattern: inferTagPattern(D),
+    };
+    const typ = findOccurrences({ itemType: "text-only", label: "TYP", text: "TYP" } as CountableItem, ctx);
+    expect(typ.length).toBeGreaterThan(0);
+    for (const h of typ) {
+      expect(h.score).toBe(0);
+      expect(h.dropReason).toBe("pattern_mismatch");
+    }
+    const door = findOccurrences({ itemType: "text-only", label: "D-101", text: "D-101" } as CountableItem, ctx).filter((h) => h.confidence === 1);
+    expect(door).toHaveLength(1);
+    expect(door[0].dropReason).toBeUndefined();
+    expect(door[0].score).toBeGreaterThan(0);
+  });
+});
+
 describe("K37: drawing-number prefix scope", () => {
   const pages: PageMeta[] = [
     { pageNumber: 1, drawingNumber: "A-101" },

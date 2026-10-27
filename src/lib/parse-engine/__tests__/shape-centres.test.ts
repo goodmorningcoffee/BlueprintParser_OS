@@ -51,6 +51,22 @@ describe("midpointBands (R3)", () => {
     expect(rows.flat()).not.toContain("OUTSIDE");
   });
 
+  it("[fix round, MED-2] the last band stops at a gap: a distant word INSIDE the box (a footnote) stays out", () => {
+    const cs = [0.2, 0.22, 0.24, 0.26];
+    const words: LineWord[] = cs.map((c, i) => word(`R${i}`, 0.2, c));
+    for (let k = 1; k <= 4; k++) words.push(word(`T${k}`, 0.2, 0.26 + k * 0.01));
+    words.push(word("FOOTNOTE", 0.2, 0.5)); // inside the box, ~20 line pitches below the last line
+    const bands = midpointBands(cs.map((c) => shape(c, 0.012)), BOX, words.map((w) => w.b));
+    const rows = rowsOf(words, bands);
+    expect(rows[3]).toEqual(["R3", "T1", "T2", "T3", "T4"]);
+    expect(bands[3][3]).toBeCloseTo(0.30 + 0.004, 9);
+    expect(rows.flat()).not.toContain("FOOTNOTE");
+    // the same under the top-aligned rule
+    const top = shapeRowBands(cs.map((c) => shape(c, 0.012)), BOX, words.map((w) => w.b), { align: "top" }).bands;
+    expect(rowsOf(words, top).flat()).not.toContain("FOOTNOTE");
+    expect(top[3][3]).toBeCloseTo(0.30 + 0.004, 9);
+  });
+
   it("bands follow the input order of the shapes, are never inverted, and honour a known header bottom", () => {
     const boxes = [shape(0.4), shape(0.2), shape(0.3)];
     const bands = midpointBands(boxes, BOX);
@@ -125,10 +141,10 @@ describe("shapeRowBands: one alignment per column (WP-2.C guard for top-aligned 
 
 describe("row keys: inside, else the crop read (flagged), repaired against sibling keys (C2-m4)", () => {
   it("restores a dropped dot or slash from the siblings' format", () => {
-    expect(repairCropKey("31", ["3.1", "3.2", "3.3"])).toBe("3.1");
-    expect(repairCropKey("310", ["3.1", "3.2", "3.10"])).toBe("3.10"); // two sibling formats; only D.DD lines up with 3 characters
-    expect(repairCropKey("12", ["1/2", "3/4", "5/8"])).toBe("1/2");
-    expect(repairCropKey("a12", ["A.1.1", "A.1.2", "A.1.3"])).toBe("A.1.2");
+    expect(repairCropKey("34", ["3.1", "3.2", "3.3"])).toBe("3.4");
+    expect(repairCropKey("310", ["3.1", "3.2", "3.11"])).toBe("3.10"); // two sibling formats; only D.DD lines up with 3 characters
+    expect(repairCropKey("78", ["1/2", "3/4", "5/8"])).toBe("7/8");
+    expect(repairCropKey("a14", ["A.1.1", "A.1.2", "A.1.3"])).toBe("A.1.4");
   });
 
   it("keeps a crop read that fits, has its own separator, or that no single sibling format explains", () => {
@@ -138,6 +154,10 @@ describe("row keys: inside, else the crop read (flagged), repaired against sibli
     expect(repairCropKey("345", ["3.1", "3.2", "3.3"])).toBeNull(); // no format lines up
     expect(repairCropKey("12", ["1.2", "3/4"])).toBeNull(); // two formats tie
     expect(repairCropKey("", ["3.1", "3.2"])).toBeNull();
+    // [fix round, LOW-1] a repair a sibling already holds would duplicate a unique key: kept as read
+    expect(repairCropKey("12", ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "10", "11"])).toBeNull();
+    expect(repairCropKey("31", ["3.1", "3.2", "3.3"])).toBeNull();
+    expect(repairCropKey("12", ["1/2", "3/4", "5/8"])).toBeNull();
   });
 
   it("reads the words inside the shape first, else the crop read with key-from-crop, repaired when it lost a separator", () => {

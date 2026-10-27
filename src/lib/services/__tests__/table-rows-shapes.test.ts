@@ -77,6 +77,28 @@ describe("methodShapeRows", () => {
     expect(r.headers).toEqual(["SYM", "QTY", "QTY (2)"]);
     expect(r.rows[3]).toEqual({ SYM: "K4", QTY: "3", "QTY (2)": "30" });
   });
+
+  it("[WP-2.C fix round, MED-2] a note far below the last row, inside the region, does not join the last row", () => {
+    const { words, shapes } = legend();
+    const base = methodShapeRows(words, shapes, REGION);
+    const r = methodShapeRows([...words, word("FOOTNOTE", 0.2, 0.38)], shapes, REGION);
+    expect(r.rows[3]).toEqual(base.rows[3]);
+    expect(r.rows[3].DESCRIPTION).toBe("NEW WALL");
+    expect(r.rowBoundaries![4]).toBeLessThan(0.33);
+    expect(r.rowBoundaries).toEqual(base.rowBoundaries);
+  });
+
+  it("[WP-2.C fix round, LOW-2] a cell's words are read in line order under a small y jitter (C02-F3)", () => {
+    const words = [word("SYM", 0.11, 0.125), word("DESCRIPTION", 0.2, 0.125)];
+    const shapes: ColumnShape[] = [];
+    ys.forEach((y, i) => {
+      shapes.push(hex(y));
+      // the second word sits 0.003 higher than the first: an exact y-centre sort would read it first
+      words.push(word(`K${i + 1}`, 0.113, y), word("ALPHA", 0.2, y + 0.0015), word("BETA", 0.234, y - 0.0015));
+    });
+    const r = methodShapeRows(words, shapes, REGION);
+    expect(r.rows.map((row) => row.DESCRIPTION)).toEqual(ys.map(() => "ALPHA BETA"));
+  });
 });
 
 // [table pipeline WP-2.C] K13 + C2-m4 on the synthetic shape fixtures (WP-2.0a): the parsed grid equals each

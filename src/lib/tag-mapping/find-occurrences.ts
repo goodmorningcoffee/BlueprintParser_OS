@@ -172,7 +172,7 @@ function scoreRawMatch(
   // looking for) against the inferred pattern. Apply to normalized tag, not
   // raw Textract text, so fuzzy-OCR matches aren't unfairly blocked.
   // For Type 1 (yolo-only, no text), pattern is irrelevant → patternMatch=true.
-  // [K10] A value of the schedule the pattern came from always passes (`patternAccepts`).
+  // [K10] A schedule member in the pattern's digit-length-free family passes (`patternAccepts`).
   const hasPattern = ctx.pattern != null;
   const patternStrength = ctx.pattern?.strength ?? "none";
   const itemText = (item.text ?? "").toUpperCase().trim();

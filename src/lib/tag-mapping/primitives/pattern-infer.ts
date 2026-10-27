@@ -170,14 +170,31 @@ export function inferTagPattern(values: string[]): InferredPattern | null {
   };
 }
 
+/** [K10] Each pattern's digit-length-free family (`\d` / `\d{n}` → `\d+`), built once per pattern. */
+const families = new WeakMap<RegExp, RegExp>();
+
+function familyOf(pattern: RegExp): RegExp {
+  let f = families.get(pattern);
+  if (!f) {
+    f = new RegExp(pattern.source.replace(/\\d(?:\{\d+\})?/g, "\\d+"), pattern.flags);
+    families.set(pattern, f);
+  }
+  return f;
+}
+
 /**
  * [table pipeline WP-2.C, K10] Does `text` pass the inferred pattern? A value of the schedule the pattern was
- * inferred from always passes: the pattern describes the majority format, so testing a minority member
- * against it (EF-10 among EF-1…EF-9) hard-zeroed every hit of a tag the schedule itself lists.
+ * inferred from passes when it is in the pattern's FAMILY: the same letters and punctuation, any number of
+ * digits in each digit run. The pattern describes the majority format, so testing a minority member against it
+ * (EF-10 among EF-1…EF-9) hard-zeroed every hit of a tag the schedule itself lists. A member outside the family
+ * (a header word or "TYP" read into a tag column of D-101…D-107) still has to fit the pattern, so the gate keeps
+ * suppressing it [fix round, MED-1]: map-tags infers the pattern from the very tags it searches, so exempting
+ * every member would switch the gate off for every call.
  */
 export function patternAccepts(p: InferredPattern, text: string): boolean {
   const t = text.trim().toUpperCase();
-  return (p.members?.has(t) ?? false) || p.pattern.test(t);
+  if (p.pattern.test(t)) return true;
+  return (p.members?.has(t) ?? false) && familyOf(p.pattern).test(t);
 }
 
 /**
