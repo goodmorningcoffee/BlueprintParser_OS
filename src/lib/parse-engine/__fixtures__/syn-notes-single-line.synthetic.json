@@ -1,0 +1,232 @@
+{
+ "schema": "bp-parse-fixture/1",
+ "id": "syn-notes-single-line",
+ "synthetic": true,
+ "title": "numbered notes, one line each, under a heading",
+ "kind": "notes",
+ "probes": ["C04-4.2"],
+ "page": {
+  "words": [
+   {"text":"GENERAL","confidence":99,"bbox":[0.55,0.15,0.0294,0.0075]},
+   {"text":"NOTES","confidence":99,"bbox":[0.5836,0.15,0.021,0.0075]},
+   {"text":"1.","confidence":99,"bbox":[0.55,0.16365,0.0084,0.0075]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.566,0.16365,0.0252,0.0075]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.5954,0.16365,0.0252,0.0075]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.6248,0.16365,0.021,0.0075]},
+   {"text":"UJYH","confidence":99,"bbox":[0.65,0.16365,0.0168,0.0075]},
+   {"text":"YTJN","confidence":99,"bbox":[0.671,0.16365,0.0168,0.0075]},
+   {"text":"2.","confidence":99,"bbox":[0.55,0.17415,0.0084,0.0075]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.566,0.17415,0.021,0.0075]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.5912,0.17415,0.021,0.0075]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.6164,0.17415,0.021,0.0075]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.6416,0.17415,0.021,0.0075]},
+   {"text":"HTJWZ","confidence":99,"bbox":[0.6668,0.17415,0.021,0.0075]},
+   {"text":"DCZRP","confidence":99,"bbox":[0.692,0.17415,0.021,0.0075]},
+   {"text":"EJBC","confidence":99,"bbox":[0.7172,0.17415,0.0168,0.0075]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.7382,0.17415,0.021,0.0075]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.7634,0.17415,0.0252,0.0075]},
+   {"text":"3.","confidence":99,"bbox":[0.55,0.18465,0.0084,0.0075]},
+   {"text":"LOZC","confidence":99,"bbox":[0.566,0.18465,0.0168,0.0075]},
+   {"text":"QEISL","confidence":99,"bbox":[0.587,0.18465,0.021,0.0075]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.6122,0.18465,0.0252,0.0075]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.6416,0.18465,0.0252,0.0075]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.671,0.18465,0.021,0.0075]},
+   {"text":"UJYH","confidence":99,"bbox":[0.6962,0.18465,0.0168,0.0075]},
+   {"text":"YTJN","confidence":99,"bbox":[0.7172,0.18465,0.0168,0.0075]},
+   {"text":"HFBLJ","confidence":99,"bbox":[0.7382,0.18465,0.021,0.0075]},
+   {"text":"ERKZM","confidence":99,"bbox":[0.7634,0.18465,0.021,0.0075]},
+   {"text":"GATDK","confidence":99,"bbox":[0.7886,0.18465,0.021,0.0075]},
+   {"text":"WRIS","confidence":99,"bbox":[0.8138,0.18465,0.0168,0.0075]},
+   {"text":"MVN","confidence":99,"bbox":[0.8348,0.18465,0.0126,0.0075]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.8516,0.18465,0.021,0.0075]},
+   {"text":"4.","confidence":99,"bbox":[0.55,0.19515,0.0084,0.0075]},
+   {"text":"MVN","confidence":99,"bbox":[0.566,0.19515,0.0126,0.0075]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.5828,0.19515,0.021,0.0075]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.608,0.19515,0.021,0.0075]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.6332,0.19515,0.021,0.0075]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.6584,0.19515,0.021,0.0075]},
+   {"text":"5.","confidence":99,"bbox":[0.55,0.20565,0.0084,0.0075]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.566,0.20565,0.021,0.0075]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.5912,0.20565,0.021,0.0075]},
+   {"text":"LOZC","confidence":99,"bbox":[0.6164,0.20565,0.0168,0.0075]},
+   {"text":"QEISL","confidence":99,"bbox":[0.6374,0.20565,0.021,0.0075]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.6626,0.20565,0.0252,0.0075]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.692,0.20565,0.0252,0.0075]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.7214,0.20565,0.021,0.0075]},
+   {"text":"UJYH","confidence":99,"bbox":[0.7466,0.20565,0.0168,0.0075]},
+   {"text":"YTJN","confidence":99,"bbox":[0.7676,0.20565,0.0168,0.0075]},
+   {"text":"6.","confidence":99,"bbox":[0.55,0.21615,0.0084,0.0075]},
+   {"text":"GATDK","confidence":99,"bbox":[0.566,0.21615,0.021,0.0075]},
+   {"text":"WRIS","confidence":99,"bbox":[0.5912,0.21615,0.0168,0.0075]},
+   {"text":"MVN","confidence":99,"bbox":[0.6122,0.21615,0.0126,0.0075]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.629,0.21615,0.021,0.0075]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.6542,0.21615,0.021,0.0075]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.6794,0.21615,0.021,0.0075]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.7046,0.21615,0.021,0.0075]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.7298,0.21615,0.021,0.0075]},
+   {"text":"HTJWZ","confidence":99,"bbox":[0.755,0.21615,0.021,0.0075]},
+   {"text":"DCZRP","confidence":99,"bbox":[0.7802,0.21615,0.021,0.0075]},
+   {"text":"EJBC","confidence":99,"bbox":[0.8054,0.21615,0.0168,0.0075]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.8264,0.21615,0.021,0.0075]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.8516,0.21615,0.0252,0.0075]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.1,0.12,0.021,0.0075]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.1252,0.12,0.021,0.0075]},
+   {"text":"SCHEDULE","confidence":99,"bbox":[0.1504,0.12,0.0336,0.0075]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.8,0.9,0.021,0.0075]},
+   {"text":"4/J-201","confidence":99,"bbox":[0.8252,0.9,0.0294,0.0075]}
+  ],
+  "lines": [
+   {
+    "text": "GENERAL NOTES",
+    "confidence": 99,
+    "words": [{"text":"GENERAL","confidence":99,"bbox":[0.55,0.15,0.0294,0.0075]},{"text":"NOTES","confidence":99,"bbox":[0.5836,0.15,0.021,0.0075]}],
+    "bbox": [0.55,0.15,0.0546,0.0075]
+   },
+   {
+    "text": "1. NEKQKA KXBDUU NJIUT UJYH YTJN",
+    "confidence": 99,
+    "words": [
+     {"text":"1.","confidence":99,"bbox":[0.55,0.16365,0.0084,0.0075]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.566,0.16365,0.0252,0.0075]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.5954,0.16365,0.0252,0.0075]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.6248,0.16365,0.021,0.0075]},
+     {"text":"UJYH","confidence":99,"bbox":[0.65,0.16365,0.0168,0.0075]},
+     {"text":"YTJN","confidence":99,"bbox":[0.671,0.16365,0.0168,0.0075]}
+    ],
+    "bbox": [0.55,0.16365,0.1378,0.0075]
+   },
+   {
+    "text": "2. DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW",
+    "confidence": 99,
+    "words": [
+     {"text":"2.","confidence":99,"bbox":[0.55,0.17415,0.0084,0.0075]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.566,0.17415,0.021,0.0075]},
+     {"text":"EWFTV","confidence":99,"bbox":[0.5912,0.17415,0.021,0.0075]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.6164,0.17415,0.021,0.0075]},
+     {"text":"SNIEV","confidence":99,"bbox":[0.6416,0.17415,0.021,0.0075]},
+     {"text":"HTJWZ","confidence":99,"bbox":[0.6668,0.17415,0.021,0.0075]},
+     {"text":"DCZRP","confidence":99,"bbox":[0.692,0.17415,0.021,0.0075]},
+     {"text":"EJBC","confidence":99,"bbox":[0.7172,0.17415,0.0168,0.0075]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.7382,0.17415,0.021,0.0075]},
+     {"text":"QTMYBW","confidence":99,"bbox":[0.7634,0.17415,0.0252,0.0075]}
+    ],
+    "bbox": [0.55,0.17415,0.2386,0.0075]
+   },
+   {
+    "text": "3. LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN HFBLJ ERKZM GATDK WRIS MVN MEVMU",
+    "confidence": 99,
+    "words": [
+     {"text":"3.","confidence":99,"bbox":[0.55,0.18465,0.0084,0.0075]},
+     {"text":"LOZC","confidence":99,"bbox":[0.566,0.18465,0.0168,0.0075]},
+     {"text":"QEISL","confidence":99,"bbox":[0.587,0.18465,0.021,0.0075]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.6122,0.18465,0.0252,0.0075]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.6416,0.18465,0.0252,0.0075]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.671,0.18465,0.021,0.0075]},
+     {"text":"UJYH","confidence":99,"bbox":[0.6962,0.18465,0.0168,0.0075]},
+     {"text":"YTJN","confidence":99,"bbox":[0.7172,0.18465,0.0168,0.0075]},
+     {"text":"HFBLJ","confidence":99,"bbox":[0.7382,0.18465,0.021,0.0075]},
+     {"text":"ERKZM","confidence":99,"bbox":[0.7634,0.18465,0.021,0.0075]},
+     {"text":"GATDK","confidence":99,"bbox":[0.7886,0.18465,0.021,0.0075]},
+     {"text":"WRIS","confidence":99,"bbox":[0.8138,0.18465,0.0168,0.0075]},
+     {"text":"MVN","confidence":99,"bbox":[0.8348,0.18465,0.0126,0.0075]},
+     {"text":"MEVMU","confidence":99,"bbox":[0.8516,0.18465,0.021,0.0075]}
+    ],
+    "bbox": [0.55,0.18465,0.3226,0.0075]
+   },
+   {
+    "text": "4. MVN MEVMU DZGMP EWFTV ZFKMP",
+    "confidence": 99,
+    "words": [
+     {"text":"4.","confidence":99,"bbox":[0.55,0.19515,0.0084,0.0075]},
+     {"text":"MVN","confidence":99,"bbox":[0.566,0.19515,0.0126,0.0075]},
+     {"text":"MEVMU","confidence":99,"bbox":[0.5828,0.19515,0.021,0.0075]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.608,0.19515,0.021,0.0075]},
+     {"text":"EWFTV","confidence":99,"bbox":[0.6332,0.19515,0.021,0.0075]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.6584,0.19515,0.021,0.0075]}
+    ],
+    "bbox": [0.55,0.19515,0.1294,0.0075]
+   },
+   {
+    "text": "5. JHWUL ESEUS LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN",
+    "confidence": 99,
+    "words": [
+     {"text":"5.","confidence":99,"bbox":[0.55,0.20565,0.0084,0.0075]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.566,0.20565,0.021,0.0075]},
+     {"text":"ESEUS","confidence":99,"bbox":[0.5912,0.20565,0.021,0.0075]},
+     {"text":"LOZC","confidence":99,"bbox":[0.6164,0.20565,0.0168,0.0075]},
+     {"text":"QEISL","confidence":99,"bbox":[0.6374,0.20565,0.021,0.0075]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.6626,0.20565,0.0252,0.0075]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.692,0.20565,0.0252,0.0075]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.7214,0.20565,0.021,0.0075]},
+     {"text":"UJYH","confidence":99,"bbox":[0.7466,0.20565,0.0168,0.0075]},
+     {"text":"YTJN","confidence":99,"bbox":[0.7676,0.20565,0.0168,0.0075]}
+    ],
+    "bbox": [0.55,0.20565,0.2344,0.0075]
+   },
+   {
+    "text": "6. GATDK WRIS MVN MEVMU DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW",
+    "confidence": 99,
+    "words": [
+     {"text":"6.","confidence":99,"bbox":[0.55,0.21615,0.0084,0.0075]},
+     {"text":"GATDK","confidence":99,"bbox":[0.566,0.21615,0.021,0.0075]},
+     {"text":"WRIS","confidence":99,"bbox":[0.5912,0.21615,0.0168,0.0075]},
+     {"text":"MVN","confidence":99,"bbox":[0.6122,0.21615,0.0126,0.0075]},
+     {"text":"MEVMU","confidence":99,"bbox":[0.629,0.21615,0.021,0.0075]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.6542,0.21615,0.021,0.0075]},
+     {"text":"EWFTV","confidence":99,"bbox":[0.6794,0.21615,0.021,0.0075]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.7046,0.21615,0.021,0.0075]},
+     {"text":"SNIEV","confidence":99,"bbox":[0.7298,0.21615,0.021,0.0075]},
+     {"text":"HTJWZ","confidence":99,"bbox":[0.755,0.21615,0.021,0.0075]},
+     {"text":"DCZRP","confidence":99,"bbox":[0.7802,0.21615,0.021,0.0075]},
+     {"text":"EJBC","confidence":99,"bbox":[0.8054,0.21615,0.0168,0.0075]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.8264,0.21615,0.021,0.0075]},
+     {"text":"QTMYBW","confidence":99,"bbox":[0.8516,0.21615,0.0252,0.0075]}
+    ],
+    "bbox": [0.55,0.21615,0.3268,0.0075]
+   },
+   {
+    "text": "ZFKMP ZYSFM SCHEDULE",
+    "confidence": 99,
+    "words": [
+     {"text":"ZFKMP","confidence":99,"bbox":[0.1,0.12,0.021,0.0075]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.1252,0.12,0.021,0.0075]},
+     {"text":"SCHEDULE","confidence":99,"bbox":[0.1504,0.12,0.0336,0.0075]}
+    ],
+    "bbox": [0.1,0.12,0.084,0.0075]
+   },
+   {
+    "text": "EWFTV 4/J-201",
+    "confidence": 99,
+    "words": [{"text":"EWFTV","confidence":99,"bbox":[0.8,0.9,0.021,0.0075]},{"text":"4/J-201","confidence":99,"bbox":[0.8252,0.9,0.0294,0.0075]}],
+    "bbox": [0.8,0.9,0.0546,0.0075]
+   }
+  ]
+ },
+ "shapes": [],
+ "region": [0.542,0.142,0.92,0.23465],
+ "manual": {
+  "columnBBs": [[0.55,0.15,0.565,0.22665],[0.565,0.15,0.912,0.22665]],
+  "rowBBs": [
+   [0.55,0.16165,0.912,0.17315],
+   [0.55,0.17215,0.912,0.18365],
+   [0.55,0.18265,0.912,0.19415],
+   [0.55,0.19315,0.912,0.20465],
+   [0.55,0.20365,0.912,0.21515],
+   [0.55,0.21415,0.912,0.22565]
+  ],
+  "columnNames": []
+ },
+ "guided": {"rows":[0.148,0.17315,0.18365,0.19415,0.20465,0.21515,0.22565],"cols":[0.548,0.565,0.912]},
+ "truth": {
+  "type": "items",
+  "items": [
+   {"key":"","text":"GENERAL NOTES"},
+   {"key":"1.","text":"NEKQKA KXBDUU NJIUT UJYH YTJN"},
+   {"key":"2.","text":"DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW"},
+   {"key":"3.","text":"LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN HFBLJ ERKZM GATDK WRIS MVN MEVMU"},
+   {"key":"4.","text":"MVN MEVMU DZGMP EWFTV ZFKMP"},
+   {"key":"5.","text":"JHWUL ESEUS LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN"},
+   {"key":"6.","text":"GATDK WRIS MVN MEVMU DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW"}
+  ]
+ }
+}

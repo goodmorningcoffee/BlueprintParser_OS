@@ -1,0 +1,270 @@
+{
+ "schema": "bp-parse-fixture/1",
+ "id": "syn-sched-center-align",
+ "synthetic": true,
+ "title": "centre-aligned columns",
+ "kind": "schedule",
+ "probes": ["C02-4.1"],
+ "page": {
+  "words": [
+   {"text":"MARK","confidence":99,"bbox":[0.1116,0.123,0.0168,0.0075]},
+   {"text":"DESCRIPTION","confidence":99,"bbox":[0.143,0.123,0.0462,0.0075]},
+   {"text":"SIZE","confidence":99,"bbox":[0.2816,0.123,0.0168,0.0075]},
+   {"text":"TYPE","confidence":99,"bbox":[0.3416,0.123,0.0168,0.0075]},
+   {"text":"REMARKS","confidence":99,"bbox":[0.383,0.123,0.0294,0.0075]},
+   {"text":"O-101","confidence":99,"bbox":[0.1095,0.1395,0.021,0.0075]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.143,0.1395,0.021,0.0075]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.1682,0.1395,0.021,0.0075]},
+   {"text":"3'-0\"","confidence":99,"bbox":[0.2795,0.1395,0.021,0.0075]},
+   {"text":"A","confidence":99,"bbox":[0.3479,0.1395,0.0042,0.0075]},
+   {"text":"LOZC","confidence":99,"bbox":[0.383,0.1395,0.0168,0.0075]},
+   {"text":"O-102","confidence":99,"bbox":[0.1095,0.156,0.021,0.0075]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.143,0.156,0.0252,0.0075]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.1724,0.156,0.0252,0.0075]},
+   {"text":"4'-0\"","confidence":99,"bbox":[0.2795,0.156,0.021,0.0075]},
+   {"text":"B","confidence":99,"bbox":[0.3479,0.156,0.0042,0.0075]},
+   {"text":"O-103","confidence":99,"bbox":[0.1095,0.1725,0.021,0.0075]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.143,0.1725,0.021,0.0075]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.1682,0.1725,0.021,0.0075]},
+   {"text":"3'-0\"","confidence":99,"bbox":[0.2795,0.1725,0.021,0.0075]},
+   {"text":"C","confidence":99,"bbox":[0.3479,0.1725,0.0042,0.0075]},
+   {"text":"O-104","confidence":99,"bbox":[0.1095,0.189,0.021,0.0075]},
+   {"text":"LOZC","confidence":99,"bbox":[0.143,0.189,0.0168,0.0075]},
+   {"text":"QEISL","confidence":99,"bbox":[0.164,0.189,0.021,0.0075]},
+   {"text":"4'-0\"","confidence":99,"bbox":[0.2795,0.189,0.021,0.0075]},
+   {"text":"A","confidence":99,"bbox":[0.3479,0.189,0.0042,0.0075]},
+   {"text":"GATDK","confidence":99,"bbox":[0.383,0.189,0.021,0.0075]},
+   {"text":"O-105","confidence":99,"bbox":[0.1095,0.2055,0.021,0.0075]},
+   {"text":"MVN","confidence":99,"bbox":[0.143,0.2055,0.0126,0.0075]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.1598,0.2055,0.021,0.0075]},
+   {"text":"3'-0\"","confidence":99,"bbox":[0.2795,0.2055,0.021,0.0075]},
+   {"text":"B","confidence":99,"bbox":[0.3479,0.2055,0.0042,0.0075]},
+   {"text":"O-106","confidence":99,"bbox":[0.1095,0.222,0.021,0.0075]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.143,0.222,0.021,0.0075]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.1682,0.222,0.021,0.0075]},
+   {"text":"4'-0\"","confidence":99,"bbox":[0.2795,0.222,0.021,0.0075]},
+   {"text":"C","confidence":99,"bbox":[0.3479,0.222,0.0042,0.0075]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.1,0.09,0.021,0.0075]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.1252,0.09,0.021,0.0075]},
+   {"text":"SCHEDULE","confidence":99,"bbox":[0.1504,0.09,0.0336,0.0075]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.8,0.9,0.021,0.0075]},
+   {"text":"4/J-201","confidence":99,"bbox":[0.8252,0.9,0.0294,0.0075]}
+  ],
+  "lines": [
+   {
+    "text": "MARK",
+    "confidence": 99,
+    "words": [{"text":"MARK","confidence":99,"bbox":[0.1116,0.123,0.0168,0.0075]}],
+    "bbox": [0.1116,0.123,0.0168,0.0075]
+   },
+   {
+    "text": "DESCRIPTION",
+    "confidence": 99,
+    "words": [{"text":"DESCRIPTION","confidence":99,"bbox":[0.143,0.123,0.0462,0.0075]}],
+    "bbox": [0.143,0.123,0.0462,0.0075]
+   },
+   {
+    "text": "SIZE",
+    "confidence": 99,
+    "words": [{"text":"SIZE","confidence":99,"bbox":[0.2816,0.123,0.0168,0.0075]}],
+    "bbox": [0.2816,0.123,0.0168,0.0075]
+   },
+   {
+    "text": "TYPE",
+    "confidence": 99,
+    "words": [{"text":"TYPE","confidence":99,"bbox":[0.3416,0.123,0.0168,0.0075]}],
+    "bbox": [0.3416,0.123,0.0168,0.0075]
+   },
+   {
+    "text": "REMARKS",
+    "confidence": 99,
+    "words": [{"text":"REMARKS","confidence":99,"bbox":[0.383,0.123,0.0294,0.0075]}],
+    "bbox": [0.383,0.123,0.0294,0.0075]
+   },
+   {
+    "text": "O-101",
+    "confidence": 99,
+    "words": [{"text":"O-101","confidence":99,"bbox":[0.1095,0.1395,0.021,0.0075]}],
+    "bbox": [0.1095,0.1395,0.021,0.0075]
+   },
+   {
+    "text": "ZFKMP SNIEV",
+    "confidence": 99,
+    "words": [{"text":"ZFKMP","confidence":99,"bbox":[0.143,0.1395,0.021,0.0075]},{"text":"SNIEV","confidence":99,"bbox":[0.1682,0.1395,0.021,0.0075]}],
+    "bbox": [0.143,0.1395,0.0462,0.0075]
+   },
+   {
+    "text": "3'-0\"",
+    "confidence": 99,
+    "words": [{"text":"3'-0\"","confidence":99,"bbox":[0.2795,0.1395,0.021,0.0075]}],
+    "bbox": [0.2795,0.1395,0.021,0.0075]
+   },
+   {
+    "text": "A",
+    "confidence": 99,
+    "words": [{"text":"A","confidence":99,"bbox":[0.3479,0.1395,0.0042,0.0075]}],
+    "bbox": [0.3479,0.1395,0.0042,0.0075]
+   },
+   {
+    "text": "LOZC",
+    "confidence": 99,
+    "words": [{"text":"LOZC","confidence":99,"bbox":[0.383,0.1395,0.0168,0.0075]}],
+    "bbox": [0.383,0.1395,0.0168,0.0075]
+   },
+   {
+    "text": "O-102",
+    "confidence": 99,
+    "words": [{"text":"O-102","confidence":99,"bbox":[0.1095,0.156,0.021,0.0075]}],
+    "bbox": [0.1095,0.156,0.021,0.0075]
+   },
+   {
+    "text": "NEKQKA KXBDUU",
+    "confidence": 99,
+    "words": [{"text":"NEKQKA","confidence":99,"bbox":[0.143,0.156,0.0252,0.0075]},{"text":"KXBDUU","confidence":99,"bbox":[0.1724,0.156,0.0252,0.0075]}],
+    "bbox": [0.143,0.156,0.0546,0.0075]
+   },
+   {
+    "text": "4'-0\"",
+    "confidence": 99,
+    "words": [{"text":"4'-0\"","confidence":99,"bbox":[0.2795,0.156,0.021,0.0075]}],
+    "bbox": [0.2795,0.156,0.021,0.0075]
+   },
+   {"text":"B","confidence":99,"words":[{"text":"B","confidence":99,"bbox":[0.3479,0.156,0.0042,0.0075]}],"bbox":[0.3479,0.156,0.0042,0.0075]},
+   {
+    "text": "O-103",
+    "confidence": 99,
+    "words": [{"text":"O-103","confidence":99,"bbox":[0.1095,0.1725,0.021,0.0075]}],
+    "bbox": [0.1095,0.1725,0.021,0.0075]
+   },
+   {
+    "text": "DZGMP EWFTV",
+    "confidence": 99,
+    "words": [{"text":"DZGMP","confidence":99,"bbox":[0.143,0.1725,0.021,0.0075]},{"text":"EWFTV","confidence":99,"bbox":[0.1682,0.1725,0.021,0.0075]}],
+    "bbox": [0.143,0.1725,0.0462,0.0075]
+   },
+   {
+    "text": "3'-0\"",
+    "confidence": 99,
+    "words": [{"text":"3'-0\"","confidence":99,"bbox":[0.2795,0.1725,0.021,0.0075]}],
+    "bbox": [0.2795,0.1725,0.021,0.0075]
+   },
+   {
+    "text": "C",
+    "confidence": 99,
+    "words": [{"text":"C","confidence":99,"bbox":[0.3479,0.1725,0.0042,0.0075]}],
+    "bbox": [0.3479,0.1725,0.0042,0.0075]
+   },
+   {
+    "text": "O-104",
+    "confidence": 99,
+    "words": [{"text":"O-104","confidence":99,"bbox":[0.1095,0.189,0.021,0.0075]}],
+    "bbox": [0.1095,0.189,0.021,0.0075]
+   },
+   {
+    "text": "LOZC QEISL",
+    "confidence": 99,
+    "words": [{"text":"LOZC","confidence":99,"bbox":[0.143,0.189,0.0168,0.0075]},{"text":"QEISL","confidence":99,"bbox":[0.164,0.189,0.021,0.0075]}],
+    "bbox": [0.143,0.189,0.042,0.0075]
+   },
+   {
+    "text": "4'-0\"",
+    "confidence": 99,
+    "words": [{"text":"4'-0\"","confidence":99,"bbox":[0.2795,0.189,0.021,0.0075]}],
+    "bbox": [0.2795,0.189,0.021,0.0075]
+   },
+   {"text":"A","confidence":99,"words":[{"text":"A","confidence":99,"bbox":[0.3479,0.189,0.0042,0.0075]}],"bbox":[0.3479,0.189,0.0042,0.0075]},
+   {
+    "text": "GATDK",
+    "confidence": 99,
+    "words": [{"text":"GATDK","confidence":99,"bbox":[0.383,0.189,0.021,0.0075]}],
+    "bbox": [0.383,0.189,0.021,0.0075]
+   },
+   {
+    "text": "O-105",
+    "confidence": 99,
+    "words": [{"text":"O-105","confidence":99,"bbox":[0.1095,0.2055,0.021,0.0075]}],
+    "bbox": [0.1095,0.2055,0.021,0.0075]
+   },
+   {
+    "text": "MVN MEVMU",
+    "confidence": 99,
+    "words": [{"text":"MVN","confidence":99,"bbox":[0.143,0.2055,0.0126,0.0075]},{"text":"MEVMU","confidence":99,"bbox":[0.1598,0.2055,0.021,0.0075]}],
+    "bbox": [0.143,0.2055,0.0378,0.0075]
+   },
+   {
+    "text": "3'-0\"",
+    "confidence": 99,
+    "words": [{"text":"3'-0\"","confidence":99,"bbox":[0.2795,0.2055,0.021,0.0075]}],
+    "bbox": [0.2795,0.2055,0.021,0.0075]
+   },
+   {
+    "text": "B",
+    "confidence": 99,
+    "words": [{"text":"B","confidence":99,"bbox":[0.3479,0.2055,0.0042,0.0075]}],
+    "bbox": [0.3479,0.2055,0.0042,0.0075]
+   },
+   {
+    "text": "O-106",
+    "confidence": 99,
+    "words": [{"text":"O-106","confidence":99,"bbox":[0.1095,0.222,0.021,0.0075]}],
+    "bbox": [0.1095,0.222,0.021,0.0075]
+   },
+   {
+    "text": "JHWUL ESEUS",
+    "confidence": 99,
+    "words": [{"text":"JHWUL","confidence":99,"bbox":[0.143,0.222,0.021,0.0075]},{"text":"ESEUS","confidence":99,"bbox":[0.1682,0.222,0.021,0.0075]}],
+    "bbox": [0.143,0.222,0.0462,0.0075]
+   },
+   {
+    "text": "4'-0\"",
+    "confidence": 99,
+    "words": [{"text":"4'-0\"","confidence":99,"bbox":[0.2795,0.222,0.021,0.0075]}],
+    "bbox": [0.2795,0.222,0.021,0.0075]
+   },
+   {"text":"C","confidence":99,"words":[{"text":"C","confidence":99,"bbox":[0.3479,0.222,0.0042,0.0075]}],"bbox":[0.3479,0.222,0.0042,0.0075]},
+   {
+    "text": "ZFKMP ZYSFM SCHEDULE",
+    "confidence": 99,
+    "words": [
+     {"text":"ZFKMP","confidence":99,"bbox":[0.1,0.09,0.021,0.0075]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.1252,0.09,0.021,0.0075]},
+     {"text":"SCHEDULE","confidence":99,"bbox":[0.1504,0.09,0.0336,0.0075]}
+    ],
+    "bbox": [0.1,0.09,0.084,0.0075]
+   },
+   {
+    "text": "EWFTV 4/J-201",
+    "confidence": 99,
+    "words": [{"text":"EWFTV","confidence":99,"bbox":[0.8,0.9,0.021,0.0075]},{"text":"4/J-201","confidence":99,"bbox":[0.8252,0.9,0.0294,0.0075]}],
+    "bbox": [0.8,0.9,0.0546,0.0075]
+   }
+  ]
+ },
+ "shapes": [],
+ "region": [0.092,0.112,0.488,0.2435],
+ "manual": {
+  "columnBBs": [[0.1,0.1365,0.14,0.2355],[0.14,0.1365,0.26,0.2355],[0.26,0.1365,0.32,0.2355],[0.32,0.1365,0.38,0.2355],[0.38,0.1365,0.48,0.2355]],
+  "rowBBs": [
+   [0.1,0.1365,0.48,0.153],
+   [0.1,0.153,0.48,0.1695],
+   [0.1,0.1695,0.48,0.186],
+   [0.1,0.186,0.48,0.2025],
+   [0.1,0.2025,0.48,0.219],
+   [0.1,0.219,0.48,0.2355]
+  ],
+  "columnNames": []
+ },
+ "guided": {"rows":[0.12,0.1365,0.153,0.1695,0.186,0.2025,0.219,0.2355],"cols":[0.1,0.14,0.26,0.32,0.38,0.48]},
+ "truth": {
+  "type": "grid",
+  "headers": ["MARK","DESCRIPTION","SIZE","TYPE","REMARKS"],
+  "rows": [
+   ["O-101","ZFKMP SNIEV","3'-0\"","A","LOZC"],
+   ["O-102","NEKQKA KXBDUU","4'-0\"","B",""],
+   ["O-103","DZGMP EWFTV","3'-0\"","C",""],
+   ["O-104","LOZC QEISL","4'-0\"","A","GATDK"],
+   ["O-105","MVN MEVMU","3'-0\"","B",""],
+   ["O-106","JHWUL ESEUS","4'-0\"","C",""]
+  ]
+ }
+}

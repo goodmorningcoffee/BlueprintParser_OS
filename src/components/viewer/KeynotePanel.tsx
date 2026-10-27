@@ -49,6 +49,7 @@ import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
+import { joinKeynoteIntersections } from "@/lib/legacy-joins/keynote-manual";
 import { regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { YoloTag, QtoItemType } from "@/types";
@@ -492,36 +493,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     if (!isRenderedLifecycleCurrent()) return;
     if (!pageTextract?.words || keynoteColumnBBs.length < 2 || keynoteRowBBs.length === 0) return;
 
-    const cols = keynoteColumnBBs; // draw order = column order
-    const rows = keynoteRowBBs;
-
-    const keys: { key: string; description: string }[] = [];
-
-    for (const rowBB of rows) {
-      // Column A = tag key
-      const tagWords = (pageTextract.words as any[]).filter((w: any) => {
-        const cx = w.bbox[0] + w.bbox[2] / 2;
-        const cy = w.bbox[1] + w.bbox[3] / 2;
-        return cx >= cols[0][0] && cx <= cols[0][2] && cy >= rowBB[1] && cy <= rowBB[3];
-      });
-      const tagText = tagWords.sort((a: any, b: any) => a.bbox[0] - b.bbox[0]).map((w: any) => w.text).join(" ");
-
-      // Column B+ = description (all other columns merged)
-      let descText = "";
-      for (let ci = 1; ci < cols.length; ci++) {
-        const descWords = (pageTextract.words as any[]).filter((w: any) => {
-          const cx = w.bbox[0] + w.bbox[2] / 2;
-          const cy = w.bbox[1] + w.bbox[3] / 2;
-          return cx >= cols[ci][0] && cx <= cols[ci][2] && cy >= rowBB[1] && cy <= rowBB[3];
-        });
-        const text = descWords.sort((a: any, b: any) => a.bbox[0] - b.bbox[0]).map((w: any) => w.text).join(" ");
-        descText += (descText ? " " : "") + text;
-      }
-
-      if (tagText || descText) {
-        keys.push({ key: tagText.trim(), description: descText.trim() });
-      }
-    }
+    // Column A = key, columns B+ = description; draw order = column order.
+    const keys = joinKeynoteIntersections(pageTextract.words, keynoteColumnBBs, keynoteRowBBs);
 
     if (keys.length > 0) {
       const started = keynoteOperation.begin();

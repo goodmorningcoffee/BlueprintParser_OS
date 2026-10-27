@@ -3,13 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BboxLTWH, TextractLine } from "@/types";
 import type { ParseWorkspaceLease } from "@/stores/viewerCommands";
-
-interface FastManualGrid {
-  headers: string[];
-  rows: Record<string, string>[];
-  colBoundaries?: number[];
-  rowBoundaries?: number[];
-}
+import { fastManualGrid, nextFastManualColumns, type FastManualGrid } from "@/lib/legacy-joins/notes-fast-manual";
 
 interface FastManualParseOverlayProps {
   /** Active gate — overlay only renders + captures events when true. */
@@ -169,47 +163,15 @@ export default memo(function FastManualParseOverlay({
       if (selectedLines.some((l) => l === hit || (l.text === hit.text && l.bbox[1] === hit.bbox[1]))) return;
       const lease = onGridEditStart();
 
-      let nextColumns = columns;
-      if (columns.length === 0) {
-        // First selection: establish columns from LINE's L/R margins + 2px padding
-        const paddingPx = 2;
-        const padNorm = paddingPx / (cssScale * width);
-        const lineLeft = hit.bbox[0];
-        const lineRight = hit.bbox[0] + hit.bbox[2];
-        // 2-column default (Key | Note). Try to find a gap in the line's words.
-        const midSplit = deriveMidSplit(hit);
-        nextColumns = midSplit !== null
-          ? [
-              Math.max(0, lineLeft - padNorm),
-              midSplit,
-              Math.min(1, lineRight + padNorm),
-            ]
-          : [
-              Math.max(0, lineLeft - padNorm),
-              Math.min(1, lineRight + padNorm),
-            ];
-        setColumns(nextColumns);
-      } else {
-        // Subsequent: extend columns if any word of the line falls outside all existing bounds
-        const leftmost = hit.bbox[0];
-        const rightmost = hit.bbox[0] + hit.bbox[2];
-        if (leftmost < nextColumns[0]) {
-          nextColumns = [leftmost, ...nextColumns];
-        }
-        if (rightmost > nextColumns[nextColumns.length - 1]) {
-          nextColumns = [...nextColumns, rightmost];
-        }
-        if (nextColumns !== columns) setColumns(nextColumns);
-      }
+      // First selection: columns from the LINE's margins (+2 px); later ones only extend the bounds.
+      const nextColumns = nextFastManualColumns(columns, hit, cssScale * width);
+      if (nextColumns !== columns) setColumns(nextColumns);
 
       const nextSelected = [...selectedLines, hit].sort((a, b) => a.bbox[1] - b.bbox[1]);
       setSelectedLines(nextSelected);
 
       // Emit grid
-      const headers = nextColumns.length === 3 ? ["Key", "Note"] : nextColumns.slice(0, -1).map((_, i) => i === 0 ? "Key" : `Col${i + 1}`);
-      const rows = nextSelected.map((line) => binLineIntoColumns(line, nextColumns, headers));
-      const rowBoundaries = computeRowBoundaries(nextSelected);
-      onGridChange({ headers, rows, colBoundaries: nextColumns, rowBoundaries }, lease);
+      onGridChange(fastManualGrid(nextSelected, nextColumns), lease);
     },
     [active, regionBbox, linesInRegion, selectedLines, columns, cssScale, width, getCanvasPos, onGridEditStart, onGridChange],
   );
@@ -256,68 +218,6 @@ export default memo(function FastManualParseOverlay({
     />
   );
 });
-
-/**
- * Find a reasonable Key/Note column split inside a LINE by scanning for the
- * largest inter-word X-gap. Returns normalized X coordinate, or null if the
- * line has fewer than 2 words.
- */
-function deriveMidSplit(line: TextractLine): number | null {
-  if (!line.words || line.words.length < 2) return null;
-  const sorted = [...line.words].sort((a, b) => a.bbox[0] - b.bbox[0]);
-  let maxGap = 0;
-  let splitAt: number | null = null;
-  for (let i = 1; i < sorted.length; i++) {
-    const prevRight = sorted[i - 1].bbox[0] + sorted[i - 1].bbox[2];
-    const curLeft = sorted[i].bbox[0];
-    const gap = curLeft - prevRight;
-    if (gap > maxGap) {
-      maxGap = gap;
-      splitAt = prevRight + gap / 2;
-    }
-  }
-  // Only use the split if the gap is meaningful (> 1% of line width)
-  if (splitAt !== null && maxGap > line.bbox[2] * 0.05) return splitAt;
-  return null;
-}
-
-function binLineIntoColumns(
-  line: TextractLine,
-  columns: number[],
-  headers: string[],
-): Record<string, string> {
-  const row: Record<string, string> = {};
-  for (const h of headers) row[h] = "";
-  if (!line.words) {
-    row[headers[0]] = line.text;
-    return row;
-  }
-  for (const word of line.words) {
-    const wx = word.bbox[0] + word.bbox[2] / 2;
-    let colIdx = 0;
-    for (let i = 1; i < columns.length - 1; i++) {
-      if (wx >= columns[i]) colIdx = i;
-    }
-    if (colIdx >= headers.length) colIdx = headers.length - 1;
-    row[headers[colIdx]] = row[headers[colIdx]]
-      ? `${row[headers[colIdx]]} ${word.text}`
-      : word.text;
-  }
-  return row;
-}
-
-function computeRowBoundaries(lines: TextractLine[]): number[] {
-  if (lines.length === 0) return [];
-  const sorted = [...lines].sort((a, b) => a.bbox[1] - b.bbox[1]);
-  const boundaries: number[] = [];
-  for (const line of sorted) {
-    boundaries.push(line.bbox[1]);
-  }
-  // Final boundary = bottom of last line
-  const last = sorted[sorted.length - 1];
-  boundaries.push(last.bbox[1] + last.bbox[3]);
-  return boundaries;
-}
 
 // Suppress unused warning on BboxLTWH — type imported for documentation consistency.
 void (null as unknown as BboxLTWH);

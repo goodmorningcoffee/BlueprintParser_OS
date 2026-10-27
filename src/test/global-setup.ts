@@ -47,6 +47,10 @@ export default async function setup({
     throw new Error(`[csi-kb] required (BP_REQUIRE_CSI_KB=1) but ${absent.map((f) => f.why).join("; and ")}`);
   }
   for (const f of absent) console.warn(`[csi-kb] ${f.why}. The tests that read it (${f.tests}) will SKIP.`);
+  // Table-pipeline private goldens (real page slices, docs repo only; PLAN §1.6 rule 12): announced here for
+  // the same reason, since legacy-golden-private.test.ts logs its own skip only under --reporter=verbose.
+  const privateSlices = join(process.env.BP_PRIVATE_GOLD_DIR ?? join(process.cwd(), "../../gitignore/projects/table_pipeline/fixtures_private"), "slices");
+  if (!existsSync(privateSlices)) console.warn(`[legacy-golden-private] no private slices at ${privateSlices}: legacy-golden-private will SKIP (set BP_PRIVATE_GOLD_DIR; real slices never enter BP2).`);
   const pool = new Pool({
     connectionString: TEST_DATABASE_URL,
     connectionTimeoutMillis: 1500,

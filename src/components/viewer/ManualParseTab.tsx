@@ -12,6 +12,7 @@ import {
 } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useTextractForPage } from "@/queries/useTextract";
+import { joinManualCells } from "@/lib/legacy-joins/manual-cells";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 import type { DetectCsiAndPersist } from "./table-operation-types";
 
@@ -162,51 +163,8 @@ export default function ManualParseTab({
       const targetColumnNames = [...tableParseColumnNames];
       if (!commitParseOperation(token, () => setSaveError(null))) return;
 
-      const headers = targetColumnBBs.map((_: any, i: number) =>
-        targetColumnNames[i]?.trim() || `Column ${String.fromCharCode(65 + i)}`
-      );
-
-      const rows: Record<string, string>[] = [];
-      for (const rowBB of targetRowBBs) {
-        const row: Record<string, string> = {};
-        let hasContent = false;
-        for (let ci = 0; ci < targetColumnBBs.length; ci++) {
-          const colBB = targetColumnBBs[ci];
-        // Cell = intersection of column and row bounding boxes
-          const cellMinX = Math.max(colBB[0], rowBB[0]);
-          const cellMaxX = Math.min(colBB[2], rowBB[2]);
-          const cellMinY = Math.max(colBB[1], rowBB[1]);
-          const cellMaxY = Math.min(colBB[3], rowBB[3]);
-
-        // Find words whose center falls inside the cell
-          const cellWords = targetWords.filter((w: any) => {
-            const cx = w.bbox[0] + w.bbox[2] / 2;
-            const cy = w.bbox[1] + w.bbox[3] / 2;
-            return cx >= cellMinX && cx <= cellMaxX && cy >= cellMinY && cy <= cellMaxY;
-          });
-
-          const text = cellWords
-            .sort((a: any, b: any) => a.bbox[0] - b.bbox[0])
-            .map((w: any) => w.text)
-            .join(" ");
-
-          row[headers[ci]] = text;
-          if (text) hasContent = true;
-        }
-        if (hasContent) rows.push(row);
-      }
-
-    // Auto-detect tag column
-      const RE_TAG = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
-      let tagColumn: string | undefined;
-      for (const h of headers) {
-        let tagCount = 0, nonEmpty = 0;
-        for (const row of rows) {
-          const v = (row[h] || "").trim();
-          if (v) { nonEmpty++; if (RE_TAG.test(v)) tagCount++; }
-        }
-        if (nonEmpty > 0 && tagCount / nonEmpty >= 0.5) { tagColumn = h; break; }
-      }
+      const { headers, rows, tagColumn } =
+        joinManualCells(targetWords, targetColumnBBs, targetRowBBs, targetColumnNames);
 
       const grid = { headers, rows, tagColumn };
       const reviewCommitted = publishTableReviewForOperation(token, {
