@@ -767,7 +767,7 @@ export default memo(function ParsedTableItem({
                           const descParts = headers.filter((h: string) => h !== mapTagColumn).map((h: string) => row?.[h] || "");
                           const desc = descParts.join(" ").trim();
                           return {
-                            id: `schedule-${table.pageNum}-${tag}-${Date.now()}`,
+                            id: `schedule-${table.pageNum}-${tag.slice(0, 64)}-${Date.now()}`,
                             name: tag,
                             tagText: tag,
                             yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "",

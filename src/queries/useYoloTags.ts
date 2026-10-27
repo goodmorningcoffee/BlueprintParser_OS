@@ -42,6 +42,7 @@ import {
   type LegacyRegionTags,
   mergeYoloTags,
   regionOf,
+  regionRowsOutsideScope,
   type RegionOp,
   replaceRegionRows,
   withRegion,
@@ -233,6 +234,7 @@ function sendSave(
         // The cache already holds every edit (region replacements included), so the whole array
         // carries them; send it next instead of re-sending a body the route refuses forever.
         lane.wholeArray = true;
+        lane.snapshot = qc.getQueryData<YoloTag[]>(queryKeys.yoloTags.all(publicId)) ?? lane.snapshot;
         lane.dirty = true;
         lane.ready = true;
       } else {
@@ -460,10 +462,12 @@ export function replaceRegionYoloTagsInCache(
   const queued: RegionOp[] = [];
   const { next, lane } = writeAndSchedule(qc, publicId, isDemo, (rows) => {
     const retireIds = legacyRetireIds(rows, legacy);
+    // A scoped re-map keeps the region's rows of other classes/columns (MED-1): carry them through.
+    const carried = legacy ? regionRowsOutsideScope(rows, regionId, legacy) : [];
     const op: RegionOp = {
       op: "replace-for-region",
       regionId,
-      tags: tags.map((tag) => withRegion(tag, regionId)),
+      tags: [...carried, ...tags].map((tag) => withRegion(tag, regionId)),
       ...(retireIds.length > 0 ? { retireIds } : {}),
     };
     queued.push(op);

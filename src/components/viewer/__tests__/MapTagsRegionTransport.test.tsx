@@ -214,37 +214,55 @@ describe("inline Map Tags (K39, K05)", () => {
 });
 
 describe("TableParsePanel Map Tags (K40)", () => {
-  it("replaces this region's tags with one replace-for-region op: 0-hit tags cleared, legacy retired, other tables kept", async () => {
+  it("replaces this region's re-mapped tags with one replace-for-region op: 0-hit cleared, legacy retired, other classes/columns/tables kept", async () => {
     const regionId = regionIdFor(PAGE, TABLE_BOX);
     const staleZeroHit = row("stale-D3", { tagText: "D3", links: { regionId } });
     const legacyD1 = row("legacy-D1", { tagText: "D1" });
     const otherTableD3 = row("other-D3", { tagText: "D3", links: { regionId: "pr-other" } });
-    seedYoloTagsFromBootstrap(queryClient, PUBLIC_ID, { yoloTags: [staleZeroHit, legacyD1, otherTableD3] });
+    // Fix round MED-1: this region's tags of another class and of another column (an inline map) survive.
+    const otherClassD1 = row("window-D1", { tagText: "D1", yoloClass: "window", links: { regionId } });
+    const otherColumnH1 = row("inline-H1", { tagText: "H1", links: { regionId } });
+    seedYoloTagsFromBootstrap(queryClient, PUBLIC_ID, {
+      yoloTags: [staleZeroHit, legacyD1, otherTableD3, otherClassD1, otherColumnH1],
+    });
+    const longText = `L${"x".repeat(299)}`;
     setViewerStoreStateForTest({
       tableParseTab: "auto",
       tableParseRegion: TABLE_BOX,
       tableParsedGrid: {
         headers: ["Tag", "Description"],
-        rows: [{ Tag: "D1", Description: "alpha" }, { Tag: "D3", Description: "gamma" }],
+        rows: [{ Tag: "D1", Description: "alpha" }, { Tag: "D3", Description: "gamma" }, { Tag: longText, Description: "" }],
         tagColumn: "Tag",
         tableName: "Synthetic Schedule",
       },
     });
-    serve({ D1: [51, 52] }); // D3 now has 0 hits
+    serve({ D1: [51, 52], [longText]: [53] }); // D3 now has 0 hits
 
     render(<TableParsePanel />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "run table map tags" }));
 
     await waitFor(() => expect(readYoloTags(queryClient, PUBLIC_ID).map((r) => r.id)).not.toContain("stale-D3"));
     const rows = readYoloTags(queryClient, PUBLIC_ID) as YoloTagRow[];
-    expect(rows.map((r) => [r.tagText, r.links?.regionId ?? null])).toEqual([
-      ["D3", "pr-other"],
-      ["D1", regionId],
+    expect(rows.map((r) => [r.tagText, r.yoloClass, r.links?.regionId ?? null])).toEqual([
+      ["D3", "", "pr-other"],
+      ["D1", "window", regionId],
+      ["H1", "", regionId],
+      ["D1", "", regionId],
+      [longText, "", regionId],
     ]);
+    expect(rows[1]).toMatchObject({ id: "window-D1", instances: otherClassD1.instances });
+    expect(rows[2]).toMatchObject({ id: "inline-H1", instances: otherColumnH1.instances });
+    // LOW-3: a long tag text no longer mints an id the ops route refuses (> 300 characters).
+    expect(rows[4].id.length).toBeLessThanOrEqual(100);
 
     await waitFor(() => expect(opsBodies).toHaveLength(1), { timeout: 3_000 });
     expect(opsBodies[0].ops).toHaveLength(1);
     expect(opsBodies[0].ops[0]).toMatchObject({ op: "replace-for-region", regionId, retireIds: ["legacy-D1"] });
-    expect((opsBodies[0].ops[0].tags as YoloTag[]).map((t) => t.tagText)).toEqual(["D1"]);
+    expect((opsBodies[0].ops[0].tags as YoloTag[]).map((t) => [t.id, t.tagText])).toEqual([
+      ["window-D1", "D1"],
+      ["inline-H1", "H1"],
+      [rows[3].id, "D1"],
+      [rows[4].id, longText],
+    ]);
   });
 });

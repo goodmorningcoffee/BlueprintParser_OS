@@ -412,6 +412,28 @@ describe("yoloTags debounced save coordinator (id-keyed tag ops)", () => {
     expect(bodyOf(fetchMock.mock.calls[1])).toEqual({ yoloTags: [tag("kept"), tag("x".repeat(400))] });
   });
 
+  it("the 400 fallback PUT carries server rows adopted while the refused request was in flight (LOW-2)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [tag("a")] });
+    const first = deferred<Response>();
+    fetchMock.mockReturnValueOnce(first.promise);
+    addYoloTagToCache(qc, "project-A", false, tag("b"));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A server response (TP-3 commit) is adopted while the save is in flight and the lane is clean.
+    const committed = { ...tag("server-s1", { instances: [hit(2)] }), links: { regionId: "pr-1" } };
+    adoptServerYoloTags(qc, "project-A", [committed], ["pr-1"]);
+    first.resolve(response({ error: { message: "bad op" } }, false, 400));
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe("PUT");
+    expect(bodyOf(fetchMock.mock.calls[1])).toEqual({ yoloTags: [tag("a"), tag("b"), committed] });
+  });
+
   it("exact cleanup cancels a pending (not yet dispatched) save", async () => {
     addYoloTagToCache(qc, "project-A", false, tag("abandoned"));
     await vi.advanceTimersByTimeAsync(499);
@@ -577,6 +599,35 @@ describe("yoloTags tag-ops transport (K05, K19, K40)", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({
       ops: [{ op: "upsert", tag: { ...unrelated, name: "edited" } }],
     });
+  });
+
+  it("a scoped region re-map keeps the region's other-class and other-column tags, in the cache and on the server (MED-1)", async () => {
+    const inRegion = (id: string, over: Partial<YoloTag>) => ({ ...tag(id, { instances: [hit(1)], ...over }), links: { regionId: "pr-1" } });
+    const otherClass = inRegion("D1-window", { tagText: "D1", yoloClass: "window" });
+    const otherColumn = inRegion("H1", { tagText: "H1" });
+    const otherSource = inRegion("kn-1", { tagText: "1", source: "keynote" });
+    const staleInScope = inRegion("D9", { tagText: "D9" });
+    const server = fakeServer([otherClass, otherColumn, otherSource, staleInScope]);
+    seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: server.rows() });
+
+    replaceRegionYoloTagsInCache(qc, "project-A", false, "pr-1", [
+      tag("D1-door", { tagText: "D1", instances: [hit(4)] }),
+      tag("D9-now", { tagText: "D9", instances: [] }), // 0 hits now
+    ], { source: "schedule", scope: "project", yoloClass: "door", texts: ["D1", "D9"] });
+
+    const expected = [["D1-window", "D1", "window"], ["H1", "H1", "door"], ["kn-1", "1", "door"], ["D1-door", "D1", "door"]];
+    const ids = (rows: readonly YoloTag[]) => rows.map((row) => [row.id, row.tagText, row.yoloClass]);
+    expect(ids(readYoloTags(qc, "project-A"))).toEqual(expected);
+    await vi.advanceTimersByTimeAsync(500);
+    await flushPromises();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(ids(server.rows()).sort()).toEqual([...expected].sort());
+    expect(ids(readYoloTags(qc, "project-A")).sort()).toEqual([...expected].sort());
+    expect(server.rows().find((row) => row.id === "D1-window")).toEqual(otherClass);
+
+    // Without a scope the op keeps PLAN's whole-region contract (TP-3 Accept).
+    replaceRegionYoloTagsInCache(qc, "project-A", false, "pr-1", [tag("only", { instances: [hit(5)] })]);
+    expect(ids(readYoloTags(qc, "project-A"))).toEqual([["only", "only", "door"]]);
   });
 
   it("an import still sends ONE whole-array PUT", async () => {

@@ -17,7 +17,11 @@ export type YoloTagOp =
 
 export type RegionOp = Extract<YoloTagOp, { op: "replace-for-region" }>;
 
-/** Legacy (unlinked, pre-TP-2) rows a region re-map takes over: same identity, one of `texts`. */
+/**
+ * A region re-map's identity scope: one source, scope and class, and the texts it re-mapped. The
+ * re-map takes over the unlinked legacy (pre-TP-2) rows of this identity, and it clears only the
+ * region's rows inside it; the region's rows outside it are carried through unchanged.
+ */
 export interface LegacyRegionTags {
   source: YoloTag["source"];
   scope: YoloTag["scope"];
@@ -192,6 +196,22 @@ export function adoptRows(
     }
   }
   return next;
+}
+
+/** Scope identity, blind to page and region: source, scope, TEXT, class. */
+function scopeKey(tag: TagKeyFields): string {
+  return yoloTagServerKey({ source: tag.source, scope: tag.scope, tagText: tag.tagText, yoloClass: tag.yoloClass });
+}
+
+/**
+ * The region's rows outside a re-map's scope: another source, scope or class, or a text the re-map
+ * did not include (an inline map of another column). A scoped re-map carries them through its
+ * `replace-for-region` unchanged, so it clears only the stale (0-hit) tags of what it re-mapped
+ * (K40) and keeps what the legacy text+class merge kept (WP-2.D2 fix round, MED-1).
+ */
+export function regionRowsOutsideScope(rows: readonly YoloTag[], regionId: string, scope: LegacyRegionTags): YoloTag[] {
+  const keys = new Set(scope.texts.map((tagText) => scopeKey({ ...scope, tagText })));
+  return rows.filter((row) => regionOf(row) === regionId && !keys.has(scopeKey(row)));
 }
 
 /** Ids of the unlinked legacy rows a region re-map takes over (`LegacyRegionTags`). */

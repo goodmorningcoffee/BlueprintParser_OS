@@ -444,7 +444,7 @@ export default function TableParsePanel() {
       const newTags: YoloTag[] = uniqueTags
         .filter((t) => results[t]?.length > 0)
         .map((t) => ({
-          id: `schedule-${target.pageNumber}-${t}-${Date.now()}`,
+          id: `schedule-${target.pageNumber}-${t.slice(0, 64)}-${Date.now()}`,
           name: t,
           tagText: t,
           yoloClass: target.tagYoloClass?.className || "",
