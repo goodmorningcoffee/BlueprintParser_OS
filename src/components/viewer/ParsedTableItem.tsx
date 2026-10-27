@@ -13,7 +13,7 @@ import { openTableCompareModal, useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
-  readYoloTags,
+  isYoloTagMapped, readYoloTags,
   useYoloTagActions,
 } from "@/queries/useYoloTags";
 import {
@@ -735,12 +735,12 @@ export default memo(function ParsedTableItem({
                     setMapError(null);
                     try {
                       // Collect unique tags from the selected column
-                      // Re-read at click time so a sibling table's just-published mapping wins over
-                      // this component's render snapshot without creating another observer.
+                      // Re-read at click time (no extra observer). K39: skip only texts this table already
+                      // mapped with this class (or its unlinked legacy tag); other sheets/classes never block.
                       const existingTags = readYoloTags(queryClient, publicId);
                       const tags: string[] = [...new Set<string>(
                         rows.map((row: Record<string, string>) => (row[mapTagColumn] || "").trim()).filter(Boolean)
-                      )].filter((tag) => !existingTags.some((t) => t.tagText === tag && t.source === "schedule"));
+                      )].filter((tag) => !isYoloTagMapped(existingTags, { source: "schedule", scope: "project", tagText: tag, yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "", links: { regionId: table.region?.id } }));
 
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
@@ -767,7 +767,7 @@ export default memo(function ParsedTableItem({
                           const descParts = headers.filter((h: string) => h !== mapTagColumn).map((h: string) => row?.[h] || "");
                           const desc = descParts.join(" ").trim();
                           return {
-                            id: `schedule-${table.pageNum}-${tag}-${Date.now()}`,
+                            id: `schedule-${table.pageNum}-${tag.slice(0, 64)}-${Date.now()}`,
                             name: tag,
                             tagText: tag,
                             yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "",
@@ -780,7 +780,7 @@ export default memo(function ParsedTableItem({
                         });
                       // The action hook rejects this late result if loader ownership changed while
                       // the request was in flight (including same-publicId reopen).
-                      if (newTags.length > 0) addYoloTagsBulk(newTags);
+                      if (newTags.length > 0) addYoloTagsBulk(newTags, { regionId: table.region?.id });
                       setShowMapTags(false);
                     } catch (err) {
                       console.error("[MAP_TAGS] Batch mapping failed:", err);

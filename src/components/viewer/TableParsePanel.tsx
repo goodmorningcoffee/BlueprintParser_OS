@@ -83,7 +83,7 @@ export default function TableParsePanel() {
   // [refactor jul11 P2.2⑨] This orchestrator legitimately renders the full collection. The
   // action-only facade adds no second Query observer and guards late map responses by project.
   const yoloTags = useYoloTagRows();
-  const { addYoloTagsBulk } = useYoloTagActions();
+  const { addYoloTagsBulk, replaceRegionYoloTags } = useYoloTagActions();
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useUiStore((s) => s.toggleParsedRegions);
   const parsedRegionColorMode = useUiStore((s) => s.parsedRegionColorMode);
@@ -364,8 +364,9 @@ export default function TableParsePanel() {
   // Phase 3: call the shared server-side map-tags-batch transport so scoring
   // (pattern inference + scope + strictness) applies to the manual flow.
   // AbortController cancels the in-flight request on rapid re-clicks or
-  // unmount. All results flow through addYoloTagsBulk as a single store
-  // update to avoid N-rerenders from a batch.
+  // unmount. All results flow through one cache action (a single store update):
+  // [WP-2.D2, K40] a re-map REPLACES this region's tags, so a tag that now has 0
+  // hits is cleared for this table only; other tables' tags are untouched.
   const handleMapTags = useCallback(async () => {
     if (!tableParsedGrid?.tagColumn || !tableParsedGrid.rows.length) return;
     if (!publicId) return;
@@ -407,6 +408,10 @@ export default function TableParsePanel() {
         tagYoloClass: tagYoloClass ? { ...tagYoloClass } : null,
         mapTagsStrictness,
         drawingNumberPrefixes: [...drawingNumberPrefixes],
+        // The parsedRegions id this grid is (or will be) saved as: the id Save derives from the region.
+        regionId: tableParsedGrid.regionId ?? (tableParseRegion
+          ? regionIdFor(pageNumber, [tableParseRegion[0], tableParseRegion[1], tableParseRegion[2], tableParseRegion[3]])
+          : undefined),
       };
 
       const nextController = new AbortController();
@@ -439,7 +444,7 @@ export default function TableParsePanel() {
       const newTags: YoloTag[] = uniqueTags
         .filter((t) => results[t]?.length > 0)
         .map((t) => ({
-          id: `schedule-${target.pageNumber}-${t}-${Date.now()}`,
+          id: `schedule-${target.pageNumber}-${t.slice(0, 64)}-${Date.now()}`,
           name: t,
           tagText: t,
           yoloClass: target.tagYoloClass?.className || "",
@@ -461,7 +466,11 @@ export default function TableParsePanel() {
       // "Mapped N" state to that decision, and require this to remain the latest mounted run on
       // both sides of the synchronous cache action.
       if (mapTagsAbortRef.current !== controller || controller.signal.aborted) return;
-      const applied = addYoloTagsBulk(newTags);
+      const applied = target.regionId
+        ? replaceRegionYoloTags(target.regionId, newTags, {
+          source: "schedule", scope: "project", yoloClass: target.tagYoloClass?.className || "", texts: uniqueTags,
+        })
+        : addYoloTagsBulk(newTags);
       if (!applied || mapTagsAbortRef.current !== controller || controller.signal.aborted) return;
       commitParseOperation(token, () => {
         setTagMappingCount(newTags.length);
@@ -475,8 +484,8 @@ export default function TableParsePanel() {
     } finally {
       tableOperation.finish(token);
     }
-  }, [tableParsedGrid, tagYoloClass, pageNumber, publicId,
-      mapTagsStrictness, drawingNumberPrefixes, addYoloTagsBulk,
+  }, [tableParsedGrid, tableParseRegion, tagYoloClass, pageNumber, publicId,
+      mapTagsStrictness, drawingNumberPrefixes, addYoloTagsBulk, replaceRegionYoloTags,
       tableOperation.begin, tableOperation.finish]);
 
   // ─── Load existing parsed region ──────────────────────────
