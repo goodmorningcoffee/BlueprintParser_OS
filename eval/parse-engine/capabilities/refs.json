@@ -1,11 +1,13 @@
 {
   "capability": "refs",
   "version": 1,
-  "modules": [],
+  "modules": [
+    "src/lib/parse-engine/paragraphs/resolve.ts"
+  ],
   "history": [
     {
       "version": 1,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "75f2f0de1518c7a848caee92a137766b6d2434c35ac6f3357908b32e49e3cd50"
     }
   ]
 }
