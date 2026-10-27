@@ -9,6 +9,7 @@ import { LEGACY_PATH_IDS } from "@/lib/legacy-joins/legacy-paths";
 import {
   computeGoldens,
   diffGoldens,
+  incompleteWildcards,
   isDeclared,
   loadSlices,
   readDeclarations,
@@ -59,8 +60,28 @@ describe("legacy goldens — synthetic fixtures", () => {
     const decls = readDeclarations();
     for (const d of decls) expect(d.ks.some((k) => /^K\d{2}$/.test(k)), `intended-diffs.md:${d.line} cites no K number`).toBe(true);
     if (!golden) return;
-    const stale = staleDeclarations(diffGoldens(golden, first).changed, decls, "syn-");
+    const { changed } = diffGoldens(golden, first);
+    const stale = staleDeclarations(changed, decls, "syn-");
     expect(stale.map((d) => `intended-diffs.md:${d.line} ${d.fixture} ${d.path}`), "declared diffs that no longer differ").toEqual([]);
+    expect(incompleteWildcards(golden, changed, decls, "syn-"), "a * row must differ on every fixture with output on that path").toEqual([]);
+  });
+
+  it("refuses a * row that leaves a fixture with output unchanged (one diff must not waive a whole path)", () => {
+    const golden = {
+      schema: "bp-legacy-goldens/1" as const,
+      base: "t",
+      paths: LEGACY_PATH_IDS,
+      fixtures: { "syn-a": { manual: { x: 1 } }, "syn-b": { manual: { x: 2 } }, "syn-c": { manual: null } },
+    };
+    const star = [{ fixture: "*", path: "manual", ks: ["K07"], line: 9 }];
+    // only syn-a changed: syn-b has output and did not change, so the * row is refused
+    expect(incompleteWildcards(golden, ["syn-a manual"], star, "syn-")).toEqual([
+      "intended-diffs.md:9 * manual: unchanged on 1 fixture(s) with output (syn-b); list the changed fixtures by id instead",
+    ]);
+    // both fixtures with output changed (syn-c's null output is not required to): accepted
+    expect(incompleteWildcards(golden, ["syn-a manual", "syn-b manual"], star, "syn-")).toEqual([]);
+    // per-id rows are unaffected
+    expect(incompleteWildcards(golden, ["syn-a manual"], [{ ...star[0], fixture: "syn-a" }], "syn-")).toEqual([]);
   });
 
   it.runIf(CAPTURE)("captures the goldens (BP_GOLDEN_CAPTURE=1)", () => {

@@ -9,23 +9,29 @@
  *   npx tsx scripts/parse-engine-fixtures/synthesize.ts --layouts [--out <dir>] [--check]
  *       render every hand-written layout in ./layouts.ts → <dir>/<id>.synthetic.json
  *       (default dir src/lib/parse-engine/__fixtures__). --check writes nothing and exits 1 on any drift.
- *   npx tsx scripts/parse-engine-fixtures/synthesize.ts --from <real-slice.json> --out <file.synthetic.json>
- *       pseudonymize a real page slice (same `bp-parse-fixture/1` shape, `synthetic:false`). Used by the
- *       docs-repo task that turns private slices into shareable ones. The input never enters BP2.
+ *   npx tsx scripts/parse-engine-fixtures/synthesize.ts --from <real-slice.json> --out <file.masked.json>
+ *       mask a real page slice (same `bp-parse-fixture/1` shape) for PRIVATE use only, e.g. reading a slice
+ *       in the docs repo without its words. The output is NOT safe to publish: it keeps the real geometry,
+ *       and masked words keep their length and case. So it stays private (`synthetic:false`, a `prv-` id,
+ *       `privateOnly:true`), the script refuses to write it inside this repository or to a
+ *       `*.synthetic.json` name, every run draws a fresh random salt (no dictionary can be built from the
+ *       public script), and digits inside numbers are masked too (phone numbers, dates). Neither the input
+ *       nor the output ever enters BP2; committed fixtures come only from hand-written layouts.
  *
- * Pseudo-text rules (per whitespace token; the map depends on the token only, so a repeated word stays
- * repeated and duplicate headers stay duplicate):
+ * Pseudo-text rules (per whitespace token; within one run the map depends on the token only, so a repeated
+ * word stays repeated and duplicate headers stay duplicate):
  *   - generic schedule/notes vocabulary (VOCAB: TAG, MARK, TYPE, NOTES, SECTION, PART, …) is kept, because
  *     the legacy header and section detectors key on it and it names no project;
  *   - key-like tokens are kept: `1.` `2.3` `1.01` `a.` `(b)` `A`;
- *   - numeric tokens are kept: `3'-0"` `08` `1:50` `2.5`;
+ *   - numeric tokens are kept: `3'-0"` `08` `1:50` `2.5` (masked with `--from`: digits change, punctuation stays);
  *   - tag-like tokens keep their pattern and digits, letters change: `EF-10` → `QX-10`;
  *   - every other letter → a pseudo letter of the same case, every other digit → a pseudo digit,
  *     punctuation kept. Length is preserved.
  */
-import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TextractLine, TextractPageData, TextractTable, TextractWord } from "@/types";
 import { LAYOUTS } from "./layouts";
 
@@ -62,6 +68,8 @@ export interface ParseFixture {
   guided: { rows: number[]; cols: number[] };
   /** What the layout printed, in reading order (pseudonymized with the page). */
   truth: FixtureTruth;
+  /** Set by `--from`: a masked REAL slice. Never committed; the golden tests refuse it (not `syn-`, not synthetic). */
+  privateOnly?: true;
 }
 
 export type FixtureTruth =
@@ -112,17 +120,29 @@ const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS = "0123456789";
 const SALT = "bp-parse-fixture/1";
 
+/**
+ * How tokens are replaced. The defaults are the layout fixtures' (fixed public salt, numbers kept), which keep
+ * the committed fixtures byte-stable. `--from` passes a random per-run salt and `maskNumbers`.
+ */
+export interface PseudoOptions {
+  salt?: string;
+  maskNumbers?: boolean;
+}
+
 /** The pseudo form of one whitespace-free token (see the header for the rules). */
-export function pseudoToken(token: string): string {
+export function pseudoToken(token: string, opts: PseudoOptions = {}): string {
+  const base = opts.salt ?? SALT;
   const core = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
   if (!core) return token;
   if (VOCAB.has(core.toUpperCase())) return token;
-  if (KEY_RE.test(token) || NUMERIC_RE.test(token)) return token;
-  const keepDigits = TAG_RE.test(core);
+  if (KEY_RE.test(token)) return token;
+  const numeric = NUMERIC_RE.test(token);
+  if (numeric && !opts.maskNumbers) return token;
+  const keepDigits = !numeric && TAG_RE.test(core);
   // A tag family keeps one prefix: the letters of `EF-1` … `EF-12` are seeded by the letters alone.
   const seed = keepDigits ? core.toUpperCase().replace(/\d/g, "") : core.toUpperCase();
-  for (let salt = 0; ; salt++) {
-    const next = rng(`${SALT}|${seed}|${salt}`);
+  for (let attempt = 0; ; attempt++) {
+    const next = rng(`${base}|${seed}|${attempt}`);
     let out = "";
     for (const ch of token) {
       if (ch >= "A" && ch <= "Z") out += UPPER[Math.floor(next() * 26)];
@@ -132,42 +152,84 @@ export function pseudoToken(token: string): string {
     }
     const outCore = out.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
     // never turn an ordinary word into vocabulary, a key or the original itself
-    if (VOCAB.has(outCore.toUpperCase()) || (outCore === core && /[A-Za-z]/.test(core))) continue;
+    if (VOCAB.has(outCore.toUpperCase()) || (outCore === core && (/[A-Za-z]/.test(core) || (opts.maskNumbers && attempt < 8)))) continue;
     if (!KEY_RE.test(token) && KEY_RE.test(out)) continue;
     return out;
   }
 }
 
 /** Pseudonymize free text token by token; whitespace runs are kept as they are. */
-export function pseudoText(text: string): string {
-  return text.split(/(\s+)/).map((part) => (/^\s*$/.test(part) ? part : pseudoToken(part))).join("");
+export function pseudoText(text: string, opts: PseudoOptions = {}): string {
+  return text.split(/(\s+)/).map((part) => (/^\s*$/.test(part) ? part : pseudoToken(part, opts))).join("");
 }
 
 /** Replace every text in a fixture (page words, lines, table cells, shape reads, manual names, truth); geometry is untouched. */
-export function pseudonymizeFixture(fx: ParseFixture): ParseFixture {
-  const word = (w: TextractWord): TextractWord => ({ ...w, text: pseudoText(w.text) });
+export function pseudonymizeFixture(fx: ParseFixture, opts: PseudoOptions = {}): ParseFixture {
+  const pt = (t: string): string => pseudoText(t, opts);
+  const word = (w: TextractWord): TextractWord => ({ ...w, text: pt(w.text) });
   const page: TextractPageData = {
     words: fx.page.words.map(word),
     lines: fx.page.lines.map((l: TextractLine) => ({
       ...l,
-      text: l.words && l.words.length > 0 ? l.words.map((w) => pseudoText(w.text)).join(" ") : pseudoText(l.text),
+      text: l.words && l.words.length > 0 ? l.words.map((w) => pt(w.text)).join(" ") : pt(l.text),
       words: (l.words ?? []).map(word),
     })),
     ...(fx.page.tables ? {
-      tables: fx.page.tables.map((t: TextractTable) => ({ ...t, cells: t.cells.map((c) => ({ ...c, text: pseudoText(c.text) })) })),
+      tables: fx.page.tables.map((t: TextractTable) => ({ ...t, cells: t.cells.map((c) => ({ ...c, text: pt(c.text) })) })),
     } : {}),
   };
   const truth: FixtureTruth = fx.truth.type === "grid"
-    ? { type: "grid", headers: fx.truth.headers.map(pseudoText), rows: fx.truth.rows.map((r) => r.map(pseudoText)) }
-    : { type: "items", items: fx.truth.items.map((it) => ({ key: pseudoText(it.key), text: pseudoText(it.text) })) };
+    ? { type: "grid", headers: fx.truth.headers.map(pt), rows: fx.truth.rows.map((r) => r.map(pt)) }
+    : { type: "items", items: fx.truth.items.map((it) => ({ key: pt(it.key), text: pt(it.text) })) };
   return {
     ...fx,
     synthetic: true,
     page,
-    shapes: fx.shapes.map((s) => (s.text === undefined ? s : { ...s, text: pseudoText(s.text) })),
-    manual: { ...fx.manual, columnNames: fx.manual.columnNames.map(pseudoText) },
+    shapes: fx.shapes.map((s) => (s.text === undefined ? s : { ...s, text: pt(s.text) })),
+    manual: { ...fx.manual, columnNames: fx.manual.columnNames.map(pt) },
     truth,
   };
+}
+
+/**
+ * `--from`: mask a REAL slice for private use. A fresh random salt per call (pass one only in tests), numbers
+ * masked, and the result marked private (`synthetic:false`, `prv-` id, `privateOnly`), so the golden tests
+ * refuse it if it is ever dropped into `__fixtures__` (they require `syn-` ids and `synthetic:true`).
+ */
+export function maskPrivateSlice(fx: ParseFixture, salt: string = randomBytes(16).toString("hex")): ParseFixture {
+  const masked = pseudonymizeFixture(fx, { salt, maskNumbers: true });
+  const id = fx.id.startsWith("prv-") ? fx.id : `prv-${fx.id.replace(/^syn-/, "")}`;
+  return { ...masked, id, synthetic: false, privateOnly: true };
+}
+
+/** Paths that mark a BP2 checkout; the first two predate this script, so older worktrees are caught too. */
+const BP2_MARKERS = ["scripts/prepush-check.sh", "src/components/viewer", "scripts/parse-engine-fixtures/synthesize.ts"];
+
+/**
+ * Why `--from` refuses to write `out`, or null: never a `*.synthetic.json` name, never inside this repository,
+ * and never inside any other BP2 checkout or worktree, however old (a directory holding one of BP2_MARKERS).
+ */
+export function refuseMaskedOut(out: string, repoRoot: string = REPO_ROOT): string | null {
+  if (out.endsWith(".synthetic.json")) return "a masked real slice is not synthetic: name it *.masked.json";
+  const real = (p: string): string => {
+    // resolve symlinks on the deepest existing ancestor (the output file itself may not exist yet)
+    let dir = resolve(p);
+    const rest: string[] = [];
+    while (!existsSync(dir) && dirname(dir) !== dir) { rest.unshift(basename(dir)); dir = dirname(dir); }
+    return join(realpathSync(dir), ...rest);
+  };
+  const target = real(out);
+  const rel = relative(real(repoRoot), target);
+  const outside = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+  let inCheckout = !outside;
+  for (let d = dirname(target); !inCheckout; d = dirname(d)) {
+    inCheckout = BP2_MARKERS.some((m) => existsSync(join(d, m)));
+    if (dirname(d) === d) break;
+  }
+  if (inCheckout) {
+    return "a masked real slice keeps real geometry and must stay in the private docs repo: --out is inside a BP2 checkout";
+  }
+  return null;
 }
 
 // ─── geometry helpers ────────────────────────────────────────────────────────
@@ -546,6 +608,7 @@ export function stableJson(value: unknown): string {
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_FIXTURE_DIR = "src/lib/parse-engine/__fixtures__";
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 function main(argv: string[]): number {
   const arg = (name: string): string | undefined => {
@@ -555,17 +618,22 @@ function main(argv: string[]): number {
   if (argv.includes("--from")) {
     const from = arg("--from");
     const out = arg("--out");
-    if (!from || !out || !out.endsWith(".synthetic.json")) {
-      console.error("usage: synthesize.ts --from <real-slice.json> --out <file.synthetic.json>");
+    if (!from || !out) {
+      console.error("usage: synthesize.ts --from <real-slice.json> --out <private-dir/file.masked.json>");
+      return 2;
+    }
+    const refused = refuseMaskedOut(out);
+    if (refused) {
+      console.error(`synthesize: refused --out ${out}: ${refused}`);
       return 2;
     }
     const fx = JSON.parse(readFileSync(from, "utf8")) as ParseFixture;
-    writeFileSync(out, stableJson(pseudonymizeFixture(fx)));
-    console.log(`synthesize: wrote ${out}`);
+    writeFileSync(out, stableJson(maskPrivateSlice(fx)));
+    console.log(`synthesize: wrote ${out} (PRIVATE ONLY: real geometry, masked text; never commit it to BP2)`);
     return 0;
   }
   if (!argv.includes("--layouts")) {
-    console.error("usage: synthesize.ts --layouts [--out <dir>] [--check] | --from <slice.json> --out <file.synthetic.json>");
+    console.error("usage: synthesize.ts --layouts [--out <dir>] [--check] | --from <slice.json> --out <private-dir/file.masked.json>");
     return 2;
   }
   const dir = resolve(arg("--out") ?? DEFAULT_FIXTURE_DIR);

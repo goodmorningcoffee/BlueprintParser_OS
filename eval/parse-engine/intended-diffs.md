@@ -16,8 +16,9 @@ in the table below. The golden tests fail on:
 - **Ids only, never text.** Cite fixture ids (`syn-…` synthetic, `prv-…` private) and path ids; never
   quote a cell, a word, a header or a note. This file is public.
 - Every row cites at least one defect number (`K07`, …) from the table-pipeline inventory.
-- `*` in the fixture column covers every fixture of that path (use it only when a change is meant to
-  touch all of them).
+- `*` in the fixture column covers every fixture of that path, synthetic and private. The tests refuse a
+  `*` row unless the path's output changed on **every** fixture where it is non-null; otherwise list the
+  changed fixtures one row per id, so that an unintended change on another fixture still fails.
 - Path ids: `ocr-positions`, `textract`, `shape-rows`, `merger`, `guided-extract`, `manual`,
   `keynote-manual`, `keynote-guided`, `notes-auto`, `notes-guided`, `notes-paragraph`,
   `spec-paragraph`, `notes-fast-manual`, `notes-manual`, `spec-auto`.

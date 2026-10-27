@@ -39,6 +39,8 @@
 #                 src/lib/parse-engine/**/__fixtures__/**  only *.synthetic.json
 #                 eval/parse-engine/**                     only intended-diffs.md, baseline.json, profile.json,
 #                                                          capabilities/<name>.json
+#                 scripts/parse-engine-fixtures/**         only *.ts (the generator and its layouts; a real
+#                                                          slice dropped next to synthesize.ts is refused)
 #               Real page slices and their goldens live in the private docs repo
 #               (gitignore/projects/table_pipeline/fixtures_private/), never here.
 #
@@ -187,9 +189,10 @@ fi
 fixture_hits=$( { git ls-files; git log -m --diff-filter=AR --name-only --format= ${tips}; } \
   | awk '
       /^src\/lib\/parse-engine\/(.*\/)?__fixtures__\// { if ($0 !~ /\.synthetic\.json$/ && !seen[$0]++) print; next }
-      /^eval\/parse-engine\// { if ($0 !~ /^eval\/parse-engine\/(intended-diffs\.md|baseline\.json|profile\.json|capabilities\/[^\/]+\.json)$/ && !seen[$0]++) print }')
+      /^eval\/parse-engine\// { if ($0 !~ /^eval\/parse-engine\/(intended-diffs\.md|baseline\.json|profile\.json|capabilities\/[^\/]+\.json)$/ && !seen[$0]++) print; next }
+      /^scripts\/parse-engine-fixtures\// { if ($0 !~ /\.ts$/ && !seen[$0]++) print }')
 if [ -n "${fixture_hits}" ]; then
-  fail "parse-engine fixtures must be *.synthetic.json and eval/parse-engine/ holds only intended-diffs.md, baseline.json, profile.json, capabilities/*.json (real slices belong in the private docs repo):"
+  fail "parse-engine fixtures must be *.synthetic.json, eval/parse-engine/ holds only intended-diffs.md, baseline.json, profile.json, capabilities/*.json, and scripts/parse-engine-fixtures/ only *.ts (real slices belong in the private docs repo):"
   printf '%s\n' "${fixture_hits}" | sed 's/^/    /' >&2
 fi
 

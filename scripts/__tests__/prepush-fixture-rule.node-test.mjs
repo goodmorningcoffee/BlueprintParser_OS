@@ -1,7 +1,7 @@
 // prepush-fixture-rule.node-test.mjs — check 7 (FIXTURES) of scripts/prepush-check.sh: parse-engine test
 // data stays synthetic (table-pipeline PLAN §1.6 rule 12, WP-2.0a). Under any __fixtures__/ of
 // src/lib/parse-engine only *.synthetic.json; under eval/parse-engine/ only intended-diffs.md,
-// baseline.json, profile.json and capabilities/<name>.json. Each case builds a throwaway git repo and runs
+// baseline.json, profile.json and capabilities/<name>.json; under scripts/parse-engine-fixtures/ only *.ts. Each case builds a throwaway git repo and runs
 // the real script against it, in manual mode (every local branch) or hook mode (refs named on stdin).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -23,6 +23,8 @@ const GOOD = [
   "eval/parse-engine/capabilities/rows.json",
   "src/lib/other/__fixtures__/not-ours.json",
   "src/lib/parse-engine/__tests__/legacy-golden.test.ts",
+  "scripts/parse-engine-fixtures/synthesize.ts",
+  "scripts/parse-engine-fixtures/layouts.ts",
 ];
 
 function git(cwd, ...args) {
@@ -92,6 +94,25 @@ test("eval/parse-engine holds only the allow-listed files", async () => {
       const r = run(repo);
       assert.equal(r.status, 1, `${bad} should be refused`);
       assert.ok(r.stderr.includes(`    ${bad}`), `${bad} is named: ${r.stderr}`);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test("scripts/parse-engine-fixtures holds only the generator's .ts files", async () => {
+  for (const bad of [
+    "scripts/parse-engine-fixtures/real-slice.json",
+    "scripts/parse-engine-fixtures/in/page.masked.json",
+    "scripts/parse-engine-fixtures/x.synthetic.json",
+  ]) {
+    const repo = await repoWith([...GOOD, bad]);
+    try {
+      const r = run(repo);
+      assert.equal(r.status, 1, `${bad} should be refused`);
+      assert.match(r.stderr, /scripts\/parse-engine-fixtures\/ only \*\.ts/u);
+      assert.ok(r.stderr.includes(`    ${bad}`), `${bad} is named: ${r.stderr}`);
+      assert.equal((r.stderr.match(/^ {4}\S/gmu) ?? []).length, 1, "only the bad path is listed");
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

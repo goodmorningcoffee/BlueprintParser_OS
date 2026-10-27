@@ -29,7 +29,7 @@ export interface GoldenFile {
 }
 
 export interface Declaration {
-  fixture: string; // a fixture id, or "*" for every fixture of that path
+  fixture: string; // a fixture id, or "*" for every fixture of that path (see incompleteWildcards)
   path: string;
   ks: string[];
   line: number;
@@ -102,6 +102,28 @@ export function staleDeclarations(changed: readonly string[], decls: readonly De
       const [id, path] = pair.split(" ");
       return path === d.path && (d.fixture === id || (d.fixture === "*" && id.startsWith(prefix)));
     });
+  });
+}
+
+/**
+ * `*` rows that do not cover every fixture they waive. A `*` row for path P is accepted only when, in this
+ * run, P's output differs from the golden on EVERY fixture of the run's prefix whose golden output on P is
+ * non-null. Otherwise one changed fixture would waive unintended changes on all the others of that path
+ * (WP-2.0a verification MED-3). Ids only, so the private run can report safely.
+ */
+export function incompleteWildcards(
+  golden: GoldenFile,
+  changed: readonly string[],
+  decls: readonly Declaration[],
+  prefix: "syn-" | "prv-",
+): string[] {
+  const differs = new Set(changed);
+  return decls.filter((d) => d.fixture === "*").flatMap((d) => {
+    const untouched = Object.keys(golden.fixtures).sort()
+      .filter((id) => id.startsWith(prefix) && (golden.fixtures[id]?.[d.path] ?? null) !== null && !differs.has(`${id} ${d.path}`));
+    if (untouched.length === 0) return [];
+    const shown = untouched.slice(0, 8).join(", ") + (untouched.length > 8 ? ", …" : "");
+    return [`intended-diffs.md:${d.line} * ${d.path}: unchanged on ${untouched.length} fixture(s) with output (${shown}); list the changed fixtures by id instead`];
   });
 }
 

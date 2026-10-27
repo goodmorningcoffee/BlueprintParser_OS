@@ -13,6 +13,7 @@ import {
   REPO_ROOT,
   computeGoldens,
   diffGoldens,
+  incompleteWildcards,
   isDeclared,
   loadSlices,
   readDeclarations,
@@ -61,6 +62,7 @@ describe.skipIf(!present)("legacy goldens — private real slices", () => {
     const decls = readDeclarations();
     expect(changed.filter((pair) => !isDeclared(pair, decls)), "declare each pair in eval/parse-engine/intended-diffs.md (ids only)").toEqual([]);
     expect(staleDeclarations(changed, decls, "prv-").map((d) => `intended-diffs.md:${d.line} ${d.fixture} ${d.path}`)).toEqual([]);
+    expect(incompleteWildcards(golden!, changed, decls, "prv-"), "a * row must differ on every fixture with output on that path").toEqual([]);
   });
 
   it.runIf(CAPTURE)("captures the private goldens (BP_GOLDEN_CAPTURE=1)", () => {
