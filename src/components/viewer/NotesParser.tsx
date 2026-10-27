@@ -35,6 +35,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useTextractForPage } from "@/queries/useTextract";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
+import { joinNotesManualCells } from "@/lib/legacy-joins/notes-manual";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: notes-parse now serves {error:{code,message}}
 import { canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
@@ -288,30 +289,14 @@ export default function NotesParser() {
     if (!textractData || guidedNotesCols.length < 2 || guidedNotesRows.length < 1) return null;
     const columns = guidedNotesCols;
     const rowBbs = guidedNotesRows;
-    const headers = columns.map((_, i) => (i === 0 ? "Key" : i === 1 ? "Note" : `Col${i + 1}`));
-    const builtRows: Record<string, string>[] = [];
-    for (const [, yT, , yB] of rowBbs) {
-      const row: Record<string, string> = {};
-      for (let c = 0; c < columns.length; c++) {
-        const [xL, , xR] = columns[c];
-        const cellWords = textractData.words.filter((w) => {
-          const [wL, wT, wW, wH] = w.bbox;
-          const cx = wL + wW / 2;
-          const cy = wT + wH / 2;
-          return cx >= xL && cx <= xR && cy >= yT && cy <= yB;
-        });
-        cellWords.sort((a, b) => a.bbox[0] - b.bbox[0]);
-        row[headers[c]] = cellWords.map((w) => w.text).join(" ").trim();
-      }
-      builtRows.push(row);
-    }
-    if (builtRows.every((r) => Object.values(r).every((v) => !v))) return null;
+    const joined = joinNotesManualCells(textractData.words, columns, rowBbs);
+    if (!joined) return null;
 
     const xs = [...columns.map((c) => c[0]), columns[columns.length - 1][2]];
     const ys = [...rowBbs.map((r) => r[1]), rowBbs[rowBbs.length - 1][3]];
     return {
-      headers,
-      rows: builtRows,
+      headers: joined.headers,
+      rows: joined.rows,
       colBoundaries: xs,
       rowBoundaries: ys,
     };

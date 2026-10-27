@@ -4,7 +4,7 @@
 # The trained models under models/ (yolo_*.pt ≈137 MB each, tatr/model.safetensors) are a real
 # investment and must never reach the public repository. Today they are untracked and ignored by
 # the anchored `/models/` line in .gitignore; this script makes that a checked invariant at push
-# time instead of a remembered one. Six checks, any hit is fatal:
+# time instead of a remembered one. Seven checks, any hit is fatal:
 #
 #   1. INDEX    no tracked file under the top-level models/ or with a weights extension
 #   2. IGNORE   .gitignore still carries the anchored `/models/` line (an un-anchored `models/`
@@ -34,6 +34,13 @@
 #               generator stages the file on `git add -A`, and hooks are not cloned, so check 5
 #               would not run there. Tips without a generator (older branches) cannot produce that
 #               file and are not held to its line.
+#   7. FIXTURES parse-engine test data stays synthetic (table-pipeline PLAN §1.6 rule 12: no real drawing
+#               text in BP2). In the index and in every path added in the pushed history:
+#                 src/lib/parse-engine/**/__fixtures__/**  only *.synthetic.json
+#                 eval/parse-engine/**                     only intended-diffs.md, baseline.json, profile.json,
+#                                                          capabilities/<name>.json
+#               Real page slices and their goldens live in the private docs repo
+#               (gitignore/projects/table_pipeline/fixtures_private/), never here.
 #
 # Usage
 #   scripts/prepush-check.sh            check every local branch (what a manual pre-push run wants)
@@ -175,8 +182,19 @@ if [ -n "${private_hits}" ]; then
   printf '%s\n' "${private_hits}" | sed 's/^/    /' >&2
 fi
 
+# 7. FIXTURES — same sources as check 5: the index plus every path added in the pushed history.
+# shellcheck disable=SC2086
+fixture_hits=$( { git ls-files; git log -m --diff-filter=AR --name-only --format= ${tips}; } \
+  | awk '
+      /^src\/lib\/parse-engine\/(.*\/)?__fixtures__\// { if ($0 !~ /\.synthetic\.json$/ && !seen[$0]++) print; next }
+      /^eval\/parse-engine\// { if ($0 !~ /^eval\/parse-engine\/(intended-diffs\.md|baseline\.json|profile\.json|capabilities\/[^\/]+\.json)$/ && !seen[$0]++) print }')
+if [ -n "${fixture_hits}" ]; then
+  fail "parse-engine fixtures must be *.synthetic.json and eval/parse-engine/ holds only intended-diffs.md, baseline.json, profile.json, capabilities/*.json (real slices belong in the private docs repo):"
+  printf '%s\n' "${fixture_hits}" | sed 's/^/    /' >&2
+fi
+
 if [ "${failures}" -ne 0 ]; then
   echo "prepush-check: ${failures} check(s) failed — push refused. Nothing private goes to GitHub." >&2
   exit 1
 fi
-echo "prepush-check: clean — no model weights, client-text files, MasterFormat KB (src/data/csi-kb.json) or MasterFormat parser fixture (src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json) tracked or added in history, no blob over 50 MB; /models/, /src/data/csi-kb.json and /src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json still ignored (each committed so at every pushed tip with its generator)"
+echo "prepush-check: clean — parse-engine fixtures synthetic-only; no model weights, client-text files, MasterFormat KB (src/data/csi-kb.json) or MasterFormat parser fixture (src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json) tracked or added in history, no blob over 50 MB; /models/, /src/data/csi-kb.json and /src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json still ignored (each committed so at every pushed tip with its generator)"

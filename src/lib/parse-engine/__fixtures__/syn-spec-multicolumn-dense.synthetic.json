@@ -1,0 +1,512 @@
+{
+ "schema": "bp-parse-fixture/1",
+ "id": "syn-spec-multicolumn-dense",
+ "synthetic": true,
+ "title": "dense spec text in two columns",
+ "kind": "spec",
+ "probes": ["C04-4.3","K33"],
+ "page": {
+  "words": [
+   {"text":"SECTION","confidence":99,"bbox":[0.55,0.15,0.0294,0.0065]},
+   {"text":"07","confidence":99,"bbox":[0.5836,0.15,0.0084,0.0065]},
+   {"text":"92","confidence":99,"bbox":[0.5962,0.15,0.0084,0.0065]},
+   {"text":"00","confidence":99,"bbox":[0.6088,0.15,0.0084,0.0065]},
+   {"text":"-","confidence":99,"bbox":[0.6214,0.15,0.0042,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.6298,0.15,0.021,0.0065]},
+   {"text":"PART","confidence":99,"bbox":[0.55,0.1617,0.0168,0.0065]},
+   {"text":"1","confidence":99,"bbox":[0.571,0.1617,0.0042,0.0065]},
+   {"text":"GENERAL","confidence":99,"bbox":[0.572,0.1617,0.0294,0.0065]},
+   {"text":"1.01","confidence":99,"bbox":[0.558,0.1707,0.0168,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.58,0.1707,0.021,0.0065]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.6052,0.1707,0.021,0.0065]},
+   {"text":"HTJWZ","confidence":99,"bbox":[0.6304,0.1707,0.021,0.0065]},
+   {"text":"DCZRP","confidence":99,"bbox":[0.6556,0.1707,0.021,0.0065]},
+   {"text":"EJBC","confidence":99,"bbox":[0.6808,0.1707,0.0168,0.0065]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.58,0.1797,0.021,0.0065]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.6052,0.1797,0.0252,0.0065]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.6346,0.1797,0.021,0.0065]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.6598,0.1797,0.021,0.0065]},
+   {"text":"LOZC","confidence":99,"bbox":[0.685,0.1797,0.0168,0.0065]},
+   {"text":"QEISL","confidence":99,"bbox":[0.58,0.1887,0.021,0.0065]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.6052,0.1887,0.0252,0.0065]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.6346,0.1887,0.0252,0.0065]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.664,0.1887,0.021,0.0065]},
+   {"text":"1.02","confidence":99,"bbox":[0.558,0.1977,0.0168,0.0065]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.58,0.1977,0.0252,0.0065]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.6094,0.1977,0.0252,0.0065]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.6388,0.1977,0.021,0.0065]},
+   {"text":"UJYH","confidence":99,"bbox":[0.664,0.1977,0.0168,0.0065]},
+   {"text":"YTJN","confidence":99,"bbox":[0.685,0.1977,0.0168,0.0065]},
+   {"text":"HFBLJ","confidence":99,"bbox":[0.58,0.2067,0.021,0.0065]},
+   {"text":"ERKZM","confidence":99,"bbox":[0.6052,0.2067,0.021,0.0065]},
+   {"text":"GATDK","confidence":99,"bbox":[0.6304,0.2067,0.021,0.0065]},
+   {"text":"WRIS","confidence":99,"bbox":[0.6556,0.2067,0.0168,0.0065]},
+   {"text":"MVN","confidence":99,"bbox":[0.6766,0.2067,0.0126,0.0065]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.58,0.2157,0.021,0.0065]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.6052,0.2157,0.021,0.0065]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.6304,0.2157,0.021,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.6556,0.2157,0.021,0.0065]},
+   {"text":"1.03","confidence":99,"bbox":[0.558,0.2247,0.0168,0.0065]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.58,0.2247,0.021,0.0065]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.6052,0.2247,0.021,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.6304,0.2247,0.021,0.0065]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.6556,0.2247,0.021,0.0065]},
+   {"text":"HTJWZ","confidence":99,"bbox":[0.6808,0.2247,0.021,0.0065]},
+   {"text":"DCZRP","confidence":99,"bbox":[0.58,0.2337,0.021,0.0065]},
+   {"text":"EJBC","confidence":99,"bbox":[0.6052,0.2337,0.0168,0.0065]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.6262,0.2337,0.021,0.0065]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.6514,0.2337,0.0252,0.0065]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.6808,0.2337,0.021,0.0065]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.58,0.2427,0.021,0.0065]},
+   {"text":"LOZC","confidence":99,"bbox":[0.6052,0.2427,0.0168,0.0065]},
+   {"text":"QEISL","confidence":99,"bbox":[0.6262,0.2427,0.021,0.0065]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.6514,0.2427,0.0252,0.0065]},
+   {"text":"1.04","confidence":99,"bbox":[0.558,0.2517,0.0168,0.0065]},
+   {"text":"LOZC","confidence":99,"bbox":[0.58,0.2517,0.0168,0.0065]},
+   {"text":"QEISL","confidence":99,"bbox":[0.601,0.2517,0.021,0.0065]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.6262,0.2517,0.0252,0.0065]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.6556,0.2517,0.0252,0.0065]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.685,0.2517,0.021,0.0065]},
+   {"text":"UJYH","confidence":99,"bbox":[0.58,0.2607,0.0168,0.0065]},
+   {"text":"YTJN","confidence":99,"bbox":[0.601,0.2607,0.0168,0.0065]},
+   {"text":"HFBLJ","confidence":99,"bbox":[0.622,0.2607,0.021,0.0065]},
+   {"text":"ERKZM","confidence":99,"bbox":[0.6472,0.2607,0.021,0.0065]},
+   {"text":"GATDK","confidence":99,"bbox":[0.6724,0.2607,0.021,0.0065]},
+   {"text":"WRIS","confidence":99,"bbox":[0.58,0.2697,0.0168,0.0065]},
+   {"text":"MVN","confidence":99,"bbox":[0.601,0.2697,0.0126,0.0065]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.6178,0.2697,0.021,0.0065]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.643,0.2697,0.021,0.0065]},
+   {"text":"PART","confidence":99,"bbox":[0.757,0.15,0.0168,0.0065]},
+   {"text":"2","confidence":99,"bbox":[0.778,0.15,0.0042,0.0065]},
+   {"text":"PRODUCTS","confidence":99,"bbox":[0.779,0.15,0.0336,0.0065]},
+   {"text":"2.01","confidence":99,"bbox":[0.765,0.159,0.0168,0.0065]},
+   {"text":"MVN","confidence":99,"bbox":[0.787,0.159,0.0126,0.0065]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.8038,0.159,0.021,0.0065]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.829,0.159,0.021,0.0065]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.8542,0.159,0.021,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.8794,0.159,0.021,0.0065]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.787,0.168,0.021,0.0065]},
+   {"text":"HTJWZ","confidence":99,"bbox":[0.8122,0.168,0.021,0.0065]},
+   {"text":"DCZRP","confidence":99,"bbox":[0.8374,0.168,0.021,0.0065]},
+   {"text":"EJBC","confidence":99,"bbox":[0.8626,0.168,0.0168,0.0065]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.8836,0.168,0.021,0.0065]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.787,0.177,0.0252,0.0065]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.8164,0.177,0.021,0.0065]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.8416,0.177,0.021,0.0065]},
+   {"text":"LOZC","confidence":99,"bbox":[0.8668,0.177,0.0168,0.0065]},
+   {"text":"2.02","confidence":99,"bbox":[0.765,0.186,0.0168,0.0065]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.787,0.186,0.021,0.0065]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.8122,0.186,0.021,0.0065]},
+   {"text":"LOZC","confidence":99,"bbox":[0.8374,0.186,0.0168,0.0065]},
+   {"text":"QEISL","confidence":99,"bbox":[0.8584,0.186,0.021,0.0065]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.8836,0.186,0.0252,0.0065]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.787,0.195,0.0252,0.0065]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.8164,0.195,0.021,0.0065]},
+   {"text":"UJYH","confidence":99,"bbox":[0.8416,0.195,0.0168,0.0065]},
+   {"text":"YTJN","confidence":99,"bbox":[0.8626,0.195,0.0168,0.0065]},
+   {"text":"HFBLJ","confidence":99,"bbox":[0.8836,0.195,0.021,0.0065]},
+   {"text":"ERKZM","confidence":99,"bbox":[0.787,0.204,0.021,0.0065]},
+   {"text":"GATDK","confidence":99,"bbox":[0.8122,0.204,0.021,0.0065]},
+   {"text":"WRIS","confidence":99,"bbox":[0.8374,0.204,0.0168,0.0065]},
+   {"text":"MVN","confidence":99,"bbox":[0.8584,0.204,0.0126,0.0065]},
+   {"text":"2.03","confidence":99,"bbox":[0.765,0.213,0.0168,0.0065]},
+   {"text":"GATDK","confidence":99,"bbox":[0.787,0.213,0.021,0.0065]},
+   {"text":"WRIS","confidence":99,"bbox":[0.8122,0.213,0.0168,0.0065]},
+   {"text":"MVN","confidence":99,"bbox":[0.8332,0.213,0.0126,0.0065]},
+   {"text":"MEVMU","confidence":99,"bbox":[0.85,0.213,0.021,0.0065]},
+   {"text":"DZGMP","confidence":99,"bbox":[0.8752,0.213,0.021,0.0065]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.787,0.222,0.021,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.8122,0.222,0.021,0.0065]},
+   {"text":"SNIEV","confidence":99,"bbox":[0.8374,0.222,0.021,0.0065]},
+   {"text":"HTJWZ","confidence":99,"bbox":[0.8626,0.222,0.021,0.0065]},
+   {"text":"DCZRP","confidence":99,"bbox":[0.8878,0.222,0.021,0.0065]},
+   {"text":"EJBC","confidence":99,"bbox":[0.787,0.231,0.0168,0.0065]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.808,0.231,0.021,0.0065]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.8332,0.231,0.0252,0.0065]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.8626,0.231,0.021,0.0065]},
+   {"text":"2.04","confidence":99,"bbox":[0.765,0.24,0.0168,0.0065]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.787,0.24,0.021,0.0065]},
+   {"text":"QTMYBW","confidence":99,"bbox":[0.8122,0.24,0.0252,0.0065]},
+   {"text":"JHWUL","confidence":99,"bbox":[0.8416,0.24,0.021,0.0065]},
+   {"text":"ESEUS","confidence":99,"bbox":[0.8668,0.24,0.021,0.0065]},
+   {"text":"LOZC","confidence":99,"bbox":[0.892,0.24,0.0168,0.0065]},
+   {"text":"QEISL","confidence":99,"bbox":[0.787,0.249,0.021,0.0065]},
+   {"text":"NEKQKA","confidence":99,"bbox":[0.8122,0.249,0.0252,0.0065]},
+   {"text":"KXBDUU","confidence":99,"bbox":[0.8416,0.249,0.0252,0.0065]},
+   {"text":"NJIUT","confidence":99,"bbox":[0.871,0.249,0.021,0.0065]},
+   {"text":"UJYH","confidence":99,"bbox":[0.8962,0.249,0.0168,0.0065]},
+   {"text":"YTJN","confidence":99,"bbox":[0.787,0.258,0.0168,0.0065]},
+   {"text":"HFBLJ","confidence":99,"bbox":[0.808,0.258,0.021,0.0065]},
+   {"text":"ERKZM","confidence":99,"bbox":[0.8332,0.258,0.021,0.0065]},
+   {"text":"GATDK","confidence":99,"bbox":[0.8584,0.258,0.021,0.0065]},
+   {"text":"ZFKMP","confidence":99,"bbox":[0.1,0.12,0.021,0.0065]},
+   {"text":"ZYSFM","confidence":99,"bbox":[0.1252,0.12,0.021,0.0065]},
+   {"text":"SCHEDULE","confidence":99,"bbox":[0.1504,0.12,0.0336,0.0065]},
+   {"text":"EWFTV","confidence":99,"bbox":[0.8,0.9,0.021,0.0065]},
+   {"text":"4/J-201","confidence":99,"bbox":[0.8252,0.9,0.0294,0.0065]}
+  ],
+  "lines": [
+   {
+    "text": "SECTION 07 92 00 - ZFKMP",
+    "confidence": 99,
+    "words": [
+     {"text":"SECTION","confidence":99,"bbox":[0.55,0.15,0.0294,0.0065]},
+     {"text":"07","confidence":99,"bbox":[0.5836,0.15,0.0084,0.0065]},
+     {"text":"92","confidence":99,"bbox":[0.5962,0.15,0.0084,0.0065]},
+     {"text":"00","confidence":99,"bbox":[0.6088,0.15,0.0084,0.0065]},
+     {"text":"-","confidence":99,"bbox":[0.6214,0.15,0.0042,0.0065]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.6298,0.15,0.021,0.0065]}
+    ],
+    "bbox": [0.55,0.15,0.1008,0.0065]
+   },
+   {
+    "text": "PART 1 GENERAL",
+    "confidence": 99,
+    "words": [
+     {"text":"PART","confidence":99,"bbox":[0.55,0.1617,0.0168,0.0065]},
+     {"text":"1","confidence":99,"bbox":[0.571,0.1617,0.0042,0.0065]},
+     {"text":"GENERAL","confidence":99,"bbox":[0.572,0.1617,0.0294,0.0065]}
+    ],
+    "bbox": [0.55,0.1617,0.0514,0.0065]
+   },
+   {
+    "text": "1.01 ZFKMP SNIEV HTJWZ DCZRP EJBC",
+    "confidence": 99,
+    "words": [
+     {"text":"1.01","confidence":99,"bbox":[0.558,0.1707,0.0168,0.0065]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.58,0.1707,0.021,0.0065]},
+     {"text":"SNIEV","confidence":99,"bbox":[0.6052,0.1707,0.021,0.0065]},
+     {"text":"HTJWZ","confidence":99,"bbox":[0.6304,0.1707,0.021,0.0065]},
+     {"text":"DCZRP","confidence":99,"bbox":[0.6556,0.1707,0.021,0.0065]},
+     {"text":"EJBC","confidence":99,"bbox":[0.6808,0.1707,0.0168,0.0065]}
+    ],
+    "bbox": [0.558,0.1707,0.1396,0.0065]
+   },
+   {
+    "text": "ZYSFM QTMYBW JHWUL ESEUS LOZC",
+    "confidence": 99,
+    "words": [
+     {"text":"ZYSFM","confidence":99,"bbox":[0.58,0.1797,0.021,0.0065]},
+     {"text":"QTMYBW","confidence":99,"bbox":[0.6052,0.1797,0.0252,0.0065]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.6346,0.1797,0.021,0.0065]},
+     {"text":"ESEUS","confidence":99,"bbox":[0.6598,0.1797,0.021,0.0065]},
+     {"text":"LOZC","confidence":99,"bbox":[0.685,0.1797,0.0168,0.0065]}
+    ],
+    "bbox": [0.58,0.1797,0.1218,0.0065]
+   },
+   {
+    "text": "QEISL NEKQKA KXBDUU NJIUT",
+    "confidence": 99,
+    "words": [
+     {"text":"QEISL","confidence":99,"bbox":[0.58,0.1887,0.021,0.0065]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.6052,0.1887,0.0252,0.0065]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.6346,0.1887,0.0252,0.0065]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.664,0.1887,0.021,0.0065]}
+    ],
+    "bbox": [0.58,0.1887,0.105,0.0065]
+   },
+   {
+    "text": "1.02 NEKQKA KXBDUU NJIUT UJYH YTJN",
+    "confidence": 99,
+    "words": [
+     {"text":"1.02","confidence":99,"bbox":[0.558,0.1977,0.0168,0.0065]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.58,0.1977,0.0252,0.0065]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.6094,0.1977,0.0252,0.0065]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.6388,0.1977,0.021,0.0065]},
+     {"text":"UJYH","confidence":99,"bbox":[0.664,0.1977,0.0168,0.0065]},
+     {"text":"YTJN","confidence":99,"bbox":[0.685,0.1977,0.0168,0.0065]}
+    ],
+    "bbox": [0.558,0.1977,0.1438,0.0065]
+   },
+   {
+    "text": "HFBLJ ERKZM GATDK WRIS MVN",
+    "confidence": 99,
+    "words": [
+     {"text":"HFBLJ","confidence":99,"bbox":[0.58,0.2067,0.021,0.0065]},
+     {"text":"ERKZM","confidence":99,"bbox":[0.6052,0.2067,0.021,0.0065]},
+     {"text":"GATDK","confidence":99,"bbox":[0.6304,0.2067,0.021,0.0065]},
+     {"text":"WRIS","confidence":99,"bbox":[0.6556,0.2067,0.0168,0.0065]},
+     {"text":"MVN","confidence":99,"bbox":[0.6766,0.2067,0.0126,0.0065]}
+    ],
+    "bbox": [0.58,0.2067,0.1092,0.0065]
+   },
+   {
+    "text": "MEVMU DZGMP EWFTV ZFKMP",
+    "confidence": 99,
+    "words": [
+     {"text":"MEVMU","confidence":99,"bbox":[0.58,0.2157,0.021,0.0065]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.6052,0.2157,0.021,0.0065]},
+     {"text":"EWFTV","confidence":99,"bbox":[0.6304,0.2157,0.021,0.0065]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.6556,0.2157,0.021,0.0065]}
+    ],
+    "bbox": [0.58,0.2157,0.0966,0.0065]
+   },
+   {
+    "text": "1.03 DZGMP EWFTV ZFKMP SNIEV HTJWZ",
+    "confidence": 99,
+    "words": [
+     {"text":"1.03","confidence":99,"bbox":[0.558,0.2247,0.0168,0.0065]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.58,0.2247,0.021,0.0065]},
+     {"text":"EWFTV","confidence":99,"bbox":[0.6052,0.2247,0.021,0.0065]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.6304,0.2247,0.021,0.0065]},
+     {"text":"SNIEV","confidence":99,"bbox":[0.6556,0.2247,0.021,0.0065]},
+     {"text":"HTJWZ","confidence":99,"bbox":[0.6808,0.2247,0.021,0.0065]}
+    ],
+    "bbox": [0.558,0.2247,0.1438,0.0065]
+   },
+   {
+    "text": "DCZRP EJBC ZYSFM QTMYBW JHWUL",
+    "confidence": 99,
+    "words": [
+     {"text":"DCZRP","confidence":99,"bbox":[0.58,0.2337,0.021,0.0065]},
+     {"text":"EJBC","confidence":99,"bbox":[0.6052,0.2337,0.0168,0.0065]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.6262,0.2337,0.021,0.0065]},
+     {"text":"QTMYBW","confidence":99,"bbox":[0.6514,0.2337,0.0252,0.0065]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.6808,0.2337,0.021,0.0065]}
+    ],
+    "bbox": [0.58,0.2337,0.1218,0.0065]
+   },
+   {
+    "text": "ESEUS LOZC QEISL NEKQKA",
+    "confidence": 99,
+    "words": [
+     {"text":"ESEUS","confidence":99,"bbox":[0.58,0.2427,0.021,0.0065]},
+     {"text":"LOZC","confidence":99,"bbox":[0.6052,0.2427,0.0168,0.0065]},
+     {"text":"QEISL","confidence":99,"bbox":[0.6262,0.2427,0.021,0.0065]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.6514,0.2427,0.0252,0.0065]}
+    ],
+    "bbox": [0.58,0.2427,0.0966,0.0065]
+   },
+   {
+    "text": "1.04 LOZC QEISL NEKQKA KXBDUU NJIUT",
+    "confidence": 99,
+    "words": [
+     {"text":"1.04","confidence":99,"bbox":[0.558,0.2517,0.0168,0.0065]},
+     {"text":"LOZC","confidence":99,"bbox":[0.58,0.2517,0.0168,0.0065]},
+     {"text":"QEISL","confidence":99,"bbox":[0.601,0.2517,0.021,0.0065]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.6262,0.2517,0.0252,0.0065]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.6556,0.2517,0.0252,0.0065]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.685,0.2517,0.021,0.0065]}
+    ],
+    "bbox": [0.558,0.2517,0.148,0.0065]
+   },
+   {
+    "text": "UJYH YTJN HFBLJ ERKZM GATDK",
+    "confidence": 99,
+    "words": [
+     {"text":"UJYH","confidence":99,"bbox":[0.58,0.2607,0.0168,0.0065]},
+     {"text":"YTJN","confidence":99,"bbox":[0.601,0.2607,0.0168,0.0065]},
+     {"text":"HFBLJ","confidence":99,"bbox":[0.622,0.2607,0.021,0.0065]},
+     {"text":"ERKZM","confidence":99,"bbox":[0.6472,0.2607,0.021,0.0065]},
+     {"text":"GATDK","confidence":99,"bbox":[0.6724,0.2607,0.021,0.0065]}
+    ],
+    "bbox": [0.58,0.2607,0.1134,0.0065]
+   },
+   {
+    "text": "WRIS MVN MEVMU DZGMP",
+    "confidence": 99,
+    "words": [
+     {"text":"WRIS","confidence":99,"bbox":[0.58,0.2697,0.0168,0.0065]},
+     {"text":"MVN","confidence":99,"bbox":[0.601,0.2697,0.0126,0.0065]},
+     {"text":"MEVMU","confidence":99,"bbox":[0.6178,0.2697,0.021,0.0065]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.643,0.2697,0.021,0.0065]}
+    ],
+    "bbox": [0.58,0.2697,0.084,0.0065]
+   },
+   {
+    "text": "PART 2 PRODUCTS",
+    "confidence": 99,
+    "words": [
+     {"text":"PART","confidence":99,"bbox":[0.757,0.15,0.0168,0.0065]},
+     {"text":"2","confidence":99,"bbox":[0.778,0.15,0.0042,0.0065]},
+     {"text":"PRODUCTS","confidence":99,"bbox":[0.779,0.15,0.0336,0.0065]}
+    ],
+    "bbox": [0.757,0.15,0.0556,0.0065]
+   },
+   {
+    "text": "2.01 MVN MEVMU DZGMP EWFTV ZFKMP",
+    "confidence": 99,
+    "words": [
+     {"text":"2.01","confidence":99,"bbox":[0.765,0.159,0.0168,0.0065]},
+     {"text":"MVN","confidence":99,"bbox":[0.787,0.159,0.0126,0.0065]},
+     {"text":"MEVMU","confidence":99,"bbox":[0.8038,0.159,0.021,0.0065]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.829,0.159,0.021,0.0065]},
+     {"text":"EWFTV","confidence":99,"bbox":[0.8542,0.159,0.021,0.0065]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.8794,0.159,0.021,0.0065]}
+    ],
+    "bbox": [0.765,0.159,0.1354,0.0065]
+   },
+   {
+    "text": "SNIEV HTJWZ DCZRP EJBC ZYSFM",
+    "confidence": 99,
+    "words": [
+     {"text":"SNIEV","confidence":99,"bbox":[0.787,0.168,0.021,0.0065]},
+     {"text":"HTJWZ","confidence":99,"bbox":[0.8122,0.168,0.021,0.0065]},
+     {"text":"DCZRP","confidence":99,"bbox":[0.8374,0.168,0.021,0.0065]},
+     {"text":"EJBC","confidence":99,"bbox":[0.8626,0.168,0.0168,0.0065]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.8836,0.168,0.021,0.0065]}
+    ],
+    "bbox": [0.787,0.168,0.1176,0.0065]
+   },
+   {
+    "text": "QTMYBW JHWUL ESEUS LOZC",
+    "confidence": 99,
+    "words": [
+     {"text":"QTMYBW","confidence":99,"bbox":[0.787,0.177,0.0252,0.0065]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.8164,0.177,0.021,0.0065]},
+     {"text":"ESEUS","confidence":99,"bbox":[0.8416,0.177,0.021,0.0065]},
+     {"text":"LOZC","confidence":99,"bbox":[0.8668,0.177,0.0168,0.0065]}
+    ],
+    "bbox": [0.787,0.177,0.0966,0.0065]
+   },
+   {
+    "text": "2.02 JHWUL ESEUS LOZC QEISL NEKQKA",
+    "confidence": 99,
+    "words": [
+     {"text":"2.02","confidence":99,"bbox":[0.765,0.186,0.0168,0.0065]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.787,0.186,0.021,0.0065]},
+     {"text":"ESEUS","confidence":99,"bbox":[0.8122,0.186,0.021,0.0065]},
+     {"text":"LOZC","confidence":99,"bbox":[0.8374,0.186,0.0168,0.0065]},
+     {"text":"QEISL","confidence":99,"bbox":[0.8584,0.186,0.021,0.0065]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.8836,0.186,0.0252,0.0065]}
+    ],
+    "bbox": [0.765,0.186,0.1438,0.0065]
+   },
+   {
+    "text": "KXBDUU NJIUT UJYH YTJN HFBLJ",
+    "confidence": 99,
+    "words": [
+     {"text":"KXBDUU","confidence":99,"bbox":[0.787,0.195,0.0252,0.0065]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.8164,0.195,0.021,0.0065]},
+     {"text":"UJYH","confidence":99,"bbox":[0.8416,0.195,0.0168,0.0065]},
+     {"text":"YTJN","confidence":99,"bbox":[0.8626,0.195,0.0168,0.0065]},
+     {"text":"HFBLJ","confidence":99,"bbox":[0.8836,0.195,0.021,0.0065]}
+    ],
+    "bbox": [0.787,0.195,0.1176,0.0065]
+   },
+   {
+    "text": "ERKZM GATDK WRIS MVN",
+    "confidence": 99,
+    "words": [
+     {"text":"ERKZM","confidence":99,"bbox":[0.787,0.204,0.021,0.0065]},
+     {"text":"GATDK","confidence":99,"bbox":[0.8122,0.204,0.021,0.0065]},
+     {"text":"WRIS","confidence":99,"bbox":[0.8374,0.204,0.0168,0.0065]},
+     {"text":"MVN","confidence":99,"bbox":[0.8584,0.204,0.0126,0.0065]}
+    ],
+    "bbox": [0.787,0.204,0.084,0.0065]
+   },
+   {
+    "text": "2.03 GATDK WRIS MVN MEVMU DZGMP",
+    "confidence": 99,
+    "words": [
+     {"text":"2.03","confidence":99,"bbox":[0.765,0.213,0.0168,0.0065]},
+     {"text":"GATDK","confidence":99,"bbox":[0.787,0.213,0.021,0.0065]},
+     {"text":"WRIS","confidence":99,"bbox":[0.8122,0.213,0.0168,0.0065]},
+     {"text":"MVN","confidence":99,"bbox":[0.8332,0.213,0.0126,0.0065]},
+     {"text":"MEVMU","confidence":99,"bbox":[0.85,0.213,0.021,0.0065]},
+     {"text":"DZGMP","confidence":99,"bbox":[0.8752,0.213,0.021,0.0065]}
+    ],
+    "bbox": [0.765,0.213,0.1312,0.0065]
+   },
+   {
+    "text": "EWFTV ZFKMP SNIEV HTJWZ DCZRP",
+    "confidence": 99,
+    "words": [
+     {"text":"EWFTV","confidence":99,"bbox":[0.787,0.222,0.021,0.0065]},
+     {"text":"ZFKMP","confidence":99,"bbox":[0.8122,0.222,0.021,0.0065]},
+     {"text":"SNIEV","confidence":99,"bbox":[0.8374,0.222,0.021,0.0065]},
+     {"text":"HTJWZ","confidence":99,"bbox":[0.8626,0.222,0.021,0.0065]},
+     {"text":"DCZRP","confidence":99,"bbox":[0.8878,0.222,0.021,0.0065]}
+    ],
+    "bbox": [0.787,0.222,0.1218,0.0065]
+   },
+   {
+    "text": "EJBC ZYSFM QTMYBW JHWUL",
+    "confidence": 99,
+    "words": [
+     {"text":"EJBC","confidence":99,"bbox":[0.787,0.231,0.0168,0.0065]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.808,0.231,0.021,0.0065]},
+     {"text":"QTMYBW","confidence":99,"bbox":[0.8332,0.231,0.0252,0.0065]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.8626,0.231,0.021,0.0065]}
+    ],
+    "bbox": [0.787,0.231,0.0966,0.0065]
+   },
+   {
+    "text": "2.04 ZYSFM QTMYBW JHWUL ESEUS LOZC",
+    "confidence": 99,
+    "words": [
+     {"text":"2.04","confidence":99,"bbox":[0.765,0.24,0.0168,0.0065]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.787,0.24,0.021,0.0065]},
+     {"text":"QTMYBW","confidence":99,"bbox":[0.8122,0.24,0.0252,0.0065]},
+     {"text":"JHWUL","confidence":99,"bbox":[0.8416,0.24,0.021,0.0065]},
+     {"text":"ESEUS","confidence":99,"bbox":[0.8668,0.24,0.021,0.0065]},
+     {"text":"LOZC","confidence":99,"bbox":[0.892,0.24,0.0168,0.0065]}
+    ],
+    "bbox": [0.765,0.24,0.1438,0.0065]
+   },
+   {
+    "text": "QEISL NEKQKA KXBDUU NJIUT UJYH",
+    "confidence": 99,
+    "words": [
+     {"text":"QEISL","confidence":99,"bbox":[0.787,0.249,0.021,0.0065]},
+     {"text":"NEKQKA","confidence":99,"bbox":[0.8122,0.249,0.0252,0.0065]},
+     {"text":"KXBDUU","confidence":99,"bbox":[0.8416,0.249,0.0252,0.0065]},
+     {"text":"NJIUT","confidence":99,"bbox":[0.871,0.249,0.021,0.0065]},
+     {"text":"UJYH","confidence":99,"bbox":[0.8962,0.249,0.0168,0.0065]}
+    ],
+    "bbox": [0.787,0.249,0.126,0.0065]
+   },
+   {
+    "text": "YTJN HFBLJ ERKZM GATDK",
+    "confidence": 99,
+    "words": [
+     {"text":"YTJN","confidence":99,"bbox":[0.787,0.258,0.0168,0.0065]},
+     {"text":"HFBLJ","confidence":99,"bbox":[0.808,0.258,0.021,0.0065]},
+     {"text":"ERKZM","confidence":99,"bbox":[0.8332,0.258,0.021,0.0065]},
+     {"text":"GATDK","confidence":99,"bbox":[0.8584,0.258,0.021,0.0065]}
+    ],
+    "bbox": [0.787,0.258,0.0924,0.0065]
+   },
+   {
+    "text": "ZFKMP ZYSFM SCHEDULE",
+    "confidence": 99,
+    "words": [
+     {"text":"ZFKMP","confidence":99,"bbox":[0.1,0.12,0.021,0.0065]},
+     {"text":"ZYSFM","confidence":99,"bbox":[0.1252,0.12,0.021,0.0065]},
+     {"text":"SCHEDULE","confidence":99,"bbox":[0.1504,0.12,0.0336,0.0065]}
+    ],
+    "bbox": [0.1,0.12,0.084,0.0065]
+   },
+   {
+    "text": "EWFTV 4/J-201",
+    "confidence": 99,
+    "words": [{"text":"EWFTV","confidence":99,"bbox":[0.8,0.9,0.021,0.0065]},{"text":"4/J-201","confidence":99,"bbox":[0.8252,0.9,0.0294,0.0065]}],
+    "bbox": [0.8,0.9,0.0546,0.0065]
+   }
+  ]
+ },
+ "shapes": [],
+ "region": [0.542,0.142,0.947,0.2867],
+ "manual": {
+  "columnBBs": [[0.55,0.15,0.571,0.2787],[0.571,0.15,0.732,0.2787]],
+  "rowBBs": [[0.55,0.1597,0.732,0.1702],[0.55,0.1687,0.732,0.1972],[0.55,0.1957,0.732,0.2242],[0.55,0.2227,0.732,0.2512],[0.55,0.2497,0.732,0.2782]],
+  "columnNames": []
+ },
+ "guided": {"rows":[0.148,0.1702,0.1972,0.2242,0.2512,0.2782],"cols":[0.548,0.571,0.732]},
+ "truth": {
+  "type": "items",
+  "items": [
+   {"key":"","text":"SECTION 07 92 00 - ZFKMP"},
+   {"key":"PART 1","text":"GENERAL"},
+   {"key":"1.01","text":"ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW JHWUL ESEUS LOZC QEISL NEKQKA KXBDUU NJIUT"},
+   {"key":"1.02","text":"NEKQKA KXBDUU NJIUT UJYH YTJN HFBLJ ERKZM GATDK WRIS MVN MEVMU DZGMP EWFTV ZFKMP"},
+   {"key":"1.03","text":"DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW JHWUL ESEUS LOZC QEISL NEKQKA"},
+   {"key":"1.04","text":"LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN HFBLJ ERKZM GATDK WRIS MVN MEVMU DZGMP"},
+   {"key":"PART 2","text":"PRODUCTS"},
+   {"key":"2.01","text":"MVN MEVMU DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW JHWUL ESEUS LOZC"},
+   {"key":"2.02","text":"JHWUL ESEUS LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN HFBLJ ERKZM GATDK WRIS MVN"},
+   {"key":"2.03","text":"GATDK WRIS MVN MEVMU DZGMP EWFTV ZFKMP SNIEV HTJWZ DCZRP EJBC ZYSFM QTMYBW JHWUL"},
+   {"key":"2.04","text":"ZYSFM QTMYBW JHWUL ESEUS LOZC QEISL NEKQKA KXBDUU NJIUT UJYH YTJN HFBLJ ERKZM GATDK"}
+  ]
+ }
+}
