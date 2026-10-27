@@ -35,6 +35,9 @@ function shapeOf(value: string): string {
   return out;
 }
 
+/** The L/D shape signature of a tag (exported for the shape-centre key repair, parse-engine/rows/shape-centres.ts). */
+export const tagSignature = shapeOf;
+
 /** Build a regex from a shape signature.
  *
  *  - Letters (`L`): emit observed character class per position.
@@ -112,6 +115,7 @@ export function inferTagPattern(values: string[]): InferredPattern | null {
     .filter((v) => v.length > 0);
 
   if (cleaned.length < 3) return null;
+  const members: ReadonlySet<string> = new Set(cleaned);
 
   // Histogram by shape
   const shapes = new Map<string, string[]>();
@@ -150,6 +154,7 @@ export function inferTagPattern(values: string[]): InferredPattern | null {
       return {
         pattern: combined,
         strength: isWeakPattern(combined) ? "weak" : "strong",
+        members,
       };
     }
     return null;
@@ -161,7 +166,18 @@ export function inferTagPattern(values: string[]): InferredPattern | null {
   return {
     pattern: regex,
     strength: isWeakPattern(regex) ? "weak" : "strong",
+    members,
   };
+}
+
+/**
+ * [table pipeline WP-2.C, K10] Does `text` pass the inferred pattern? A value of the schedule the pattern was
+ * inferred from always passes: the pattern describes the majority format, so testing a minority member
+ * against it (EF-10 among EF-1…EF-9) hard-zeroed every hit of a tag the schedule itself lists.
+ */
+export function patternAccepts(p: InferredPattern, text: string): boolean {
+  const t = text.trim().toUpperCase();
+  return (p.members?.has(t) ?? false) || p.pattern.test(t);
 }
 
 /**

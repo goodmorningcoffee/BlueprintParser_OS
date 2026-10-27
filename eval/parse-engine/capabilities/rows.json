@@ -1,0 +1,13 @@
+{
+  "capability": "rows",
+  "version": 1,
+  "modules": [
+    "src/lib/parse-engine/rows/shape-centres.ts"
+  ],
+  "history": [
+    {
+      "version": 1,
+      "sha256": "d45ca3cb14beba27c97565550222416796bde82341b95b80ccc104064ee5f956"
+    }
+  ]
+}

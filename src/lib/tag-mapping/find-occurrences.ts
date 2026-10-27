@@ -45,6 +45,7 @@ import type {
 import { DEFAULT_SCORING_CONFIG } from "./types";
 import { resolveRegionType, weightFor } from "./primitives/region-weight";
 import { composeScore } from "./primitives/score-compose";
+import { patternAccepts } from "./primitives/pattern-infer";
 
 import { findYoloOnlyMatches } from "./matchers/type1-yolo-only";
 import { findFreeFloatingMatches, type TextRulesContext } from "./matchers/type2-text-only";
@@ -171,12 +172,13 @@ function scoreRawMatch(
   // looking for) against the inferred pattern. Apply to normalized tag, not
   // raw Textract text, so fuzzy-OCR matches aren't unfairly blocked.
   // For Type 1 (yolo-only, no text), pattern is irrelevant → patternMatch=true.
+  // [K10] A value of the schedule the pattern came from always passes (`patternAccepts`).
   const hasPattern = ctx.pattern != null;
   const patternStrength = ctx.pattern?.strength ?? "none";
   const itemText = (item.text ?? "").toUpperCase().trim();
   const patternMatch = !hasPattern || itemText === ""
     ? true
-    : ctx.pattern!.pattern.test(itemText);
+    : patternAccepts(ctx.pattern!, itemText);
 
   // Window match: for multi-word-reconstructed tags, the raw matcher has
   // already validated adjacency. For single-word or YOLO-anchored hits,

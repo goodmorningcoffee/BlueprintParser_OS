@@ -4,11 +4,13 @@
  * justify the center of each row in the table, as an additional row building tool"). A 4th MethodResult
  * for the grid merger beside OCR positions / Textract / OpenCV lines: the rows are the column of tag
  * shapes in the region's left part (classifier-engine/shape-column.ts — the same rule the proposals' tag
- * map uses), each row band running from one shape to the next, so a multi-line description stays one row
+ * map uses), each row band running between the midpoints of consecutive shape centres (WP-2.C, K13: a
+ * description centred on its shape stays in its row; the last row runs to the last word in the region), so a multi-line description stays one row
  * (the OCR-positions chain, tol .006, splits 29 % of legend tag bands); the columns are x-start clusters
  * (OCR-positions' gap rule) over the CELL-START words right of the shapes — a word with a neighbour ending
  * within the column gap to its left continues a cell, so "NEW WALL TYPE" stays one description column;
- * the tag column is the shape column itself (the word inside the shape, else the classical crop read). Measured basis: shape centre within .18 word
+ * the tag column is the shape column itself (the word inside the shape, else the classical crop read, its lost
+ * `.`/`/` restored from the sibling keys: parse-engine/rows/shape-centres.ts). Measured basis: shape centre within .18 word
  * heights of its row text (yolo), .04 (classical). Pure.
  *
  * Confidence .6 when the column is regular (≥ 3 shapes, gap CV ≤ .5), else .35 so the merger never takes a
@@ -16,7 +18,9 @@
  */
 import type { MethodResult } from "@/lib/grid-merger";
 import type { TextractWord } from "@/types";
-import { bestShapeColumn, rowBands, tagTextOf, type ColumnShape, type ColumnWord } from "@/lib/classifier-engine/shape-column";
+import { bestShapeColumn, type ColumnShape, type ColumnWord } from "@/lib/classifier-engine/shape-column";
+import { assembleText } from "@/lib/parse-engine/lines";
+import { readShapeKeys, shapeRowBands } from "@/lib/parse-engine/rows/shape-centres";
 
 export interface ShapeRowsOptions {
   /** OCR-positions' column gap (normalized x) between x-start clusters. Default .015. */
@@ -31,7 +35,9 @@ const WEAK_CONFIDENCE = 0.35;
 const MAX_GAP_CV = 0.5;
 
 const toColumnWord = (w: TextractWord): ColumnWord => ({ text: w.text, bbox: [w.bbox[0], w.bbox[1], w.bbox[0] + w.bbox[2], w.bbox[1] + w.bbox[3]], c: [w.bbox[0] + w.bbox[2] / 2, w.bbox[1] + w.bbox[3] / 2], h: Math.max(w.bbox[3], 1e-4) });
-const joinWords = (ws: readonly ColumnWord[]): string => [...ws].sort((a, b) => a.c[1] - b.c[1] || a.bbox[0] - b.bbox[0]).map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
+// [table pipeline WP-2.C] line-aware (lines top to bottom, words left to right): the exact-y-centre sort read
+// words of one line out of order under a small height jitter (C02-F3).
+const joinWords = (ws: readonly ColumnWord[]): string => assembleText(ws.map((w) => ({ t: w.text, b: w.bbox }))).replace(/\s+/g, " ").trim();
 
 export function methodShapeRows(
   words: readonly TextractWord[],
@@ -46,7 +52,9 @@ export function methodShapeRows(
   const inBox = words.map(toColumnWord).filter((w) => w.c[0] >= regionBbox[0] && w.c[0] <= regionBbox[2] && w.c[1] >= regionBbox[1] && w.c[1] <= regionBbox[3]);
   const col = bestShapeColumn(shapes, regionBbox, "any");
   if (!col) return fail("no shape column: need ≥ 3 aligned tag shapes in the left 25 % of the region", { shapesInRegion: shapes.length, regionWordCount: inBox.length });
-  const bands = rowBands(col, regionBbox);
+  const { bands, align } = shapeRowBands(col.shapes.map((s) => s.bbox), regionBbox, inBox.map((w) => w.bbox));
+  // [WP-2.C] keys: the words inside each shape, else its crop read (flagged), repaired against the siblings (C2-m4).
+  const keys = readShapeKeys(col.shapes, inBox.map((w) => ({ t: w.text, b: w.bbox })));
 
   // Columns right of the shapes: OCR-positions' x-start clusters over the words that START a cell.
   const right = inBox.filter((w) => w.c[0] > col.right);
@@ -93,12 +101,12 @@ export function methodShapeRows(
 
   const rows: Record<string, string>[] = [];
   let withTag = 0;
-  col.shapes.forEach((s, i) => {
+  col.shapes.forEach((_s, i) => {
     const band = bands[i];
     const cells = bounds.map(() => [] as ColumnWord[]);
     for (const w of inBox) if (w.c[1] >= band[1] && w.c[1] < band[3]) cells[colOf(w)].push(w);
     const row: Record<string, string> = {};
-    const tag = tagTextOf(s, inBox) ?? joinWords(cells[0]);
+    const tag = keys[i].key ?? joinWords(cells[0]);
     if (tag) withTag++;
     headers.forEach((h, c) => { row[h] = c === 0 ? tag : joinWords(cells[c]); });
     rows.push(row);
@@ -115,8 +123,9 @@ export function methodShapeRows(
     rowBoundaries: [headerWords.length ? Math.min(regionBbox[1], ...headerWords.map((w) => w.bbox[1])) : bands[0][1], ...bands.map((b) => b[1]).slice(1), bands[bands.length - 1][3]],
     debug: {
       intermediate: {
-        source: col.source, shapeClass: col.shapeClass, shapeCount: col.n, gapCv: col.gapCv, regular,
+        source: col.source, shapeClass: col.shapeClass, bandAlign: align, shapeCount: col.n, gapCv: col.gapCv, regular,
         regionWordCount: inBox.length, columnClusterCount: centers.length, headerRowDetected: headerWords.length > 0, rowsWithTag: withTag,
+        keyFromCrop: keys.filter((k) => k.flags.includes("key-from-crop")).length, keysRepaired: keys.filter((k) => k.flags.includes("key-repaired")).length,
       },
     },
   };

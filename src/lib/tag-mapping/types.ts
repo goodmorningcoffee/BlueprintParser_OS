@@ -78,6 +78,8 @@ export interface ScoredMatch {
 export interface InferredPattern {
   pattern: RegExp;
   strength: "strong" | "weak";
+  /** [K10] The (trimmed, upper-cased) values the pattern was inferred from; each always passes (`patternAccepts`). */
+  members?: ReadonlySet<string>;
 }
 
 // ─── Scope ────────────────────────────────────────────────────

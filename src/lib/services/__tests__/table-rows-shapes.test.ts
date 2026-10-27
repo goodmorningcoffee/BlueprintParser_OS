@@ -2,6 +2,8 @@
 // the row above, the tag column reads the word inside the shape (else the crop read), the header comes from the
 // words above the first band, the result merges through grid-merger as a 4th MethodResult, and a region without
 // a column fails softly.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TextractWord } from "@/types";
 import type { ColumnShape } from "@/lib/classifier-engine/shape-column";
@@ -74,5 +76,33 @@ describe("methodShapeRows", () => {
     const r = methodShapeRows(words, shapes, REGION);
     expect(r.headers).toEqual(["SYM", "QTY", "QTY (2)"]);
     expect(r.rows[3]).toEqual({ SYM: "K4", QTY: "3", "QTY (2)": "30" });
+  });
+});
+
+// [table pipeline WP-2.C] K13 + C2-m4 on the synthetic shape fixtures (WP-2.0a): the parsed grid equals each
+// fixture's hand-written truth (centred 3-line rows, a tall last row, classical crop keys that lost their dot,
+// hexagon keys, centred keynotes), and the top-aligned keynote-bubble legend keeps every note whole.
+describe("methodShapeRows on the synthetic shape fixtures (K13, C2-m4)", () => {
+  const fixture = (id: string) => JSON.parse(readFileSync(join(__dirname, "../../parse-engine/__fixtures__", `${id}.synthetic.json`), "utf8"));
+  for (const id of ["syn-sched-shapes-centred-3line", "syn-sched-shapes-tall-last", "syn-sched-shapes-classical-dotted", "syn-sched-shapes-hex", "syn-keynote-shapes"]) {
+    it(`${id}: headers and rows equal the truth`, () => {
+      const f = fixture(id);
+      const r = methodShapeRows(f.page.words, f.shapes, f.region);
+      expect(r.headers).toEqual(f.truth.headers);
+      expect(r.rows.map((row) => r.headers.map((h) => row[h]))).toEqual(f.truth.rows);
+    });
+  }
+
+  it("dotted keys survive the crop fallback, flagged in the debug counts", () => {
+    const f = fixture("syn-sched-shapes-classical-dotted");
+    const r = methodShapeRows(f.page.words, f.shapes, f.region);
+    expect(r.debug?.intermediate).toMatchObject({ keyFromCrop: 2, keysRepaired: 2, bandAlign: "centre" });
+  });
+
+  it("the top-aligned keynote-bubble legend keeps each note's lines together", () => {
+    const f = fixture("syn-notes-keynote-bubbles");
+    const r = methodShapeRows(f.page.words, f.shapes, f.region);
+    expect(r.debug?.intermediate).toMatchObject({ bandAlign: "top" });
+    expect(r.rows.map((row) => r.headers.map((h) => row[h]))).toEqual(f.truth.items.map((it: { key: string; text: string }) => [it.key, it.text]));
   });
 });
