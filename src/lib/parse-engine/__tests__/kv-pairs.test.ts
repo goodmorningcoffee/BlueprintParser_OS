@@ -3,7 +3,7 @@
 // `notes-key-value` grids). All text is synthetic pseudo-words (rule 12).
 import { describe, expect, it } from "vitest";
 import { groupLinesByYOverlap, kvPairs, type KvLine } from "../paragraphs/kv-pairs";
-import { bindKeyValueGrid, buildLineFeatures } from "@/lib/specnote-parser";
+import { bindKeyValueGrid, buildLineFeatures, parseNotesFromRegion } from "@/lib/specnote-parser";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import type { TextractLine, TextractPageData, TextractWord } from "@/types";
 
@@ -136,5 +136,96 @@ describe("bindKeyValueGrid on kv-pairs (K09)", () => {
     const kv = regions.find((r) => r.type === "notes-key-value");
     expect(kv, "the probe classifies as notes-key-value").toBeDefined();
     expect(kv!.grid?.rows).toEqual([{ Key: "QBBREVRQTRONS", Value: "" }, ...ENTRIES.map(([Key, Value]) => ({ Key, Value }))]);
+  });
+});
+
+// WP-2.B VERIFY MED-1 / LOW-1 (fix round): layouts the y-overlap grouping must NOT merge into one entry.
+/** One OCR LINE (LTWH) from explicitly placed words `[text, x, w]` on one baseline. */
+function placedLine(words: [string, number, number][], y: number, h = 0.006): TextractLine {
+  const ws: TextractWord[] = words.map(([t, x, w]) => ({ text: t, confidence: 95, bbox: [x, y, w, h] as Ltwh }));
+  const x0 = Math.min(...words.map(([, x]) => x));
+  const x1 = Math.max(...words.map(([, x, w]) => x + w));
+  return { text: words.map(([t]) => t).join(" "), confidence: 95, bbox: [x0, y, x1 - x0, h] as Ltwh, words: ws } as TextractLine;
+}
+
+/** A legend printed in two side-by-side columns: per row, `QA<r> | QVALA<r> QWORD` and `QB<r> | QVALB<r> QWORD`. */
+function twoColumnLegend(oneLinePerPair: boolean): { lines: TextractLine[]; pairs: [string, string][] } {
+  const lines: TextractLine[] = [];
+  const pairs: [string, string][] = [];
+  for (let r = 0; r < 4; r++) {
+    const y = 0.1 + r * 0.02;
+    for (const [c, x] of [["A", 0.1], ["B", 0.5]] as const) {
+      const key: [string, number, number] = [`Q${c}${r}`, x, 0.03];
+      const val: [string, number, number][] = [[`QVAL${c}${r}`, x + 0.1, 0.06], ["QWORD", x + 0.17, 0.03]];
+      if (oneLinePerPair) lines.push(placedLine([key, ...val], y));
+      else lines.push(placedLine([key], y), placedLine(val, y));
+      pairs.push([`Q${c}${r}`, `QVAL${c}${r} QWORD`]);
+    }
+  }
+  return { lines, pairs };
+}
+
+describe("kvPairs keeps separate entries separate (WP-2.B VERIFY MED-1)", () => {
+  it("two side-by-side legend columns, one LINE per entry: 8 entries, none paired across the gutter", () => {
+    const { lines, pairs } = twoColumnLegend(true);
+    expect(kvPairs(toKvLines(lines), { minGapRatio: 0.05 }).pairs.map((p) => [p.key, p.value])).toEqual(pairs);
+    expect(bindKeyValueGrid(buildLineFeatures(lines))?.rows).toEqual(pairs.map(([Key, Value]) => ({ Key, Value })));
+  });
+
+  it("two side-by-side legend columns, key and value as separate LINEs: 8 entries", () => {
+    const { lines, pairs } = twoColumnLegend(false);
+    const r = kvPairs(toKvLines(lines), { minGapRatio: 0.05 });
+    expect(r.pairs.map((p) => [p.key, p.value])).toEqual(pairs);
+    // every line lands in exactly one entry; each entry's box stays on its own side of the gutter
+    expect(r.pairs.flatMap((p) => p.lineIdx).sort((a, b) => a - b)).toEqual(lines.map((_, i) => i));
+    for (const p of r.pairs) expect(p.b[2] < 0.45 || p.b[0] > 0.45).toBe(true);
+    expect(bindKeyValueGrid(buildLineFeatures(lines))?.rows).toEqual(pairs.map(([Key, Value]) => ({ Key, Value })));
+  });
+
+  it("the notes catch-all reads a two-column legend entry by entry (autoSplitColumns on and off)", () => {
+    const { lines, pairs } = twoColumnLegend(true);
+    const pg = page(lines);
+    for (const autoSplitColumns of [true, false]) {
+      const g = parseNotesFromRegion(pg, [0.05, 0.05, 0.8, 0.2], { autoSplitColumns });
+      const got = (g?.rows ?? []).map((row) => [row.Key, row.Value ?? row.Note]);
+      for (const [k, v] of pairs) expect(got, `autoSplitColumns=${autoSplitColumns}`).toContainEqual([k, v]);
+      expect(got.some(([k, v]) => /QA\d/.test(`${k}`) && /QB\d/.test(`${v}`)), "no pair across the gutter").toBe(false);
+    }
+  });
+
+  it("a multi-word key beside a multi-word value is one entry, not a gutter", () => {
+    const lines = toKvLines([ocrLine("QQ RR", 0.6, 0.1, 0.03), ocrLine("SS TT UU", 0.66, 0.1, 0.09)]);
+    expect(kvPairs(lines, { minGapRatio: 0.05 }).pairs.map((p) => [p.key, p.value])).toEqual([["QQ RR", "SS TT UU"]]);
+  });
+
+  it("a tall LINE beside two stacked entries stays its own row and does not chain them", () => {
+    const tall = placedLine([["QBIG", 0.05, 0.03]], 0.1, 0.02);
+    const entries: [string, string, number][] = [["QK1", "QVALONE", 0.101], ["QK2", "QVALTWO", 0.111], ["QK3", "QVALTHREE", 0.13]];
+    const want = [{ Key: "QBIG", Value: "" }, ...entries.map(([Key, Value]) => ({ Key, Value }))];
+    const oneLine = [tall, ...entries.map(([k, v, y]) => placedLine([[k, 0.1, 0.03], [v, 0.2, 0.06]], y))];
+    expect(bindKeyValueGrid(buildLineFeatures(oneLine))?.rows).toEqual(want);
+    const split = [tall, ...entries.flatMap(([k, v, y]) => [placedLine([[k, 0.1, 0.03]], y), placedLine([[v, 0.2, 0.06]], y)])];
+    expect(bindKeyValueGrid(buildLineFeatures(split))?.rows).toEqual(want);
+  });
+
+  it("does not chain stacked lines through a growing band: membership is pairwise", () => {
+    const lines = toKvLines([ocrLine("QQ", 0.1, 0.1, 0.02), ocrLine("RR", 0.2, 0.103, 0.02), ocrLine("SS", 0.3, 0.106, 0.02)]);
+    expect(groupLinesByYOverlap(lines)).toEqual([[0, 1], [2]]);
+  });
+});
+
+describe("bindKeyValueGrid continuation merge (WP-2.B VERIFY LOW-1)", () => {
+  it("appends a wrapped value LINE to the previous entry; one row boundary per row", () => {
+    const lines = legendLines(false);
+    const wrapped = [...lines.slice(0, 4), ocrLine("CXNTRNUQTRXN", 0.66, 0.135, 0.05), ...lines.slice(4)].map((l, i) =>
+      i > 4 ? ocrLine(l.text, l.bbox[0], l.bbox[1] + 0.01, l.bbox[2]) : l,
+    );
+    const g = bindKeyValueGrid(buildLineFeatures(wrapped));
+    expect(g?.rows).toEqual([
+      { Key: ENTRIES[0][0], Value: ENTRIES[0][1] },
+      { Key: ENTRIES[1][0], Value: `${ENTRIES[1][1]} CXNTRNUQTRXN` },
+      ...ENTRIES.slice(2).map(([Key, Value]) => ({ Key, Value })),
+    ]);
+    expect(g?.rowBoundaries).toHaveLength(g!.rows.length);
   });
 });
