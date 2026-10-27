@@ -20,6 +20,7 @@ import {
 import { useTextractForPage } from "@/queries/useTextract";
 import { navigateYoloTag, readYoloTags } from "@/queries/useYoloTags";
 import { canPersist } from "@/lib/client-persist";
+import { renamedHeader } from "@/lib/table-headers";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import EditableGrid from "./EditableGrid";
 
@@ -364,9 +365,12 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     setTableParsedGridForUser({ ...tableParsedGrid, rows: newRows });
   };
 
-  const handleHeaderRename = (colIndex: number, newName: string) => {
+  const handleHeaderRename = (colIndex: number, requestedName: string) => {
     if (!tableParsedGrid) return;
     const oldH = tableParsedGrid.headers[colIndex];
+    // K06: a name another column already uses gets "X (2)", so the rename never merges two columns.
+    const newName = renamedHeader(tableParsedGrid.headers, colIndex, requestedName);
+    if (newName === oldH) return;
     const newHeaders = [...tableParsedGrid.headers];
     newHeaders[colIndex] = newName;
     const newRows = tableParsedGrid.rows.map((row) => {

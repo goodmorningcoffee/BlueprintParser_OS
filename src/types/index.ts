@@ -729,7 +729,7 @@ export interface ParsedRegion {
   id: string;
   type: ParsedRegionType;
   category: string; // "door-schedule", "keynote-table", "symbol-legend", etc.
-  bbox: BboxLTWH; // region location on page
+  bbox: BboxMinMax; // stored normalised MinMax [x0,y0,x1,y1] (K04); read with lib/parsed-region-bbox
   confidence: number;
   csiTags?: CsiCode[];
   data: ScheduleData | KeynoteData | LegendData | NotesData | SpecData;

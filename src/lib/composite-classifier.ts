@@ -46,6 +46,7 @@ import {
   ltwh2minmax,
 } from "@/lib/bbox-utils";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 import { isWholeWordMatch } from "@/lib/text-match-utils";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -213,9 +214,13 @@ export function classifyPageRegions(
   for (const pr of parsedRegions ?? []) {
     // ParsedRegion has no pageNumber field in our input shape — caller is
     // expected to pre-filter by page. Just accept what we're given.
+    // The saved box is already MinMax (K04): reading it as LTWH stretched a schedule at
+    // [.6,.1,.9,.4] to [.6,.1,1.5,.5] and down-tiered plan tags beside it.
+    const bbox = parsedRegionMinMax(pr);
+    if (!bbox) continue;
     const region: ClassifiedRegion = {
       kind: "table",
-      bbox: ltwh2minmax(pr.bbox),
+      bbox,
       confidence: 0.95,
       sources: ["parsedRegions"],
       pageNumber,

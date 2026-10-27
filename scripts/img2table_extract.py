@@ -26,6 +26,37 @@ except ImportError:
     sys.exit(0)
 
 
+def _unique_headers(headers: list) -> list:
+    """
+    Column-header dedupe (K06), the same rule as `src/lib/table-headers.ts` `uniqueHeaders`.
+
+    Rows are dicts keyed by header, so two columns printed with the same name ("TYPE" under DOOR
+    and under FRAME) would share one key and the second column's values would overwrite the
+    first. The first occurrence keeps its label; later ones become "X (2)", "X (3)", ...; a suffix
+    already taken by a printed label moves on to the next free number; a blank label becomes
+    "Column <n>" (1-based position). Exact, case-sensitive.
+    """
+    base = [h if isinstance(h, str) and h.strip() != "" else f"Column {i + 1}" for i, h in enumerate(headers)]
+    first_at = {}
+    for i, h in enumerate(base):
+        first_at.setdefault(h, i)
+    taken = set(first_at)
+    next_suffix = {}
+    out = []
+    for i, h in enumerate(base):
+        if first_at[h] == i:
+            out.append(h)
+            continue
+        n = next_suffix.get(h, 2)
+        while f"{h} ({n})" in taken:
+            n += 1
+        label = f"{h} ({n})"
+        next_suffix[h] = n + 1
+        taken.add(label)
+        out.append(label)
+    return out
+
+
 def _table_to_method_result(best_table, region_bbox: list, crop_w: int, crop_h: int) -> dict:
     """
     Convert a single img2table ExtractedTable into a MethodResult dict.
@@ -58,6 +89,7 @@ def _table_to_method_result(best_table, region_bbox: list, crop_w: int, crop_h: 
     headers = [str(c) for c in df.columns]
     if all(str(h).isdigit() for h in headers):
         headers = [f"Column {int(h) + 1}" for h in headers]
+    headers = _unique_headers(headers)
 
     rows = []
     for _, row in df.iterrows():

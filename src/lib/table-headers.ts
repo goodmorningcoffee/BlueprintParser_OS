@@ -31,3 +31,18 @@ export function uniqueHeaders(headers: readonly string[]): string[] {
     return label;
   });
 }
+
+/**
+ * The name a renamed column may take without colliding (K06 on rename): `name` itself when no other
+ * column uses it, else the next free `name (n)` by the `uniqueHeaders` rule. The other columns never
+ * change, so their row keys stay valid. A blank name becomes `Column <index + 1>`. Exact and
+ * case-sensitive, like `uniqueHeaders`.
+ */
+export function renamedHeader(headers: readonly string[], index: number, name: string): string {
+  const taken = new Set(headers.filter((_, i) => i !== index));
+  const label = typeof name === "string" && name.trim() !== "" ? name : `Column ${index + 1}`;
+  if (!taken.has(label)) return label;
+  let n = 2;
+  while (taken.has(`${label} (${n})`)) n++;
+  return `${label} (${n})`;
+}

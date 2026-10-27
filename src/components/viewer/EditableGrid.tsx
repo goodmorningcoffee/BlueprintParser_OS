@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { renamedHeader } from "@/lib/table-headers";
 
 export interface EditableGridProps {
   headers: string[];
@@ -143,7 +144,8 @@ export default function EditableGrid({
 
   const commitHeaderEdit = useCallback(() => {
     if (editingHeader === null || !onHeaderRename) return;
-    const newName = headerEditValue.trim() || `Column ${editingHeader + 1}`;
+    // K06: renaming onto another column's name yields "X (2)" instead of merging the two columns.
+    const newName = renamedHeader(headers, editingHeader, headerEditValue.trim());
     if (newName !== headers[editingHeader]) {
       onHeaderRename(editingHeader, newName);
     }

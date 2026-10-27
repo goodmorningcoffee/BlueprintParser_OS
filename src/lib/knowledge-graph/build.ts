@@ -34,6 +34,7 @@
 
 import { patternRegex } from "@/lib/shape-ensemble/families";
 import type { BboxLTWH } from "@/types";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 import {
   isCalloutDetailNumber,
   isCalloutSheetNumber,
@@ -405,12 +406,13 @@ export function buildKnowledgeGraph(input: GraphBuildInput, options: GraphBuildO
     (page.parsedRegions ?? []).forEach((r, i) => {
       const id = `table:${pn}:pr:${r.id ?? i}`;
       const category = r.category || r.type || "parsed-region";
-      const bbox = r.bbox ?? [0, 0, 0, 0];
-      addTable(pn, id, category, bbox, 0.9, prov("parsedRegions", pn, r.bbox), r.id);
+      const mm = parsedRegionMinMax(r); // the saved box is MinMax (K04); graph nodes are LTWH
+      const bbox: BboxLTWH = mm ? ltwhFromMinMax(mm) : [0, 0, 0, 0];
+      addTable(pn, id, category, bbox, 0.9, prov("parsedRegions", pn, mm ? bbox : undefined), r.id);
       for (const tag of r.csiTags ?? []) {
         if (!tag.code) continue;
         csiNode(tag.code, tag.description, tag.division);
-        g.csi(id, tag.code, "span", 0.7, prov("parsedRegions", pn, r.bbox));
+        g.csi(id, tag.code, "span", 0.7, prov("parsedRegions", pn, mm ? bbox : undefined));
         tableCsi.set(id, [...(tableCsi.get(id) ?? []), tag.code]);
       }
       const data = (r.data ?? null) as { rows?: unknown[]; tagColumn?: string | number | null; keynotes?: Array<{ key: string; description?: string }> } | null;

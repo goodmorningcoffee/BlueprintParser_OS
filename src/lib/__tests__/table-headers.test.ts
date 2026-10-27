@@ -2,7 +2,7 @@
 // [table pipeline WP-2.0b] Header dedupe (K06): duplicate names must keep separate record keys.
 
 import { describe, expect, it } from "vitest";
-import { uniqueHeaders } from "@/lib/table-headers";
+import { renamedHeader, uniqueHeaders } from "@/lib/table-headers";
 
 describe("uniqueHeaders", () => {
   it("keeps the first label and suffixes later duplicates X (2), X (3)", () => {
@@ -34,5 +34,20 @@ describe("uniqueHeaders", () => {
     const input = ["A", "B"];
     expect(uniqueHeaders(input)).toEqual(input);
     expect(new Set(uniqueHeaders(["a", "a", "a", "a (2)", "a (3)", ""])).size).toBe(6);
+  });
+});
+
+describe("renamedHeader (K06 on rename)", () => {
+  it("keeps a free name and suffixes a taken one without touching the other columns", () => {
+    expect(renamedHeader(["ZA", "ZB", "ZC"], 2, "ZQ")).toBe("ZQ");
+    expect(renamedHeader(["ZA", "ZB", "ZC"], 2, "ZA")).toBe("ZA (2)");
+    expect(renamedHeader(["ZA", "ZA (2)", "ZC"], 2, "ZA")).toBe("ZA (3)");
+  });
+
+  it("renaming a column to its own name is a no-op; blank becomes Column n; case-sensitive", () => {
+    expect(renamedHeader(["ZA", "ZB"], 1, "ZB")).toBe("ZB");
+    expect(renamedHeader(["ZA", "ZB"], 1, "  ")).toBe("Column 2");
+    expect(renamedHeader(["Column 2", "ZB"], 1, "")).toBe("Column 2 (2)");
+    expect(renamedHeader(["za", "ZB"], 1, "ZA")).toBe("ZA");
   });
 });

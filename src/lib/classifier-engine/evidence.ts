@@ -37,7 +37,7 @@ export interface ClassifierPageInput {
   csiCodes?: readonly CsiCode[] | null;
   /** The page's fresh region v2 record — the "regions-v2" candidate source. */
   regionsV2?: RegionsV2 | null;
-  /** User-committed regions (`pageIntelligence.parsedRegions`, LTWH bboxes) — the "parsed-regions" source. */
+  /** User-committed regions (`pageIntelligence.parsedRegions`, MinMax bboxes, K04) — the "parsed-regions" source. */
   parsedRegions?: ReadonlyArray<{ bbox?: readonly number[] | null }> | null;
   /** `pages.drawingNumber` — the sheet number. */
   drawingNumber?: string | null;

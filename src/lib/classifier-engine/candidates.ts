@@ -11,6 +11,7 @@ import { DUPLICATE_IOU } from "@/lib/region-classifier-v2/classify";
 import { inside, iou, ltwhToMinMax } from "@/lib/region-classifier-v2/geometry";
 import type { Candidate, ClassifierPageInput, PageEvidence } from "./evidence";
 import type { CandidateSource, ClassifierRecipe } from "./types";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 
 const validBox = (b: readonly number[] | null | undefined): b is BboxMinMax =>
   Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v)) && b[2] > b[0] && b[3] > b[1];
@@ -40,7 +41,7 @@ function fromSource(src: CandidateSource, input: ClassifierPageInput, page: Page
     }
     case "parsed-regions":
       return (input.parsedRegions ?? [])
-        .map((r) => (r?.bbox && r.bbox.length === 4 ? ltwhToMinMax(r.bbox as [number, number, number, number]) : null))
+        .map((r) => parsedRegionMinMax(r)) // stored MinMax (K04); was read as LTWH
         .filter(validBox)
         .map((bbox) => ({ source: "parsed-regions" as const, bbox, anchorBbox: bbox }));
     default:
