@@ -11,7 +11,7 @@ import type { RegionDetection } from "@/lib/region-classifier-v2";
 
 export interface Mark {
   channel: string; label: string; bbox: BboxMinMax; center: [number, number]; confidence?: number;
-  provenance?: string; text?: string | null; meta?: { modelName?: string; division?: string } | null;
+  provenance?: string; text?: string | null; meta?: { modelName?: string; division?: string; annotationId?: number | null } | null;
 }
 export interface SamplePage { pid: string; set: number; page: number; run: string }
 
@@ -71,30 +71,85 @@ export function loadPage(s: SamplePage, corpus = DEFAULT_CORPUS): LoadedPage | n
     code: m.label, description: "", trade: "", division: m.meta?.division ?? m.label,
     triggers: [{ text: "", tier: 1 as const, bbox: minMaxToLtwh(m.bbox) }],
   }));
-  const keynotes: KeynoteShapeData[] = marks.filter((m) => m.channel === "shape").map((m) => ({ shape: m.label, text: m.text ?? "", bbox: m.bbox }));
+  const keynotes: KeynoteShapeData[] = classicalKeynotes(s.pid, marks, corpus);
   return { marks, yolo, detections, words, csiCodes, drawingNumber: sheetNumberOf(s.pid, s.page, corpus), keynotes };
 }
 
-const tablesCache = new Map<string, Map<number, TextractTable[]>>();
 /**
- * [shape-tags] The page's Textract TABLES from the corpus bundle (`data/bundles/<pid>.json` → pages[].textractData.tables;
- * the marks do not carry them, production holds them in `pages.textractData.tables`). The bundle is parsed once per
- * pid and only its tables are kept. Empty when the bundle is absent.
+ * [table-pipeline WP-2.G, K79] What a corpus bundle holds that the marks do not, parsed once per pid and kept small:
+ * the Textract TABLES per page, and the classical crop read (`data.text`) of every shape-parse annotation by id.
  */
-export function textractTablesOf(pid: string, page: number, corpus = DEFAULT_CORPUS): TextractTable[] {
-  let m = tablesCache.get(pid);
-  if (!m) {
-    m = new Map();
+interface BundleIndex { tables: Map<number, TextractTable[]>; shapeText: Map<number, string>; textRegions: Map<number, CorpusTextRegion[]> }
+/** A System-1 text region from the bundle's `pageIntelligence.textRegions` (type + MinMax box only; no text kept). */
+export interface CorpusTextRegion { type: string; bbox: BboxMinMax }
+const bundleCache = new Map<string, BundleIndex>();
+function bundleIndexOf(pid: string, corpus = DEFAULT_CORPUS): BundleIndex {
+  const key = `${corpus}\u0000${pid}`;
+  let ix = bundleCache.get(key);
+  if (!ix) {
+    ix = { tables: new Map(), shapeText: new Map(), textRegions: new Map() };
     const file = join(corpus, "data", "bundles", `${pid}.json`);
     if (existsSync(file)) {
       try {
-        const bundle = JSON.parse(readFileSync(file, "utf8")) as { pages?: Array<{ pageNumber?: number; textractData?: { tables?: TextractTable[] } | null }> };
+        const bundle = JSON.parse(readFileSync(file, "utf8")) as {
+          pages?: Array<{ pageNumber?: number; textractData?: { tables?: TextractTable[] } | null; pageIntelligence?: { textRegions?: Array<{ type?: unknown; bbox?: unknown }> } | null }>;
+          annotations?: Array<{ id?: number; source?: string; data?: { text?: unknown } | null }>;
+        };
         for (const p of bundle.pages ?? []) {
-          if (typeof p?.pageNumber === "number" && Array.isArray(p.textractData?.tables)) m.set(p.pageNumber, p.textractData.tables.filter((t) => t?.bbox));
+          if (typeof p?.pageNumber === "number" && Array.isArray(p.textractData?.tables)) ix.tables.set(p.pageNumber, p.textractData.tables.filter((t) => t?.bbox));
+          const trs = p?.pageIntelligence?.textRegions;
+          if (typeof p?.pageNumber === "number" && Array.isArray(trs)) {
+            ix.textRegions.set(p.pageNumber, trs.flatMap((t) => {
+              const b = t?.bbox;
+              if (typeof t?.type !== "string" || !Array.isArray(b) || b.length !== 4 || !b.every((v) => typeof v === "number")) return [];
+              return [{ type: t.type, bbox: [b[0], b[1], b[0] + b[2], b[1] + b[3]] as BboxMinMax }]; // textRegions are LTWH
+            }));
+          }
         }
-      } catch { /* malformed bundle → no tables for this run */ }
+        for (const a of bundle.annotations ?? []) {
+          if (a?.source === "shape-parse" && typeof a.id === "number") ix.shapeText.set(a.id, typeof a.data?.text === "string" ? a.data.text : "");
+        }
+      } catch { /* malformed bundle → no tables, no crop reads for this run */ }
     }
-    tablesCache.set(pid, m);
+    bundleCache.set(key, ix);
   }
-  return m.get(page) ?? [];
+  return ix;
+}
+
+/**
+ * [table-pipeline WP-2.G, K79] The page's classical shapes as production's `pages.keynotes` rows. Only classical shape-parse
+ * marks (provenance `raster.opencv.shape:`) qualify: symbol-search template hits and other machine sources never enter
+ * `pages.keynotes` in production. The ingest wrote `text = note || name` for shape-parse ANNOTATIONS, so their mark text is
+ * the shape name ("circle"); the crop read is the bundle annotation's `data.text`. Marks cut from `pages.keynotes`
+ * (no annotation id) already carry the crop read. When the bundle is absent, an annotation mark whose text is just its
+ * label gets "" (unknown), never the shape name.
+ */
+export function classicalKeynotes(pid: string, marks: readonly Mark[], corpus = DEFAULT_CORPUS): KeynoteShapeData[] {
+  const out: KeynoteShapeData[] = [];
+  for (const m of marks) {
+    if (m.channel !== "shape" || !(m.provenance ?? "").startsWith("raster.opencv.shape:")) continue;
+    const annId = m.meta?.annotationId;
+    let text = m.text ?? "";
+    if (typeof annId === "number") {
+      const crop = bundleIndexOf(pid, corpus).shapeText.get(annId);
+      // an empty / blank crop read is unknown, not "": a later ingest's own text (not the shape name) then survives
+      text = crop?.trim() ? crop : text === m.label ? "" : text;
+    }
+    out.push({ shape: m.label, text, bbox: m.bbox });
+  }
+  return out;
+}
+
+/**
+ * [shape-tags] The page's Textract TABLES from the corpus bundle (`data/bundles/<pid>.json` → pages[].textractData.tables;
+ * the marks do not carry them, production holds them in `pages.textractData.tables`). The bundle is parsed once per
+ * pid and only its tables (and the shape crop reads, K79) are kept. Empty when the bundle is absent.
+ */
+export function textractTablesOf(pid: string, page: number, corpus = DEFAULT_CORPUS): TextractTable[] {
+  return bundleIndexOf(pid, corpus).tables.get(page) ?? [];
+}
+
+/** [table-pipeline WP-2.G] The page's System-1 text regions (type + MinMax) from the bundle; empty when absent. */
+export function textRegionsOf(pid: string, page: number, corpus = DEFAULT_CORPUS): CorpusTextRegion[] {
+  return bundleIndexOf(pid, corpus).textRegions.get(page) ?? [];
 }
