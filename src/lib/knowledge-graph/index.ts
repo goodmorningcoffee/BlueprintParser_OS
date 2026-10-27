@@ -77,3 +77,5 @@ export {
   type ProjectCrossSetLink,
   type ProjectCrossSetLinks,
 } from "./cross-set";
+// [TP-3 WP-3.H] the signed-in viewer bootstrap strips large / server-only keys — see viewer-pi.ts.
+export { viewerProjectIntelligence, VIEWER_STRIPPED_INDEX_KEYS, VIEWER_STRIPPED_PI_KEYS } from "./viewer-pi";

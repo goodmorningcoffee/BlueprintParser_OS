@@ -16,7 +16,7 @@
 //     UPDATE, any active mutation lease → busy. Sound because lease acquisition runs under
 //     the same row lock, so a later lease waits for this commit and then reads the mark.
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { AuthSession, ProjectAccessRow } from "@/lib/api-utils";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
@@ -143,7 +143,8 @@ export type WorkReader = Pick<ProjectWriteTransaction, "select" | "selectDistinc
 
 /**
  * Pages carrying human work: annotations of the given sources (default: user/takeoff), QTO
- * references (schedule page, line-item pages and instances), parsed regions, parse labels.
+ * references (schedule page, line-item pages and instances), parsed regions, parse labels, notes/spec
+ * card verdicts, proposal verdicts, and tag-map instances the user confirmed or rejected.
  */
 export async function humanWorkPages(
   tx: WorkReader,
@@ -177,16 +178,44 @@ export async function humanWorkPages(
     ));
   for (const row of regions) work.add(row.pageNumber);
   // [TP-2 WP-2.F] a page whose parsed regions carry ✓/✗ labels (user-owned gold) is human work too.
+  // [TP-3 WP-3.H, rule 8] so is a page with notes/spec card verdicts or proposal verdicts.
   const labelled = await tx
     .select({ pageNumber: pages.pageNumber })
     .from(pages)
     .where(and(
       eq(pages.projectId, projectId),
-      sql`jsonb_typeof(${pages.pageIntelligence}->'parseLabels') = 'object'`,
-      sql`${pages.pageIntelligence}->'parseLabels' <> '{}'::jsonb`,
+      or(...USER_OWNED_PAGE_OBJECT_KEYS.map((key) => sql`(jsonb_typeof(${pages.pageIntelligence}->${key}::text) = 'object'
+        AND ${pages.pageIntelligence}->${key}::text <> '{}'::jsonb)`)),
     ));
   for (const row of labelled) work.add(row.pageNumber);
+  // [TP-3 WP-3.H] a tag-map instance the user confirmed or rejected (`PJ.tagMaps`, TP-4) pins its page.
+  const [tagMapRow] = await tx
+    .select({ tagMaps: sql<unknown>`${projects.projectIntelligence}->'tagMaps'` })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  for (const pageNumber of tagMapHumanPages(tagMapRow?.tagMaps)) work.add(pageNumber);
   return work;
+}
+
+/** User-owned `pageIntelligence` objects whose presence (non-empty) makes a page human work. */
+export const USER_OWNED_PAGE_OBJECT_KEYS = ["parseLabels", "textRegionVerdicts", "proposalVerdicts"] as const;
+
+/** Pages of `PJ.tagMaps` instances whose status is not `auto` (TagMapV1: `{[regionId]: {defs: {[id]: {instances[]}}}}`). */
+export function tagMapHumanPages(tagMaps: unknown): number[] {
+  const out = new Set<number>();
+  if (!tagMaps || typeof tagMaps !== "object") return [];
+  for (const map of Object.values(tagMaps as Record<string, unknown>)) {
+    const defs = (map as { defs?: unknown } | null)?.defs;
+    if (!defs || typeof defs !== "object") continue;
+    for (const def of Object.values(defs as Record<string, unknown>)) {
+      const instances = (def as { instances?: unknown } | null)?.instances;
+      for (const inst of Array.isArray(instances) ? instances : []) {
+        const { page, status } = (inst ?? {}) as { page?: unknown; status?: unknown };
+        if (typeof page === "number" && Number.isInteger(page) && typeof status === "string" && status !== "auto") out.add(page);
+      }
+    }
+  }
+  return [...out].sort((a, b) => a - b);
 }
 
 /**

@@ -33,6 +33,7 @@ import { pages, annotations, projects } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { onVisiblePage, visiblePage } from "@/lib/page-dedup";
 import { summaryTableName } from "@/lib/parsed-table-summary";
+import { deriveStructureIndex } from "@/lib/parse-engine/index-derive"; // [TP-3 WP-3.H] PJ.structureIndex is derived here, never hand-written (C1-B2)
 import {
   assertProjectWriteCapability,
   type ProjectWriteCapability,
@@ -557,6 +558,7 @@ export async function computeProjectSummaries(
       .sort((a, b) => a.code.localeCompare(b.code)),
   };
 
+  const structureIndex = deriveStructureIndex(pageRows, new Date().toISOString()); // visible pages only (hidden duplicates out)
   // The potentially long read/analysis phase stays outside a transaction. Re-read merge state and
   // publish only after acquiring the parent project lock for this exact lifecycle generation.
   await withProjectWrite(writeCapability, projectId, async (tx) => {
@@ -569,7 +571,7 @@ export async function computeProjectSummaries(
     await tx
       .update(projects)
       .set({
-        projectIntelligence: { ...existingPi, summaries },
+        projectIntelligence: { ...existingPi, summaries, ...{ structureIndex } }, // typed PJ has no structureIndex field (types/index.ts at its ceiling)
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId));

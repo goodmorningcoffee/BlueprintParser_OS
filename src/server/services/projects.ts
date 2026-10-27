@@ -64,7 +64,7 @@ import { deleteProjectFully } from "@/lib/project-delete";
 import { visiblePageCount, visiblePageCountsByProject } from "@/server/services/project-page-counts";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
-import { publicProjectIntelligence } from "@/lib/knowledge-graph";
+import { publicProjectIntelligence, viewerProjectIntelligence } from "@/lib/knowledge-graph";
 import { ApiError, notFound } from "@/server/api/envelope";
 import {
   isCanonicalProjectPath,
@@ -181,7 +181,7 @@ export async function getProject(
   // Extract summaries + graph from projectIntelligence (computed during processing)
   const pi = project.projectIntelligence as Record<string, unknown> | null;
   const summaries = (pi?.summaries as Record<string, unknown>) || null;
-  const projectIntelligence = pi || null;
+  const projectIntelligence = pi ? viewerProjectIntelligence(pi) : null;
 
   const response = NextResponse.json({
     id: project.publicId,
@@ -317,7 +317,7 @@ export async function getDemoProject(idParam: string): Promise<Response> {
     status: project.status,
     summaries,
     // [cross-set F3 2026-10-24] never the private sets' publicIds (written while the row was private)
-    projectIntelligence: pi ? publicProjectIntelligence(pi) : null,
+    projectIntelligence: pi ? viewerProjectIntelligence(publicProjectIntelligence(pi)) : null,
     demoConfig,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
