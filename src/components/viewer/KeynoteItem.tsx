@@ -27,6 +27,7 @@ import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
 import type { MapTagsStrictness } from "./MapTagsSection";
+import ParseVerdictBar from "./ParseVerdictBar";
 
 /** Convert keynote parsedRegion data to grid format for TableCompareModal */
 function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string, string>[]; tagColumn: string; tableName?: string } {
@@ -258,6 +259,7 @@ export default function KeynoteItem({
         )}
         <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete keynote table">x</button>
       </div>
+      {isCurrentPage && <ParseVerdictBar pageNumber={keynote.pageNumber} region={region} />}
 
       {nameError && (
         <div className="mx-2 mb-1 text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">

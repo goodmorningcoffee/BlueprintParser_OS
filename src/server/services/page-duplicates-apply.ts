@@ -143,7 +143,7 @@ export type WorkReader = Pick<ProjectWriteTransaction, "select" | "selectDistinc
 
 /**
  * Pages carrying human work: annotations of the given sources (default: user/takeoff), QTO
- * references (schedule page, line-item pages and instances), parsed regions.
+ * references (schedule page, line-item pages and instances), parsed regions, parse labels.
  */
 export async function humanWorkPages(
   tx: WorkReader,
@@ -176,6 +176,16 @@ export async function humanWorkPages(
       sql`jsonb_array_length(${pages.pageIntelligence}->'parsedRegions') > 0`,
     ));
   for (const row of regions) work.add(row.pageNumber);
+  // [TP-2 WP-2.F] a page whose parsed regions carry ✓/✗ labels (user-owned gold) is human work too.
+  const labelled = await tx
+    .select({ pageNumber: pages.pageNumber })
+    .from(pages)
+    .where(and(
+      eq(pages.projectId, projectId),
+      sql`jsonb_typeof(${pages.pageIntelligence}->'parseLabels') = 'object'`,
+      sql`${pages.pageIntelligence}->'parseLabels' <> '{}'::jsonb`,
+    ));
+  for (const row of labelled) work.add(row.pageNumber);
   return work;
 }
 

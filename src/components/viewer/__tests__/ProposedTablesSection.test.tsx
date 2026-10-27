@@ -249,16 +249,19 @@ describe("ProposedTablesSection", () => {
     expect(qc.getQueryData<ProjectProposalSummary>(queryKeys.proposals.all("pub-1"))!.items[0].verdict).toBeUndefined();
   });
 
-  it("Parse this table prefills the Auto Parse region and records accept", async () => {
+  it("[TP-2 K58] Parse this table prefills the Auto Parse region, posts NO verdict, and hands the parse its proposalId", async () => {
     persistence.persistFetch.mockResolvedValue({ verdict: {} });
+    useTableParseHintStore.setState({ hint: null });
     mount(<ProposedTablesSection />);
     fireEvent.click(screen.getByText("Door schedule", { selector: "span" }).closest("button")!);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Parse this table" })); });
     expect(commands.transitionTableParseTab).toHaveBeenCalledWith("auto");
     expect(commands.acceptTableParseRegion).toHaveBeenCalledWith([0.1, 0.2, 0.5, 0.6]);
-    expect(persistence.persistFetch).toHaveBeenCalledWith(
-      "/api/projects/pub-1/proposals/verdict", { pageNumber: 1, proposalId: "a", verdict: "accept" }, "POST",
-    );
+    expect(persistence.persistFetch).not.toHaveBeenCalled(); // the SAVE of the parse posts accept (with the class)
+    expect(useTableParseHintStore.getState().hint).toEqual({ publicId: "pub-1", pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], proposalId: "a" });
+    // a plain parse keeps the default row source: the request carries the proposalId only
+    expect(tableParseRequestHints("pub-1", 1, [0.1, 0.2, 0.5, 0.6])).toEqual({ proposalId: "a" });
+    expect(qc.getQueryData<ProjectProposalSummary>(queryKeys.proposals.all("pub-1"))!.items[0].verdict).toBeUndefined();
   });
 
   it("[shape-tags] table chip, the tag column block (readable tags, sheet · trade), and Accept with tags sets the parse hint for that project's region", async () => {
@@ -282,22 +285,22 @@ describe("ProposedTablesSection", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept with tags" })); });
     expect(commands.transitionTableParseTab).toHaveBeenCalledWith("auto");
     expect(commands.acceptTableParseRegion).toHaveBeenCalledWith([0.1, 0.2, 0.5, 0.6]);
-    expect(persistence.persistFetch).toHaveBeenCalledWith("/api/projects/pub-1/proposals/verdict", { pageNumber: 1, proposalId: "a", verdict: "accept" }, "POST");
-    expect(useTableParseHintStore.getState().hint).toEqual({ publicId: "pub-1", pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], rowSource: "shape-centres", tagYoloClass: { model: "yolo_primitive", className: "hexagon" } });
-    expect(tableParseRequestHints("pub-1", 1, [0.1, 0.2, 0.5, 0.6])).toEqual({ rowSource: "shape-centres" });
+    expect(persistence.persistFetch).not.toHaveBeenCalled(); // [TP-2 K58] no verdict before parsing
+    expect(useTableParseHintStore.getState().hint).toEqual({ publicId: "pub-1", pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], proposalId: "a", rowSource: "shape-centres", tagYoloClass: { model: "yolo_primitive", className: "hexagon" } });
+    expect(tableParseRequestHints("pub-1", 1, [0.1, 0.2, 0.5, 0.6])).toEqual({ rowSource: "shape-centres", proposalId: "a" });
     expect(tableParseRequestHints("pub-2", 1, [0.1, 0.2, 0.5, 0.6])).toEqual({}); // another project, same page number
     expect(tableParseRequestHints("pub-1", 2, [0.1, 0.2, 0.5, 0.6])).toEqual({});
     expect(tableParseRequestHints("pub-1", 1, [0.6, 0.6, 0.9, 0.9])).toEqual({});
     // an Auto Parse run consumes the hint it uses; one that does not match leaves it
     expect(consumeTableParseHints("pub-1", 1, [[0.6, 0.6, 0.9, 0.9]])).toEqual([{}]);
     expect(useTableParseHintStore.getState().hint).not.toBeNull();
-    expect(consumeTableParseHints("pub-1", 1, [[0.6, 0.6, 0.9, 0.9], [0.1, 0.2, 0.5, 0.6]])).toEqual([{}, { rowSource: "shape-centres" }]);
+    expect(consumeTableParseHints("pub-1", 1, [[0.6, 0.6, 0.9, 0.9], [0.1, 0.2, 0.5, 0.6]])).toEqual([{}, { rowSource: "shape-centres", proposalId: "a" }]);
     expect(useTableParseHintStore.getState().hint).toBeNull();
-    // plain Parse this table clears a stale hint
+    // plain Parse this table replaces a stale with-tags hint by a proposalId-only one (default row source)
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept with tags" })); });
-    expect(useTableParseHintStore.getState().hint).not.toBeNull();
+    expect(useTableParseHintStore.getState().hint?.rowSource).toBe("shape-centres");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Parse this table" })); });
-    expect(useTableParseHintStore.getState().hint).toBeNull();
+    expect(useTableParseHintStore.getState().hint).toEqual({ publicId: "pub-1", pageNumber: 1, bbox: [0.1, 0.2, 0.5, 0.6], proposalId: "a" });
     // a column with no readable tag says so instead of "+n more"
     seedProposalsFromBootstrap(qc, "pub-1", { proposals: { ...SUMMARY, items: [item({ id: "a", pageNumber: 1, tagRows: 3, tags: [], tagCount: 0, tagShape: "circle" })] } });
     fireEvent.click(screen.getByText("Door schedule", { selector: "span" }).closest("button")!);

@@ -206,7 +206,7 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     // client cache must not roll them back) [clf 2a] are server-owned: a client patch can neither set nor clear them.
     const merged: Record<string, unknown> = {
       ...existing, ...intelligence, duplicateOf: existing.duplicateOf, evidence: existing.evidence, tiles: existing.tiles,
-      shapes: existing.shapes, channels: existing.channels, classifierProposals: existing.classifierProposals, proposalVerdicts: existing.proposalVerdicts,
+      shapes: existing.shapes, channels: existing.channels, classifierProposals: existing.classifierProposals, proposalVerdicts: existing.proposalVerdicts, parseLabels: existing.parseLabels,
     };
 
     // CSI merge: collect csiTags from parsedRegions and merge into the page-level csiCodes.

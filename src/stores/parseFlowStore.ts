@@ -76,6 +76,7 @@ export interface ParseFlowState {
     csiTags?: { code: string; description: string }[];
     colBoundaries?: number[];
     rowBoundaries?: number[];
+    proposalId?: string; // K58: the classifier proposal this parse came from; its save posts the accept (never persisted in data)
   } | null;
   setTableParsedGrid: (grid: ParseFlowState["tableParsedGrid"]) => void;
   /** Per-method grids plus the auto-picked merged snapshot. Live-only and not persisted. */

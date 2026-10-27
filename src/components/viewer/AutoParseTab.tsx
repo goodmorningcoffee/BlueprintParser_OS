@@ -249,6 +249,7 @@ export default function AutoParseTab({
           csiTags: [],
           tableName: targetRegions.length > 1 ? `Merged (${targetRegions.length} regions)` : undefined,
           regionId: regionIdFor(targetPageNumber, reviewRegion), // the id detectCsiAndPersist saves under (K01)
+          ...(targetRegions.length === 1 && targetHints[0].proposalId ? { proposalId: targetHints[0].proposalId } : {}), // K58: accepted on save
           // Only include boundaries for single-region parse (multi-region merges invalidate positions)
           ...(targetRegions.length === 1 && firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
           ...(targetRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),

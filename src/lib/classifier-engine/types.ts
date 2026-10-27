@@ -368,6 +368,10 @@ export interface ProposalVerdict {
   proposedClassId: string | null;
   userId: number;
   at: string;
+  /** [TP-2 WP-2.F, K58] "parse": an accept posted by the SAVE of a parse started from this proposal (stored classId). */
+  via?: "parse";
+  /** With via "parse": the saved ParsedRegion the parse produced (server-checked against the proposal's box). */
+  regionId?: string;
 }
 
 export type PageProposalVerdicts = Record<string, ProposalVerdict>;

@@ -533,6 +533,15 @@ export const MUTATION_SURFACES = [
   mutation("tag-ops", "/api/projects/[id]/tags/ops", "POST", "shared-guard", [
     ["src/server/services/tag-ops.ts", "postTagOps"],
   ]),
+  // [table pipeline WP-2.F 2026-10-27] K58/C3-m4: the verdict bar's ✓/✗ labels (PI.parseLabels), snapshot
+  // computed server-side; demo refused for every role by assertProjectWritable (allowDemo:true only to answer 403).
+  // The GET (same file) has no allowDemo and refuses a demo project in the service.
+  mutation("parse-label-record", "/api/projects/[id]/parse-labels", "POST", "shared-guard", [
+    ["src/server/services/parse-labels.ts", "recordParseLabel"],
+  ]),
+  mutation("parse-label-delete", "/api/projects/[id]/parse-labels", "DELETE", "shared-guard", [
+    ["src/server/services/parse-labels.ts", "deleteParseLabel"],
+  ]),
   mutation("region-promote", "/api/regions/promote", "POST", "shared-guard", [
     ["src/server/services/regions.ts", "promoteRegion"],
   ]),

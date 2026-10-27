@@ -83,6 +83,7 @@ import { logger } from "@/lib/logger";
 import { observeRegionData } from "@/server/services/region-data-observe";
 // [TP-1 WP-1.B K03] promote/delete responses carry the page-window projection (denylisted keys out), like GET /pages.
 import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
+import { withoutParseLabel } from "@/server/services/parse-labels";
 import type {
   TextractPageData,
   PageIntelligence,
@@ -400,10 +401,12 @@ export async function deleteParsedRegion(
       return { deleted: false, updatedIntelligence: currentIntelligence };
     }
 
-    const updatedIntelligence: PageIntelligence = {
+    // [TP-2 WP-2.F fix 2026-10-27] The region's ✓/✗ label (PI.parseLabels, keyed by region id) goes with
+    // it, under this same page lock, so an orphan never pins the page as human work or revives on re-parse.
+    const updatedIntelligence: PageIntelligence = withoutParseLabel({
       ...currentIntelligence,
       parsedRegions: nextRegions,
-    };
+    }, regionId);
     await tx
       .update(pages)
       .set({ pageIntelligence: updatedIntelligence })

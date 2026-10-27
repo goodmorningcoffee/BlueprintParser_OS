@@ -8,12 +8,18 @@ import type { BboxMinMax } from "@/types";
 // hint never leaks into another project or another box on the same page number, and it is CONSUMED (cleared)
 // by the first Auto Parse request that uses it (`consumeTableParseHints`), so later parses of that region run
 // the default methods unless the proposal is accepted with tags again.
+// [TP-2 WP-2.F, K58] EVERY "Parse this table" now sets a hint carrying the `proposalId` (`rowSource` only for
+// "Accept with tags"). The request hints carry it, the review grid keeps it, and a successful save posts the
+// proposal's `accept` (server: stored classId, only when no verdict exists). Any matching hint is consumed.
 
 export interface TableParseHint {
   publicId: string;
   pageNumber: number;
   bbox: BboxMinMax;
-  rowSource: "shape-centres";
+  /** Only "Accept with tags": the shape-centre row builder. A plain "Parse this table" runs the default methods. */
+  rowSource?: "shape-centres";
+  /** The classifier proposal being parsed (K58); the save of that parse posts its `accept`. */
+  proposalId?: string;
   /** The column's shape class for Map Tags (`yolo-with-inner-text` on yolo_primitive). */
   tagYoloClass?: { model: string; className: string };
 }
@@ -48,12 +54,13 @@ export function tableParseHintFor(publicId: string | null | undefined, pageNumbe
   return hintMatches(hint, publicId, pageNumber, bbox) ? hint : null;
 }
 
-export type TableParseRequestHints = { rowSource?: "shape-centres" };
+export type TableParseRequestHints = { rowSource?: "shape-centres"; proposalId?: string };
 
-/** Request-body fields for /api/table-parse of this region: `{ rowSource }` when a hint applies, else nothing. Does not consume it. */
+/** Request-body fields for /api/table-parse of this region: `{ rowSource?, proposalId? }` when a hint applies, else nothing. Does not consume it. */
 export function tableParseRequestHints(publicId: string | null | undefined, pageNumber: number, bbox: readonly number[] | null | undefined): TableParseRequestHints {
   const hint = tableParseHintFor(publicId, pageNumber, bbox);
-  return hint ? { rowSource: hint.rowSource } : {};
+  if (!hint) return {};
+  return { ...(hint.rowSource ? { rowSource: hint.rowSource } : {}), ...(hint.proposalId ? { proposalId: hint.proposalId } : {}) };
 }
 
 /**
@@ -61,7 +68,9 @@ export function tableParseRequestHints(publicId: string | null | undefined, page
  * a hint that one of the regions uses is cleared (consumed) here.
  */
 export function consumeTableParseHints(publicId: string | null | undefined, pageNumber: number, regions: ReadonlyArray<readonly number[]>): TableParseRequestHints[] {
+  const hint = useTableParseHintStore.getState().hint;
   const out = regions.map((bbox) => tableParseRequestHints(publicId, pageNumber, bbox));
-  if (out.some((h) => h.rowSource)) useTableParseHintStore.getState().setHint(null);
+  // Clear on ANY matching hint (K58): a proposalId-only hint must not outlive the parse that used it.
+  if (regions.some((bbox) => hintMatches(hint, publicId, pageNumber, bbox))) useTableParseHintStore.getState().setHint(null);
   return out;
 }
