@@ -92,6 +92,34 @@ export async function submitProposalVerdict(
   return body.verdict;
 }
 
+/**
+ * [TP-2 WP-2.F, K58] After the SAVE of a parse that started from "Parse this table": post the proposal's
+ * `accept` with `via:"parse"` and the saved region. The server takes the stored classId and writes only when
+ * the proposal has no verdict yet and the region overlaps it; the client also skips a proposal its cache
+ * already shows as verdicted. Best-effort: never throws (the parse is saved either way).
+ */
+export async function postParseAcceptVerdict(
+  qc: QueryClient,
+  publicId: string,
+  pageNumber: number,
+  proposalId: string,
+  regionId: string,
+): Promise<void> {
+  if (!publicId) return;
+  const cached = qc.getQueryData<ProjectProposalSummary | null>(queryKeys.proposals.all(publicId));
+  if (cached?.items.some((item) => item.id === proposalId && item.verdict !== undefined)) return;
+  try {
+    const body = (await persistFetch(
+      verdictUrl(publicId),
+      { pageNumber, proposalId, verdict: "accept", via: "parse", regionId },
+      "POST",
+    )) as { verdict: ProposalVerdict | null } | null;
+    if (body?.verdict) applyProposalVerdict(qc, publicId, proposalId, body.verdict.verdict);
+  } catch (err) {
+    console.warn("[proposals] accept after parse failed:", err);
+  }
+}
+
 /** Undo = DELETE the verdict, then clear it in the cache. */
 export async function undoProposalVerdict(
   qc: QueryClient,

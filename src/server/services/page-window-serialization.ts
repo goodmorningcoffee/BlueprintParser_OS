@@ -18,6 +18,8 @@ const PAGE_WINDOW_OMITTED_INTELLIGENCE_KEYS = [
   "classifierProposals",
   // [clf 1] the user's labels carry feature snapshots; the panel reads verdicts from the summary.
   "proposalVerdicts",
+  // [TP-2 WP-2.F] the verdict bar's labels (machine snapshots, user ids); read via GET …/parse-labels?page=.
+  "parseLabels",
 ] as const;
 
 /**

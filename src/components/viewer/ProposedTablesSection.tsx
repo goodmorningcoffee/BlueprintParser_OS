@@ -4,7 +4,7 @@
 // classifier's proposals from projectIntelligence.proposals, This page / All pages, filtered by verdict, grouped by
 // discipline then kind. Hover a row → soft outline on the canvas; click → go to its page and FOCUS it (green
 // box, other annotations dimmed, viewport fitted; Esc or Clear ends it). Actions on the focused row: Parse
-// this table (prefills the Auto Parse region, records accept), Not a table (reject), Rename (kind menu, free
+// this table (prefills the Auto Parse region; its save records accept — TP-2 K58), Not a table (reject), Rename (kind menu, free
 // name for "Other schedule"), Undo (deletes the verdict). Demo projects are read-only: no verdict buttons.
 // [clf visibility 2026-10-25] No summary / no items renders a short empty state (it used to render nothing, which
 // read the same as "wrong tab"); the scope defaults to All pages while the current page has no proposals.
@@ -195,16 +195,18 @@ export default function ProposedTablesSection() {
       }),
     );
 
+  // [TP-2 WP-2.F, K58] Always a hint with the proposalId (shape-centre rows only "with tags"). No verdict here: the
+  // SAVE of this parse posts `accept` with the stored class, and only when the proposal has no verdict yet.
   const parseThis = (item: ProposalSummaryItem, withTags = false) => {
-    useTableParseHintStore.getState().setHint(withTags && item.tagRows ? {
-      publicId, pageNumber: item.pageNumber, bbox: [...item.bbox] as typeof item.bbox, rowSource: "shape-centres",
-      ...(item.tagShape ? { tagYoloClass: { model: "yolo_primitive", className: item.tagShape } } : {}),
-    } : null);
+    useTableParseHintStore.getState().setHint({
+      publicId, pageNumber: item.pageNumber, bbox: [...item.bbox] as typeof item.bbox, proposalId: item.id,
+      ...(withTags && item.tagRows ? { rowSource: "shape-centres" as const } : {}),
+      ...(withTags && item.tagRows && item.tagShape ? { tagYoloClass: { model: "yolo_primitive", className: item.tagShape } } : {}),
+    });
     focusItem(item);
     transitionTableParseTab("auto");
     // A fresh array each click, so re-queueing after a removal is not mistaken for a repeat.
     acceptTableParseRegion([...item.bbox] as typeof item.bbox);
-    if (!isDemo && item.verdict === undefined) void verdict(item, "accept");
   };
 
   return (

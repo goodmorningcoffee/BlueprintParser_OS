@@ -81,6 +81,11 @@ export const queryKeys = {
   proposals: {
     all: (publicId: string) => ["project", publicId, "proposals"] as const,
   },
+  // [TP-2 WP-2.F] the verdict bar's ✓/✗ labels, GET /api/projects/[id]/parse-labels?page=N (slim, per page).
+  parseLabels: {
+    all: (publicId: string) => ["project", publicId, "parseLabels"] as const,
+    page: (publicId: string, pageNumber: number) => ["project", publicId, "parseLabels", pageNumber] as const,
+  },
   // [graph T8 2026-10-24] knowledge-graph reference index, GET /api/projects/[id]/graph once per open.
   projectGraph: {
     index: (publicId: string) => ["project", publicId, "knowledgeGraph", "index"] as const,

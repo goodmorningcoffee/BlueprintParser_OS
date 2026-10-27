@@ -29,9 +29,11 @@ import { useAnnotations } from "@/queries/useAnnotations";
 import { useYoloTagActions, useYoloTagRows } from "@/queries/useYoloTags";
 import { updatePageIntelligenceForPage, usePageIntelligenceByPage } from "@/queries/usePageWindow";
 import { saveParsedRegion } from "@/queries/parsedRegions";
+import { postParseAcceptVerdict } from "@/queries/useProposals";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import ProposedTablesSection from "./ProposedTablesSection";
+import ParseVerdictBar from "./ParseVerdictBar";
 import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
@@ -233,6 +235,7 @@ export default function TableParsePanel() {
         csiTags: grid.csiTags?.map((tag) => ({ ...tag })),
         colBoundaries: grid.colBoundaries ? [...grid.colBoundaries] : undefined,
         rowBoundaries: grid.rowBoundaries ? [...grid.rowBoundaries] : undefined,
+        proposalId: grid.proposalId,
       };
       let detectedCsiTags = frozenGrid.csiTags ?? [];
 
@@ -285,6 +288,7 @@ export default function TableParsePanel() {
             csiTags: commitGrid.csiTags || [],
           },
         );
+        if (commitGrid.proposalId) void postParseAcceptVerdict(queryClient, target.publicId, target.pageNumber, commitGrid.proposalId, regionIdFor(target.pageNumber, target.bbox)); // K58
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
         if (!canPublishCompletion()) return false;
@@ -719,7 +723,7 @@ export default function TableParsePanel() {
                     filenamePrefix="schedules"
                   />
                 )}
-                {allParsedTables.map((t) => (
+                {allParsedTables.flatMap((t) => [
                   <ParsedTableItem
                     key={t.reactKey}
                     table={t}
@@ -732,8 +736,9 @@ export default function TableParsePanel() {
                     isDemo={isDemo}
                     focusedParsedRegionId={focusedParsedRegionId}
                     cellStructureOperation={cellStructureOperation}
-                  />
-                ))}
+                  />,
+                  t.pageNum === pageNumber ? <ParseVerdictBar key={`${t.reactKey}:verdict`} pageNumber={t.pageNum} region={t.region} /> : null,
+                ])}
               </>
             )}
           </div>

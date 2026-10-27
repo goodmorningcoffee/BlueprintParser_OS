@@ -9,6 +9,11 @@
  * The client names the proposal; the SERVER reads the stored proposal and snapshots its features,
  * classId and recipe version — a client never supplies features, so a refit cannot be poisoned by a
  * forged feature vector. Demo projects are refused for every role (assertProjectWritable).
+ *
+ * [TP-2 WP-2.F, K58] `{verdict:"accept", via:"parse", regionId}` is posted by the SAVE of a parse that started
+ * from "Parse this table" (no verdict is recorded before parsing any more). The server takes the STORED
+ * classId, writes only when the proposal has no verdict yet, and only when the named saved region exists on
+ * that page and overlaps the proposal (IoU ≥ .5). Otherwise nothing is written (a forged id is ignored).
  */
 
 import { and, eq, sql } from "drizzle-orm";
@@ -28,6 +33,7 @@ import type {
   VerdictKind,
 } from "@/lib/classifier-engine/types";
 import { scheduleKind } from "@/lib/classifier-engine/vocabulary";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 
 const VERDICTS: readonly VerdictKind[] = ["accept", "reject", "rename"];
 const CLASS_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -38,6 +44,8 @@ export interface VerdictInput {
   verdict: VerdictKind;
   classId?: string;
   name?: string;
+  via?: "parse";
+  regionId?: string;
 }
 
 function invalid(message: string): never {
@@ -72,12 +80,48 @@ export function parseVerdictInput(body: Record<string, unknown>): VerdictInput {
     invalid("reject takes no classId or name");
   }
   if (name !== undefined && classId === undefined) invalid("name requires classId");
+  if (body.via !== undefined) {
+    const { regionId } = body;
+    if (body.via !== "parse" || verdict !== "accept" || classId !== undefined || name !== undefined) {
+      invalid("via parse is an accept with no classId or name");
+    }
+    if (typeof regionId !== "string" || regionId.length === 0 || regionId.length > 300) invalid("via parse requires regionId");
+    return { ...target, verdict, via: "parse", regionId };
+  }
   return {
     ...target,
     verdict,
     ...(classId === undefined ? {} : { classId: classId as string }),
     ...(name === undefined ? {} : { name: (name as string).trim() }),
   };
+}
+
+const iou = (a: readonly number[], b: readonly number[]): number => {
+  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+  const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  const union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy;
+  return union > 0 ? (ix * iy) / union : 0;
+};
+
+/**
+ * The input a save-time accept (via "parse") is recorded with, or null when it must be ignored: the proposal
+ * already has a verdict, or the named region is not a saved region of this page overlapping the proposal.
+ * The class is the STORED one (dropped when it is no longer a schedule kind).
+ */
+export function parseAcceptInput(
+  pageIntelligence: Record<string, unknown>,
+  proposal: ClassifierProposal,
+  input: VerdictInput,
+): VerdictInput | null {
+  const existing = (pageIntelligence.proposalVerdicts ?? {}) as PageProposalVerdicts;
+  if (existing && typeof existing === "object" && Object.prototype.hasOwnProperty.call(existing, proposal.id)) return null;
+  const regions = Array.isArray(pageIntelligence.parsedRegions) ? pageIntelligence.parsedRegions : [];
+  const region = regions.find((r: { id?: unknown } | null) => r && r.id === input.regionId);
+  const box = parsedRegionMinMax(region);
+  if (!box || !Array.isArray(proposal.bbox) || iou(box, proposal.bbox) < 0.5) return null;
+  const stored = proposal.classId ?? undefined;
+  const classId = stored && (proposal.target !== "schedule" || scheduleKind(stored)) && CLASS_ID.test(stored) ? stored : undefined;
+  return { ...input, ...(classId ? { classId } : {}) };
 }
 
 /** The stored proposal with this id, or null. Tolerates a missing or malformed computed block. */
@@ -121,6 +165,7 @@ export function buildVerdict(
     proposedClassId: proposal.classId ?? null,
     userId,
     at: at.toISOString(),
+    ...(input.via === "parse" ? { via: "parse" as const, regionId: input.regionId } : {}),
   };
 }
 
@@ -192,15 +237,18 @@ export async function recordProposalVerdict(
   accessProject: ProjectAccessRow,
   session: AuthSession | null,
   body: Record<string, unknown>,
-): Promise<{ verdict: ProposalVerdict }> {
+): Promise<{ verdict: ProposalVerdict | null }> {
   const writeCapability = assertProjectWritable(accessProject);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
-  const input = parseVerdictInput(body);
+  const parsed = parseVerdictInput(body);
   return withProjectWrite(writeCapability, accessProject.id, async (tx) => {
-    const page = await lockPage(tx, accessProject.id, input.pageNumber);
+    const page = await lockPage(tx, accessProject.id, parsed.pageNumber);
     const pi = (page.pageIntelligence ?? {}) as Record<string, unknown>;
-    const proposal = findStoredProposal(pi, input.proposalId);
+    const proposal = findStoredProposal(pi, parsed.proposalId);
+    if (!proposal && parsed.via === "parse") return { verdict: null }; // a forged / stale id is ignored
     if (!proposal) throw new ApiError("NOT_FOUND", "Proposal not found");
+    const input = parsed.via === "parse" ? parseAcceptInput(pi, proposal, parsed) : parsed;
+    if (!input) return { verdict: null };
     const verdict = buildVerdict(proposal, input, session.user.dbId, new Date());
     const existing = (pi.proposalVerdicts ?? {}) as PageProposalVerdicts;
     await writeVerdicts(tx, page.id, { ...existing, [proposal.id]: verdict });
