@@ -18,7 +18,7 @@ import {
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
 import {
-  navigateYoloTag,
+  isYoloTagMapped, navigateYoloTag,
   readYoloTags,
   useYoloTagActions,
 } from "@/queries/useYoloTags";
@@ -421,8 +421,8 @@ export default function KeynoteItem({
                     try {
                       const tags: string[] = [...new Set<string>(
                         keynote.keys.map((k) => k.key.trim()).filter(Boolean)
-                      )].filter((tag) => !readYoloTags(queryClient, identityPublicId)
-                        .some((t) => t.tagText === tag && t.source === "keynote"));
+                      )].filter((tag) => !isYoloTagMapped(readYoloTags(queryClient, identityPublicId),
+                        { source: "keynote", scope: "project", tagText: tag, yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "", links: { regionId: region?.id } }));
 
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
@@ -457,7 +457,7 @@ export default function KeynoteItem({
                             instances: results[tag],
                           };
                         });
-                      if (newTags.length > 0) addYoloTagsBulk(newTags);
+                      if (newTags.length > 0) addYoloTagsBulk(newTags, { regionId: region?.id });
                       setShowMapTags(false);
                     } catch (err) {
                       console.error("[MAP_TAGS] Keynote batch mapping failed:", err);
