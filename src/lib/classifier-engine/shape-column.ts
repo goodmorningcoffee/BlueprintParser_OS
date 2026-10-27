@@ -11,6 +11,7 @@
 
 import type { BboxMinMax } from "@/types";
 import { center, inside, iou } from "@/lib/region-classifier-v2/geometry";
+import { shapeRowBands } from "@/lib/parse-engine/rows/shape-centres";
 import { TAG_MAP_ROW_CAP, type ProposalTagMap, type ProposalTagRow } from "./types";
 
 export type ShapeSource = "yolo" | "classical";
@@ -154,16 +155,16 @@ export function columnTextShares(col: ShapeColumn, words: readonly ColumnWord[])
 }
 
 /**
- * Row bands for a row builder: row i spans from its shape's band top to the next shape's band top (the last
- * one to its band bottom plus half a pitch, inside the box), so continuation lines without a shape fold into
- * the row above (measured: 29 % of legend tag bands span ≥ 2 OCR rows). Words above the first band are the header.
+ * Row bands for a row builder, one per column shape. [table pipeline WP-2.C, K13] Delegates to
+ * parse-engine/rows/shape-centres.ts `shapeRowBands` (PLAN R3): row i spans from the midpoint of the shape
+ * centres above it to the midpoint below, so a description centred on its shape stays in its row, unless the
+ * description lines show a top-aligned column (wrapped notes beside their bubble's first line), which keeps
+ * the shape-top cuts. Continuation lines without a shape stay in their row (measured: 29 % of legend tag
+ * bands span ≥ 2 OCR rows). The last band runs down to the last word inside the box (`words`), so a tall last
+ * row keeps its trailing lines. Words above the first band are the header.
  */
-export function rowBands(col: ShapeColumn, box: BboxMinMax): BboxMinMax[] {
-  // [fix round] tops never decrease: a tall shape right after a short one would otherwise invert its band.
-  const tops: number[] = [];
-  for (const s of col.shapes) tops.push(Math.max(rowBand(s, box)[1], tops[tops.length - 1] ?? -Infinity));
-  const half = 0.5 * (col.pitch ?? height(col.shapes[col.n - 1]));
-  return col.shapes.map((s, i) => [box[0], tops[i], box[2], i + 1 < col.n ? tops[i + 1] : Math.min(box[3], rowBand(s, box)[3] + half)] as BboxMinMax);
+export function rowBands(col: ShapeColumn, box: BboxMinMax, words: readonly ColumnWord[] = []): BboxMinMax[] {
+  return shapeRowBands(col.shapes.map((s) => s.bbox), box, words.map((w) => w.bbox)).bands;
 }
 
 const clean = (t: string): string => t.replace(/\s+/g, " ").trim();
@@ -183,7 +184,7 @@ export function tagTextOf(s: ColumnShape, words: readonly ColumnWord[]): string 
 export function buildTagMap(shapes: readonly ColumnShape[], words: readonly ColumnWord[], box: BboxMinMax, opts: ShapeColumnOptions = {}): ProposalTagMap | undefined {
   const col = bestShapeColumn(shapes, box, "any", opts);
   if (!col) return undefined;
-  const bands = rowBands(col, box);
+  const bands = rowBands(col, box, words);
   const rightWords = words.filter((w) => w.c[0] > col.right);
   const rows: ProposalTagRow[] = col.shapes.slice(0, TAG_MAP_ROW_CAP).map((s, i) => {
     const band = bands[i];

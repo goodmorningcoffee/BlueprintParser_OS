@@ -16,6 +16,9 @@
 
 import type { PageMeta, ScopeFilter, ScopeOptions } from "../types";
 
+/** A page the "Unnumbered" chip groups: no drawing number, or one with no non-digit prefix (the chips' `/^[^\d]+/`). */
+const unnumbered = (drawingNumber: string | null | undefined): boolean => !/^[^\d]+/.test(drawingNumber ?? "");
+
 /**
  * Build a scope filter from a set of options + the project's page metadata.
  * `pageMeta` should cover every page the caller plans to scan; pages absent
@@ -27,14 +30,12 @@ export function buildScope(
 ): ScopeFilter {
   const explicitPages = opts.pages ? new Set(opts.pages) : null;
   const prefixes = opts.drawingNumberPrefixes?.map((p) => p.toUpperCase()) ?? null;
+  // [K37] The "Unnumbered" chip sends prefix "": it selects pages whose drawing number has no letter prefix
+  // (none, empty, or starting with a digit: the chips' own grouping), never every numbered page.
   const allowedByPrefix = prefixes
     ? new Set(
         pageMeta
-          .filter((p) =>
-            p.drawingNumber
-              ? prefixes.some((pre) => p.drawingNumber!.toUpperCase().startsWith(pre))
-              : false,
-          )
+          .filter((p) => prefixes.some((pre) => (pre === "" ? unnumbered(p.drawingNumber) : (p.drawingNumber ?? "").toUpperCase().startsWith(pre))))
           .map((p) => p.pageNumber),
       )
     : null;

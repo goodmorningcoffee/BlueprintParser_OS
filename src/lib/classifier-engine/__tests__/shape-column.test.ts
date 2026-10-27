@@ -52,15 +52,17 @@ describe("findShapeColumn", () => {
     expect(bestShapeColumn([], BOX, "any")).toBeNull();
   });
 
-  it("text shares and row bands: continuation lines fold into the row above; the last band ends half a pitch below", () => {
+  it("text shares and row bands: continuation lines fold into the row above; the last band ends half a centre gap below", () => {
     const col = findShapeColumn(ys.map((y) => circle(y)), BOX, "yolo")!;
     const words = [word("1", 0.117, 0.15), word("WALL", 0.2, 0.15), word("TYPE", 0.2, 0.18), word("A", 0.2, 0.195), word("DOOR", 0.2, 0.24)];
     expect(columnTextShares(col, words)).toEqual({ textInside: 0.2, textRight: 0.6 });
-    const bands = rowBands(col, BOX);
+    const bands = rowBands(col, BOX, words);
     expect(bands).toHaveLength(5);
     expect(bands[0][1]).toBeCloseTo(0.142, 6);
     expect(bands[0][3]).toBeCloseTo(0.172, 6); // the next band's top
-    expect(bands[4][3]).toBeCloseTo(0.278 + 0.015, 6);
+    // [table pipeline WP-2.C] this column is top-aligned (the continuation "A" sits right under "TYPE"), so the cuts stay
+    // at the shape tops; the last band ends half a centre gap below the last centre (was: shape bottom + half a pitch)
+    expect(bands[4][3]).toBeCloseTo(0.27 + 0.015, 6);
     expect(bands.every((b) => b[0] === BOX[0] && b[2] === BOX[2])).toBe(true);
     // [fix round] a tall shape right after a short one cannot invert its band: tops never decrease, every band has height ≥ 0
     const tall: ColumnShape = { label: "circle", bbox: [0.11, 0.18 - 0.04, 0.13, 0.18 + 0.04], source: "yolo", confidence: 0.8 };

@@ -27,6 +27,19 @@ in the table below. The golden tests fail on:
 
 | fixture | path | K | WP | why (no drawing text) |
 |---|---|---|---|---|
+| syn-sched-shapes-centred-3line | shape-rows | K13 | WP-2.C | midpoint bands: each centred 3-line description stays in its row; the header no longer takes row 0's upper line |
+| syn-sched-shapes-centred-3line | merger | K13 | WP-2.C | the shape-rows base changes as above |
+| syn-sched-shapes-tall-last | shape-rows | K13 | WP-2.C | the last band runs to the last word in the region: the tall last row keeps its trailing lines |
+| syn-sched-shapes-tall-last | merger | K13 | WP-2.C | the shape-rows base changes as above |
+| syn-sched-shapes-classical-dotted | shape-rows | K13 | WP-2.C | C2-m4: two crop-read keys get their dropped separator back from the sibling keys; row boundaries are midpoints |
+| syn-sched-shapes-classical-dotted | merger | K13 | WP-2.C | C2-m4: the repaired keys reach the merged grid (row text unchanged) |
+| syn-sched-shapes-hex | shape-rows | K13 | WP-2.C | row boundaries only (midpoints, last band to the last word); every cell unchanged |
+| syn-keynote-shapes | shape-rows | K13 | WP-2.C | row boundaries only (midpoints, last band to the last word); every cell unchanged |
+| syn-keynote-shapes | merger | K13 | WP-2.C | row boundaries only; every cell unchanged |
+| syn-kv-symbol-legend | shape-rows | K13 | WP-2.C | row boundaries only (midpoints, last band to the last word); every cell unchanged |
+| syn-kv-symbol-legend | merger | K13 | WP-2.C | row boundaries only; every cell unchanged |
+| syn-notes-keynote-bubbles | shape-rows | K13 | WP-2.C | top-aligned column keeps the shape-top cuts; only the last band now runs to the last word; every cell unchanged |
+| syn-notes-keynote-bubbles | merger | K13 | WP-2.C | row boundaries only; every cell unchanged |
 
 ### WP-2.B: text assembly at the root (K06, K07, K09, C04-03)
 
