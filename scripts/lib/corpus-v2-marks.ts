@@ -132,7 +132,8 @@ export function classicalKeynotes(pid: string, marks: readonly Mark[], corpus = 
     let text = m.text ?? "";
     if (typeof annId === "number") {
       const crop = bundleIndexOf(pid, corpus).shapeText.get(annId);
-      text = crop ?? (text === m.label ? "" : text);
+      // an empty / blank crop read is unknown, not "": a later ingest's own text (not the shape name) then survives
+      text = crop?.trim() ? crop : text === m.label ? "" : text;
     }
     out.push({ shape: m.label, text, bbox: m.bbox });
   }

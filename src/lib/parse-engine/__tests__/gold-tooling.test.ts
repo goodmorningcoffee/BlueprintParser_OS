@@ -9,12 +9,14 @@ import {
   canonicalJson, insideBp2Checkout, mulberry32, refuseWrite, toJsonl, validateRecords, writePrivate, type GoldLine,
 } from "../../../../scripts/gold/gold-lib";
 import { main as validateMain, validateFiles } from "../../../../scripts/gold/validate";
+import { main as labelPackMain } from "../../../../scripts/gold/label-pack";
+import { main as prefillMain } from "../../../../scripts/gold/prefill";
 import { drawSample, guessParaStratum, main as selectMain, type Candidate } from "../../../../scripts/gold/select-sample";
 import { assign } from "../../../../scripts/gold/label-pack";
-import { agreement, cohenKappa, compare, mergeBatch } from "../../../../scripts/gold/adjudicate";
+import { agreement, cohenKappa, compare, ignoredDecisions, main as adjudicateMain, mergeBatch } from "../../../../scripts/gold/adjudicate";
 import { tabTruthFrom } from "../../../../scripts/gold/prefill";
 import {
-  bootstrapMean, legacyPrediction, pairedBootstrap, paraMetrics, promotionVerdict, tabMetrics,
+  HEADLINE_GAPS, bootstrapMean, legacyPrediction, measure, pairedBootstrap, paraMetrics, promotionVerdict, tabMetrics, type Unit,
 } from "../../../../scripts/lib/parse-measure";
 import { run as measureRun, syntheticUnits } from "../../../../scripts/parse-engine-measure";
 import { classicalKeynotes, type Mark } from "../../../../scripts/lib/corpus-v2-marks";
@@ -156,12 +158,44 @@ describe("bootstrap and the §6.4 verdict", () => {
     expect(u.verdict).toBe("undecided");
     expect(u.needUnits).toBe(Math.ceil(50 * (0.04 / 0.02) ** 2));
   });
+
+  it("never promotes over an unmeasured §6.3 headline unless the narrowed set is accepted (WP-2.G fix, MED-3)", () => {
+    const ci = (diff: number, lo: number, hi: number, n = 50) => ({ n, meanBase: 0.5, meanLeg: 0.5 + diff, diff, lo, hi });
+    const pass = { a: ci(0.05, 0.02, 0.08), b: ci(0, -0.005, 0.006) };
+    const gated = promotionVerdict(pass, { gaps: HEADLINE_GAPS["G-TAB"] });
+    expect(gated.verdict).toBe("undecided");
+    expect(gated.reason).toMatch(/shapeCentreRows/);
+    const accepted = promotionVerdict(pass, { gaps: HEADLINE_GAPS["G-TAB"], acceptGaps: true });
+    expect(accepted).toMatchObject({ verdict: "promote" });
+    expect(accepted.reason).toMatch(/MEASURED/);
+    // a measured headline with no applicable unit is a gap too
+    expect(promotionVerdict({ ...pass, c: ci(Number.NaN, Number.NaN, Number.NaN, 0) }).verdict).toBe("undecided");
+    // a sure loss still holds, gaps or not
+    expect(promotionVerdict({ ...pass, b: ci(-0.05, -0.08, -0.02) }, { gaps: ["x"], acceptGaps: true }).verdict).toBe("hold");
+  });
+
+  it("a leg that throws scores as empty and is counted; metrics that do not apply drop out of n", () => {
+    const units = syntheticUnits().filter((u) => u.gold === "G-TAB").slice(0, 4);
+    const ok = { id: "ok", applies: () => true, run: (u: Unit) => ({ grid: u.gold === "G-TAB" ? u.truth.rows.map((r) => r.cells) : null }) };
+    const boom = { id: "boom", applies: () => true, run: () => { throw new Error("x"); } };
+    const r = measure(units, [ok, boom], { resamples: 50, baseline: { "G-TAB": "ok" } });
+    expect(r.skipped["G-TAB: boom threw (scored as empty)"]).toBe(4);
+    expect(r.legs["G-TAB"].boom.metrics.cellExact.mean).toBe(0);
+    const withTag = units.filter((u) => u.gold === "G-TAB" && u.truth.tagColumn != null).length;
+    expect(r.legs["G-TAB"].ok.metrics.tagKeyExact.n).toBe(withTag);
+    expect(r.headlineGaps["G-TAB"]).toEqual({ missing: [...HEADLINE_GAPS["G-TAB"]], accepted: false });
+  });
 });
 
 describe("metrics", () => {
   const t = (TAB as Extract<GoldLine, { gold: "G-TAB" }>).truth;
   it("a perfect grid scores 1 everywhere; a split row and a column split are seen", () => {
-    expect(tabMetrics(t, t.rows.map((r) => r.cells))).toEqual({ rowCountExact: 1, rowTextF1: 1, wordRowAcc: 1, cellExact: 1 });
+    expect(tabMetrics(t, t.rows.map((r) => r.cells))).toEqual({ rowCountExact: 1, rowTextF1: 1, wordRowAcc: 1, cellExact: 1, tagKeyExact: 1, sectionRowRecall: 1 });
+    // the tag column and section rows are scored on their own; without them the metric does not apply (NaN)
+    expect(tabMetrics(t, [["QX-1", "ZFKMP SNIEV", "3'-0\""], ["QX-2 DCZRP", "NEKQKA KXBDUU", "4'-0\""]])).toMatchObject({ sectionRowRecall: 0 });
+    expect(tabMetrics(t, [["QX 1", "ZFKMP SNIEV", "3'-0\""], ["DCZRP"], ["QX 2", "NEKQKA KXBDUU", "4'-0\""]]).tagKeyExact).toBe(0);
+    const plain = tabMetrics({ headerRows: [], rows: [{ cells: ["QX-1", "ZFKMP"] }] }, [["QX-1", "ZFKMP"]]);
+    expect(Number.isNaN(plain.tagKeyExact) && Number.isNaN(plain.sectionRowRecall)).toBe(true);
     const split = [["QX-1", "ZFKMP", "3'-0\""], ["", "SNIEV", ""], ["DCZRP"], ["QX-2", "NEKQKA KXBDUU", "4'-0\""]];
     const m = tabMetrics(t, split);
     expect(m.rowCountExact).toBe(0);
@@ -198,7 +232,8 @@ describe("parse-engine-measure dry run on the synthetic fixtures", () => {
     const b = measureRun(["--synthetic", "--sets", "all", "--resamples", "200"]);
     expect(a.report).toEqual(b.report);
     const tab = a.report.legs["G-TAB"]["legacy:merger"];
-    expect(Object.keys(tab.metrics)).toEqual(["rowCountExact", "rowTextF1", "wordRowAcc", "cellExact"]);
+    expect(Object.keys(tab.metrics)).toEqual(["rowCountExact", "rowTextF1", "wordRowAcc", "cellExact", "tagKeyExact", "sectionRowRecall"]);
+    expect(a.markdown).toMatch(/§6\.3 headlines not measured: rowBandF1/);
     expect(tab.metrics.rowTextF1.lo).toBeLessThanOrEqual(tab.metrics.rowTextF1.mean);
     expect(Object.keys(tab.byStratum)).toContain("shape-tag-schedule");
     expect(a.report.paired["G-TAB"].baseline).toBe("legacy:merger");
@@ -298,6 +333,55 @@ describe("sampling, packs and adjudication", () => {
     const decided = mergeBatch(asg, A, B, agreed, [{ goldId: ids[1], pick: "b" }]);
     expect(decided[1]).toMatchObject({ adjudicated: true, labellers: ["agent-a", "agent-b", "owner"], truth: (off as Extract<GoldLine, { gold: "G-TAB" }>).truth });
     expect(validateRecords(decided).problems).toEqual([]);
+    // decisions it ignores are reported; a third labeller's decision carries its name
+    expect(ignoredDecisions(asg, A, B, agreed, [{ goldId: ids[0], pick: "b" }, { goldId: ids[2], pick: "b" }, { goldId: "tab-zz-0001", pick: "a" }]))
+      .toEqual([`${ids[0]}: the labellers agree`, `${ids[2]}: single-labelled (B has no label)`, "tab-zz-0001: not a unit of this batch"]);
+    expect(mergeBatch(asg, A, B, agreed, [{ goldId: ids[1], pick: "a", by: "agent-c" }])[1].labellers).toEqual(["agent-a", "agent-b", "agent-c"]);
+  });
+
+  it("adjudicate --decisions refuses an existing gold file with any problem, and keeps a .bak when it merges (MED-1)", () => {
+    const dir = tmp(), b = join(dir, "gold", "batches", "b1");
+    const tab = (id: string) => ({ ...TAB, goldId: id }) as GoldLine;
+    writePrivate(join(b, "packs", "assignment.json"), JSON.stringify({ schema: "bp-gold-assignment/1", batch: "b1", seed: 1, a: "agent-a", b: "agent-b", aUnits: ["tab-b1-0001"], bScratch: [], bPrefill: [] }), dir);
+    writePrivate(join(b, "labels", "agent-a.jsonl"), toJsonl([tab("tab-b1-0001")]), dir);
+    const gf = join(dir, "gold", "G-TAB.v1.jsonl");
+    const bad = toJsonl([tab("tab-b0-0001"), { ...tab("tab-b0-0002"), note: "hand edit" }]);
+    writePrivate(gf, bad, dir);
+    const dec = join(dir, "dec.json");
+    writeFileSync(dec, "[]");
+    expect(adjudicateMain(["--batch", "b1", "--private-dir", dir, "--decisions", dec])).toBe(1);
+    expect(readFileSync(gf, "utf8")).toBe(bad);
+    expect(existsSync(join(b, "adjudication", "final.jsonl"))).toBe(false);
+    const good = toJsonl([tab("tab-b0-0001")]);
+    writePrivate(gf, good, dir);
+    expect(adjudicateMain(["--batch", "b1", "--private-dir", dir, "--decisions", dec])).toBe(0);
+    expect(readFileSync(`${gf}.bak`, "utf8")).toBe(good);
+    expect(readFileSync(gf, "utf8")).toMatch(/tab-b0-0001[\s\S]*tab-b1-0001/);
+  });
+
+  it("prefill skips a tag map whose table had no page evidence instead of aborting the batch (MED-2)", () => {
+    const dir = tmp(), corpus = tmp();
+    mkdirSync(join(corpus, "data", "bundles"), { recursive: true });
+    writeFileSync(join(corpus, "data", "bundles", "p1.json"), JSON.stringify({ pages: [], annotations: [] }));
+    const items = [
+      { gold: "G-TAB", stratum: "shape-tag-schedule", pid: "p1", setId: "set-1", page: 1, region: [0.1, 0.1, 0.3, 0.3], source: "t", goldId: "tab-b1-0001" },
+      { gold: "G-TAGMAP", stratum: "schedule-project", pid: "p1", setId: "set-1", page: 1, region: [0.1, 0.1, 0.3, 0.3], source: "table:tab-b1-0001", goldId: "tagmap-b1-0001", table: "tab-b1-0001" },
+    ];
+    writePrivate(join(dir, "gold", "batches", "b1", "sample.json"), JSON.stringify({ schema: "bp-gold-sample/1", batch: "b1", seed: 1, perSet: 2, quota: {}, taken: {}, items }), dir);
+    expect(prefillMain(["--batch", "b1", "--private-dir", dir, "--corpus", corpus])).toBe(0);
+    expect(readFileSync(join(dir, "gold", "batches", "b1", "prefill.jsonl"), "utf8")).not.toMatch(/tagmap-b1-0001/);
+  });
+
+  it("validate --known-tables resolves tag maps without the prefill; label-pack will not re-pack a labelled batch", () => {
+    const dir = tmp();
+    const labels = join(dir, "gold", "batches", "b1", "labels", "agent-b.jsonl");
+    writePrivate(labels, toJsonl([TAGMAP]), dir);
+    expect(validateMain(["--private-dir", dir, "--file", labels, "--no-slices"])).toBe(1);
+    const kt = join(dir, "gold", "batches", "b1", "packs", "tables.json");
+    writePrivate(kt, JSON.stringify(["tab-t1-0001"]), dir);
+    expect(validateMain(["--private-dir", dir, "--file", labels, "--known-tables", kt, "--no-slices"])).toBe(0);
+    writePrivate(join(dir, "gold", "batches", "b1", "packs", "assignment.json"), "{}", dir);
+    expect(labelPackMain(["--batch", "b1", "--private-dir", dir])).toBe(1);
   });
 
   it("prefill turns a method result into a valid table (placeholder headers dropped, edges kept only when they fit)", () => {
@@ -311,7 +395,7 @@ describe("K79: the corpus loader's classical keynotes", () => {
   it("takes the crop read from the bundle annotation, never the shape name, and drops non-classical shape marks", () => {
     const corpus = tmp();
     mkdirSync(join(corpus, "data", "bundles"), { recursive: true });
-    writeFileSync(join(corpus, "data", "bundles", "pid1.json"), JSON.stringify({ pages: [], annotations: [{ id: 11, source: "shape-parse", data: { text: "QX-4" } }, { id: 12, source: "shape-parse", data: {} }] }));
+    writeFileSync(join(corpus, "data", "bundles", "pid1.json"), JSON.stringify({ pages: [], annotations: [{ id: 11, source: "shape-parse", data: { text: "QX-4" } }, { id: 12, source: "shape-parse", data: {} }, { id: 13, source: "shape-parse", data: { text: "  " } }] }));
     const m = (over: Partial<Mark>): Mark => ({ channel: "shape", label: "circle", bbox: [0.1, 0.1, 0.12, 0.12], center: [0.11, 0.11], provenance: "raster.opencv.shape:circle", text: "circle", ...over });
     const marks = [
       m({ meta: { annotationId: 11 } }),                                              // annotation: crop read from the bundle
@@ -323,5 +407,7 @@ describe("K79: the corpus loader's classical keynotes", () => {
     ];
     expect(classicalKeynotes("pid1", marks, corpus).map((k) => k.text)).toEqual(["QX-4", "", "", "QX-7"]);
     expect(classicalKeynotes("absent", [m({ meta: { annotationId: 11 } })], corpus).map((k) => k.text)).toEqual([""]);
+    // an empty / blank crop read is unknown: a re-ingested mark's own text survives it, the shape name never does
+    expect(classicalKeynotes("pid1", [m({ meta: { annotationId: 12 }, text: "QX-5" }), m({ meta: { annotationId: 13 }, text: "QX-6" }), m({ meta: { annotationId: 13 } })], corpus).map((k) => k.text)).toEqual(["QX-5", "QX-6", ""]);
   });
 });

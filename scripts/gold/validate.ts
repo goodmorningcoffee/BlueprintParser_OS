@@ -2,10 +2,12 @@
 /**
  * validate.ts — check gold files against the `bp-gold/1` contract (WP-2.G; PLAN §6.1).
  *
- *   npx tsx scripts/gold/validate.ts [--private-dir <dir>] [--file <a.jsonl> …] [--roundtrip] [--no-slices]
+ *   npx tsx scripts/gold/validate.ts [--private-dir <dir>] [--file <a.jsonl> …] [--known-tables <tables.json>] [--roundtrip] [--no-slices]
  *     default      every <dir>/gold/*.v1.jsonl, validated together (a G-TAGMAP line may name a table in another file)
  *     --file       these files instead (labels returned by a labeller, a prefill, …); repeatable. Two labellers' files
  *                  share goldIds by design, so ids are unique per file here, not across files
+ *     --known-tables a JSON array of G-TAB goldIds that tag maps may reference besides the files' own tables
+ *                  (label-pack writes <batch>/packs/tables.json for this, so labellers never need prefill.jsonl)
  *     --roundtrip  also require each file to be canonical: parse → canonical JSONL is byte-equal to the file
  *     --no-slices  skip the check that every sliceId has <dir>/slices/<sliceId>.json
  *
@@ -22,7 +24,7 @@ import { insideBp2Checkout, privateDirOf, readJsonl, refuseWrite, toJsonl, valid
 
 export interface ValidateResult { files: number; lines: number; byGold: Record<string, number>; problems: string[] }
 
-export function validateFiles(files: readonly string[], o: { privateDir: string; roundtrip?: boolean; checkSlices?: boolean; uniqueAcrossFiles?: boolean }): ValidateResult {
+export function validateFiles(files: readonly string[], o: { privateDir: string; roundtrip?: boolean; checkSlices?: boolean; uniqueAcrossFiles?: boolean; knownTables?: readonly string[] }): ValidateResult {
   const problems: string[] = [];
   const all: GoldLine[] = [];
   const raw: Array<{ file: string; records: unknown[] }> = [];
@@ -30,7 +32,7 @@ export function validateFiles(files: readonly string[], o: { privateDir: string;
     try { raw.push({ file: f, records: readJsonl(f) }); } catch (e) { problems.push((e as Error).message); }
   }
   // tables known across files, so a tag map may reference a table validated in another file
-  const tables = new Set<string>();
+  const tables = new Set<string>(o.knownTables ?? []);
   for (const { records } of raw) for (const r of records) {
     const x = r as { gold?: unknown; goldId?: unknown };
     if (x?.gold === "G-TAB" && typeof x.goldId === "string") tables.add(x.goldId);
@@ -68,7 +70,16 @@ export function main(argv: readonly string[]): number {
     const refused = refuseWrite(f, privateDir);
     if (refused) { console.error(`validate: refused ${f}: ${refused}`); return 2; }
   }
-  const r = validateFiles(files, { privateDir, roundtrip: argv.includes("--roundtrip"), checkSlices: !argv.includes("--no-slices"), uniqueAcrossFiles: !explicit });
+  let knownTables: string[] | undefined;
+  const kt = argv.includes("--known-tables") ? argv[argv.indexOf("--known-tables") + 1] : undefined;
+  if (kt) {
+    try {
+      const v = JSON.parse(readFileSync(resolve(kt), "utf8")) as unknown;
+      if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw new Error("not a JSON array of strings");
+      knownTables = v as string[];
+    } catch (e) { console.error(`validate: --known-tables ${kt}: ${(e as Error).message}`); return 2; }
+  }
+  const r = validateFiles(files, { privateDir, roundtrip: argv.includes("--roundtrip"), checkSlices: !argv.includes("--no-slices"), uniqueAcrossFiles: !explicit, knownTables });
   for (const p of r.problems.slice(0, 200)) console.error(`  ${p}`);
   if (r.problems.length > 200) console.error(`  … ${r.problems.length - 200} more`);
   console.log(`validate: ${r.files} files, ${r.lines} lines (${Object.entries(r.byGold).map(([g, n]) => `${g} ${n}`).join(", ") || "none"}), ${r.problems.length} problems`);

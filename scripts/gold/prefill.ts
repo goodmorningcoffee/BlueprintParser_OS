@@ -12,7 +12,9 @@
  *     G-TAB from Textract silver (the table method), else the legacy merger; G-PARA from the notes binder, else the
  *     spec binder; G-TAGMAP lists the table's tag-column keys with no instances (the labeller finds them; "?" when the
  *     table prefill has no keys).
- * Existing slices are kept unless --force. Reads only the corpus; writes only under the private dir. Prints counts.
+ * Existing slices are kept unless --force. A unit with no page evidence (bundle or page absent, no Textract words or
+ * lines) is skipped, and so is every G-TAGMAP unit whose table was skipped (it would name a table the batch lacks);
+ * both are counted in the summary line. Reads only the corpus; writes only under the private dir. Prints counts.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -120,12 +122,18 @@ export function main(argv: readonly string[]): number {
   const force = argv.includes("--force");
   const lines: GoldLine[] = [];
   const tables = new Map<string, TabTruth>();
-  let cut = 0, kept = 0, noEvidence = 0;
+  let cut = 0, kept = 0, noEvidence = 0, orphanTagMaps = 0;
+  const skippedTables = new Set<string>();
   const cache: { pid: string | null; b: Bundle } = { pid: null, b: {} }; // one bundle in memory at a time (units are sorted by pid)
   const order = sample.items.slice().sort((a, b) => (a.gold === "G-TAGMAP" ? 1 : 0) - (b.gold === "G-TAGMAP" ? 1 : 0) || (a.pid < b.pid ? -1 : a.pid > b.pid ? 1 : 0) || (a.goldId < b.goldId ? -1 : 1));
   for (const item of order) {
     const sheet = sheetNumberOf(item.pid, item.page, corpus);
-    if (item.gold === "G-TAGMAP") { lines.push(prefillLine(item, null, sheet, tables)); continue; }
+    if (item.gold === "G-TAGMAP") {
+      // tag maps sort after every table, so a skipped table is known here
+      if (item.table && skippedTables.has(item.table)) { orphanTagMaps++; continue; }
+      lines.push(prefillLine(item, null, sheet, tables));
+      continue;
+    }
     const id = `prv-${item.goldId}`;
     const file = join(privateDir, "slices", `${id}.json`);
     let slice: LegacySlice | null = null;
@@ -139,7 +147,7 @@ export function main(argv: readonly string[]): number {
       const page = cache.b.pages?.find((p) => p.pageNumber === item.page);
       const region = item.region.map(clamp) as MinMax;
       const s = page ? cutSlice(id, item.stratum, region, page, cache.b.annotations ?? []) : null;
-      if (!s) { noEvidence++; continue; }
+      if (!s) { noEvidence++; if (item.gold === "G-TAB") skippedTables.add(item.goldId); continue; }
       writePrivate(file, JSON.stringify(s) + "\n", privateDir);
       slice = s;
       cut++;
@@ -152,7 +160,7 @@ export function main(argv: readonly string[]): number {
   if (problems.length) { console.error(`prefill: ${problems.length} schema problems (first: ${problems[0]})`); return 1; }
   lines.sort((a, b) => (a.goldId < b.goldId ? -1 : 1));
   writePrivate(join(dir, "prefill.jsonl"), toJsonl(lines), privateDir);
-  console.log(`prefill: ${lines.length} prefill lines (${cut} slices cut, ${kept} kept, ${noEvidence} units without page evidence) → ${join(dir, "prefill.jsonl")}`);
+  console.log(`prefill: ${lines.length} prefill lines (${cut} slices cut, ${kept} kept, ${noEvidence} units without page evidence, ${orphanTagMaps} tag maps skipped with their table) → ${join(dir, "prefill.jsonl")}`);
   return 0;
 }
 

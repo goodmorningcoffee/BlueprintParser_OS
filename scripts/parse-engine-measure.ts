@@ -5,7 +5,7 @@
  *   NODE_OPTIONS=--max-old-space-size=3584 npx tsx scripts/parse-engine-measure.ts [--sets odd|even|all]
  *       [--private-dir <dir>] [--json <out.json>] [--tool ocr-positions,merger,…] [--gold G-TAB,G-PARA]
  *       [--seed 20261027] [--resamples 2000] [--baseline-tab legacy:merger] [--baseline-para legacy:notes-auto]
- *       [--synthetic]
+ *       [--synthetic] [--accept-headline-gaps]
  *     --sets       odd (fit) | even (held out, default) | all — split by the gold line's set number
  *     --private-dir the private gold root (default $BP_PRIVATE_GOLD_DIR, else the docs-repo fixtures_private):
  *                  reads gold/G-TAB.v1.jsonl, gold/G-PARA.v1.jsonl and slices/<sliceId>.json
@@ -13,6 +13,9 @@
  *                  checkout. Without it the markdown goes to stdout only.
  *     --tool       legacy paths to run (default: every path that applies to the gold set)
  *     --synthetic  dry run on the committed synthetic fixtures (their `truth` as gold; set n = fixture order)
+ *     --accept-headline-gaps  let §6.4 promote although some §6.3 headlines are not measured (HEADLINE_GAPS in
+ *                  lib/parse-measure.ts); only once the owner / integrator has accepted the narrowed set. Without it a
+ *                  would-be promote is reported undecided, and the report names the missing headlines either way.
  *
  * Legs: one per legacy path (`legacy:<path>`, through the WP-2.0a adapters in lib/legacy-joins/legacy-paths.ts).
  * The engine leg lands in TP-3.Q with the same `Leg` shape (scripts/lib/parse-measure.ts). Every headline gets a
@@ -119,6 +122,7 @@ export function run(argv: readonly string[]): { report: MeasureReport; markdown:
   const report = measure(units, legacyLegs(tools ? (id: LegacyPathId) => tools.includes(id) : undefined), {
     sets, seed: Number(argOf(argv, "seed") ?? 20261027), resamples: Number(argOf(argv, "resamples") ?? 2000),
     baseline: { "G-TAB": argOf(argv, "baseline-tab"), "G-PARA": argOf(argv, "baseline-para") },
+    acceptHeadlineGaps: argv.includes("--accept-headline-gaps"),
   });
   Object.assign(report.skipped, skipped);
   for (const [g, n] of Object.entries(adjudicated)) if (report.gold[g]) report.gold[g].adjudicated = n;

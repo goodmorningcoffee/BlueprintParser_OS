@@ -8,8 +8,11 @@
  *         different first; the first --max-owner go to the owner, the rest need a third label)
  *   npx tsx scripts/gold/adjudicate.ts --batch b1 --decisions <decisions.json> [--private-dir <dir>]
  *       decisions: [{goldId, pick: "a" | "b"} | {goldId, line: <bp-gold/1 line>}]
+ *       decisions may carry `by` (default "owner"; e.g. the third labeller of a `third-label` queue item)
  *       → <batch>/adjudication/final.jsonl and the batch's lines merged into <dir>/gold/<G-SET>.v1.jsonl (lines of
- *         the same goldIds are replaced; every other line is kept), validated before anything is written.
+ *         the same goldIds are replaced; every other line is kept), validated before anything is written. An
+ *         existing gold file with ANY problem (schema or semantic) is refused, never filtered: fix it with
+ *         validate.ts first. The previous gold file is kept as <G-SET>.v1.jsonl.bak before it is replaced.
  *
  * Merge rule: labeller A's label is the base. A double-labelled unit both agree on → adjudicated, labellers [a, b];
  * a decided disagreement → the decision, labellers [a, b, owner]; an undecided one → A's label, adjudicated false;
@@ -96,7 +99,7 @@ export function compare(asg: Assignment, A: ReadonlyMap<string, GoldLine>, B: Re
   return { report, queue, agreed: new Set(rows.filter((r) => r.agree).map((r) => r.id)) };
 }
 
-export type Decision = { goldId: string; pick: "a" | "b" } | { goldId: string; line: GoldLine };
+export type Decision = ({ goldId: string; pick: "a" | "b" } | { goldId: string; line: GoldLine }) & { by?: string };
 
 /** The batch's final lines (see the merge rule in the header). */
 export function mergeBatch(asg: Assignment, A: ReadonlyMap<string, GoldLine>, B: ReadonlyMap<string, GoldLine>, agreed: ReadonlySet<string>, decisions: readonly Decision[]): GoldLine[] {
@@ -111,10 +114,20 @@ export function mergeBatch(asg: Assignment, A: ReadonlyMap<string, GoldLine>, B:
     else if (b && d) {
       if ("line" in d && d.line.gold !== a.gold) throw new Error(`decision for ${id}: a ${d.line.gold} line for a ${a.gold} unit`);
       const chosen = "line" in d ? d.line : d.pick === "b" ? b : a;
-      out.push({ ...chosen, goldId: id, labellers: [asg.a, asg.b, "owner"], adjudicated: true } as GoldLine);
+      out.push({ ...chosen, goldId: id, labellers: [asg.a, asg.b, d.by ?? "owner"], adjudicated: true } as GoldLine);
     } else out.push({ ...a, labellers: [asg.a], adjudicated: false });
   }
   return out.sort((x, y) => (x.goldId < y.goldId ? -1 : 1));
+}
+
+/** Decisions mergeBatch ignores (unit agreed, single-labelled, or unknown), each with the reason — printed as warnings. */
+export function ignoredDecisions(asg: Assignment, A: ReadonlyMap<string, GoldLine>, B: ReadonlyMap<string, GoldLine>, agreed: ReadonlySet<string>, decisions: readonly Decision[]): string[] {
+  const units = new Set(asg.aUnits);
+  return decisions.flatMap((d) => {
+    const why = !units.has(d.goldId) ? "not a unit of this batch" : !A.has(d.goldId) ? "A did not label it"
+      : !B.has(d.goldId) ? "single-labelled (B has no label)" : agreed.has(d.goldId) ? "the labellers agree" : null;
+    return why ? [`${d.goldId}: ${why}`] : [];
+  });
 }
 
 /** One labeller's labels; a tag map may name any table of the batch (the labeller may not have labelled that table). */
@@ -143,24 +156,36 @@ export function main(argv: readonly string[]): number {
     return 0;
   }
   const decisions = JSON.parse(readFileSync(resolve(decFile), "utf8")) as Decision[];
+  for (const w of ignoredDecisions(asg, A, B, agreed, decisions)) console.error(`adjudicate: warning: decision ignored — ${w}`);
   const final = mergeBatch(asg, A, B, agreed, decisions);
   const ids = new Set(final.map((l) => l.goldId));
   const goldFile = (g: string) => join(privateDir, "gold", `${g}.v1.jsonl`);
-  const existing = (g: string) => (existsSync(goldFile(g)) ? validateRecords(readJsonl(goldFile(g))).lines : []);
-  const tables = new Set([...existing("G-TAB"), ...final].filter((l) => l.gold === "G-TAB").map((l) => l.goldId));
+  // Existing gold is read whole and must be valid: a filtered read would silently drop the bad lines on rewrite.
+  const SETS = ["G-TAB", "G-PARA", "G-TAGMAP"] as const;
+  const raw = new Map<string, unknown[]>();
+  try { for (const g of SETS) raw.set(g, existsSync(goldFile(g)) ? readJsonl(goldFile(g)) : []); } catch (e) { console.error(`adjudicate: ${(e as Error).message}; nothing written`); return 1; }
+  const tabIdOf = (r: unknown) => { const x = r as { gold?: unknown; goldId?: unknown }; return x?.gold === "G-TAB" && typeof x.goldId === "string" ? [x.goldId] : []; };
+  const tables = new Set([...raw.get("G-TAB")!.flatMap(tabIdOf), ...final.filter((l) => l.gold === "G-TAB").map((l) => l.goldId)]);
+  const existing = new Map<string, GoldLine[]>();
+  for (const g of SETS) {
+    const { lines, problems } = validateRecords(raw.get(g)!, tables);
+    if (problems.length) { console.error(`adjudicate: existing ${goldFile(g)} has ${problems.length} problems (first: ${problems[0]}); fix it with validate.ts — nothing written`); return 1; }
+    existing.set(g, lines);
+  }
   const { problems: fp } = validateRecords(final, tables);
   if (fp.length) { console.error(`adjudicate: merged batch has ${fp.length} problems (first: ${fp[0]})`); return 1; }
   const writes: Array<{ file: string; lines: GoldLine[]; mine: GoldLine[] }> = [];
-  for (const gold of ["G-TAB", "G-PARA", "G-TAGMAP"] as const) {
+  for (const gold of SETS) {
     const mine = final.filter((l) => l.gold === gold);
     if (!mine.length) continue;
-    const merged = [...existing(gold).filter((l) => !ids.has(l.goldId)), ...mine].sort((x, y) => (x.goldId < y.goldId ? -1 : 1));
+    const merged = [...existing.get(gold)!.filter((l) => !ids.has(l.goldId)), ...mine].sort((x, y) => (x.goldId < y.goldId ? -1 : 1));
     const { problems } = validateRecords(merged, tables);
     if (problems.length) { console.error(`adjudicate: ${goldFile(gold)} would have ${problems.length} problems (first: ${problems[0]}); nothing written`); return 1; }
     writes.push({ file: goldFile(gold), lines: merged, mine });
   }
   writePrivate(join(dir, "adjudication", "final.jsonl"), toJsonl(final), privateDir);
   for (const w of writes) {
+    if (existsSync(w.file)) writePrivate(`${w.file}.bak`, readFileSync(w.file, "utf8"), privateDir);
     writePrivate(w.file, toJsonl(w.lines), privateDir);
     console.log(`adjudicate: ${w.mine[0].gold} ${w.mine.length} lines from ${batch} (${w.mine.filter((l) => l.adjudicated).length} adjudicated) → ${w.file} (${w.lines.length} total)`);
   }

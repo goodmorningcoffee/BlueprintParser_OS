@@ -3,16 +3,19 @@
  * label-pack.ts — split a prefilled gold batch into labeller packs (WP-2.G; PLAN §6.1 protocol, DR-2.2).
  *
  *   npx tsx scripts/gold/label-pack.ts --batch b1 [--private-dir <dir>] [--a agent-a] [--b agent-b]
- *       [--scratch 30] [--double 0.15] [--seed 20261027]
+ *       [--scratch 30] [--double 0.15] [--seed 20261027] [--force]
  *
  * Protocol: labeller A corrects the prefill of EVERY unit. Labeller B labels `--scratch` G-TAB tables FROM SCRATCH
  * (no prefill; drawn round-robin over the table strata) and `--double` of the remaining units WITH the prefill —
  * always blind to A. Writes under <dir>/gold/batches/<batch>/packs/: `<labeller>.jsonl` (one work item per unit:
  * opaque ids, region, the slice's text lines inside the region in reading order, the prefill or a blank template),
- * `assignment.json` (who labels what, in which mode: adjudicate.ts reads it) and `README.md` (instructions). Labels
- * come back as `bp-gold/1` lines in <dir>/gold/batches/<batch>/labels/<labeller>.jsonl. Prints counts only.
+ * `assignment.json` (who labels what, in which mode: adjudicate.ts reads it), `tables.json` (the batch's table ids
+ * only, so a labeller validates tag maps without seeing the prefill) and `README.md` (instructions). Labels come back
+ * as `bp-gold/1` lines in <dir>/gold/batches/<batch>/labels/<labeller>.jsonl. Once labels exist, re-packing is
+ * refused without --force (a new seed / scratch / labeller would pair the labels against the wrong modes). Prints
+ * counts only.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { LegacySlice } from "@/lib/legacy-joins/legacy-paths";
@@ -63,8 +66,8 @@ Return one \`bp-gold/1\` line per unit in \`../labels/<you>.jsonl\`: copy \`temp
 - G-PARA: \`items\` in reading order: \`key\` as printed (\`1.\`, \`A.\`, \`(b)\`, or ""), \`text\` with line breaks joined by one
   space; a block header is an item with \`header:true\`.
 - G-TAGMAP: every tag of the table and every instance on the drawings (\`page\` + normalised bbox); \`qty\` when printed.
-Check with: \`npx tsx scripts/gold/validate.ts --file <labels file> --file <batch>/prefill.jsonl\` (the prefill names
-every table of the batch, so a tag map that points at a table you did not label still resolves).
+Check with: \`npx tsx scripts/gold/validate.ts --file <labels file> --known-tables <batch>/packs/tables.json\` (the batch's
+table ids only, so a tag map that points at a table you did not label still resolves). Do not open \`prefill.jsonl\`.
 `;
 
 export function main(argv: readonly string[]): number {
@@ -74,6 +77,11 @@ export function main(argv: readonly string[]): number {
   const dir = join(privateDir, "gold", "batches", batch);
   const a = argOf(argv, "a") ?? "agent-a", b = argOf(argv, "b") ?? "agent-b";
   if (a === b) { console.error("label-pack: the two labellers must differ"); return 2; }
+  const labelsDir = join(dir, "labels");
+  if (!argv.includes("--force") && existsSync(join(dir, "packs", "assignment.json")) && existsSync(labelsDir) && readdirSync(labelsDir).some((f) => f.endsWith(".jsonl"))) {
+    console.error(`label-pack: ${batch} already has labels under ${labelsDir}; re-packing would change the assignment adjudicate.ts pairs them by (use --force to re-pack anyway)`);
+    return 1;
+  }
   const sample = JSON.parse(readFileSync(join(dir, "sample.json"), "utf8")) as Sample;
   const { lines, problems } = validateRecords(readJsonl(join(dir, "prefill.jsonl")));
   if (problems.length) { console.error(`label-pack: prefill.jsonl has ${problems.length} problems (first: ${problems[0]})`); return 1; }
@@ -92,6 +100,7 @@ export function main(argv: readonly string[]): number {
   writePrivate(join(dir, "packs", `${a}.jsonl`), toJsonl(packA), privateDir);
   writePrivate(join(dir, "packs", `${b}.jsonl`), toJsonl(packB), privateDir);
   writePrivate(join(dir, "packs", "assignment.json"), JSON.stringify(asg, null, 1) + "\n", privateDir);
+  writePrivate(join(dir, "packs", "tables.json"), JSON.stringify(lines.filter((l) => l.gold === "G-TAB").map((l) => l.goldId).sort()) + "\n", privateDir);
   writePrivate(join(dir, "packs", "README.md"), README(batch, a, b), privateDir);
   console.log(`label-pack: ${a} ${packA.length} units (prefill); ${b} ${asg.bScratch.length} scratch + ${asg.bPrefill.length} prefill → ${join(dir, "packs")}`);
   return 0;

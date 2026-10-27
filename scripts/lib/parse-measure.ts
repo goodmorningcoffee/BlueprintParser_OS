@@ -3,7 +3,8 @@
  *
  * Pure: no file IO, no clock, no unseeded randomness. A unit is one gold region (G-TAB table or G-PARA block) with
  * its page slice; a leg turns a unit into a prediction (a grid or an item list); the metrics score a prediction
- * against the unit's truth (every metric is in [0, 1], higher is better); the paired bootstrap gives a 95 % CI of
+ * against the unit's truth (every metric is in [0, 1], higher is better; NaN = the metric does not apply to that unit,
+ * which then counts in neither that metric's mean nor its n); the paired bootstrap gives a 95 % CI of
  * (leg − baseline) per headline, resampling units with a seeded PRNG. TP-2 has only the legacy legs (the 2.0a
  * adapters); TP-3.Q adds an `engine` leg with the same `Leg` shape. Nothing here returns drawing text: reports carry
  * numbers, leg ids, strata and opaque gold ids.
@@ -145,10 +146,26 @@ export function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
-export const TAB_METRICS = ["rowCountExact", "rowTextF1", "wordRowAcc", "cellExact"] as const;
+export const TAB_METRICS = ["rowCountExact", "rowTextF1", "wordRowAcc", "cellExact", "tagKeyExact", "sectionRowRecall"] as const;
 export const PARA_METRICS = ["itemF1", "keyExact", "textSim"] as const;
-/** Headline metrics (PLAN §6.3: rows ✓, cols/cells ✓, paragraphs ✓). */
+/** Headline metrics measured here (PLAN §6.3: rows ✓, cols/cells ✓, tag column ✓ legends, shape-centre rows ✓, paragraphs ✓). */
 export const HEADLINES: Record<UnitGold["gold"], readonly string[]> = { "G-TAB": TAB_METRICS, "G-PARA": PARA_METRICS };
+/**
+ * PLAN §6.3 headlines NOT measured by this tool (a grid / item-list prediction carries no geometry, no tag-column
+ * choice, no item level or header flag). They are named in every report, and §6.4 "promote" is withheld (→ undecided)
+ * while any is missing, unless the narrowed set is explicitly accepted (`acceptHeadlineGaps`, CLI
+ * `--accept-headline-gaps`) — the verdict never claims "every headline" over a partial set.
+ *   rowBandF1        rows: row-band F1 (IoU ≥ .7) — needs predicted row bands
+ *   gritsTop/Con     cols/cells: GriTS-Top / GriTS-Con — cellExact is the only cell metric today
+ *   shapeCentreRows  shape-centre rows: shape-column boxes with every description line in the right row
+ *   tagColumnAcc     tag column: which column the method calls the tag column (incl. non-left); tagKeyExact covers
+ *                    only the key text
+ *   keyPathExact, blockHeaderF1   paragraphs: hierarchy path and block headers — predicted items carry neither
+ */
+export const HEADLINE_GAPS: Record<UnitGold["gold"], readonly string[]> = {
+  "G-TAB": ["rowBandF1", "gritsTop", "gritsCon", "shapeCentreRows", "tagColumnAcc"],
+  "G-PARA": ["keyPathExact", "blockHeaderF1"],
+};
 
 /**
  * G-TAB (and G-ROW) metrics of a predicted grid against the truth body rows (header rows are not body rows):
@@ -156,7 +173,10 @@ export const HEADLINES: Record<UnitGold["gold"], readonly string[]> = { "G-TAB":
  *   rowTextF1      exact-match F1 of whole-row text (cells joined in order, column-agnostic): row segmentation;
  *   wordRowAcc     share of truth words found in the predicted row aligned to their row (G-ROW, word → row);
  *   cellExact      share of non-empty truth cells matched exactly in the aligned row, under the best one-to-one
- *                  column mapping (cols/cells, normalised text).
+ *                  column mapping (cols/cells, normalised text);
+ *   tagKeyExact    the same, over the truth tag column only (tag column: key text exact); NaN without a tagColumn;
+ *   sectionRowRecall share of truth section rows that come back as their own aligned row with the same text
+ *                  (shape-centre rows: section-row recall); NaN without section rows.
  */
 export function tabMetrics(truth: TabTruth, grid: readonly string[][] | null | undefined): Record<(typeof TAB_METRICS)[number], number> {
   const body = truth.rows.map((r) => r.cells);
@@ -196,11 +216,26 @@ export function tabMetrics(truth: TabTruth, grid: readonly string[][] | null | u
       if (j != null && pi != null && normText(pred[j][pi] ?? "") === t) cellHits++;
     });
   });
+  const tc = truth.tagColumn;
+  let tags = 0, tagHits = 0;
+  if (tc != null) {
+    body.forEach((r, i) => {
+      const t = normText(r[tc] ?? "");
+      if (truth.rows[i].section || !t) return;
+      tags++;
+      const j = align[i], pi = colMap.get(tc);
+      if (j != null && pi != null && normText(pred[j][pi] ?? "") === t) tagHits++;
+    });
+  }
+  const sections = body.flatMap((_, i) => (truth.rows[i].section ? [i] : []));
+  const sectionHits = sections.filter((i) => align[i] != null && rowText(pred[align[i]!]) === rowText(body[i])).length;
   return {
     rowCountExact: pred.length === body.length ? 1 : 0,
     rowTextF1: exactF1(body.map(rowText), pred.map(rowText)),
     wordRowAcc: words ? found / words : 1,
     cellExact: cells ? cellHits / cells : 1,
+    tagKeyExact: tags ? tagHits / tags : NaN,
+    sectionRowRecall: sections.length ? sectionHits / sections.length : NaN,
   };
 }
 
@@ -269,15 +304,22 @@ export function pairedBootstrap(base: readonly number[], leg: readonly number[],
  * is ≥ −0.01 and at least one headline's point estimate is ≥ +0.03; hold when a headline is surely worse (upper bound
  * < −0.01) or no headline can reach +0.03 (every upper bound < +0.03); otherwise undecided, with a rough count of
  * units needed (n·(half-width / needed half-width)², the largest over the headlines that block). Guards are measured
- * elsewhere (classifier-measure) and are not part of this verdict.
+ * elsewhere (classifier-measure) and are not part of this verdict. `gaps` are §6.3 headlines this report does not
+ * measure (HEADLINE_GAPS, plus measured ones with no applicable unit): a would-be promote is undecided while any is
+ * missing, unless `acceptGaps` (the narrowed set was accepted by the owner / integrator).
  */
-export function promotionVerdict(cis: Record<string, PairedCI>): { verdict: "promote" | "hold" | "undecided"; reason: string; needUnits?: number } {
+export function promotionVerdict(cis: Record<string, PairedCI>, o: { gaps?: readonly string[]; acceptGaps?: boolean } = {}): { verdict: "promote" | "hold" | "undecided"; reason: string; needUnits?: number } {
   const xs = Object.entries(cis).filter(([, c]) => c.n > 0);
   if (!xs.length) return { verdict: "undecided", reason: "no units" };
   const worse = xs.filter(([, c]) => c.hi < -0.01);
   if (worse.length) return { verdict: "hold", reason: `worse on ${worse.map(([k]) => k).join(", ")}` };
   const gain = xs.some(([, c]) => c.diff >= 0.03);
-  if (gain && xs.every(([, c]) => c.lo >= -0.01)) return { verdict: "promote", reason: "every lower bound ≥ −0.01 and a headline gains ≥ +0.03" };
+  if (gain && xs.every(([, c]) => c.lo >= -0.01)) {
+    const gaps = [...(o.gaps ?? []), ...Object.entries(cis).filter(([, c]) => !(c.n > 0)).map(([k]) => `${k} (no applicable units)`)];
+    if (!gaps.length) return { verdict: "promote", reason: "every headline's lower bound ≥ −0.01 and a headline gains ≥ +0.03" };
+    if (o.acceptGaps) return { verdict: "promote", reason: `every MEASURED headline's lower bound ≥ −0.01 and one gains ≥ +0.03; narrowed set accepted, not measured: ${gaps.join(", ")}` };
+    return { verdict: "undecided", reason: `measured headlines pass, but §6.3 headlines are not measured: ${gaps.join(", ")} (promote needs them, or --accept-headline-gaps)` };
+  }
   if (xs.every(([, c]) => c.hi < 0.03)) return { verdict: "hold", reason: "no headline can gain +0.03" };
   let need = 0;
   for (const [, c] of xs) {
@@ -299,19 +341,23 @@ export interface MeasureReport {
   gold: Record<string, { units: number; byStratum: Record<string, number>; adjudicated?: number }>;
   legs: Record<string, Record<string, LegReport>>;
   paired: Record<string, { baseline: string; legs: Record<string, { metrics: Record<string, PairedCI>; byStratum: Record<string, Record<string, PairedCI>>; verdict: ReturnType<typeof promotionVerdict> }> }>;
+  /** §6.3 headlines not measured per gold set, and whether the narrowed set was accepted for the verdict. */
+  headlineGaps: Record<string, { missing: string[]; accepted: boolean }>;
   skipped: Record<string, number>;
 }
 
 /** Score every leg on every unit it applies to and build the report (deterministic for a given seed). */
-export function measure(units: readonly Unit[], legs: readonly Leg[], o: BootOpts & { sets?: string; baseline?: Partial<Record<UnitGold["gold"], string>> } = {}): MeasureReport {
+export function measure(units: readonly Unit[], legs: readonly Leg[], o: BootOpts & { sets?: string; baseline?: Partial<Record<UnitGold["gold"], string>>; acceptHeadlineGaps?: boolean } = {}): MeasureReport {
   const seed = o.seed ?? 20261027, resamples = o.resamples ?? 2000;
-  const report: MeasureReport = { schema: "bp-parse-measure/1", sets: o.sets ?? "all", seed, resamples, gold: {}, legs: {}, paired: {}, skipped: {} };
+  const report: MeasureReport = { schema: "bp-parse-measure/1", sets: o.sets ?? "all", seed, resamples, gold: {}, legs: {}, paired: {}, headlineGaps: {}, skipped: {} };
+  const fin = (v: number): boolean => Number.isFinite(v);
   for (const gold of ["G-TAB", "G-PARA"] as const) {
     const us = units.filter((u) => u.gold === gold).slice().sort((a, b) => (a.goldId < b.goldId ? -1 : a.goldId > b.goldId ? 1 : 0));
     if (!us.length) continue;
     const byStratum: Record<string, number> = {};
     for (const u of us) byStratum[u.stratum] = (byStratum[u.stratum] ?? 0) + 1;
     report.gold[gold] = { units: us.length, byStratum };
+    report.headlineGaps[gold] = { missing: [...HEADLINE_GAPS[gold]], accepted: !!o.acceptHeadlineGaps };
     const metricNames = HEADLINES[gold];
     const scores = new Map<string, Record<string, number>[]>();
     const covered = new Map<string, number>();
@@ -321,13 +367,19 @@ export function measure(units: readonly Unit[], legs: readonly Leg[], o: BootOpt
       const rows: Record<string, number>[] = [];
       let cov = 0;
       for (const u of us) {
-        const pred = leg.run(u);
+        // one legacy path that throws on one slice must not abort the run: it scores as an empty prediction, counted
+        let pred: Prediction;
+        try { pred = leg.run(u); } catch {
+          pred = { grid: null, items: null };
+          const k = `${gold}: ${leg.id} threw (scored as empty)`;
+          report.skipped[k] = (report.skipped[k] ?? 0) + 1;
+        }
         if ((u.gold === "G-TAB" ? pred.grid : pred.items)?.length) cov++;
         rows.push(scoreUnit(u, pred));
       }
       scores.set(leg.id, rows);
       covered.set(leg.id, cov);
-      const metrics = (sel: (i: number) => boolean) => Object.fromEntries(metricNames.map((m) => [m, bootstrapMean(rows.filter((_, i) => sel(i)).map((r) => r[m]), { seed, resamples })]));
+      const metrics = (sel: (i: number) => boolean) => Object.fromEntries(metricNames.map((m) => [m, bootstrapMean(rows.filter((_, i) => sel(i)).map((r) => r[m]).filter(fin), { seed, resamples })]));
       const strata: LegReport["byStratum"] = {};
       for (const s of Object.keys(byStratum).sort()) strata[s] = { units: byStratum[s], metrics: metrics((i) => us[i].stratum === s) };
       report.legs[gold][leg.id] = { units: us.length, coverage: r4(cov / us.length), metrics: metrics(() => true), byStratum: strata };
@@ -339,13 +391,13 @@ export function measure(units: readonly Unit[], legs: readonly Leg[], o: BootOpt
     for (const [id, rows] of scores) {
       if (id === baseline) continue;
       const paired = (sel: (i: number) => boolean) => Object.fromEntries(metricNames.map((m) => {
-        const idx = us.map((_, i) => i).filter(sel);
+        const idx = us.map((_, i) => i).filter((i) => sel(i) && fin(base[i][m]) && fin(rows[i][m]));
         return [m, pairedBootstrap(idx.map((i) => base[i][m]), idx.map((i) => rows[i][m]), { seed, resamples })];
       }));
       const all = paired(() => true);
       const strata: Record<string, Record<string, PairedCI>> = {};
       for (const s of Object.keys(byStratum).sort()) strata[s] = paired((i) => us[i].stratum === s);
-      report.paired[gold].legs[id] = { metrics: all, byStratum: strata, verdict: promotionVerdict(all) };
+      report.paired[gold].legs[id] = { metrics: all, byStratum: strata, verdict: promotionVerdict(all, { gaps: HEADLINE_GAPS[gold], acceptGaps: o.acceptHeadlineGaps }) };
     }
   }
   return report;
@@ -367,8 +419,18 @@ export function reportMarkdown(r: MeasureReport): string {
       out.push("", `Paired (leg − ${p.baseline}), 95 % CI:`, "", `| leg | ${names.join(" | ")} | §6.4 |`, `|---|${names.map(() => "---").join("|")}|---|`);
       for (const [id, l] of Object.entries(p.legs)) out.push(`| ${id} | ${names.map((m) => ci(l.metrics[m])).join(" | ")} | ${l.verdict.verdict}${l.verdict.needUnits ? ` (~${l.verdict.needUnits} units)` : ""} |`);
     }
+    const gaps = r.headlineGaps[gold];
+    if (gaps?.missing.length) out.push("", `§6.3 headlines not measured: ${gaps.missing.join(", ")} (${gaps.accepted ? "narrowed set accepted for the verdict" : "promote withheld until measured or accepted"}).`);
     out.push("");
   }
+  out.push(
+    "Reading notes:",
+    "- tagKeyExact / sectionRowRecall count only units with a tag column / section rows (their n says how many).",
+    "- legacy:guided-extract and legacy:manual are oracle-assisted where the gold has colEdges + rowEdges (inputs drawn on the truth grid); elsewhere they use detectRowsAndColumns, so one leg mixes both regimes.",
+    "- legacy:guided-extract returns the header line as body row 1 when the truth has a header, so its rowCountExact is ≈ 0 by construction.",
+    "- an undecided verdict has no unit estimate when no headline is blocked by its lower bound (no headline reaches +0.03 yet).",
+    "",
+  );
   for (const [k, n] of Object.entries(r.skipped)) out.push(`- skipped: ${k} (${n})`);
   return out.join("\n") + "\n";
 }
