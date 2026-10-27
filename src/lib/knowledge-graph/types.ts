@@ -10,7 +10,7 @@
 // inside one project, and `revision_of` is only the within-project case (same sheet number on two
 // pages, or an admin duplicate mark).
 
-import type { BboxLTWH } from "@/types";
+import type { BboxLTWH, BboxMinMax } from "@/types";
 
 export const KNOWLEDGE_GRAPH_VERSION = 1;
 
@@ -278,7 +278,7 @@ export interface GraphPageInput {
     id?: string;
     type?: string;
     category?: string;
-    bbox?: BboxLTWH;
+    bbox?: BboxMinMax; // stored MinMax (K04); build.ts converts it for the LTWH graph nodes
     csiTags?: Array<{ code: string; description?: string; division?: string }>;
     data?: { headers?: string[]; rows?: unknown[]; tagColumn?: number | string | null; keynotes?: Array<{ key: string; description?: string }> } | null;
   }> | null;

@@ -1516,10 +1516,10 @@ export default function ViewAllPanel() {
                               if (!canAdoptProjectLifecycle()) return;
                               navigateViewerPage(pnNum);
                               if (!canAdoptProjectLifecycle()) return;
-                              const [l, t, w, h] = r.bbox;
+                              const [x0, y0, x1, y1] = r.bbox; // stored MinMax (K04)
                               useUiStore.getState().setLlmHighlight({
                                 pageNumber: pnNum,
-                                bbox: [l, t, l + w, t + h],
+                                bbox: [x0, y0, x1, y1],
                                 label: r.category,
                               });
                             }}

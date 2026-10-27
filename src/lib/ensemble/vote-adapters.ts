@@ -18,6 +18,7 @@ import type {
   BboxLTWH,
   BboxMinMax,
 } from "@/types";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 
 function minmaxToLtwh(b: BboxMinMax): BboxLTWH {
   return [b[0], b[1], b[2] - b[0], b[3] - b[1]];
@@ -72,15 +73,20 @@ export function votesFromParsedRegions(
   parsedRegions: readonly ParsedRegion[] | undefined,
 ): RegionVote[] {
   if (!parsedRegions) return [];
+  // Votes are LTWH; the saved ParsedRegion box is MinMax (K04), so convert instead of passing it on.
   return parsedRegions
     .filter((pr) => pr.type === "schedule" || pr.type === "keynote")
-    .map((pr) => ({
-      source: "parsed-region" as const,
-      bbox: pr.bbox,
-      score: 0.99,  // user has committed this; treat as near-certain
-      category: pr.category,
-      evidence: [`user-saved ${pr.type}`],
-    }));
+    .flatMap((pr) => {
+      const bbox = parsedRegionMinMax(pr);
+      if (!bbox) return [];
+      return [{
+        source: "parsed-region" as const,
+        bbox: minmaxToLtwh(bbox),
+        score: 0.99,  // user has committed this; treat as near-certain
+        category: pr.category,
+        evidence: [`user-saved ${pr.type}`],
+      }];
+    });
 }
 
 // ─── Bundle all adapters ──────────────────────────────────────
