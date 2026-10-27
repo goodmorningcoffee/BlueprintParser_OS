@@ -140,6 +140,84 @@ export async function persistFetch(
   }
 }
 
+/** What `persistFetchResult` resolves to: every HTTP outcome, including 4xx/5xx. */
+export interface PersistFetchResult<T = unknown> {
+  ok: boolean;
+  status: number;
+  /** Parsed JSON body, or null when the body is empty or not JSON. */
+  body: T | null;
+}
+
+function isAbortError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
+}
+
+/**
+ * Like `persistFetch`, but RESOLVES on every HTTP status so the caller can read a 409 (or any
+ * error) body. It throws only when no response arrived: an abort rethrows the original
+ * AbortError; any other network failure throws the same message `persistFetch` uses.
+ */
+export async function persistFetchResult<T = unknown>(
+  url: string,
+  body: unknown,
+  method: "POST" | "PUT" | "PATCH" | "DELETE" = "POST",
+  signal?: AbortSignal,
+): Promise<PersistFetchResult<T>> {
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    throw new Error(`Network error while saving: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let parsed: T | null = null;
+  try {
+    parsed = (await resp.json()) as T;
+  } catch {
+    parsed = null;
+  }
+  return { ok: resp.ok, status: resp.status, body: parsed };
+}
+
+/** A non-2xx GET response from `getJson`; `status` lets a query branch on 404 and the like. */
+export class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+/**
+ * The sanctioned client GET: `fetch(url, { signal })`, parsed JSON on 2xx. A non-2xx response
+ * throws `HttpError` (message from the API error envelope, else `HTTP <status>`); a 2xx body that
+ * is not JSON throws too. An abort rejects with the original AbortError.
+ */
+export async function getJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
+  const resp = await fetch(url, { signal });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      const msg = apiErrorMessage(await resp.json());
+      if (msg) detail = msg;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new HttpError(resp.status, detail);
+  }
+  try {
+    return (await resp.json()) as T;
+  } catch {
+    throw new HttpError(resp.status, `Invalid JSON from ${url} (HTTP ${resp.status})`);
+  }
+}
+
 /**
  * Upsert a parsed region (table/keynote/notes/spec/legend) through the
  * transactional /api/regions/promote route. Pass a STABLE `regionId` so that
