@@ -1,0 +1,15 @@
+{
+  "capability": "evidence",
+  "version": 1,
+  "modules": [
+    "src/lib/parse-engine/geometry.ts",
+    "src/lib/parse-engine/lines.ts",
+    "src/server/services/parse-engine/evidence.ts"
+  ],
+  "history": [
+    {
+      "version": 1,
+      "sha256": "5ad3e0b79b4ce63ae34c76aca5b75508636c69b200a3f7221542bd821d3cb34f"
+    }
+  ]
+}

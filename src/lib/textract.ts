@@ -8,7 +8,8 @@ import { promisify } from "util";
 import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { TextractPageData, TextractWord, TextractLine, TextractTable, TextractCell, BboxLTWH } from "@/types";
+import type { TextractPageData, TextractWord, TextractLine, BboxLTWH } from "@/types";
+import type { TextractCellExt, TextractLayoutBlock, TextractLayoutKind, TextractMergedCell, TextractPageDataExt, TextractTableExt } from "@/types/shapes/textract";
 import { logger } from "@/lib/logger";
 
 const execFileAsync = promisify(execFile);
@@ -29,7 +30,7 @@ const textractClient = new TextractClient({
  */
 export async function analyzePageImage(
   imageBuffer: Buffer
-): Promise<TextractPageData> {
+): Promise<TextractPageDataExt> {
   const command = new AnalyzeDocumentCommand({
     Document: { Bytes: imageBuffer },
     FeatureTypes: ["LAYOUT", "TABLES"],
@@ -39,11 +40,26 @@ export async function analyzePageImage(
   return parseTextractResponse(response.Blocks || []);
 }
 
+/** [TP-2 WP-2.E] LAYOUT block type → the compact kind the parse engine reads; other LAYOUT types are dropped. */
+const LAYOUT_KIND: Readonly<Record<string, TextractLayoutKind>> = {
+  LAYOUT_LIST: "list",
+  LAYOUT_TEXT: "text",
+  LAYOUT_SECTION_HEADER: "section-header",
+  LAYOUT_TITLE: "title",
+  LAYOUT_TABLE: "table",
+};
+const r4 = (v: number): number => Math.round(v * 1e4) / 1e4;
+
 /**
  * Parse raw Textract Block[] into our TextractPageData shape.
  * Pure function — reusable by both dev route and production webhook.
+ *
+ * [TP-2 WP-2.E, K17] Also keeps, compactly and with no text, what the LAYOUT + TABLES features already
+ * return: `layout` ({k, b} MinMax, 4 dp; only when the response has LAYOUT blocks), `cells[].hdr` on
+ * COLUMN_HEADER cells and `tables[].merged` (MERGED_CELL spans). Always on; words, lines and the
+ * existing table fields are unchanged.
  */
-export function parseTextractResponse(blocks: Block[]): TextractPageData {
+export function parseTextractResponse(blocks: Block[]): TextractPageDataExt {
   const words: TextractWord[] = [];
   const lineMap = new Map<
     string,
@@ -103,7 +119,7 @@ export function parseTextractResponse(blocks: Block[]): TextractPageData {
   }
 
   // Extract TABLE blocks (from TABLES feature type)
-  const tables: TextractTable[] = [];
+  const tables: TextractTableExt[] = [];
   const blockById = new Map<string, Block>();
   for (const block of blocks) {
     if (block.Id) blockById.set(block.Id, block);
@@ -116,7 +132,7 @@ export function parseTextractResponse(blocks: Block[]): TextractPageData {
     const tableBbox: BboxLTWH = [tableBB.Left || 0, tableBB.Top || 0, tableBB.Width || 0, tableBB.Height || 0];
 
     const cellIds = block.Relationships?.find((r) => r.Type === "CHILD")?.Ids || [];
-    const cells: TextractCell[] = [];
+    const cells: TextractCellExt[] = [];
     let maxRow = 0;
     let maxCol = 0;
 
@@ -146,15 +162,33 @@ export function parseTextractResponse(blocks: Block[]): TextractPageData {
         text: cellText,
         bbox: [cellBB.Left || 0, cellBB.Top || 0, cellBB.Width || 0, cellBB.Height || 0],
         confidence: cellBlock.Confidence || 0,
+        ...(cellBlock.EntityTypes?.includes("COLUMN_HEADER") ? { hdr: true as const } : {}),
       });
     }
 
+    const merged: TextractMergedCell[] = [];
+    for (const mergedId of block.Relationships?.find((r) => r.Type === "MERGED_CELL")?.Ids || []) {
+      const m = blockById.get(mergedId);
+      if (!m || m.BlockType !== "MERGED_CELL") continue;
+      merged.push({ r: m.RowIndex || 1, c: m.ColumnIndex || 1, rs: m.RowSpan || 1, cs: m.ColumnSpan || 1 });
+    }
+
     if (cells.length > 0) {
-      tables.push({ bbox: tableBbox, cells, rowCount: maxRow, colCount: maxCol });
+      tables.push({ bbox: tableBbox, cells, rowCount: maxRow, colCount: maxCol, ...(merged.length > 0 ? { merged } : {}) });
     }
   }
 
-  return { lines, words, ...(tables.length > 0 ? { tables } : {}) };
+  const layout: TextractLayoutBlock[] = [];
+  for (const block of blocks) {
+    const k = block.BlockType ? LAYOUT_KIND[block.BlockType] : undefined;
+    const bb = block.Geometry?.BoundingBox;
+    if (!k || !bb) continue;
+    const x0 = bb.Left || 0;
+    const y0 = bb.Top || 0;
+    layout.push({ k, b: [r4(x0), r4(y0), r4(x0 + (bb.Width || 0)), r4(y0 + (bb.Height || 0))] });
+  }
+
+  return { lines, words, ...(tables.length > 0 ? { tables } : {}), ...(layout.length > 0 ? { layout } : {}) };
 }
 
 /**
@@ -314,7 +348,7 @@ async function retryWithBackoff<T>(
  */
 export async function analyzePageImageWithFallback(
   pngBuffer: Buffer
-): Promise<TextractPageData> {
+): Promise<TextractPageDataExt> {
   // Strategy A: Textract at original resolution (with retry for throttling)
   try {
     return await retryWithBackoff(() => analyzePageImage(pngBuffer));

@@ -52,7 +52,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
-import { eq, and, gte, lte, or, isNull } from "drizzle-orm";
+import { eq, and, gte, lte, or, isNull, sql } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
 import {
   resolveByPublicId,
@@ -261,8 +261,9 @@ export async function getPageTextract(req: Request) {
 
   const { project } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
 
+  // [TP-2 WP-2.E] the compact LAYOUT blocks (`textract_data.layout`, engine-only) never reach the viewer.
   const [pageRow] = await db
-    .select({ textractData: pages.textractData })
+    .select({ textractData: sql<TextractPageData | null>`CASE WHEN jsonb_typeof(${pages.textractData}) = 'object' THEN ${pages.textractData} - 'layout' ELSE ${pages.textractData} END` })
     .from(pages)
     .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)))
     .limit(1);

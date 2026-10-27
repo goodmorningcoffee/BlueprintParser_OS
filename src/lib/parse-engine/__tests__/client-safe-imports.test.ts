@@ -32,7 +32,7 @@ const CLIENT_SAFE = [
   "paragraphs/address",
 ] as const;
 
-const MUST_EXIST = ["lines", "geometry"] as const;
+const MUST_EXIST = ["types", "lines", "geometry", "ops"] as const; // + types, ops: WP-2.E (2.0b VERIFY LOW-4)
 
 function sourceFile(mod: string): string | null {
   for (const ext of [".ts", ".tsx"]) {

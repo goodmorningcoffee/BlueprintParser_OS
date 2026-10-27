@@ -1250,6 +1250,25 @@ export const PUBLIC_DEMO_SURFACES = [
       "SSE output is non-JSON; zero persistence is enforced semantically.",
     ),
   ),
+  // [TP-2 WP-2.E] Global parse-engine switches (code defaults ⊕ app_settings.parseEngine); no project data.
+  publicSurface(
+    "parse-engine-flags",
+    "/api/projects/[id]/parse-engine/flags",
+    "GET",
+    "strict-public-shape",
+    ["src/server/services/parse-engine/flags.ts"],
+    projection("getParseEngineFlags", [
+      "cropCache",
+      "killSwitch",
+      "tools.keynoteRoute",
+      "tools.notesAuto",
+      "tools.notesClassifier",
+      "tools.specAuto",
+      "tools.specClassifier",
+      "tools.tablesRoute",
+      "tools.workspace",
+    ]),
+  ),
 ];
 
 /** Shared helpers that intentionally query demo-only state for one of the public surfaces above. */
