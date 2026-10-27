@@ -1,0 +1,149 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * parse-engine-measure.ts — score the parse paths against the private gold (table-pipeline WP-2.G; PLAN §6.2).
+ *
+ *   NODE_OPTIONS=--max-old-space-size=3584 npx tsx scripts/parse-engine-measure.ts [--sets odd|even|all]
+ *       [--private-dir <dir>] [--json <out.json>] [--tool ocr-positions,merger,…] [--gold G-TAB,G-PARA]
+ *       [--seed 20261027] [--resamples 2000] [--baseline-tab legacy:merger] [--baseline-para legacy:notes-auto]
+ *       [--synthetic]
+ *     --sets       odd (fit) | even (held out, default) | all — split by the gold line's set number
+ *     --private-dir the private gold root (default $BP_PRIVATE_GOLD_DIR, else the docs-repo fixtures_private):
+ *                  reads gold/G-TAB.v1.jsonl, gold/G-PARA.v1.jsonl and slices/<sliceId>.json
+ *     --json       write the JSON report there and the markdown table beside it (.md); refused inside a BP2
+ *                  checkout. Without it the markdown goes to stdout only.
+ *     --tool       legacy paths to run (default: every path that applies to the gold set)
+ *     --synthetic  dry run on the committed synthetic fixtures (their `truth` as gold; set n = fixture order)
+ *
+ * Legs: one per legacy path (`legacy:<path>`, through the WP-2.0a adapters in lib/legacy-joins/legacy-paths.ts).
+ * The engine leg lands in TP-3.Q with the same `Leg` shape (scripts/lib/parse-measure.ts). Every headline gets a
+ * seeded bootstrap 95 % CI over units, per stratum too, and a PAIRED CI of (leg − baseline) with the §6.4 verdict.
+ * The report holds numbers, leg ids, strata and opaque gold ids only — never drawing text.
+ */
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import type { LegacyPathId, LegacySlice } from "@/lib/legacy-joins/legacy-paths";
+import { LEGACY_PATH_IDS } from "@/lib/legacy-joins/legacy-paths";
+import { argOf, inSplit, privateDirOf, readJsonl, refuseWrite, validateRecords, writePrivate, type GoldLine, type TabTruth } from "./gold/gold-lib";
+import { legacyLegs, measure, reportMarkdown, type MeasureReport, type Unit } from "./lib/parse-measure";
+
+type MinMax = [number, number, number, number];
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const SYNTHETIC_DIR = join(REPO_ROOT, "src/lib/parse-engine/__fixtures__");
+
+interface FixtureFile {
+  id: string; kind: string; synthetic?: boolean; page: LegacySlice["page"]; shapes: LegacySlice["shapes"]; region: MinMax;
+  manual: LegacySlice["manual"]; guided: LegacySlice["guided"];
+  truth: { type: "grid"; headers: string[]; rows: string[][] } | { type: "items"; items: { key: string; text: string }[] };
+}
+
+const toSlice = (f: FixtureFile): LegacySlice => ({ id: f.id, page: f.page, shapes: f.shapes ?? [], region: f.region, manual: f.manual, guided: f.guided });
+
+/** Manual / guided inputs drawn on the gold's own grid (as a user would end up), when the gold carries its edges. */
+export function inputsFromTruth(t: TabTruth, region: MinMax): Pick<LegacySlice, "manual" | "guided"> | null {
+  if (!t.colEdges || !t.rowEdges) return null;
+  const ce = t.colEdges, re = t.rowEdges, h = t.headerRows.length;
+  return {
+    guided: { rows: re.slice(), cols: ce.slice() },
+    manual: {
+      columnBBs: ce.slice(0, -1).map((x, i) => [x, region[1], ce[i + 1], region[3]] as MinMax),
+      rowBBs: re.slice(h, -1).map((y, i) => [region[0], y, region[2], re[h + i + 1]] as MinMax),
+      columnNames: [],
+    },
+  };
+}
+
+/** The synthetic fixtures as gold units (dry run): grid truth → G-TAB, item truth → G-PARA; key-value legends are 2-column tables. */
+export function syntheticUnits(dir = SYNTHETIC_DIR): Unit[] {
+  const files = readdirSync(dir).filter((f) => /^syn-.*\.synthetic\.json$/.test(f)).sort();
+  return files.map((f, i): Unit => {
+    const fx = JSON.parse(readFileSync(join(dir, f), "utf8")) as FixtureFile;
+    const setId = `set-${i + 1}`;
+    const slice = toSlice(fx);
+    const shapes = (fx.shapes ?? []).length > 0, tables = (fx.page.tables ?? []).length > 0;
+    if (fx.truth.type === "grid" || fx.kind === "kv-legend") {
+      const grid = fx.truth.type === "grid" ? fx.truth : { headers: [], rows: fx.truth.items.map((x) => [x.key, x.text]) };
+      const ncols = Math.max(grid.headers.length, ...grid.rows.map((r) => r.length));
+      const stratum = fx.kind === "kv-legend" ? "kv-legend"
+        : fx.kind === "keynote" ? (shapes ? "keynote-legend-shapes" : "kv-legend")
+          : shapes ? "shape-tag-schedule" : tables ? "ruled-no-shape" : /two-tier/.test(fx.id) ? "two-tier-wrapped" : "unruled";
+      const truth: TabTruth = {
+        headerRows: grid.headers.length ? [grid.headers] : [],
+        rows: grid.rows.map((cells) => (cells.length === 1 && ncols > 1 ? { cells, section: true as const } : { cells })),
+      };
+      return { gold: "G-TAB", goldId: `tab-${fx.id}`, setId, stratum, slice, truth };
+    }
+    const stratum = fx.kind === "spec" ? "spec-hierarchy" : /two-column|multicolumn/.test(fx.id) ? "multi-column-notes" : "notes";
+    return { gold: "G-PARA", goldId: `para-${fx.id}`, setId, stratum, slice, truth: { items: fx.truth.items } };
+  });
+}
+
+/** Private gold → units. Lines whose slice is missing are counted in `skipped`, never silently dropped. */
+export function privateUnits(privateDir: string, sets: string, golds: readonly string[]): { units: Unit[]; skipped: Record<string, number>; adjudicated: Record<string, number> } {
+  const units: Unit[] = [];
+  const skipped: Record<string, number> = {};
+  const adjudicated: Record<string, number> = {};
+  const bump = (k: string) => { skipped[k] = (skipped[k] ?? 0) + 1; };
+  const lines: GoldLine[] = [];
+  for (const g of golds) {
+    const file = join(privateDir, "gold", `${g}.v1.jsonl`);
+    if (!existsSync(file)) { bump(`${g}: no gold file`); continue; }
+    const { lines: ls, problems } = validateRecords(readJsonl(file));
+    if (problems.length) throw new Error(`${file}: ${problems.length} problems — run scripts/gold/validate.ts (first: ${problems[0]})`);
+    lines.push(...ls);
+  }
+  for (const l of lines) {
+    if ((l.gold !== "G-TAB" && l.gold !== "G-PARA") || !inSplit(l.setId, sets)) continue;
+    if (!l.sliceId) { bump(`${l.gold}: no sliceId`); continue; }
+    const sf = join(privateDir, "slices", `${l.sliceId}.json`);
+    if (!existsSync(sf)) { bump(`${l.gold}: slice file missing`); continue; }
+    const slice = { ...toSlice(JSON.parse(readFileSync(sf, "utf8")) as FixtureFile), region: l.region as MinMax };
+    if (l.adjudicated) adjudicated[l.gold] = (adjudicated[l.gold] ?? 0) + 1;
+    if (l.gold === "G-TAB") units.push({ gold: "G-TAB", goldId: l.goldId, setId: l.setId, stratum: l.stratum, truth: l.truth, slice: { ...slice, ...(inputsFromTruth(l.truth, l.region as MinMax) ?? {}) } });
+    else units.push({ gold: "G-PARA", goldId: l.goldId, setId: l.setId, stratum: l.stratum, truth: l.truth, slice });
+  }
+  return { units, skipped, adjudicated };
+}
+
+export function run(argv: readonly string[]): { report: MeasureReport; markdown: string; written: string[] } {
+  const sets = argOf(argv, "sets") ?? "even";
+  if (!["odd", "even", "all"].includes(sets)) throw new Error(`--sets must be odd, even or all (got ${sets})`);
+  const golds = (argOf(argv, "gold") ?? "G-TAB,G-PARA").split(",");
+  const tools = argOf(argv, "tool")?.split(",");
+  for (const t of tools ?? []) if (!(LEGACY_PATH_IDS as readonly string[]).includes(t)) throw new Error(`--tool ${t}: not a legacy path (${LEGACY_PATH_IDS.join(", ")})`);
+  const privateDir = privateDirOf(argOf(argv, "private-dir"));
+  const synthetic = argv.includes("--synthetic");
+  let units: Unit[], skipped: Record<string, number> = {}, adjudicated: Record<string, number> = {};
+  if (synthetic) units = syntheticUnits().filter((u) => golds.includes(u.gold) && inSplit(u.setId, sets));
+  else ({ units, skipped, adjudicated } = privateUnits(privateDir, sets, golds));
+  const report = measure(units, legacyLegs(tools ? (id: LegacyPathId) => tools.includes(id) : undefined), {
+    sets, seed: Number(argOf(argv, "seed") ?? 20261027), resamples: Number(argOf(argv, "resamples") ?? 2000),
+    baseline: { "G-TAB": argOf(argv, "baseline-tab"), "G-PARA": argOf(argv, "baseline-para") },
+  });
+  Object.assign(report.skipped, skipped);
+  for (const [g, n] of Object.entries(adjudicated)) if (report.gold[g]) report.gold[g].adjudicated = n;
+  const markdown = reportMarkdown(report);
+  const written: string[] = [];
+  const json = argOf(argv, "json");
+  if (json) {
+    // reports may go to the private logs dir (outside the gold root), never into a BP2 checkout
+    const refused = refuseWrite(json, privateDir, false);
+    if (refused) throw new Error(`refused --json: ${refused}`);
+    const md = json.replace(/\.json$/, "") + ".md";
+    writePrivate(json, JSON.stringify(report, null, 1) + "\n", privateDir, false);
+    writePrivate(md, `${synthetic ? "_synthetic dry run_\n\n" : ""}${markdown}`, privateDir, false);
+    written.push(json, md);
+  }
+  return { report, markdown, written };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try {
+    const { markdown, written } = run(process.argv.slice(2));
+    process.stdout.write(markdown);
+    for (const w of written) console.error(`parse-engine-measure: wrote ${w}`);
+  } catch (e) {
+    console.error(`parse-engine-measure: ${(e as Error).message}`);
+    process.exitCode = 1;
+  }
+}
