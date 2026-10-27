@@ -14,6 +14,15 @@
  * "corrected" is never written by a client. It is inferred on read (rule 2 forbids a promote-response hook):
  * a ✓/✗ label whose snapshot no longer matches the region's current snapshot reads back as `corrected`, the
  * stored snapshot being the machine output and the current region the truth (`effectiveParseLabel`).
+ * ⚠ `corrected` means "the region CHANGED since the verdict", NOT "a human edited it": a stored region has no
+ * origin marker (promote writes `source:"user"` on every path and every client save is `via:"parser"`), so an
+ * Auto Parse re-run that auto-persists under the same id reads back `corrected` too. Consumers (TP-3 WP-3.Q
+ * import) must treat a verdict-bar `corrected` as unadjudicated until regions carry an origin
+ * (WP-2.F verify MED-1, 2026-10-27).
+ *
+ * Deleting a region drops its label under the same page lock (`withoutParseLabel`, called by
+ * `deleteParsedRegion`), so an orphan never pins the page as human work or re-attaches to a later parse of
+ * the same box. A whole-array PATCH that drops a region still leaves the label (TP-3 WP-3.G follow-up).
  *
  * Demo projects are refused for every method: writes by `assertProjectWritable`; the read explicitly
  * (labels carry user ids).
@@ -43,7 +52,8 @@ const MAX_ID = 300;
 export interface ParseLabelSlim {
   verdict: ParseLabel["verdict"];
   at: string;
-  /** Only on an inferred `corrected`: the verdict the user gave before the region was edited. */
+  /** Only on an inferred `corrected`: the verdict the user gave before the region CHANGED (an edit OR a re-parse
+   *  saved under the same id; the server cannot tell which, see the header). */
   was?: ParseLabel["verdict"];
 }
 
@@ -150,6 +160,20 @@ export function effectiveParseLabel(label: ParseLabel, region: StoredRegion | nu
   const current = regionSnapshot(region);
   if (snapshotHashOf(current) === label.snapshotHash) return label;
   return { ...label, verdict: "corrected", was: label.verdict, accepted: current };
+}
+
+/**
+ * `pageIntelligence` without `parseLabels[regionId]` (the same object when there is no such label). For a
+ * caller that already holds the page row lock and writes the whole object (`deleteParsedRegion`).
+ */
+export function withoutParseLabel<T extends object>(pageIntelligence: T, regionId: string): T {
+  const raw = (pageIntelligence as { parseLabels?: unknown }).parseLabels;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Object.prototype.hasOwnProperty.call(raw, regionId)) {
+    return pageIntelligence;
+  }
+  const rest: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+  delete rest[regionId];
+  return { ...pageIntelligence, parseLabels: rest };
 }
 
 function isLabel(value: unknown): value is ParseLabel {

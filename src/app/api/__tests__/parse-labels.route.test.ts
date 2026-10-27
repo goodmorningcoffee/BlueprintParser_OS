@@ -5,7 +5,9 @@
 //   • two tabs: concurrent verdicts on two regions both survive; the same region twice → one key;
 //   • a verdict survives reload (GET), the page window never ships it, the generic PATCH cannot touch it;
 //   • an edit-save after ✗ reads back as `corrected` (C3-m4), with the stored snapshot as machine;
-//   • demo refused for every method and role; a labelled page is human work for the duplicate hide.
+//   • demo refused for every method and role; a labelled page is human work for the duplicate hide;
+//   • [WP-2.F verify, 2026-10-27] deleting a region drops ITS label only (LOW-2); a machine re-parse under the
+//     same id also reads `corrected` — the known limit WP-3.Q must import as unadjudicated (MED-1).
 // All strings are synthetic.
 import { describe, expect, inject, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -18,6 +20,7 @@ vi.mock("@/lib/auth", async () => {
 import { DELETE, GET, POST } from "@/app/api/projects/[id]/parse-labels/route";
 import { POST as promotePOST } from "@/app/api/regions/promote/route";
 import { PATCH as intelligencePATCH } from "@/app/api/pages/intelligence/route";
+import { DELETE as regionsDELETE } from "@/app/api/regions/route";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
@@ -192,6 +195,46 @@ describe.skipIf(!dbUp)("GET/POST/DELETE /api/projects/[id]/parse-labels", () => 
     expect(Object.keys((await pageIntel(page.id)).parseLabels)).toEqual(["parsed-b"]);
     expect(await readJson(await del(project.publicId, { pageNumber: 1, regionId: "parsed-a" }))).toMatchObject({ status: 200, body: { removed: false } });
     expect(Object.keys((await readJson(await get(project.publicId, 1))).body.labels)).toEqual(["parsed-b"]);
+  });
+
+  it("deleting a region drops its label under the same lock; sibling labels and orphans of other ids survive", async () => {
+    const { user, project, page } = await seeded({ parseLabels: { "gone-earlier": { verdict: "wrong", snapshotHash: "x", at: "t" } } });
+    asUser(user);
+    await post(project.publicId, { pageNumber: 1, regionId: "parsed-a", verdict: "wrong" });
+    await post(project.publicId, { pageNumber: 1, regionId: "parsed-b", verdict: "correct" });
+    const res = await readJson(await regionsDELETE(makeReq("/api/regions", {
+      method: "DELETE", body: { publicId: project.publicId, pageNumber: 1, regionId: "parsed-a" },
+    })));
+    expect(res).toMatchObject({ status: 200, body: { deleted: true } });
+    expect(res.body.updatedIntelligence).not.toHaveProperty("parseLabels");
+    const after = await pageIntel(page.id);
+    expect(Object.keys(after.parseLabels).sort()).toEqual(["gone-earlier", "parsed-b"]);
+    expect(after.keep).toBe("me");
+    // A later parse of the same box under the same id starts unlabelled (no revived orphan).
+    const promoted = await promotePOST(makeReq("/api/regions/promote", {
+      method: "POST",
+      body: { publicId: project.publicId, pageNumber: 1, type: "schedule", overrides: { regionId: "parsed-a", bbox: REGION_A.bbox, data: REGION_A.data } },
+    }));
+    expect(promoted.status).toBe(200);
+    expect((await readJson(await get(project.publicId, 1))).body.labels).not.toHaveProperty("parsed-a");
+  });
+
+  it("[known limit, MED-1] a machine re-parse saved under the same id ALSO reads back corrected (no origin marker)", async () => {
+    // Promote stores source:"user" on every path and every client save is via:"parser", so the server cannot
+    // tell an Auto Parse re-run from a cell edit. WP-3.Q imports a verdict-bar `corrected` as unadjudicated.
+    const { user, project, page } = await seeded();
+    asUser(user);
+    await post(project.publicId, { pageNumber: 1, regionId: "parsed-a", verdict: "correct" });
+    const reparsed = await promotePOST(makeReq("/api/regions/promote", {
+      method: "POST",
+      body: {
+        publicId: project.publicId, pageNumber: 1, type: "schedule",
+        overrides: { regionId: "parsed-a", bbox: REGION_A.bbox, data: { ...REGION_A.data, colBoundaries: [0.1, 0.32, 0.5] } },
+      },
+    }));
+    expect(reparsed.status).toBe(200);
+    expect((await pageIntel(page.id)).parsedRegions[0].source).toBe("user");
+    expect((await readJson(await get(project.publicId, 1))).body.labels["parsed-a"]).toMatchObject({ verdict: "corrected", was: "correct" });
   });
 
   it("the generic PATCH can neither write nor clear parseLabels; the page window never ships them", async () => {
