@@ -528,6 +528,11 @@ export const MUTATION_SURFACES = [
     "shared-guard",
     [["src/server/services/proposal-verdicts.ts", "deleteProposalVerdict"]],
   ),
+  // [table pipeline WP-2.D1 2026-10-27] K19/K40: id-keyed yoloTags ops under the project row lock;
+  // demo refused for every role by assertProjectWritable (allowDemo:true only to answer 403).
+  mutation("tag-ops", "/api/projects/[id]/tags/ops", "POST", "shared-guard", [
+    ["src/server/services/tag-ops.ts", "postTagOps"],
+  ]),
   mutation("region-promote", "/api/regions/promote", "POST", "shared-guard", [
     ["src/server/services/regions.ts", "promoteRegion"],
   ]),
