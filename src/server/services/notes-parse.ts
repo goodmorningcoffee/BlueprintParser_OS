@@ -22,6 +22,7 @@ import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import type { BboxLTWH } from "@/types";
 import { logger } from "@/lib/logger";
 import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
+import { notesGuidedProposal } from "@/lib/legacy-joins/notes-guided-proposal";
 
 const OPTS = { bboxMessage: LONG_BBOX_MESSAGE, allowDemo: true };
 
@@ -72,12 +73,6 @@ export async function notesParsePropose(rawBody: Record<string, unknown>) {
   const grid = parseNotesFromRegion(textractData, ltwhBbox, {
     autoSplitColumns: autoSplitColumns ?? true,
   });
-  if (!grid) {
-    return { proposedRows: [], proposedCols: [] };
-  }
-
-  return {
-    proposedRows: grid.rowBoundaries ?? [],
-    proposedCols: grid.colBoundaries ?? [],
-  };
+  // [table-pipeline WP-2.B] rows closed at the region bottom, so the last note is extracted (C04-03).
+  return notesGuidedProposal(grid, regionBbox);
 }

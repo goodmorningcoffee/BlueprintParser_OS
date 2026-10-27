@@ -26,6 +26,7 @@ import type {
   MatchContext,
 } from "./types";
 import { findOccurrences } from "./find-occurrences";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
 import { allPagesScope } from "./primitives/scope";
 import { findYoloMatches, mergeYoloAndFloatingHits } from "./matchers/type3-yolo-with-inner-text";
 import { findFreeFloatingMatches } from "./matchers/type2-text-only";
@@ -138,8 +139,8 @@ export function getOcrTextInAnnotationLegacy(
 }
 
 /**
- * `scanClassForTexts` — unchanged; scans all YOLO annotations of a class,
- * extracts inner OCR text, groups by unique text.
+ * `scanClassForTexts` — scans all YOLO annotations of a class, extracts inner
+ * OCR text (line-aware since WP-2.B), groups by unique text.
  */
 export function scanClassForTextsLegacy(
   yoloClass: string,
@@ -174,11 +175,9 @@ export function scanClassForTextsLegacy(
       return bboxContainsPoint(annBbox, center);
     });
 
-    const text = insideWords
-      .sort((a, b) => a.bbox[0] - b.bbox[0])
-      .map((w) => w.text)
-      .join(" ")
-      .trim();
+    // [table-pipeline WP-2.B, K07/U24] line-aware reading order: a two-line tag reads top line
+    // first. Was x only, which interleaved stacked lines by their left edges.
+    const text = assembleText(lineWordsFromLtwh(insideWords));
 
     const key = text.toUpperCase();
     if (!textMap.has(key)) textMap.set(key, { instances: [], pages: new Set() });

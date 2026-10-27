@@ -2,7 +2,11 @@
 // `ManualParseTab.parseFromIntersections` at the TP-1 head (67492cc) so the goldens can call it.
 // Behaviour is byte-equal to the inline original (legacy-golden.test.ts); WP-2.B changes it
 // (K06 duplicate headers, K07 x-only join) — record every output diff in eval/parse-engine/intended-diffs.md.
+// [WP-2.B] Done: cell text is line-aware (`assembleText`); headers go through `uniqueHeaders` after the
+// blank fill, so two columns named alike keep separate keys (`X`, `X (2)`).
 import type { TextractWord } from "@/types";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
+import { uniqueHeaders } from "@/lib/table-headers";
 
 type MinMax = readonly [number, number, number, number];
 
@@ -14,16 +18,16 @@ export interface ManualCellsGrid {
 
 const RE_TAG = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
 
-/** Cell = column BB ∩ row BB; words by centre, joined in x order; tag column = first ≥ 50 % tag-like. */
+/** Cell = column BB ∩ row BB; words by centre, line-aware reading order; tag column = first ≥ 50 % tag-like. */
 export function joinManualCells(
   words: readonly TextractWord[],
   columnBBs: readonly MinMax[],
   rowBBs: readonly MinMax[],
   columnNames: readonly string[],
 ): ManualCellsGrid {
-  const headers = columnBBs.map((_, i) =>
+  const headers = uniqueHeaders(columnBBs.map((_, i) =>
     columnNames[i]?.trim() || `Column ${String.fromCharCode(65 + i)}`
-  );
+  ));
 
   const rows: Record<string, string>[] = [];
   for (const rowBB of rowBBs) {
@@ -44,10 +48,7 @@ export function joinManualCells(
         return cx >= cellMinX && cx <= cellMaxX && cy >= cellMinY && cy <= cellMaxY;
       });
 
-      const text = cellWords
-        .sort((a, b) => a.bbox[0] - b.bbox[0])
-        .map((w) => w.text)
-        .join(" ");
+      const text = assembleText(lineWordsFromLtwh(cellWords));
 
       row[headers[ci]] = text;
       if (text) hasContent = true;

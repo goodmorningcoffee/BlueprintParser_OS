@@ -3,6 +3,9 @@
 // `binLineIntoColumns`, `computeRowBoundaries`) at the TP-1 head (67492cc) so the goldens can call it.
 // One Textract LINE = one row. Byte-equal to the inline original; WP-2.B changes it (K06/K07) —
 // record every output diff in eval/parse-engine/intended-diffs.md.
+// [WP-2.B] Deliberately NOT rewired to `assembleText`: one row is one OCR LINE, whose word order is
+// already the reading order (also for rotated text, where a geometric sort reverses it — measured on a
+// private slice). Headers are fixed names, unique by construction, so no `uniqueHeaders` either.
 import type { TextractLine } from "@/types";
 
 export interface FastManualGrid {

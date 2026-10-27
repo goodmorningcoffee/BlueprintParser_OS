@@ -10,6 +10,7 @@
 
 import type { TextractWord } from "@/types";
 import { ROW_Y_TOLERANCE } from "@/lib/spatial-constants";
+import { assembleText, lineWordsFromLtwh } from "@/lib/parse-engine/lines";
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
@@ -303,9 +304,8 @@ export function extractCellsFromGrid(
         return cx >= colLeft && cx < colRight && cy >= rowTop && cy < rowBot;
       });
 
-      // Sort left-to-right, concatenate
-      cellWords.sort((a, b) => a.bbox[0] - b.bbox[0]);
-      cells.push(cellWords.map((w) => w.text).join(" ").trim());
+      // Line-aware reading order: lines top to bottom, words left to right (K07; was x only)
+      cells.push(assembleText(lineWordsFromLtwh(cellWords)));
     }
     grid.push(cells);
   }

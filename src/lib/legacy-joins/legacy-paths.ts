@@ -18,7 +18,7 @@
  *   keynote-manual    Keynote Manual → joinKeynoteIntersections
  *   keynote-guided    Keynote Guided → extractCellsFromGrid + the KeynoteData it saves
  *   notes-auto        /api/notes-parse → parseNotesFromRegion
- *   notes-guided      Notes Guided: /api/notes-parse/propose → extractCellsFromGrid
+ *   notes-guided      Notes Guided: /api/notes-parse/propose (notesGuidedProposal) → extractCellsFromGrid
  *   notes-paragraph   Paragraph overlay fallback clusters (notes tolerance) → rowTextFromClusterNumbered
  *   spec-paragraph    Paragraph overlay fallback clusters (spec tolerance) → rowTextFromClusterSpec
  *   notes-fast-manual Fast-manual: one double-click per LINE in the region, top-down
@@ -44,6 +44,7 @@ import {
 import { joinKeynoteIntersections } from "./keynote-manual";
 import { joinManualCells } from "./manual-cells";
 import { fastManualGrid, nextFastManualColumns } from "./notes-fast-manual";
+import { notesGuidedProposal } from "./notes-guided-proposal";
 import { joinNotesManualCells } from "./notes-manual";
 
 type MinMax = [number, number, number, number];
@@ -173,8 +174,7 @@ export function runLegacyPath(id: LegacyPathId, s: LegacySlice): unknown {
       return parseNotesFromRegion(s.page, toLtwh(s.region), { autoSplitColumns: true }) ?? null;
     case "notes-guided": {
       const grid = parseNotesFromRegion(s.page, toLtwh(s.region), { autoSplitColumns: true });
-      const rows = grid?.rowBoundaries ?? [];
-      const cols = grid?.colBoundaries ?? [];
+      const { proposedRows: rows, proposedCols: cols } = notesGuidedProposal(grid, s.region);
       if (rows.length < 2 || cols.length < 2) return { proposal: { rows, cols }, grid: null };
       const { headers, rows: dataRows } = extractCellsFromGrid(words, rows, cols);
       return { proposal: { rows, cols }, grid: { headers, rows: dataRows } };
