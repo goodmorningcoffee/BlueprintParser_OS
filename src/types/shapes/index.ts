@@ -16,3 +16,5 @@ export * from "./annotation-data";
 export * from "./region-data";
 // [refactor jul23 P4.1 U11] pipelineConfig subtree registry (Stage D).
 export * from "./pipeline-config";
+// [TP-2 WP-2.E] compact LAYOUT blocks, header flags and merged-cell spans on the stored Textract page.
+export * from "./textract";
