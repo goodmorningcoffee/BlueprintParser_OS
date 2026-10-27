@@ -7,7 +7,7 @@
  *       [--seed 20261027] [--resamples 2000] [--baseline-tab legacy:merger] [--baseline-para legacy:notes-auto]
  *       [--synthetic] [--accept-headline-gaps]
  *     --sets       odd (fit) | even (held out, default) | all — split by the gold line's set number
- *     --private-dir the private gold root (default $BP_PRIVATE_GOLD_DIR, else the docs-repo fixtures_private):
+ *     --private-dir the private gold root (else $BP_PRIVATE_GOLD_DIR; required except with --synthetic):
  *                  reads gold/G-TAB.v1.jsonl, gold/G-PARA.v1.jsonl and slices/<sliceId>.json
  *     --json       write the JSON report there and the markdown table beside it (.md); refused inside a BP2
  *                  checkout. Without it the markdown goes to stdout only.
@@ -27,7 +27,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { LegacyPathId, LegacySlice } from "@/lib/legacy-joins/legacy-paths";
 import { LEGACY_PATH_IDS } from "@/lib/legacy-joins/legacy-paths";
-import { argOf, inSplit, privateDirOf, readJsonl, refuseWrite, validateRecords, writePrivate, type GoldLine, type TabTruth } from "./gold/gold-lib";
+import { argOf, inSplit, optionalPrivateDirOf, privateDirOf, readJsonl, refuseWrite, validateRecords, writePrivate, type GoldLine, type TabTruth } from "./gold/gold-lib";
 import { legacyLegs, measure, reportMarkdown, type MeasureReport, type Unit } from "./lib/parse-measure";
 
 type MinMax = [number, number, number, number];
@@ -114,11 +114,12 @@ export function run(argv: readonly string[]): { report: MeasureReport; markdown:
   const golds = (argOf(argv, "gold") ?? "G-TAB,G-PARA").split(",");
   const tools = argOf(argv, "tool")?.split(",");
   for (const t of tools ?? []) if (!(LEGACY_PATH_IDS as readonly string[]).includes(t)) throw new Error(`--tool ${t}: not a legacy path (${LEGACY_PATH_IDS.join(", ")})`);
-  const privateDir = privateDirOf(argOf(argv, "private-dir"));
   const synthetic = argv.includes("--synthetic");
+  // the synthetic dry run reads no gold, so it needs no private dir
+  const privateDir = synthetic ? optionalPrivateDirOf(argOf(argv, "private-dir")) : privateDirOf(argOf(argv, "private-dir"));
   let units: Unit[], skipped: Record<string, number> = {}, adjudicated: Record<string, number> = {};
   if (synthetic) units = syntheticUnits().filter((u) => golds.includes(u.gold) && inSplit(u.setId, sets));
-  else ({ units, skipped, adjudicated } = privateUnits(privateDir, sets, golds));
+  else ({ units, skipped, adjudicated } = privateUnits(privateDir as string, sets, golds));
   const report = measure(units, legacyLegs(tools ? (id: LegacyPathId) => tools.includes(id) : undefined), {
     sets, seed: Number(argOf(argv, "seed") ?? 20261027), resamples: Number(argOf(argv, "resamples") ?? 2000),
     baseline: { "G-TAB": argOf(argv, "baseline-tab"), "G-PARA": argOf(argv, "baseline-para") },
@@ -131,11 +132,12 @@ export function run(argv: readonly string[]): { report: MeasureReport; markdown:
   const json = argOf(argv, "json");
   if (json) {
     // reports may go to the private logs dir (outside the gold root), never into a BP2 checkout
-    const refused = refuseWrite(json, privateDir, false);
+    const root = privateDir ?? dirname(resolve(json));
+    const refused = refuseWrite(json, root, false);
     if (refused) throw new Error(`refused --json: ${refused}`);
     const md = json.replace(/\.json$/, "") + ".md";
-    writePrivate(json, JSON.stringify(report, null, 1) + "\n", privateDir, false);
-    writePrivate(md, `${synthetic ? "_synthetic dry run_\n\n" : ""}${markdown}`, privateDir, false);
+    writePrivate(json, JSON.stringify(report, null, 1) + "\n", root, false);
+    writePrivate(md, `${synthetic ? "_synthetic dry run_\n\n" : ""}${markdown}`, root, false);
     written.push(json, md);
   }
   return { report, markdown, written };

@@ -25,18 +25,19 @@ function ocrLine(text: string, x: number, y: number, w: number, h = 0.006): Text
 const page = (lines: TextractLine[]): TextractPageData =>
   ({ lines, words: lines.flatMap((l) => l.words ?? []), tables: [] }) as unknown as TextractPageData;
 
-// The C04-04 probe, pseudo-words: 6 legend entries, key and value as SEPARATE LINEs at the same height.
+// The C04-04 probe shape in random pseudo-words of the same lengths (publicity LOW L2): 6 legend entries, key
+// and value as SEPARATE LINEs at the same height.
 const ENTRIES: [string, string][] = [
-  ["QZV", "QZOVL"],
-  ["QFF", "QZOVL FRMQSHED FLXXR"],
-  ["QCT", "QCXUSTRCAL CERLRNG TRLE"],
-  ["QLUM", "QLUMRNUM"],
-  ["BLDQ", "BURLDRNQ"],
-  ["CLQ", "CERLRNQ"],
+  ["VKD", "ZUMTE"],
+  ["JPW", "ZUMTE HOBYRAGI DWENK"],
+  ["MXR", "PYGODWEMIX TAKUSBO NEFJ"],
+  ["KWEB", "SOVITREK"],
+  ["GAPU", "YELKOMAD"],
+  ["TIZ", "FUNOGEP"],
 ];
 function legendLines(withHeader: boolean): TextractLine[] {
   const out: TextractLine[] = [];
-  if (withHeader) out.push(ocrLine("QBBREVRQTRONS", 0.6, 0.1, 0.1, 0.009));
+  if (withHeader) out.push(ocrLine("ZORKVENTIBLAD", 0.6, 0.1, 0.1, 0.009));
   ENTRIES.forEach(([k, v], i) => {
     out.push(ocrLine(k, 0.6, 0.115 + i * 0.01, 0.025));
     out.push(ocrLine(v, 0.66, 0.115 + i * 0.01, 0.09));
@@ -62,7 +63,7 @@ describe("kvPairs (K09)", () => {
 
   it("keeps a lone heading as a key-only row", () => {
     const { pairs } = kvPairs(toKvLines(legendLines(true)), { minGapRatio: 0.05 });
-    expect(pairs.map((p) => [p.key, p.value])).toEqual([["QBBREVRQTRONS", ""], ...ENTRIES]);
+    expect(pairs.map((p) => [p.key, p.value])).toEqual([["ZORKVENTIBLAD", ""], ...ENTRIES]);
   });
 
   it("conserves words: every input word lands in exactly one key or value", () => {
@@ -91,16 +92,16 @@ describe("kvPairs (K09)", () => {
   it("appends a wrapped value line to the previous pair only with mergeContinuations", () => {
     const lines = legendLines(false);
     // wrap the second entry's value onto a second line in the value column
-    const wrapped = [...lines.slice(0, 4), ocrLine("CXNTRNUQTRXN", 0.66, 0.135, 0.05), ...lines.slice(4)].map((l, i) =>
+    const wrapped = [...lines.slice(0, 4), ocrLine("WEPLOSTANURK", 0.66, 0.135, 0.05), ...lines.slice(4)].map((l, i) =>
       i > 4 ? ocrLine(l.text, l.bbox[0], l.bbox[1] + 0.01, l.bbox[2]) : l,
     );
     const plain = kvPairs(toKvLines(wrapped), { minGapRatio: 0.05 }).pairs;
     expect(plain).toHaveLength(7);
-    expect(plain[2]).toMatchObject({ key: "CXNTRNUQTRXN", value: "" });
+    expect(plain[2]).toMatchObject({ key: "WEPLOSTANURK", value: "" });
     const merged = kvPairs(toKvLines(wrapped), { minGapRatio: 0.05, mergeContinuations: true }).pairs;
     expect(merged.map((p) => [p.key, p.value])).toEqual([
       ENTRIES[0],
-      [ENTRIES[1][0], `${ENTRIES[1][1]} CXNTRNUQTRXN`],
+      [ENTRIES[1][0], `${ENTRIES[1][1]} WEPLOSTANURK`],
       ...ENTRIES.slice(2),
     ]);
   });
@@ -135,7 +136,7 @@ describe("bindKeyValueGrid on kv-pairs (K09)", () => {
     const regions = classifyTextRegions(page(legendLines(true)), []);
     const kv = regions.find((r) => r.type === "notes-key-value");
     expect(kv, "the probe classifies as notes-key-value").toBeDefined();
-    expect(kv!.grid?.rows).toEqual([{ Key: "QBBREVRQTRONS", Value: "" }, ...ENTRIES.map(([Key, Value]) => ({ Key, Value }))]);
+    expect(kv!.grid?.rows).toEqual([{ Key: "ZORKVENTIBLAD", Value: "" }, ...ENTRIES.map(([Key, Value]) => ({ Key, Value }))]);
   });
 });
 
@@ -217,13 +218,13 @@ describe("kvPairs keeps separate entries separate (WP-2.B VERIFY MED-1)", () => 
 describe("bindKeyValueGrid continuation merge (WP-2.B VERIFY LOW-1)", () => {
   it("appends a wrapped value LINE to the previous entry; one row boundary per row", () => {
     const lines = legendLines(false);
-    const wrapped = [...lines.slice(0, 4), ocrLine("CXNTRNUQTRXN", 0.66, 0.135, 0.05), ...lines.slice(4)].map((l, i) =>
+    const wrapped = [...lines.slice(0, 4), ocrLine("WEPLOSTANURK", 0.66, 0.135, 0.05), ...lines.slice(4)].map((l, i) =>
       i > 4 ? ocrLine(l.text, l.bbox[0], l.bbox[1] + 0.01, l.bbox[2]) : l,
     );
     const g = bindKeyValueGrid(buildLineFeatures(wrapped));
     expect(g?.rows).toEqual([
       { Key: ENTRIES[0][0], Value: ENTRIES[0][1] },
-      { Key: ENTRIES[1][0], Value: `${ENTRIES[1][1]} CXNTRNUQTRXN` },
+      { Key: ENTRIES[1][0], Value: `${ENTRIES[1][1]} WEPLOSTANURK` },
       ...ENTRIES.slice(2).map(([Key, Value]) => ({ Key, Value })),
     ]);
     expect(g?.rowBoundaries).toHaveLength(g!.rows.length);

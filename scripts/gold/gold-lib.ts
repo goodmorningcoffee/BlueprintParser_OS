@@ -2,7 +2,7 @@
  * gold-lib.ts — shared core of the table-pipeline gold tools (WP-2.G; PLAN §6.1).
  *
  * Gold holds REAL drawing text, so it lives only in the private docs repo. Every gold tool reads and writes
- * only under the private dir (`--private-dir`, else `$BP_PRIVATE_GOLD_DIR`, else the docs-repo default below)
+ * only under the private dir (`--private-dir`, else `$BP_PRIVATE_GOLD_DIR`; there is no default, so an unset dir is an error)
  * and refuses any path inside a BP2 checkout (PLAN §1.6 rule 12). Nothing here prints drawing text.
  *
  * Private dir layout (one root, the same env var the 2.0a private goldens read):
@@ -22,11 +22,18 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 
-export const DEFAULT_PRIVATE_DIR = "/workspaces/projects/gitignore/projects/table_pipeline/fixtures_private";
+/** The private dir if one is given (`--private-dir`, else `$BP_PRIVATE_GOLD_DIR`), else null. No default is
+ *  compiled in: the private location is not published, and a silent default could point at the wrong root. */
+export function optionalPrivateDirOf(arg?: string | null, env: Readonly<Record<string, string | undefined>> = process.env): string | null {
+  const dir = arg || env.BP_PRIVATE_GOLD_DIR;
+  return dir ? resolve(dir) : null;
+}
 
-/** The private dir: `--private-dir`, else `$BP_PRIVATE_GOLD_DIR`, else the docs-repo default. */
-export function privateDirOf(arg?: string | null, env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(arg || env.BP_PRIVATE_GOLD_DIR || DEFAULT_PRIVATE_DIR);
+/** The private dir: `--private-dir`, else `$BP_PRIVATE_GOLD_DIR`; throws a clear error when neither is set. */
+export function privateDirOf(arg?: string | null, env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const dir = optionalPrivateDirOf(arg, env);
+  if (!dir) throw new Error("no private gold dir: pass --private-dir <dir> or set BP_PRIVATE_GOLD_DIR (gold holds real drawing text and lives only in the private docs repo, never in BP2)");
+  return dir;
 }
 
 // ─── the write guard ─────────────────────────────────────────────────────────

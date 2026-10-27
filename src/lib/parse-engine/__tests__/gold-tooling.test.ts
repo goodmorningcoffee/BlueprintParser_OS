@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  canonicalJson, insideBp2Checkout, mulberry32, refuseWrite, toJsonl, validateRecords, writePrivate, type GoldLine,
+  canonicalJson, insideBp2Checkout, mulberry32, privateDirOf, refuseWrite, toJsonl, validateRecords, writePrivate, type GoldLine,
 } from "../../../../scripts/gold/gold-lib";
 import { main as validateMain, validateFiles } from "../../../../scripts/gold/validate";
 import { main as labelPackMain } from "../../../../scripts/gold/label-pack";
@@ -114,12 +114,18 @@ describe("the gold tools never write inside the BP2 tree", () => {
     expect(existsSync(join(REPO, "src", "gold-leak.jsonl"))).toBe(false);
   });
 
+  it("there is no compiled-in private dir: unset is a clear error, --private-dir beats $BP_PRIVATE_GOLD_DIR", () => {
+    expect(() => privateDirOf(undefined, {})).toThrow(/no private gold dir: pass --private-dir/);
+    expect(privateDirOf(undefined, { BP_PRIVATE_GOLD_DIR: "/x/env" })).toBe(resolve("/x/env"));
+    expect(privateDirOf("/x/arg", { BP_PRIVATE_GOLD_DIR: "/x/env" })).toBe(resolve("/x/arg"));
+  });
+
   it("select-sample, validate and the measure refuse a BP2 private dir / output", () => {
     const cands = join(tmp(), "c.jsonl");
     writeFileSync(cands, toJsonl([{ gold: "G-PARA", stratum: "notes", pid: "p1", setId: "set-1", page: 1, region: [0.1, 0.1, 0.2, 0.2], source: "t" }]));
     expect(() => selectMain(["--batch", "zz", "--candidates", cands, "--private-dir", join(REPO, "tmp-gold-private")])).toThrow(/inside a BP2 checkout/);
     expect(existsSync(join(REPO, "tmp-gold-private"))).toBe(false);
-    expect(validateMain(["--file", join(REPO, "package.json")])).toBe(2);
+    expect(validateMain(["--file", join(REPO, "package.json"), "--private-dir", tmp()])).toBe(2);
     expect(() => measureRun(["--synthetic", "--sets", "all", "--resamples", "10", "--json", join(REPO, "measure-report.json")])).toThrow(/refused/);
     expect(existsSync(join(REPO, "measure-report.json"))).toBe(false);
   });
