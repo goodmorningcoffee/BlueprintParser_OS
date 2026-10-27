@@ -1,11 +1,20 @@
 {
   "capability": "cols",
   "version": 1,
-  "modules": [],
+  "modules": [
+    "scripts/detect_table_lines.py",
+    "src/lib/parse-engine/cols/primitive-grid.ts",
+    "src/lib/parse-engine/cols/rulings.ts",
+    "src/lib/parse-engine/cols/textract-cells.ts",
+    "src/lib/parse-engine/cols/x-starts.ts",
+    "src/lib/parse-engine/geometry.ts",
+    "src/lib/parse-engine/lines.ts",
+    "src/server/services/parse-engine/rulings.ts"
+  ],
   "history": [
     {
       "version": 1,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "0f444b402bc447f0522de8ab8502df15232578094edbfc8194a4e41c73f796b8"
     }
   ]
 }

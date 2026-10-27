@@ -1,11 +1,14 @@
 {
   "capability": "title",
   "version": 1,
-  "modules": [],
+  "modules": [
+    "src/lib/classifier-engine/derive-name.ts",
+    "src/server/services/parse-engine/title.ts"
+  ],
   "history": [
     {
       "version": 1,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "ea6217a4179b628ab883589aa542710cd37a8fa959a855302c3ddff64f67cfc5"
     }
   ]
 }
