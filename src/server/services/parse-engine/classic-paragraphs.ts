@@ -25,6 +25,7 @@ import type { CompanyCsiContext } from "@/lib/csi-company-db";
 import { logger } from "@/lib/logger";
 import { runParseEngine } from "@/lib/parse-engine/engine";
 import { legacyView, viewHash, type LegacyNotesView, type LegacySpecView } from "@/lib/parse-engine/legacy-view";
+import { textRegionKey } from "@/lib/parse-engine/text-region-verdicts";
 import type { BboxMinMax, ParseRecipe, ParseRequest, ParseResult, RegionLinks, StructureParagraphDoc } from "@/lib/parse-engine/types";
 import type { CsiCode, TextractPageData } from "@/types";
 import { buildPageEvidence } from "./evidence";
@@ -33,12 +34,8 @@ export type ParagraphKind = "notes" | "spec";
 
 type CsiCtx = Pick<CompanyCsiContext, "config" | "db"> | null | undefined;
 
-/**
- * WP-3.F's text-region content key, `tr:${type}:${x0},${y0},${x1},${y1}` (MinMax, two decimals). WP-3.F is not in
- * this branch's base; at integration this repoints to `parse-engine/text-region-verdicts.ts` `textRegionKey`.
- */
-const q2 = (n: number): string => (Math.round(n * 100) / 100).toFixed(2);
-export const textRegionKeyOf = (type: string, b: readonly number[]): string => `tr:${type}:${b.map(q2).join(",")}`;
+/** WP-3.F's text-region content key (`lib/parse-engine/text-region-verdicts.ts`), re-exported under 3.J's name. */
+export const textRegionKeyOf = textRegionKey;
 
 const validBox = (b: readonly number[]): boolean =>
   b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v)) && b[2] > b[0] && b[3] > b[1];
