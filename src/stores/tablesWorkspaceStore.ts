@@ -45,6 +45,8 @@ export interface WorkspaceDraft {
   ops: CorrectionOp[];
   regionId?: string;
   revision?: number;
+  /** [WP-3.M] `viewHash` of the saved region's view the draft was loaded on (PLAN §1.1 row 7). */
+  viewHash?: string;
   /** Request stamp: a parse result is applied only when it carries this stamp (stale results are dropped). */
   startedAt: number;
   /** [WP-3.M] The request that produced `result` (the commit's recipe), and `links.continues` (K11, C2-M10). */
@@ -112,7 +114,8 @@ function writeMirror(publicId: string, drafts: Record<string, WorkspaceDraft>): 
   try {
     const mirrored: Record<string, MirroredDraft> = {};
     for (const [key, { result: _result, startedAt: _startedAt, ...rest }] of Object.entries(drafts)) {
-      if (rest.ops.length > 0) mirrored[key] = rest;
+      // [WP-3.M] continuation boxes and "Continues from" are the user's work too (WP-3.M verify LOW-8).
+      if (rest.ops.length > 0 || (rest.parts?.length ?? 0) > 0 || !!rest.continues) mirrored[key] = rest;
     }
     const storage = globalThis.localStorage;
     if (!storage) return;

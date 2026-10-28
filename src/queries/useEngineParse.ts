@@ -44,15 +44,19 @@ export interface ParseOptions {
   tatr?: boolean;
 }
 
-/** A fresh draft for an item: bound to the item's page (K29), no ops, no result yet. */
-export function draftFor(item: WorkspaceItemRef, revision?: number): WorkspaceDraft {
+/**
+ * A fresh draft for an item: bound to the item's page (K29), no ops, no result yet. A saved region's draft also
+ * carries the revision and `viewHash` it was loaded at, when the caller knows them (the commit resolves them
+ * otherwise).
+ */
+export function draftFor(item: WorkspaceItemRef, baseline?: { revision: number; viewHash?: string }): WorkspaceDraft {
   return {
     page: item.page,
     bbox: [...item.b] as WorkspaceDraft["bbox"],
     kind: item.kind,
     ...(item.classId ? { classId: item.classId } : {}),
     ...(item.regionId ? { regionId: item.regionId } : {}),
-    ...(revision !== undefined ? { revision } : {}),
+    ...(item.regionId && baseline ? { revision: baseline.revision, ...(baseline.viewHash ? { viewHash: baseline.viewHash } : {}) } : {}),
     result: null,
     ops: [],
     startedAt: 0,
@@ -168,12 +172,17 @@ export async function parseItem(
   }
 }
 
-/** Warm the cache with an item's instant parse (no draft is touched; a cached or in-flight key is not re-sent). */
+/**
+ * Warm the cache with an item's instant parse (no draft is touched; a cached or in-flight key is not re-sent, and
+ * neither is one whose prefetch already failed: opening the item retries it, an inbox re-read does not).
+ */
 export function prefetchItemParse(qc: QueryClient, publicId: string, item: WorkspaceItemRef): Promise<void> {
   const draft = useTablesWorkspaceStore.getState().drafts[item.id] ?? draftFor(item);
   const request = parseRequestFor(item, draft, { budget: "instant" });
+  const queryKey = engineParseKey(publicId, item.id, request);
+  if (qc.getQueryState(queryKey)?.status === "error") return Promise.resolve();
   return qc.prefetchQuery({
-    queryKey: engineParseKey(publicId, item.id, request),
+    queryKey,
     queryFn: ({ signal }) => postEngineParse(publicId, request, signal),
     staleTime: INSTANT_PARSE_STALE_MS,
     retry: false,

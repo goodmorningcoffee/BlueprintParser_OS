@@ -56,9 +56,10 @@ export default function KindBar({
     if (!d || (d.kind === k && !opts.classId)) return;
     const ops: CorrectionOp[] = d.ops.filter((o) => o.op !== "set-kind");
     if (opts.byUser && k !== item.kind) ops.push({ op: "set-kind", kind: k });
-    useTablesWorkspaceStore.getState().putDraft(item.id, {
-      ...d, kind: k, ops, ...(opts.classId ? { classId: opts.classId } : {}), result: null,
-    });
+    // The class rides on the commit's set-kind op (WP-3.G); a kind the user picks drops the old kind's class.
+    const { classId: oldClass, ...rest } = d;
+    const classId = opts.classId ?? (opts.byUser && k !== d.kind ? undefined : oldClass);
+    useTablesWorkspaceStore.getState().putDraft(item.id, { ...rest, kind: k, ops, ...(classId ? { classId } : {}), result: null });
   };
 
   const verdict = async (v: ItemVerdict) => {

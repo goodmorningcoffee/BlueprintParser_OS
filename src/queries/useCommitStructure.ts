@@ -1,32 +1,33 @@
 "use client";
 
 // [TP-3 WP-3.M] Accept: POST /api/projects/[id]/parse-engine/commit (WP-3.G's route) through `persistFetchResult`,
-// which resolves on a 409 so its body can be read (§1.6 rule 6). One outcome per answer (PLAN §2.1, §3.2):
-//   2xx                → adopt the server's page intelligence, summaries, CSI spatial map and the auto-mapped tag
-//                        rows (`adoptServerYoloTags`, no reload), invalidate the inbox, discard the draft (WP-3.L
-//                        verify LOW-4: a committed op list must never be re-applied on reopen);
-//   409 {conflict}     → ConflictDialog (Replace pre-selected, ⏎ confirms; "Keep both" secondary; K36, C3-m2);
-//   409 {rebased}      → RebaseNote ("n rows changed after re-scan · Accept again ⏎"; C3-m1);
-//   409 {paidExpired}  → offer "Textract this crop again ($)" (a commit never pays; it reads the crop cache only);
-//   409 otherwise      → the region changed since it was opened (stale revision): reload it.
+// which resolves on a 409 so its body can be read (§1.6 rule 6). The server re-runs `recipe`, applies `ops` on top
+// (re-matching ids against `base`) and stores that; it never takes a client model. One outcome per answer:
+//   200                    → adopt the server's page intelligence, summaries, CSI spatial map and the tag rows
+//                            (`adoptServerYoloTags`, no reload), invalidate the inbox, discard the draft (WP-3.L
+//                            verify LOW-4: a committed op list must never be re-applied on reopen);
+//   409 reason conflict    → ConflictDialog (Replace pre-selected = re-send with that region's id, revision and
+//                            viewHash; "Keep both" = `onConflict:"keep-both"`; K36, C3-m2);
+//   409 reason rebased     → RebaseNote (the rebased model already has the ops applied; C3-m1);
+//   409 reason paid-expired→ offer "Textract this crop again ($)" (a commit never pays; it reads the crop cache only);
+//   409 reason stale       → the region changed since it was opened; "Reload item" adopts its current revision;
+//   409 reason ops-lost    → a correction no longer lands on the re-parse: the commit is refused.
+// Re-saving a region always carries its `revision` (0 for a region saved by the classic tools, as WP-3.G counts
+// it) and the `viewHash` of the view the draft was loaded on (PLAN §1.1 row 7), read from the page window or, for
+// a page outside it, from that page's read.
 // Also the verdict writes the KindBar sends ("Not a table", "Table, not a schedule", Undo) through WP-3.F's
-// verdict route, and the bulk "Accept all Notes/Specs ≥ agreement x", which commits one item at a time and
-// stops on the first answer that is not a clean commit.
-//
-// ⚠ INTEGRATION (WP-3.G): the commit route is a sibling work package in the same group, so its wire is not on
-// this branch. `CommitRequestBody` / `CommitSuccessBody` below are the client's side of PLAN §2.1 + WP-3.G steps
-// 1–11. The 409 details are read at the top level of the body, or inside the `error` envelope, or under
-// `error.details` — whichever WP-3.G picks; reconcile and narrow this reader when 3.G merges.
+// verdict route, and the bulk "Accept all Notes/Specs ≥ agreement x".
 
 import type { QueryClient } from "@tanstack/react-query";
 import { apiErrorMessage, persistFetch, persistFetchResult } from "@/lib/client-persist";
 import { refreshPageCsiSpatialMapForTarget } from "@/lib/csi-spatial-refresh-target";
-import type { CorrectionOp, ParseRecipe, StructureModel } from "@/lib/parse-engine/types";
-import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
+import { viewHash } from "@/lib/parse-engine/legacy-view";
+import type { BboxMinMax, CorrectionOp, ParseRecipe, StructureKind, StructureModel } from "@/lib/parse-engine/types";
+import { ensurePageIntelligence, readPageIntelligence, setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { invalidateWorkspaceItems } from "@/queries/useWorkspaceItems";
 import { adoptServerYoloTags } from "@/queries/useYoloTags";
-import { draftFor, originOf, parseItem, parseRequestFor, type ItemOrigin } from "@/queries/useEngineParse";
+import { draftFor, originOf, parseItem, parseRequestFor } from "@/queries/useEngineParse";
 import { useTablesWorkspaceStore, type WorkspaceDraft, type WorkspaceItemRef } from "@/stores/tablesWorkspaceStore";
 import type { PageIntelligence, ProjectSummaries, YoloTag } from "@/types";
 
@@ -34,79 +35,80 @@ const base = (publicId: string) => `/api/projects/${encodeURIComponent(publicId)
 export const commitUrl = (publicId: string) => `${base(publicId)}/commit`;
 export const verdictUrl = (publicId: string) => `${base(publicId)}/verdict`;
 
-export interface CommitRequestBody {
-  pageNumber: number;
-  /** The inbox item key (proposal id, `tr:…`, `draw:…` or a region id). */
-  itemId: string;
-  origin: ItemOrigin;
-  /** The request that produced the previewed result; the server re-runs it outside the lock (paid: cache only). */
+// ── wire ──────────────────────────────────────────────────────────────────────────────────────────
+// ⚠ MIRROR, field for field, of WP-3.G's `src/lib/parse-engine/types-commit.ts` (tp/wp-3-g 2f214a8). That file is
+// a sibling WP's (§5.1: no shared files inside a group), so it is not on this branch. AT INTEGRATION delete these
+// five declarations and write `export type { CommitRequest, TagSummary, CommitTagsDelta, CommitResponse,
+// CommitRefusal } from "@/lib/parse-engine/types-commit";` — the tests also check the body against a copy of
+// 3.G's `zCommitBody`, to be swapped for the real one then.
+
+export interface CommitRequest {
   recipe: ParseRecipe;
-  /** Id-keyed corrections, applied after fusion (E-2). */
   ops: CorrectionOp[];
-  /** The evidence the preview was made from; a changed hash makes the server rebase (409 {rebased}). */
-  evidenceHash: string;
-  /** Saving over an existing region: its id and the revision the user started from (stale → 409). */
+  base?: StructureModel;
+  evidenceHash?: string;
   regionId?: string;
   revision?: number;
-  proposalId?: string;
-  textRegionKey?: string;
-  /** Region on another sheet this table continues (`links.continues`, K11, C2-M10). */
-  continues?: string;
-  classId?: string;
-  /** The answer to a 409 {conflict}: replace the overlapping region, or keep both. */
-  onConflict?: "replace" | "keep-both";
-  /** The one-click confirm of a 409 {rebased}. */
-  acceptRebased?: true;
+  viewHash?: string;
+  onConflict?: "keep-both";
+  tableName?: string;
+  links?: { proposalId?: string; textRegionKey?: string; continues?: string };
   secondsToAccept?: number;
-  /** A "+ Region" box: a table the detector missed (label `missedDetection`). */
-  missedDetection?: true;
 }
 
-/** "Mapped 14 tags · 212 hits · 3 with none" (WP-3.G step 10). */
-export interface TagSummary { tags: number; hits: number; withNone: number; scope?: "sheet" | "project" }
+/** "Mapped 14 tags · 212 hits · 3 with none" (C3-M2). Absent when the model has no tag keys. */
+export interface TagSummary { keys: number; tags: number; hits: number; none: number; noneKeys: string[]; scope: "sheet" | "project" }
 
-export interface CommitSuccessBody {
+export interface CommitTagsDelta { rows: unknown[]; removed: string[]; replacedRegionIds: string[] }
+
+export interface CommitResponse {
   ok: true;
   regionId: string;
   revision: number;
-  updatedIntelligence?: PageIntelligence;
-  summaries?: ProjectSummaries | null;
-  tagSummary?: TagSummary | null;
-  /** The projected tag rows that replaced this region's tags (`replace-for-region`), for `adoptServerYoloTags`. */
-  yoloTags?: { rows: YoloTag[]; replacedRegionIds: string[]; removedIds?: string[] };
+  kind: StructureKind;
+  parsedRegion: unknown;
+  updatedIntelligence: unknown;
+  csiCodeCount: number;
+  tagSummary?: TagSummary;
+  tags: CommitTagsDelta;
+  summaries: unknown;
 }
 
-export interface ConflictInfo { regionId: string; revision?: number; title?: string; origin?: "workspace" | "classic" }
+export type CommitRefusal =
+  | { reason: "stale"; regionId: string; revision: number | null; viewHash?: string }
+  | { reason: "conflict"; conflict: { regionId: string; kind: StructureKind; title: string; revision: number; viewHash: string; bbox: BboxMinMax } }
+  | { reason: "rebased"; rebased: StructureModel; changedRows: number | null; evidenceHash: string }
+  | { reason: "ops-lost"; lost: { index: number; op: CorrectionOp["op"] }[] }
+  | { reason: "paid-expired"; paidExpired: true; methods: string[] };
+
+// ── outcomes ─────────────────────────────────────────────────────────────────────────────────────
+
+export type ConflictInfo = Extract<CommitRefusal, { reason: "conflict" }>["conflict"];
 
 export type CommitOutcome =
   | { status: "committed"; regionId: string; revision: number; tagSummary: TagSummary | null }
-  | { status: "conflict"; conflict: ConflictInfo }
-  | { status: "rebased"; model: StructureModel; evidenceHash: string | null; changedRows: number }
+  | { status: "conflict"; conflict: ConflictInfo; message: string }
+  | { status: "rebased"; model: StructureModel; evidenceHash: string; changedRows: number | null }
   | { status: "paid-expired"; methods: string[]; message: string }
-  | { status: "stale-revision"; message: string }
+  | { status: "stale"; regionId: string; revision: number | null; viewHash?: string; message: string }
+  | { status: "ops-lost"; lost: { index: number; op: CorrectionOp["op"] }[]; message: string }
   | { status: "error"; message: string; httpStatus: number };
 
 function obj(v: unknown): Record<string, unknown> | null {
   return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
-
-/** A 409 detail, wherever the route put it: the body, the `error` envelope, or `error.details`. */
-function detail(body: unknown, key: string): unknown {
-  const top = obj(body);
-  const err = obj(top?.error);
-  return top?.[key] ?? err?.[key] ?? obj(err?.details)?.[key];
-}
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((m): m is string => typeof m === "string") : []);
 
 function readTagSummary(v: unknown): TagSummary | null {
   const t = obj(v);
-  if (!t || typeof t.tags !== "number" || typeof t.hits !== "number") return null;
+  if (!t || ![t.keys, t.tags, t.hits, t.none].every((n) => typeof n === "number")) return null;
   return {
-    tags: t.tags, hits: t.hits, withNone: typeof t.withNone === "number" ? t.withNone : 0,
-    ...(t.scope === "sheet" || t.scope === "project" ? { scope: t.scope } : {}),
+    keys: t.keys as number, tags: t.tags as number, hits: t.hits as number, none: t.none as number,
+    noneKeys: strings(t.noneKeys), scope: t.scope === "sheet" ? "sheet" : "project",
   };
 }
 
-/** Classify a commit answer (pure; exported for tests). */
+/** Classify a commit answer by WP-3.G's `reason` (pure; exported for tests). An unknown 409 is an error. */
 export function classifyCommitResponse(status: number, body: unknown): CommitOutcome {
   const top = obj(body);
   if (status >= 200 && status < 300 && top && typeof top.regionId === "string") {
@@ -117,70 +119,136 @@ export function classifyCommitResponse(status: number, body: unknown): CommitOut
     };
   }
   const message = apiErrorMessage(body) ?? `Accept failed (HTTP ${status})`;
-  if (status !== 409) return { status: "error", message, httpStatus: status };
-  const conflict = obj(detail(body, "conflict"));
-  if (conflict && typeof conflict.regionId === "string") {
-    return {
-      status: "conflict",
-      conflict: {
-        regionId: conflict.regionId,
-        ...(typeof conflict.revision === "number" ? { revision: conflict.revision } : {}),
-        ...(typeof conflict.title === "string" ? { title: conflict.title } : {}),
-        ...(conflict.origin === "workspace" || conflict.origin === "classic" ? { origin: conflict.origin } : {}),
-      },
-    };
+  if (status === 409 && top) {
+    switch (top.reason) {
+      case "conflict": {
+        const c = obj(top.conflict);
+        if (c && typeof c.regionId === "string" && typeof c.revision === "number" && typeof c.viewHash === "string") {
+          return {
+            status: "conflict", message,
+            conflict: {
+              regionId: c.regionId, revision: c.revision, viewHash: c.viewHash,
+              kind: c.kind as StructureKind, title: typeof c.title === "string" ? c.title : "",
+              bbox: (Array.isArray(c.bbox) ? c.bbox : [0, 0, 0, 0]) as BboxMinMax,
+            },
+          };
+        }
+        break;
+      }
+      case "rebased":
+        if (obj(top.rebased) && typeof top.evidenceHash === "string") {
+          return {
+            status: "rebased", model: top.rebased as StructureModel, evidenceHash: top.evidenceHash,
+            changedRows: typeof top.changedRows === "number" ? top.changedRows : null,
+          };
+        }
+        break;
+      case "paid-expired":
+        return { status: "paid-expired", methods: strings(top.methods), message };
+      case "ops-lost":
+        return { status: "ops-lost", lost: Array.isArray(top.lost) ? (top.lost as { index: number; op: CorrectionOp["op"] }[]) : [], message };
+      case "stale":
+        if (typeof top.regionId === "string") {
+          return {
+            status: "stale", regionId: top.regionId, message,
+            revision: typeof top.revision === "number" ? top.revision : null,
+            ...(typeof top.viewHash === "string" ? { viewHash: top.viewHash } : {}),
+          };
+        }
+        break;
+      default:
+        break;
+    }
   }
-  const rebased = obj(detail(body, "rebased"));
-  if (rebased) {
-    const model = obj(rebased.model) ?? rebased;
-    const stamp = obj(rebased.stamp);
-    const hash = rebased.evidenceHash ?? stamp?.evidenceHash ?? detail(body, "evidenceHash");
-    const changed = detail(body, "changedRows") ?? rebased.changedRows;
-    return {
-      status: "rebased", model: model as unknown as StructureModel,
-      evidenceHash: typeof hash === "string" ? hash : null,
-      changedRows: typeof changed === "number" ? changed : 0,
-    };
-  }
-  const paid = detail(body, "paidExpired");
-  if (paid !== undefined && paid !== null && paid !== false) {
-    const methods = Array.isArray(paid) ? paid.filter((m): m is string => typeof m === "string")
-      : Array.isArray(obj(paid)?.methods) ? (obj(paid)!.methods as unknown[]).filter((m): m is string => typeof m === "string") : [];
-    return { status: "paid-expired", methods, message };
-  }
-  return { status: "stale-revision", message };
+  return { status: "error", message, httpStatus: status };
 }
 
-/** Everything the commit needs from the open item (built from its draft; the draft must hold a result). */
-export function buildCommitBody(
-  item: WorkspaceItemRef & { origin?: unknown },
-  draft: WorkspaceDraft,
-  extra: Partial<Pick<CommitRequestBody, "onConflict" | "acceptRebased" | "secondsToAccept" | "regionId" | "revision" | "evidenceHash">> = {},
-): CommitRequestBody {
+// ── the region a re-save starts from ─────────────────────────────────────────────────────────────
+
+export interface RegionBaseline { revision: number; viewHash: string }
+
+/**
+ * A saved region's `links.revision` (0 when it has none: a region saved by the classic tools, which WP-3.G counts
+ * as revision 0) and the `viewHash` of its stored data, or undefined when this page intelligence does not hold it.
+ */
+export function regionBaseline(pi: unknown, regionId: string | undefined): RegionBaseline | undefined {
+  if (!regionId) return undefined;
+  const regions = obj(pi)?.parsedRegions;
+  if (!Array.isArray(regions)) return undefined;
+  const region = regions.find((r) => obj(r)?.id === regionId) as { data?: { links?: { revision?: unknown } } } | undefined;
+  if (!region) return undefined;
+  const rev = region.data?.links?.revision;
+  return { revision: typeof rev === "number" && Number.isInteger(rev) && rev >= 0 ? rev : 0, viewHash: viewHash(region.data) };
+}
+
+/**
+ * A re-save draft with no baseline yet (its page was outside the page window when it opened) gets one here: from
+ * the window, else from a read of that one page. Unresolved, the commit still sends revision 0 and the server
+ * answers 409 stale instead of overwriting.
+ */
+export async function withRegionBaseline(qc: QueryClient, publicId: string, item: WorkspaceItemRef, draft: WorkspaceDraft): Promise<WorkspaceDraft> {
+  const regionId = draft.regionId ?? item.regionId;
+  if (!regionId || draft.revision !== undefined) return draft;
+  let found = regionBaseline(readPageIntelligence(qc, publicId, draft.page), regionId);
+  if (!found) {
+    const pi = await ensurePageIntelligence(qc, { publicId, pageNumber: draft.page, isDemo: false }).catch(() => undefined);
+    found = regionBaseline(pi, regionId);
+  }
+  return found ? { ...draft, regionId, ...found } : draft;
+}
+
+// ── the body ─────────────────────────────────────────────────────────────────────────────────────
+
+export interface CommitExtra {
+  /** Replace after a conflict: the overlapped region's id, revision and viewHash (WP-3.G's Replace). */
+  target?: { regionId: string; revision: number; viewHash?: string };
+  onConflict?: "keep-both";
+  /** The rebased evidence a RebaseNote confirm accepts. */
+  evidenceHash?: string;
+  secondsToAccept?: number;
+}
+
+/**
+ * WP-3.G takes the accepted class from the last `set-kind` op (or the model's own `classId`), so a class the item
+ * carries (the proposal's, or the kind suggestion the user took) rides on that op; without it the class is lost.
+ */
+export function opsWithClass(ops: readonly CorrectionOp[], kind: StructureKind, classId: string | undefined, model: StructureModel): CorrectionOp[] {
+  const out = [...ops];
+  if (!classId || ("classId" in model && model.classId === classId)) return out;
+  for (let i = out.length - 1; i >= 0; i -= 1) {
+    const op = out[i];
+    if (op.op === "set-kind") {
+      out[i] = { ...op, classId };
+      return out;
+    }
+  }
+  out.push({ op: "set-kind", kind, classId });
+  return out;
+}
+
+/** WP-3.G's `CommitRequest` for the open item (built from its draft; the draft must hold a result). */
+export function buildCommitBody(item: WorkspaceItemRef & { origin?: unknown }, draft: WorkspaceDraft, extra: CommitExtra = {}): CommitRequest {
   if (!draft.result) throw new Error("Nothing to accept yet: the item has not been parsed.");
   const origin = originOf(item);
   const request = draft.request ?? parseRequestFor(item, draft, { budget: draft.result.stamp.budget });
   const recipeOrigin: ParseRecipe["origin"] =
     origin === "proposal" || origin === "text-region" || origin === "draw" ? origin : origin === "region" ? "saved" : "draw";
-  const regionId = extra.regionId ?? draft.regionId ?? item.regionId;
-  const revision = extra.revision ?? draft.revision;
-  return {
-    pageNumber: draft.page,
-    itemId: item.id,
-    origin,
-    recipe: { request, origin: recipeOrigin },
-    ops: [...draft.ops],
-    evidenceHash: extra.evidenceHash ?? draft.result.stamp.evidenceHash,
-    ...(regionId ? { regionId } : {}),
-    ...(revision !== undefined ? { revision } : {}),
+  const regionId = draft.regionId ?? item.regionId;
+  const target = extra.target ?? (regionId ? { regionId, revision: draft.revision ?? 0, viewHash: draft.viewHash } : null);
+  const links = {
     ...(item.proposalId ? { proposalId: item.proposalId } : {}),
     ...(origin === "text-region" ? { textRegionKey: item.id } : {}),
     ...(draft.continues ? { continues: draft.continues } : {}),
-    ...(draft.classId ? { classId: draft.classId } : {}),
+  };
+  return {
+    recipe: { request, origin: recipeOrigin },
+    ops: opsWithClass(draft.ops, draft.kind, draft.classId, draft.result.model),
+    base: draft.result.model,
+    evidenceHash: extra.evidenceHash ?? draft.result.stamp.evidenceHash,
+    ...(target ? { regionId: target.regionId, revision: target.revision, ...(target.viewHash ? { viewHash: target.viewHash } : {}) } : {}),
     ...(extra.onConflict ? { onConflict: extra.onConflict } : {}),
-    ...(extra.acceptRebased ? { acceptRebased: true as const } : {}),
+    ...(Object.keys(links).length > 0 ? { links } : {}),
     ...(extra.secondsToAccept !== undefined ? { secondsToAccept: extra.secondsToAccept } : {}),
-    ...(origin === "draw" ? { missedDetection: true as const } : {}),
   };
 }
 
@@ -191,20 +259,20 @@ export interface CommitTarget {
 }
 
 /** POST the commit and, on success, adopt every server answer into the client caches. */
-export async function commitStructure(qc: QueryClient, target: CommitTarget, body: CommitRequestBody): Promise<CommitOutcome> {
+export async function commitStructure(qc: QueryClient, target: CommitTarget, body: CommitRequest): Promise<CommitOutcome> {
   const { publicId, isDemo, itemKey } = target;
   if (isDemo || !publicId) return { status: "error", message: "Saving is not available in a demo project.", httpStatus: 403 };
   const res = await persistFetchResult<unknown>(commitUrl(publicId), body, "POST");
   const outcome = classifyCommitResponse(res.status, res.body);
   if (outcome.status !== "committed") return outcome;
-  const ok = res.body as CommitSuccessBody;
-  if (obj(ok.updatedIntelligence)) setPageIntelligenceForPage(qc, publicId, body.pageNumber, ok.updatedIntelligence as PageIntelligence);
+  const ok = res.body as Partial<CommitResponse>;
+  const pageNumber = body.recipe.request.page;
+  if (obj(ok.updatedIntelligence)) setPageIntelligenceForPage(qc, publicId, pageNumber, ok.updatedIntelligence as PageIntelligence);
   if (obj(ok.summaries)) seedSummariesCache(qc, publicId, ok.summaries as ProjectSummaries);
-  refreshPageCsiSpatialMapForTarget(qc, publicId, body.pageNumber);
-  const tags = obj(ok.yoloTags);
+  refreshPageCsiSpatialMapForTarget(qc, publicId, pageNumber);
+  const tags = obj(ok.tags);
   if (tags && Array.isArray(tags.rows) && Array.isArray(tags.replacedRegionIds)) {
-    adoptServerYoloTags(qc, publicId, tags.rows as YoloTag[], tags.replacedRegionIds as string[],
-      Array.isArray(tags.removedIds) ? (tags.removedIds as string[]) : []);
+    adoptServerYoloTags(qc, publicId, tags.rows as YoloTag[], strings(tags.replacedRegionIds), strings(tags.removed));
   }
   useTablesWorkspaceStore.getState().discardDraft(itemKey);
   invalidateWorkspaceItems(qc, publicId);
@@ -284,7 +352,8 @@ export async function bulkAcceptItems(
     if (!(parsed.result.model.quality.agreement >= minAgreement)) {
       report.skipped++;
     } else {
-      const draft = useTablesWorkspaceStore.getState().drafts[item.id] ?? { ...draftFor(item), result: parsed.result };
+      const held = useTablesWorkspaceStore.getState().drafts[item.id] ?? { ...draftFor(item), result: parsed.result };
+      const draft = await withRegionBaseline(qc, target.publicId, item, held);
       const outcome = await commitStructure(qc, { ...target, itemKey: item.id }, buildCommitBody(item, { ...draft, ops: [] }));
       if (outcome.status !== "committed") {
         report.stopped = { item, reason: outcome.status === "conflict" ? "it overlaps a saved region" : "message" in outcome ? outcome.message : outcome.status };

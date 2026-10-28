@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { isEditableKeyboardTarget } from "@/lib/keyboard-target";
 import { EMPTY_ITEMS, inboxView, useWorkspaceItems, type WorkspaceItem } from "@/queries/useWorkspaceItems";
 import { useSessionStore } from "@/stores/sessionStore";
-import { useTablesWorkspaceStore } from "@/stores/tablesWorkspaceStore";
+import { useTablesWorkspaceStore, type WorkspaceItemRef } from "@/stores/tablesWorkspaceStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { next, openItem, prev } from "@/stores/workspaceCommands";
 import EmptyState, { type EmptyReason } from "./EmptyState";
@@ -29,6 +29,33 @@ function emptyReason(error: boolean, total: number, todo: number, filter: string
   if (total === 0) return "none";
   if (filter === "todo" && todo === 0) return "reviewed";
   return "filtered";
+}
+
+/**
+ * [WP-3.M] The new visible order, plus the OPEN item when a re-read dropped it from the view (a verdict moved it to
+ * Rejected, an Accept to Parsed, a drawn box the items read never returns). It goes back where it was — after the
+ * nearest earlier item still in view — so its detail (Undo, Next ▸) stays until the user moves on and "Next ▸"
+ * still means the item after it (WP-3.M verify MED-3). Exported for tests.
+ */
+export function keepSelected(
+  ordered: readonly WorkspaceItemRef[],
+  previous: readonly WorkspaceItemRef[],
+  selectedKey: string | null,
+): WorkspaceItemRef[] {
+  const out = [...ordered];
+  if (!selectedKey || ordered.some((i) => i.id === selectedKey)) return out;
+  const at = previous.findIndex((i) => i.id === selectedKey);
+  if (at < 0) return out;
+  let insertAt = 0;
+  for (let j = at - 1; j >= 0; j -= 1) {
+    const k = out.findIndex((i) => i.id === previous[j].id);
+    if (k >= 0) {
+      insertAt = k + 1;
+      break;
+    }
+  }
+  out.splice(insertAt, 0, previous[at]);
+  return out;
 }
 
 export default function TablesWorkspacePanel() {
@@ -48,7 +75,8 @@ export default function TablesWorkspacePanel() {
   // between renders unless the read, the kinds or the filter change (the query cache keeps `data` identity).
   const ordered = useMemo(() => [...view.rows, ...view.low], [view]);
   useEffect(() => {
-    useTablesWorkspaceStore.getState().setQueue(ordered);
+    const state = useTablesWorkspaceStore.getState();
+    state.setQueue(keepSelected(ordered, state.queue, state.selectedKey));
   }, [ordered]);
 
   const onOpen = (item: WorkspaceItem) => {

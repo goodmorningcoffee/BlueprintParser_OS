@@ -3,8 +3,9 @@
 // answers (conflict → Replace pre-selected ⏎; rebase → one-click; paid crop expired → paid re-run), the tag
 // summary + yoloTags adoption, continuations (`parts`, `links.continues`), verdicts, StepTabs and the bulk
 // Notes/Specs accept. The real workspace store, commands, focus store and query caches are used; only `fetch`
-// is mocked, routed by URL (the parse route of WP-3.E; the commit route of WP-3.G and the verdict / items routes
-// of WP-3.F are mirrored by their PLAN §2.1 / §3.2 shapes). All fixtures are synthetic (PLAN §1.6 rule 12).
+// is mocked, routed by URL (the parse route of WP-3.E; the commit route answers in WP-3.G's real shapes —
+// `types-commit.ts` @ tp/wp-3-g 2f214a8 — and the verdict / items routes in WP-3.F's). All fixtures are synthetic
+// (PLAN §1.6 rule 12). The body-vs-schema and panel-level checks are in AcceptWire.test.tsx.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -17,7 +18,6 @@ import { addContinuationPart } from "@/components/viewer/workspace/ContinuationC
 import { stepsFor } from "@/components/viewer/workspace/StepTabs";
 import type { ParseResult, StructureModel } from "@/lib/parse-engine/types";
 import { parseItem } from "@/queries/useEngineParse";
-import { classifyCommitResponse } from "@/queries/useCommitStructure";
 import { queryKeys } from "@/queries/queryKeys";
 import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { readYoloTags } from "@/queries/useYoloTags";
@@ -86,7 +86,12 @@ const parseRoute = (model: (body: Record<string, unknown>) => StructureModel = (
   url.endsWith("/parse-engine/parse") ? { status: 200, body: parseResult(model(body!), "ev-1", body!.budget as "instant") } : undefined;
 const commitRoute = (answer: (n: number, body: Record<string, unknown>) => Hit): Route => (url, _m, body) =>
   url.endsWith("/parse-engine/commit") ? answer(commitCalls().length, body!) : undefined;
-const committed = (over: Record<string, unknown> = {}): Hit => ({ status: 200, body: { ok: true, regionId: "sr-schedule-1-x", revision: 1, ...over } });
+const committed = (over: Record<string, unknown> = {}): Hit => ({
+  status: 200,
+  body: { ok: true, regionId: "sr-schedule-1-x", revision: 1, kind: "schedule", parsedRegion: {}, updatedIntelligence: null, csiCodeCount: 0, tags: { rows: [], removed: [], replacedRegionIds: [] }, summaries: null, ...over },
+});
+const refusal = (body: Record<string, unknown>): Hit => ({ status: 409, body: { error: { code: "CONFLICT", message: "Refused" }, ...body } });
+const conflictBody = { reason: "conflict", conflict: { regionId: "pr-1-100", kind: "schedule", title: "Synthetic saved", revision: 2, viewHash: "vh1:abc", bbox: [0.1, 0.1, 0.4, 0.3] } };
 
 let qc: QueryClient;
 const Providers = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -184,7 +189,7 @@ describe("accept", () => {
     parsedRegions: [{ id: "reg-1", type: "schedule", category: "schedule", bbox: [0.1, 0.1, 0.4, 0.3], confidence: 1, data: { headers: [], rows: [], tagColumn: null, links: { revision } } }],
   } as unknown as PageIntelligence);
 
-  it("sends the item id, the revision it started from and the ops; success discards the draft", async () => {
+  it("sends the recipe, the region's revision + viewHash, the ops and their base; success discards the draft", async () => {
     seedRevision(3);
     routes = [parseRoute(), commitRoute(() => committed())];
     openWith([region]);
@@ -193,8 +198,8 @@ describe("accept", () => {
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(commitCalls()).toHaveLength(1));
     expect(commitCalls()[0].body).toMatchObject({
-      pageNumber: 1, itemId: "reg-1", origin: "region", regionId: "reg-1", revision: 3, evidenceHash: "ev-1",
-      ops: [{ op: "set-header-rows", n: 2 }],
+      regionId: "reg-1", revision: 3, viewHash: expect.stringMatching(/^vh1:/), evidenceHash: "ev-1",
+      ops: [{ op: "set-header-rows", n: 2 }], base: { kind: "schedule", headerRows: 1 },
       recipe: { origin: "saved", request: { page: 1, bbox: [0.1, 0.1, 0.4, 0.3], kind: "schedule", budget: "instant" } },
     });
     expect(commitCalls()[0].body!.secondsToAccept).toEqual(expect.any(Number));
@@ -205,8 +210,8 @@ describe("accept", () => {
     const serverRow = { id: "t-1", name: "A1", tagText: "A1", yoloClass: "", yoloModel: "", source: "schedule", scope: "project", instances: [] } as unknown as YoloTag;
     qc.setQueryData(queryKeys.yoloTags.all(PUB), []);
     routes = [parseRoute(), commitRoute(() => committed({
-      tagSummary: { tags: 14, hits: 212, withNone: 3, scope: "project" },
-      yoloTags: { rows: [serverRow], replacedRegionIds: ["sr-schedule-1-x"] },
+      tagSummary: { keys: 17, tags: 14, hits: 212, none: 3, noneKeys: ["X1", "X2", "X3"], scope: "project" },
+      tags: { rows: [serverRow], removed: [], replacedRegionIds: ["sr-schedule-1-x"] },
     }))];
     openWith([item({ id: "p-1", proposalId: "p-1" }), item({ id: "p-2", proposalId: "p-2" })]);
     await screen.findByText(/1 row × 2 columns/);
@@ -216,7 +221,8 @@ describe("accept", () => {
     expect(readYoloTags(qc, PUB).map((t) => t.id)).toEqual(["t-1"]);
     expect(useTablesWorkspaceStore.getState().selectedKey).toBe("p-2");
     expect(useTablesWorkspaceStore.getState().drafts["p-1"]).toBeUndefined();
-    expect(commitCalls()[0].body).toMatchObject({ itemId: "p-1", proposalId: "p-1", recipe: { origin: "proposal" } });
+    expect(commitCalls()[0].body).toMatchObject({ links: { proposalId: "p-1" }, recipe: { origin: "proposal", request: { hints: { proposalId: "p-1" } } } });
+    expect(commitCalls()[0].body).not.toHaveProperty("regionId");
   });
 
   it("⏎ on the detail is Accept & next; ⏎ on a button keeps its own meaning", async () => {
@@ -231,22 +237,22 @@ describe("accept", () => {
   });
 
   it("a conflict opens the dialog with Replace pre-selected, and ⏎ replaces the overlapping region", async () => {
-    routes = [parseRoute(), commitRoute((n) => n === 1
-      ? { status: 409, body: { error: { code: "CONFLICT", message: "Overlaps a saved region" }, conflict: { regionId: "pr-1-100", revision: 2, origin: "classic" } } }
-      : committed())];
+    routes = [parseRoute(), commitRoute((n) => (n === 1 ? refusal(conflictBody) : committed()))];
     openWith([item({ id: "p-1", proposalId: "p-1" })]);
     await screen.findByText(/1 row × 2 columns/);
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     const dialog = await screen.findByRole("dialog", { name: "Overlapping saved region" });
     expect(within(dialog).getByRole("radio", { name: /Replace/ })).toBeChecked();
-    expect(within(dialog).getByText(/classic tools/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/"Synthetic saved"/)).toBeInTheDocument();
     fireEvent.keyDown(within(dialog).getByRole("radio", { name: /Replace/ }), { key: "Enter" });
     await waitFor(() => expect(commitCalls()).toHaveLength(2));
-    expect(commitCalls()[1].body).toMatchObject({ onConflict: "replace", regionId: "pr-1-100", revision: 2 });
+    // WP-3.G's Replace: that region's id, revision and viewHash, and NO onConflict (it only takes "keep-both").
+    expect(commitCalls()[1].body).toMatchObject({ regionId: "pr-1-100", revision: 2, viewHash: "vh1:abc" });
+    expect(commitCalls()[1].body).not.toHaveProperty("onConflict");
   });
 
   it("Keep both is the secondary choice", async () => {
-    routes = [parseRoute(), commitRoute((n) => n === 1 ? { status: 409, body: { conflict: { regionId: "pr-1-100" } } } : committed())];
+    routes = [parseRoute(), commitRoute((n) => (n === 1 ? refusal(conflictBody) : committed()))];
     openWith([item({ id: "p-1", proposalId: "p-1" })]);
     await screen.findByText(/1 row × 2 columns/);
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
@@ -257,34 +263,29 @@ describe("accept", () => {
     expect(commitCalls()[1].body).not.toHaveProperty("regionId");
   });
 
-  it("a rebase shows the changed-row note and one click accepts the rebased model", async () => {
+  it("a rebase previews the rebased model, and one click re-sends the same base + ops on the new evidence", async () => {
     routes = [parseRoute(), commitRoute((n) => n === 1
-      ? { status: 409, body: { rebased: { model: tableModel({ headerRows: 2 }), evidenceHash: "ev-2" }, changedRows: 3 } }
+      ? refusal({ reason: "rebased", rebased: tableModel({ headerRows: 2 }), changedRows: 3, evidenceHash: "ev-2" })
       : committed())];
     openWith([item({ id: "p-1", proposalId: "p-1" })]);
     await screen.findByText(/1 row × 2 columns/);
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     expect(await screen.findByText("3 rows changed after re-scan")).toBeInTheDocument();
+    expect(screen.getByText(/2 header rows/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Accept again/ }));
     await waitFor(() => expect(commitCalls()).toHaveLength(2));
-    expect(commitCalls()[1].body).toMatchObject({ acceptRebased: true, evidenceHash: "ev-2" });
+    expect(commitCalls()[1].body).toMatchObject({ evidenceHash: "ev-2", base: { headerRows: 1 } });
+    expect(commitCalls()[1].body).not.toHaveProperty("acceptRebased");
   });
 
   it("a paid crop that is no longer cached offers the paid re-run", async () => {
-    routes = [parseRoute(), commitRoute(() => ({ status: 409, body: { error: { code: "CONFLICT", message: "A paid result is no longer cached (textract)" }, paidExpired: ["textract"] } }))];
+    routes = [parseRoute(), commitRoute(() => refusal({ reason: "paid-expired", paidExpired: true, methods: ["textract"] }))];
     openWith([item({ id: "p-1", proposalId: "p-1" })]);
     await screen.findByText(/1 row × 2 columns/);
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     fireEvent.click(await screen.findByRole("button", { name: "Textract this crop again ($)" }));
     await waitFor(() => expect(parseCalls()).toHaveLength(2));
     expect(parseCalls()[1].body).toMatchObject({ budget: "thorough", hints: { proposalId: "p-1", allowPaidTextract: true } });
-  });
-
-  it("classifies a bare 409 as a stale revision and other errors as errors", () => {
-    expect(classifyCommitResponse(409, { error: { code: "CONFLICT", message: "Region changed" } })).toEqual({ status: "stale-revision", message: "Region changed" });
-    expect(classifyCommitResponse(403, { error: { code: "FORBIDDEN", message: "No" } })).toMatchObject({ status: "error", httpStatus: 403 });
-    expect(classifyCommitResponse(409, { error: { code: "CONFLICT", message: "x", details: { conflict: { regionId: "r" } } } }))
-      .toMatchObject({ status: "conflict", conflict: { regionId: "r" } });
   });
 });
 
@@ -327,7 +328,7 @@ describe("continuations", () => {
     expect(useTablesWorkspaceStore.getState().drafts["p-1"].continues).toBe("reg-9");
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(commitCalls()).toHaveLength(1));
-    expect(commitCalls()[0].body).toMatchObject({ continues: "reg-9" });
+    expect(commitCalls()[0].body).toMatchObject({ links: { proposalId: "p-1", continues: "reg-9" } });
   });
 });
 
@@ -375,16 +376,17 @@ describe("bulk accept", () => {
     const agreementOf = (b: Record<string, unknown>) => ((b.bbox as number[])[0] === 0.2 ? 0.5 : 0.95);
     routes = [
       parseRoute((b) => notesModel(true, agreementOf(b))),
-      commitRoute((n) => (n === 2 ? { status: 409, body: { conflict: { regionId: "pr-x" } } } : committed())),
+      commitRoute((n) => (n === 2 ? refusal(conflictBody) : committed())),
     ];
     useTablesWorkspaceStore.setState({ enabled: true, open: true, scope: "sheet", kinds: ["notes", "spec"] });
     render(<Providers><BulkAcceptDialog items={notes} pageNumber={1} /></Providers>);
     fireEvent.click(screen.getByRole("button", { name: /Accept all Notes\/Specs/ }));
     fireEvent.click(screen.getByRole("button", { name: "Accept 4 on this sheet" }));
     expect(await screen.findByText(/Accepted 1 of 4 · 1 left for review · stopped at "Synthetic tr:notes-numbered:0.30,0.50,0.40,0.90"/)).toBeInTheDocument();
-    expect(commitCalls().map((c) => c.body!.itemId)).toEqual([notes[0].id, notes[2].id]);
+    const trKey = (b: Record<string, unknown> | undefined) => (b?.links as { textRegionKey?: string } | undefined)?.textRegionKey;
+    expect(commitCalls().map((c) => trKey(c.body))).toEqual([notes[0].id, notes[2].id]);
     // Sequential: each item's parse comes after the previous item's commit.
-    const order = calls.filter((c) => c.method === "POST").map((c) => `${c.url.endsWith("/commit") ? "C" : "P"}:${c.body!.itemId ?? (c.body!.bbox as number[])[0]}`);
+    const order = calls.filter((c) => c.method === "POST").map((c) => `${c.url.endsWith("/commit") ? "C" : "P"}:${trKey(c.body) ?? (c.body!.bbox as number[])[0]}`);
     expect(order).toEqual(["P:0.1", `C:${notes[0].id}`, "P:0.2", "P:0.3", `C:${notes[2].id}`]);
   });
 });

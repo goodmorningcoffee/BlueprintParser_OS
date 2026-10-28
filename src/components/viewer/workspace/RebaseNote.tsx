@@ -12,7 +12,7 @@ export default function RebaseNote({
   onConfirm,
   onCancel,
 }: {
-  changedRows: number;
+  changedRows: number | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -27,10 +27,10 @@ export default function RebaseNote({
     e.stopPropagation();
     onConfirm();
   };
-  const rows = `${changedRows} row${changedRows === 1 ? "" : "s"}`;
+  const what = changedRows === null ? "The page changed" : `${changedRows} row${changedRows === 1 ? "" : "s"} changed`;
   return (
     <div role="alert" aria-label="Re-scanned" onKeyDown={onKeyDown} className="flex flex-wrap items-center gap-1 rounded border border-sky-400/50 bg-sky-400/10 p-1.5 text-[11px]">
-      <span className="flex-1 text-[var(--fg)]">{rows} changed after re-scan</span>
+      <span className="flex-1 text-[var(--fg)]">{what} after re-scan</span>
       <button ref={confirmRef} type="button" onClick={onConfirm} className={wsButton(true)}>
         Accept again ⏎
       </button>

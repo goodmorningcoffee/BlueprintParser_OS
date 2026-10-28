@@ -48,10 +48,16 @@ export default function BulkAcceptDialog({ items, pageNumber }: { items: readonl
   const run = async () => {
     setProgress(0);
     setMessage(null);
-    const report = await bulkAcceptItems(qc, { publicId, isDemo }, targets, minAgreement, setProgress);
-    setProgress(null);
-    setOpen(false);
-    setMessage(reportText(report, targets.length));
+    try {
+      const report = await bulkAcceptItems(qc, { publicId, isDemo }, targets, minAgreement, setProgress);
+      setMessage(reportText(report, targets.length));
+    } catch (e) {
+      // A network failure mid-run (verify LOW-4): what was saved stays saved; the inbox re-read shows it.
+      setMessage(`Stopped: ${e instanceof Error ? e.message : "the connection failed"}. Items already saved stay saved.`);
+    } finally {
+      setProgress(null);
+      setOpen(false);
+    }
   };
 
   const where = scope === "all" ? "all sheets" : "this sheet";

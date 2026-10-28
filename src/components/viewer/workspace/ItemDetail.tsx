@@ -2,20 +2,23 @@
 
 // [TP-3 WP-3.M] The open item (PLAN §3.1 ItemDetail): KindBar · EvidenceStrip · StepTabs · the step body ·
 // AcceptBar. Mounted by TablesWorkspacePanel below the inbox while an item is selected.
-//   • The item's draft is created here on open, bound to the item's page (K29). Saving over an existing region
-//     carries the revision the user started from (`data.links.revision` from the page window), so a region
-//     changed meanwhile answers 409 instead of being overwritten.
+//   • The item's draft is created here on open (and again after a plain Accept discards it), bound to the item's
+//     page (K29). Saving over an existing region carries the revision (`data.links.revision`, 0 for a classic
+//     region) and the `viewHash` of the view it was loaded on, from the page window (the commit reads the page
+//     when the window lacks it), so a region changed meanwhile answers 409 instead of being overwritten.
 //   • useEngineParse runs the instant parse once (stale answers dropped by stamp) and prefetches the NEXT item
 //     of the inbox's visible order at `instant` (C3-m8), so "Accept & next" opens it already parsed.
 //   • ⏎ on the detail itself is "Accept & next" (onKeyDown on this section, never on `window`; Enter on a
-//     button or in a field keeps its native meaning; §1.6 rule 14).
+//     button or in a field keeps its native meaning; §1.6 rule 14). Opening an item while the keyboard is in
+//     the panel focuses the detail, so ⏎ works without a click first (verify LOW-7).
 // The Structure step (source switcher, corrections, preview grid, paragraphs) is WP-3.N; until it mounts, the
 // step body is a read-only summary of the fused result. Tags and References are TP-4.
 
-import { useEffect, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { isEditableKeyboardTarget } from "@/lib/keyboard-target";
 import type { ParseResult } from "@/lib/parse-engine/types";
+import { regionBaseline } from "@/queries/useCommitStructure";
 import { draftFor, useEngineParse } from "@/queries/useEngineParse";
 import { readPageIntelligence } from "@/queries/usePageWindow";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -26,19 +29,8 @@ import KindBar from "./KindBar";
 import StepTabs, { stepsFor } from "./StepTabs";
 import { KIND_LABELS } from "./WorkspaceHeader";
 
-/** The revision a saved region is at (`data.links.revision`), when the page window holds it. */
-function regionRevision(pi: unknown, regionId: string | undefined): number | undefined {
-  if (!regionId || !pi || typeof pi !== "object") return undefined;
-  const regions = (pi as { parsedRegions?: unknown }).parsedRegions;
-  if (!Array.isArray(regions)) return undefined;
-  const region = regions.find((r) => !!r && typeof r === "object" && (r as { id?: unknown }).id === regionId) as
-    { data?: { links?: { revision?: unknown } } } | undefined;
-  const rev = region?.data?.links?.revision;
-  return typeof rev === "number" ? rev : undefined;
-}
-
 function freshDraft(qc: QueryClient, publicId: string, item: WorkspaceItemRef) {
-  return draftFor(item, regionRevision(readPageIntelligence(qc, publicId, item.page), item.regionId));
+  return draftFor(item, regionBaseline(readPageIntelligence(qc, publicId, item.page), item.regionId));
 }
 
 export function resultSummary(result: ParseResult): string {
@@ -80,6 +72,7 @@ export default function ItemDetail() {
   const queue = useTablesWorkspaceStore((s) => s.queue);
   const step = useTablesWorkspaceStore((s) => s.step);
   const draft = useTablesWorkspaceStore((s) => (selectedKey ? s.drafts[selectedKey] : undefined));
+  const sectionRef = useRef<HTMLElement>(null);
   const at = queue.findIndex((q) => q.id === selectedKey);
   const item: WorkspaceItemRef | null = at >= 0 ? queue[at] : null;
   const nextItem = at >= 0 && at + 1 < queue.length ? queue[at + 1] : null;
@@ -88,13 +81,26 @@ export default function ItemDetail() {
   const title = result?.model.title?.text || itemTitle || (item ? `Untitled ${KIND_LABELS[item.kind].replace(/s$/, "").toLowerCase()}` : "");
 
   // Open: create the item's draft once per opening (a draft restored from storage keeps its ops and parts). A
-  // commit discards the draft and is not followed by a new one, so a committed op list is never re-applied.
+  // commit discards the draft (a committed op list is never re-applied); a plain Accept then starts a new one on
+  // the region it just wrote (useAcceptFlow), so "Re-scan box" + Accept re-saves that region cleanly.
   const itemKey = item?.id ?? null;
   useEffect(() => {
     const target = useTablesWorkspaceStore.getState().queue.find((q) => q.id === itemKey);
     if (!target || useTablesWorkspaceStore.getState().drafts[target.id]) return;
     useTablesWorkspaceStore.getState().putDraft(target.id, freshDraft(qc, publicId, target));
   }, [itemKey, qc, publicId]);
+
+  // Keyboard flow: when the item opens from the panel (J/K, ⏎ on a row, Accept & next), focus the detail so ⏎
+  // accepts. Focus elsewhere (the canvas, a field) is left alone.
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el || !itemKey) return;
+    const active = el.ownerDocument.activeElement;
+    const panel = el.closest("aside");
+    if (active === el.ownerDocument.body || (panel && active && panel.contains(active) && !isEditableKeyboardTarget(active))) {
+      el.focus({ preventScroll: true });
+    }
+  }, [itemKey]);
 
   const parse = useEngineParse(publicId, item, nextItem, !!item);
   const flow = useAcceptFlow(publicId, isDemo, item, title);
@@ -116,10 +122,13 @@ export default function ItemDetail() {
     if (flow.canAccept && !parse.busy) void flow.accept(true);
   };
 
+  // A rebase waiting for its one-click confirm previews the rebased model (the server already applied the ops).
+  const shown = flow.phase.kind === "rebased" && result ? { ...result, model: flow.phase.model } : result;
   const steps = stepsFor(result?.model);
   const active = steps.includes(step) ? step : "structure";
   return (
     <section
+      ref={sectionRef}
       aria-label="Item detail"
       tabIndex={-1}
       onKeyDown={onKeyDown}
@@ -129,7 +138,7 @@ export default function ItemDetail() {
       <EvidenceStrip result={result} busy={parse.busy} error={parse.error} paidAllowed={!isDemo} onRun={(o) => void parse.run(o)} />
       <StepTabs model={result?.model} />
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <StepBody step={active} result={result} />
+        <StepBody step={active} result={shown} />
       </div>
       <AcceptBar
         flow={flow}
