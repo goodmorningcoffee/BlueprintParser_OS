@@ -439,10 +439,10 @@ describe("inbox", () => {
     const { panel } = await openInbox();
     act(() => { next(); next(); next(); });
     expect(ws().selectedKey).toBe("p-low-table");
-    expect(within(panel).queryByText("Synthetic p-noise")).toBeNull();
+    expect(panel.querySelector('[data-item-id="p-noise"]')).toBeNull();
     act(() => { next(); next(); });
     expect(ws().selectedKey).toBe("p-noise");
-    expect(within(panel).getByText("Synthetic p-noise")).toBeInTheDocument();
+    expect(panel.querySelector('[data-item-id="p-noise"]')).toBeInTheDocument(); // (WP-3.M: the detail repeats the title)
     act(() => prev());
     expect(ws().selectedKey).toBe("p-low-table");
   });
@@ -456,9 +456,9 @@ describe("inbox", () => {
     fireEvent.click(within(panel).getByRole("button", { name: /Not a table: rest of this sheet \(2\)/ }));
     fireEvent.click(within(panel).getByRole("button", { name: /Confirm: 2 not a table/ }));
     await within(panel).findByText("Marked 2 as not a table.");
-    const posted = calls.filter((c) => c.method === "POST").map((c) => (c.body as { itemId: string }).itemId);
+    const posted = calls.filter((c) => c.method === "POST" && c.url.endsWith("/parse-engine/verdict")).map((c) => (c.body as { itemId: string }).itemId);
     expect(posted).toEqual(["p-mid", "p-low-table"]);
-    expect(calls.filter((c) => c.method === "POST")[0].body).toMatchObject({
+    expect(calls.filter((c) => c.method === "POST" && c.url.endsWith("/parse-engine/verdict"))[0].body).toMatchObject({
       pageNumber: 1, itemId: "p-mid", origin: "proposal", kind: "schedule", proposalId: "p-mid", verdict: "reject",
     });
   });
@@ -473,7 +473,7 @@ describe("inbox", () => {
     fireEvent.click(within(panel).getByRole("button", { name: /Not a table: rest of this sheet \(4\)/ }));
     fireEvent.click(within(panel).getByRole("button", { name: /Confirm: 4 not a table/ }));
     await within(panel).findByText("Marked 4 as not a table.");
-    const posted = calls.filter((c) => c.method === "POST").map((c) => (c.body as { itemId: string }).itemId);
+    const posted = calls.filter((c) => c.method === "POST" && c.url.endsWith("/parse-engine/verdict")).map((c) => (c.body as { itemId: string }).itemId);
     expect(posted).toEqual(["p-high", "p-mid", "p-low-table", "p-noise"]);
   });
 
@@ -495,7 +495,7 @@ describe("inbox", () => {
     fireEvent.click(within(panel).getByRole("button", { name: /Not a table: rest of this sheet/ }));
     fireEvent.click(within(panel).getByRole("button", { name: /Confirm:/ }));
     await within(panel).findByText(/Saved 1, then stopped/);
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
+    expect(calls.filter((c) => c.method === "POST" && c.url.endsWith("/parse-engine/verdict"))).toHaveLength(2);
   });
 });
 

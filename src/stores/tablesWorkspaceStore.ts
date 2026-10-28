@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { BboxMinMax, CorrectionOp, ParseResult, StructureKind } from "@/lib/parse-engine/types";
+import type { BboxMinMax, CorrectionOp, ParseRequest, ParseResult, StructureKind } from "@/lib/parse-engine/types";
 
 // [TP-3 WP-3.L] The Tables & Notes workspace's viewer state (PLAN §3.2). LEAF store: it imports only
 // zustand and types, never fetches, never navigates and never touches another store — cross-store work
@@ -16,7 +16,7 @@ export type WorkspaceGroup = "tables" | "notes";
 export type WorkspaceScope = "sheet" | "all";
 export type WorkspaceFilter = "todo" | "parsed" | "rejected" | "stale";
 export type WorkspaceStep = "structure" | "tags" | "refs" | "accept";
-export type WorkspaceCorrection = "draw-region" | null;
+export type WorkspaceCorrection = "draw-region" | "draw-continuation" | null; // [WP-3.M] continuation box (C3-M3)
 
 export const GROUP_KINDS: Readonly<Record<WorkspaceGroup, readonly StructureKind[]>> = {
   tables: ["schedule", "keynote", "legend"],
@@ -47,6 +47,9 @@ export interface WorkspaceDraft {
   revision?: number;
   /** Request stamp: a parse result is applied only when it carries this stamp (stale results are dropped). */
   startedAt: number;
+  /** [WP-3.M] The request that produced `result` (the commit's recipe), and `links.continues` (K11, C2-M10). */
+  request?: ParseRequest;
+  continues?: string;
 }
 
 type MirroredDraft = Omit<WorkspaceDraft, "result" | "startedAt">;

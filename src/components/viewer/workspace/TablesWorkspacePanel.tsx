@@ -1,7 +1,8 @@
 "use client";
 
 // [TP-3 WP-3.L] The workspace's right panel (PLAN §3.1): header, inbox, and (WP-3.M) the item detail below the
-// selected row. 420 px wide by default, resizable from its left edge with pointer capture (no window listeners).
+// inbox plus the bulk Notes/Specs accept under the list. 420 px wide by default, resizable from its left edge
+// with pointer capture (no window listeners).
 // Keys are handled HERE, on the panel, never on `window` (§1.6 rule 14): J / K move through the inbox's visible
 // order. Enter belongs to the panel only on the panel itself (opens the selected item) or on an inbox row (opens
 // THAT row); on any other control — a button, a chip, a select — Enter keeps its native meaning (WP-3.L verify
@@ -17,6 +18,8 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { next, openItem, prev } from "@/stores/workspaceCommands";
 import EmptyState, { type EmptyReason } from "./EmptyState";
 import InboxList from "./InboxList";
+import BulkAcceptDialog from "./BulkAcceptDialog";
+import ItemDetail from "./ItemDetail";
 import WorkspaceHeader from "./WorkspaceHeader";
 
 export const PANEL_WIDTH = { initial: 420, min: 320, max: 720 } as const;
@@ -106,9 +109,13 @@ export default function TablesWorkspacePanel() {
         {showEmpty ? (
           <EmptyState reason={emptyReason(!!error, view.total, view.counts.todo, filter)} scope={scope} />
         ) : (
-          <InboxList rows={view.rows} low={view.low} pageNumber={pageNumber} onOpen={onOpen} />
+          <>
+            <InboxList rows={view.rows} low={view.low} pageNumber={pageNumber} onOpen={onOpen} />
+            <BulkAcceptDialog items={ordered} pageNumber={pageNumber} />
+          </>
         )}
       </div>
+      {selectedKey ? <ItemDetail /> : null}
     </aside>
   );
 }
