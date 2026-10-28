@@ -10,10 +10,12 @@
  *   number keys; a bare `1` is a WEAK number key (the segmenter accepts it only in sequence and in the
  *   key column); `2.5` is never a number key. `A.` / `a)` / `(B)` are letter keys; `1.01` is a strong
  *   spec article, `2.3` a weak one; `K-01` / `EF-10.` / `A1` are tag keys;
- * - a block header is a whole UPPER-CASE line (no lower-case letter anywhere) that ends in NOTES,
+ * - a notes block header is a whole UPPER-CASE line (no lower-case letter anywhere) that ends in NOTES,
  *   KEYNOTES, LEGEND, ABBREVIATIONS, SYMBOLS or SPECIFICATIONS, optionally followed by a continuation
  *   mark (`(CONT.)`, `CONT'D`, `CONTINUED`) and a colon; spec headers are `SECTION nn nn nn …`,
- *   `PART n …` and `END OF SECTION`. A line that starts with a key is never a header.
+ *   `PART n …` and `END OF SECTION` (a title-case name after the number is allowed). A line that starts
+ *   with a key is never a header. Whether a header-shaped line IS a header in context (an all-caps
+ *   wrapped line ending in NOTES is not) is the segmenter's call: this grammar has no geometry.
  *
  * `keyNorm` is the comparison form used by `StructureIndexV1.keys` ("K-01" → "K01", "(4)" → "4",
  * "1.01" → "1.01"); `sectionNorm` is the `specSections` form ("08 71 00" → "087100").
@@ -138,12 +140,14 @@ export interface HeaderMatch {
   part?: number;
 }
 
-const RE_CONT = /\s*(?:\(\s*CONT(?:'D|D|\.|INUED)?\.?\s*\)|[-–—]?\s*CONT(?:'D|D)\.?|CONTINUED)\s*:?\s*$/;
+const RE_CONT = /\s*(?:\(\s*CONT(?:'D|D|\.|INUED)?\.?\s*\)|[-–—]?\s*(?:CONT(?:'D|D)\.?|CONTINUED))\s*:?\s*$/;
 const RE_NOTES_HEADER =
   /^(?:[A-Z][A-Z0-9&/'’.\-]*\s+){0,6}(?:(?:GENERAL\s+)?NOTES?|KEY\s?NOTES?|LEGEND|ABBREVIATIONS?|SYMBOLS?|SPECIFICATIONS?)$/;
 const RE_LEGEND_HEADER = /(?:^|\s)(?:LEGEND|ABBREVIATIONS?|SYMBOLS?)$/;
 const RE_SPEC_SECTION = /^SECTION\s+(\d{2})\s?(\d{2})\s?(\d{2})(?:\.(\d{2}))?\b/;
 const RE_SPEC_PART = /^PART\s+(\d)\b/;
+/** A mixed-case PART line is a header only as `PART n - Title` / `PART n Title Case` ("PART 1 of the work …" is prose). */
+const RE_SPEC_PART_MIXED = /^PART\s+\d(?:\s*[-–—.:]\s*[A-Z]\S*|\s+[A-Z]\S*)(?:\s+(?:[A-Z]\S*|and|of|for|the|to|in|&))*\s*$/;
 const RE_END_OF_SECTION = /^END\s+OF\s+SECTION\b/;
 const MAX_HEADER_CHARS = 60;
 
@@ -163,8 +167,10 @@ export function matchHeader(line: string): HeaderMatch | null {
   const header = line.trim();
   if (header === "" || header.length > MAX_HEADER_CHARS) return null;
   if (matchKey(header)) return null; // "4. NOTES ARE …" is a note, never a header
-  if (/[a-z]/.test(header)) return null; // K34: "see note 4 …", "Notes: provide shims"
+  const lower = /[a-z]/.test(header);
 
+  // spec headers first: their keywords are matched upper-case, and a title-case name after the number
+  // ("SECTION 08 71 00 - Door Hardware", "PART 1 - General") is normal in a project manual (VERIFY MED-5)
   let m: RegExpExecArray | null;
   if ((m = RE_SPEC_SECTION.exec(header))) {
     const section = `${m[1]} ${m[2]} ${m[3]}${m[4] ? `.${m[4]}` : ""}`;
@@ -173,9 +179,10 @@ export function matchHeader(line: string): HeaderMatch | null {
   if (RE_END_OF_SECTION.test(header)) {
     return { kind: "end-of-section", header, headerNorm: normaliseHeader(header), continued: false };
   }
-  if ((m = RE_SPEC_PART.exec(header))) {
+  if ((m = RE_SPEC_PART.exec(header)) && (!lower || RE_SPEC_PART_MIXED.test(header))) {
     return { kind: "spec-part", header, headerNorm: normaliseHeader(header), continued: RE_CONT.test(header), part: parseInt(m[1], 10) };
   }
+  if (lower) return null; // K34: "see note 4 …", "Notes: provide shims" (the notes grammar is upper-case only)
   const continued = RE_CONT.test(header);
   const core = header.replace(RE_CONT, "").replace(/:\s*$/, "").trim();
   if (!RE_NOTES_HEADER.test(core)) return null;

@@ -354,3 +354,134 @@ describe("segmentParagraphs probes", () => {
     expect(zStructureParagraphDoc.parse(doc)).toEqual(doc);
   });
 });
+
+// WP-3.C fix round: the verifier's probes (WP-3.C.VERIFY.md), all pseudo-word text (rule 12)
+describe("segmentParagraphs: verify-round probes", () => {
+  const bbox: BboxMinMax = [0.1, 0.1, 0.6, 0.5];
+  const dy = 0.011;
+  const keys = (doc: StructureParagraphDoc) => doc.paragraphs.map((p) => p.key);
+
+  it("HIGH-1: a header spanning the gutter does not turn column detection off; it heads both columns", () => {
+    const lines: SegmentLine[] = [line("ZFKMP NOTES AND SPECIFICATIONS", 0.15, 0.11)];
+    for (let i = 0; i < 6; i++) lines.push(line(`${i + 1}. DCZRP ZFKMP ${i + 1}`, 0.11, 0.11 + (2 + i) * dy));
+    for (let i = 0; i < 6; i++) lines.push(line(`${i + 7}. SNIEV HTJWZ ${i + 7}`, 0.26, 0.11 + (2 + i) * dy));
+    const r = segmentParagraphsDetailed({ lines, bbox });
+    expect(r.columns).toHaveLength(2);
+    expect(keys(r.doc)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
+    expect(r.doc.paragraphs[0].text).toBe("DCZRP ZFKMP 1");
+    expect(r.doc.blocks.map((b) => b.header)).toEqual(["ZFKMP NOTES AND SPECIFICATIONS"]);
+  });
+
+  it("HIGH-1: a header centred over the gutter is read first, not as the right column's header", () => {
+    const lines: SegmentLine[] = [line("GENERAL NOTES", 0.21, 0.11)];
+    for (let i = 0; i < 6; i++) lines.push(line(`${i + 1}. DCZRP ZFKMP ${i + 1}`, 0.11, 0.11 + (2 + i) * dy));
+    for (let i = 0; i < 6; i++) lines.push(line(`${i + 7}. SNIEV HTJWZ ${i + 7}`, 0.26, 0.11 + (2 + i) * dy));
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(doc.blocks.map((b) => b.header)).toEqual(["GENERAL NOTES"]);
+    expect(keys(doc)).toHaveLength(12);
+  });
+
+  it("HIGH-1: one non-header lead-in line crossing the gutter of a long list is tolerated", () => {
+    const lines: SegmentLine[] = [line("ZFKMP SNIEV HTJWZ DCZRP", 0.17, 0.11)];
+    for (let i = 0; i < 6; i++) lines.push(line(`${i + 1}. DCZRP ZFKMP ${i + 1}`, 0.11, 0.11 + (2 + i) * dy));
+    for (let i = 0; i < 6; i++) lines.push(line(`${i + 7}. SNIEV HTJWZ ${i + 7}`, 0.26, 0.11 + (2 + i) * dy));
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(keys(doc)).toEqual([null, "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
+    expect(doc.paragraphs[0].text).toBe("ZFKMP SNIEV HTJWZ DCZRP");
+  });
+
+  it("HIGH-2: a keynote list whose numerals are separate LINEs reads one key per row (not a key column)", () => {
+    const vals = ["ZFKMP WALL", "DCZRP DOOR", "SNIEV CEILING", "HTJWZ OPENING"];
+    const lines: SegmentLine[] = [line("KEYNOTES", 0.11, 0.11)];
+    vals.forEach((v, i) => {
+      lines.push(line(String(i + 1), 0.11, 0.11 + (2 + i) * dy));
+      lines.push(line(v, 0.16, 0.11 + (2 + i) * dy));
+    });
+    const r = segmentParagraphsDetailed({ lines, bbox });
+    expect(r.columns).toHaveLength(1);
+    expect(keyed(r.doc)).toEqual(vals.map((v, i) => [String(i + 1), v]));
+    // both input LINEs of a row are assigned to its paragraph
+    expect(r.assignment.filter((a) => a.paragraph === "p1").map((a) => a.line)).toEqual([1, 2]);
+  });
+
+  it("HIGH-2: tag keys as separate LINEs, with a header too narrow to block the gutter", () => {
+    const vals = ["ZFKMP EGGSHELL", "DCZRP SEMIGLOSS", "SNIEV TILE", "HTJWZ CARPET"];
+    const tags = ["PT-1", "PT-2", "AC-1", "CP-1"];
+    const lines: SegmentLine[] = [line("LEGEND", 0.11, 0.11)];
+    tags.forEach((t, i) => {
+      lines.push(line(t, 0.11, 0.11 + (2 + i) * dy));
+      lines.push(line(vals[i], 0.2, 0.11 + (2 + i) * dy));
+    });
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(keyed(doc)).toEqual(tags.map((t, i) => [t, vals[i]]));
+  });
+
+  it("MED-1: a wrapped line starting with a tag (flush or indented) continues its note", () => {
+    for (const x of [0.11, 0.125]) {
+      const lines = [
+        line("GENERAL NOTES", 0.11, 0.11),
+        line("1. ZFKMP DCZRP SNIEV IN ALL", 0.11, 0.11 + 2 * dy),
+        line("R-19 WALLS AS SHOWN.", x, 0.11 + 3 * dy),
+        line("2. HTJWZ ALL SURFACES WITH", 0.11, 0.11 + 4 * dy),
+        line("PT-1 UNLESS NOTED.", x, 0.11 + 5 * dy),
+        line("3. ZFKMP ALL WALLS.", 0.11, 0.11 + 6 * dy),
+      ];
+      const doc = segmentParagraphs({ lines, bbox });
+      expect(keys(doc), `x=${x}`).toEqual(["1", "2", "3"]);
+      expect(doc.paragraphs[0].text).toBe("ZFKMP DCZRP SNIEV IN ALL R-19 WALLS AS SHOWN.");
+      expect(doc.paragraphs.every((p) => p.depth === 0)).toBe(true);
+    }
+  });
+
+  it("MED-1: an indented tag sub-list with list evidence is still a child level", () => {
+    const lines = [line("1. ZFKMP FINISHES:", 0.11, 0.11), line("PT-1 DCZRP", 0.125, 0.11 + dy), line("PT-2 SNIEV", 0.125, 0.11 + 2 * dy), line("2. HTJWZ", 0.11, 0.11 + 3 * dy)];
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(doc.paragraphs.map((p) => [p.keyPath.join(">"), p.depth])).toEqual([["1", 0], ["1>PT-1", 1], ["1>PT-2", 1], ["2", 0]]);
+  });
+
+  it("MED-1: an indented in-sequence (2) at the text indent is text, so the real note 2 is not a duplicate", () => {
+    const lines = [line("1. ZFKMP TWO", 0.11, 0.11), line("(2) LAYERS OF DCZRP.", 0.125, 0.11 + dy), line("2. SNIEV NOTE.", 0.11, 0.11 + 2 * dy), line("3. HTJWZ NOTE.", 0.11, 0.11 + 3 * dy)];
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(keys(doc)).toEqual(["1", "2", "3"]);
+    expect(doc.paragraphs[0].text).toBe("ZFKMP TWO (2) LAYERS OF DCZRP.");
+  });
+
+  it("MED-1: an indented first-of-class child key that starts its sequence is still a child level", () => {
+    const lines = [line("1. ZFKMP", 0.11, 0.11), line("A. DCZRP", 0.125, 0.11 + dy), line("B. SNIEV", 0.125, 0.11 + 2 * dy), line("2. HTJWZ", 0.11, 0.11 + 3 * dy)];
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(doc.paragraphs.map((p) => [p.keyPath.join("."), p.depth])).toEqual([["1", 0], ["1.A", 1], ["1.B", 1], ["2", 0]]);
+  });
+
+  it("MED-2: an all-caps wrapped line ending in SPECIFICATIONS / NOTES at the hanging indent is text, not a header", () => {
+    const lines = [
+      line("GENERAL NOTES", 0.11, 0.11),
+      line("1. ZFKMP ALL DCZRP IN ACCORDANCE", 0.11, 0.11 + 2 * dy),
+      line("WITH SNIEV'S SPECIFICATIONS", 0.1204, 0.11 + 3 * dy),
+      line("AND HTJWZ.", 0.1204, 0.11 + 4 * dy),
+      line("2. ZFKMP WITH THE", 0.11, 0.11 + 5 * dy),
+      line("STRUCTURAL GENERAL NOTES", 0.1204, 0.11 + 6 * dy),
+      line("3. DCZRP ALL WALLS.", 0.11, 0.11 + 7 * dy),
+    ];
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(doc.blocks.map((b) => b.header)).toEqual(["GENERAL NOTES"]);
+    expect(keys(doc)).toEqual(["1", "2", "3"]);
+    expect(doc.paragraphs[0].text).toBe("ZFKMP ALL DCZRP IN ACCORDANCE WITH SNIEV'S SPECIFICATIONS AND HTJWZ.");
+    expect(doc.quality.flags).not.toContain("lead-in");
+  });
+
+  it("LOW-3 (M9): a header resets numbering for WEAK keys too", () => {
+    const lines = [line("1 ZFKMP", 0.11, 0.11), line("2 DCZRP", 0.11, 0.11 + dy), line("ELECTRICAL NOTES", 0.11, 0.11 + 3 * dy), line("1 SNIEV", 0.11, 0.11 + 4 * dy), line("2 HTJWZ", 0.11, 0.11 + 5 * dy)];
+    const doc = segmentParagraphs({ lines, bbox });
+    const byBlock = doc.blocks.map((b) => doc.paragraphs.filter((p) => p.blockId === b.id).map((p) => p.key));
+    expect(byBlock).toEqual([["1", "2"], ["1", "2"]]);
+  });
+
+  it("LOW-3: after truncation the assignment names only paragraphs the doc keeps", () => {
+    const lines: SegmentLine[] = [];
+    for (let i = 0; i < 1_050; i++) lines.push(line(`${(i % 500) + 1}. ZFKMP`, 0.1, 0.0005 * i, 0.0004));
+    const r = segmentParagraphsDetailed({ lines, bbox: [0, 0, 1, 1] });
+    const ids = new Set(r.doc.paragraphs.map((p) => p.id));
+    expect(r.assignment.every((a) => a.paragraph === null || ids.has(a.paragraph))).toBe(true);
+  });
+});
+

@@ -1,7 +1,7 @@
 // @vitest-environment node
 // [table pipeline WP-3.C] §1.7 reference resolution on a hand-built index (synthetic ids and headers only).
 import { describe, expect, it } from "vitest";
-import { blocksSliceOf, keyLookupVariants, kindHintFromPhrase, orderCandidates, resolveReference, splitKeyPath } from "../paragraphs/resolve";
+import { blocksSliceOf, keyLookupVariants, kindHintFromPhrase, orderCandidates, prepareResolverIndex, resolveReference, splitKeyPath } from "../paragraphs/resolve";
 import type { StructureIndexKeyEntry, StructureIndexRegion } from "../types";
 import type { ReferenceQuery, ResolvedCandidate, ResolverIndex } from "../types-paragraphs";
 
@@ -238,3 +238,66 @@ describe("rule 6 ordering and helpers", () => {
     expect(a).toBe(b);
   });
 });
+
+// WP-3.C fix round (WP-3.C.VERIFY.md MED-3, MED-4, LOW-2); synthetic ids and headers only
+describe("resolveReference: verify-round fixes", () => {
+  const notes = (id: string): StructureIndexRegion[] => [region(id, "notes", [0, 0, 1, 1])];
+
+  it("MED-3a: a (CONT.) block never chains across disciplines when the same-discipline predecessor is not indexed", () => {
+    const idx: ResolverIndex = {
+      sheets: [{ page: 1, raw: "A-001" }, { page: 2, raw: "E-001" }, { page: 3, raw: "E-002" }],
+      regions: { "1": notes("ra"), "3": notes("re2") },
+      keys: { "1": { "9": [e("ra", "notes", "p9", "GENERAL NOTES")] }, "3": { "1": [e("re2", "notes", "p1", "GENERAL NOTES")] } },
+      specSections: {},
+      blocks: { "1": [{ regionId: "ra", blockId: "b1", headerNorm: "GENERAL NOTES" }], "3": [{ regionId: "re2", blockId: "b1", headerNorm: "GENERAL NOTES", continued: true }] },
+    };
+    const o = resolveReference(q(3, "9"), idx);
+    // not a same-sheet chain hit: A-001 is reached only as the project's general sheet (rule 4c)
+    expect(o.status === "resolved" ? o.level : o.status).toBe("general-notes");
+    // and the E-002 → E-001 chain still forms when E-001 has the block
+    const withE: ResolverIndex = { ...idx, keys: { ...idx.keys, "2": { "9": [e("re1", "notes", "p9", "GENERAL NOTES")] } }, blocks: { ...idx.blocks, "2": [{ regionId: "re1", blockId: "b1", headerNorm: "GENERAL NOTES" }] } };
+    expect(resolveReference(q(3, "9"), withE)).toMatchObject({ status: "resolved", level: "same-sheet", hit: { page: 2, regionId: "re1" } });
+  });
+
+  it("MED-3b: a page continuing two blocks keeps the chains apart", () => {
+    const idx: ResolverIndex = {
+      sheets: [{ page: 1, raw: "A-500" }, { page: 2, raw: "A-501" }, { page: 3, raw: "A-502" }],
+      regions: { "1": notes("r500"), "2": notes("r501"), "3": [region("r502g", "notes", [0, 0, 0.5, 1]), region("r502e", "notes", [0.5, 0, 1, 1])] },
+      keys: { "1": { "3": [e("r500", "notes", "p3", "ELECTRICAL NOTES")] }, "2": { "3": [e("r501", "notes", "p3", "GENERAL NOTES")] }, "3": {} },
+      specSections: {},
+      blocks: {
+        "1": [{ regionId: "r500", blockId: "b1", headerNorm: "ELECTRICAL NOTES" }],
+        "2": [{ regionId: "r501", blockId: "b1", headerNorm: "GENERAL NOTES" }],
+        "3": [{ regionId: "r502g", blockId: "b1", headerNorm: "GENERAL NOTES", continued: true }, { regionId: "r502e", blockId: "b1", headerNorm: "ELECTRICAL NOTES", continued: true }],
+      },
+    };
+    expect(resolveReference(q(2, "3"), idx)).toMatchObject({ status: "resolved", level: "same-sheet", hit: { page: 2, regionId: "r501" } });
+    // on the continuing page: a mention inside the GENERAL (CONT.) region follows only its chain
+    expect(resolveReference(q(3, "3", "note", { regionId: "r502g" }), idx)).toMatchObject({ status: "resolved", hit: { page: 2, regionId: "r501" } });
+    expect(resolveReference(q(3, "3", "note", { b: [0.7, 0.4, 0.72, 0.41] }), idx)).toMatchObject({ status: "resolved", hit: { page: 1, regionId: "r500" } });
+    // a mention in neither region sees both chains: honestly ambiguous
+    expect(resolveReference(q(3, "3"), idx).status).toBe("ambiguous");
+  });
+
+  it("MED-4: 'SEE GENERAL NOTE 3' inside a schedule resolves to the GENERAL NOTES block, not the schedule's footnote 3", () => {
+    const idx: ResolverIndex = {
+      sheets: [{ page: 1, raw: "A-601" }],
+      regions: { "1": [region("sch", "schedule", [0.1, 0.1, 0.5, 0.5]), region("gn", "notes", [0.6, 0.1, 0.9, 0.5])] },
+      keys: { "1": { "3": [e("sch", "schedule", "p3", null), e("gn", "notes", "p3", "GENERAL NOTES")] } },
+      specSections: {},
+    };
+    const b: [number, number, number, number] = [0.2, 0.2, 0.22, 0.21];
+    expect(resolveReference(q(1, "3", "general-note", { b }), idx)).toMatchObject({ status: "resolved", level: "same-sheet", hit: { regionId: "gn" } });
+    // a bare NOTE 3 there is still the schedule's own footnote (rule 4a)
+    expect(resolveReference(q(1, "3", "note", { b }), idx)).toMatchObject({ status: "resolved", level: "same-region", hit: { regionId: "sch" } });
+  });
+
+  it("LOW-2: a prepared index gives the same outcomes as the raw index", () => {
+    const idx = makeIndex();
+    const prepared = prepareResolverIndex(idx);
+    for (const query of [q(2, "3"), q(3, "9"), q(2, "2", "note", { sheet: "A-502" }), q(6, "9"), q(1, "12", "keynote"), q(3, "2.3.A", "spec", { section: "08 71 00" })]) {
+      expect(resolveReference(query, prepared)).toEqual(resolveReference(query, idx));
+    }
+  });
+});
+

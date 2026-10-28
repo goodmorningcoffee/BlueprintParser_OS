@@ -21,6 +21,8 @@ import type { ParagraphAddress } from "../types";
 
 /** Sheet number as written: A-101, A101, A 101, A.101, A-101A, E-300.00, FA-001, T001.04, ABCD-101. */
 const RE_SHEET_NUMBER = /^([A-Z]{1,4})[\s\-_.]?(\d{1,4})([A-Z]{1,2})?(?:\.(\d{1,2}))?$/;
+/** 4-letter words that precede a number in note prose and are never a discipline prefix. */
+const PROSE_PREFIXES: ReadonlySet<string> = new Set(["NOTE", "PART", "TYPE", "ROOM", "DOOR", "PAGE", "ITEM", "UNIT", "AREA", "ZONE", "STEP", "CASE", "MARK", "SIZE", "WALL", "BLDG", "DWGS"]);
 
 /**
  * Canonical key: upper-case, separators removed, a zero decimal dropped ("A-101.00" / "A101" / "a 101" →
@@ -32,6 +34,9 @@ export function sheetKey(raw: string | null | undefined): string | null {
   const m = RE_SHEET_NUMBER.exec(raw.trim().toUpperCase());
   if (!m) return null;
   const [, prefix, number, suffix, decimal] = m;
+  // a 4-letter prefix (K67) is a sheet only with ≥ 3 digits and when it is not a common word: "NOTE 4",
+  // "TYPE 12", "ROOM 101" are prose (VERIFY LOW-1). 1–3 letters keep the KG grammar exactly.
+  if (prefix.length === 4 && (number.length < 3 || PROSE_PREFIXES.has(prefix))) return null;
   const dec = decimal && /[1-9]/.test(decimal) ? `.${decimal}` : "";
   return `${prefix}${number}${suffix ?? ""}${dec}`;
 }

@@ -185,3 +185,23 @@ describe("paragraph addresses (C2-M8)", () => {
     expect(paragraphAddressId({ ...a, blockHeader: null })).toBe("para:A501//3");
   });
 });
+
+// WP-3.C fix round (WP-3.C.VERIFY.md MED-5, LOW-1)
+describe("verify-round grammar fixes", () => {
+  it("MED-5: mixed-case SECTION / PART headers are spec headers; prose PART lines are not", () => {
+    expect(matchHeader("SECTION 08 71 00 - Zfkmp Dczrp")).toMatchObject({ kind: "spec-section", section: "08 71 00", headerNorm: "SECTION 08 71 00 ZFKMP DCZRP" });
+    expect(matchHeader("PART 1 - General")).toMatchObject({ kind: "spec-part", part: 1 });
+    expect(matchHeader("PART 2 Products and Materials")).toMatchObject({ kind: "spec-part", part: 2 });
+    expect(matchHeader("PART 1 of the work shall be zfkmp")).toBeNull();
+    expect(matchHeader("General Notes")).toBeNull(); // K34 still holds for the notes grammar
+  });
+  it("MED-5: GENERAL NOTES - CONTINUED is a continued header", () => {
+    expect(matchHeader("GENERAL NOTES - CONTINUED")).toMatchObject({ kind: "notes", continued: true, headerNorm: "GENERAL NOTES" });
+    expect(matchHeader("GENERAL NOTES – CONT'D")).toMatchObject({ continued: true, headerNorm: "GENERAL NOTES" });
+  });
+  it("LOW-1: 4-letter prose before a number is not a sheet key; 4-letter disciplines with 3+ digits are", () => {
+    for (const raw of ["NOTE 4", "PART 2", "TYPE 12", "ROOM 101", "DOOR 105", "ABCD-12"]) expect(sheetKey(raw), raw).toBeNull();
+    expect(sheetKey("ABCD-101")).toBe("ABCD101");
+  });
+});
+

@@ -8,7 +8,9 @@
  * an `unresolved` outcome names.
  *
  * Order (§1.7): explicit sheet → spec section → bare: same region (a schedule's footnotes) → same sheet
- * (plus `(CONT.)` chains, rule 5) → general notes (same discipline first, then the project's general
+ * (plus `(CONT.)` chains, rule 5: a continued block links to the same-header block on the nearest earlier
+ * page OF THE SAME DISCIPLINE, and a chain joins only the regions it links, so one page continuing two
+ * blocks never mixes them) → general notes (same discipline first, then the project's general
  * sheets). Exactly one candidate → `resolved`; several → `ambiguous`, ordered by same discipline, then
  * nearest sheet number (rule 6); none → `unresolved` with the pages the fallback should read.
  *
@@ -73,9 +75,25 @@ interface Ctx {
   index: ResolverIndex;
   sheetOf: Map<number, ResolverSheet>;
   keyOf: Map<number, string | null>;
-  /** page → pages chained to it through `(CONT.)` blocks (rule 5), as "page:regionId" members. */
-  chains: Map<number, Set<string>>;
+  /** "page:regionId" → the chain it belongs to through `(CONT.)` blocks (rule 5), as "page:regionId" members. */
+  chains: Map<string, Set<string>>;
   pageOrder: number[];
+}
+
+/** The page order, sheet map and `(CONT.)` chains of an index, built once (VERIFY LOW-2: a KG pass resolves thousands of references). */
+export interface PreparedResolverIndex {
+  readonly prepared: true;
+  readonly index: ResolverIndex;
+  /** @internal */
+  readonly ctx: Ctx;
+}
+
+/** Build the resolver's derived state once; pass the result to `resolveReference` for every reference of a pass. The index must not change afterwards. */
+export function prepareResolverIndex(index: ResolverIndex): PreparedResolverIndex {
+  const pageOrder = orderPages(index.sheets);
+  const sheetOf = new Map<number, ResolverSheet>(index.sheets.map((s) => [s.page, s]));
+  const keyOf = new Map<number, string | null>(index.sheets.map((s) => [s.page, pageKey(s)]));
+  return { prepared: true, index, ctx: { index, sheetOf, keyOf, chains: buildChains(index, pageOrder, keyOf), pageOrder } };
 }
 
 function pageKey(s: ResolverSheet): string | null {
@@ -97,26 +115,31 @@ function orderPages(sheets: readonly ResolverSheet[]): number[] {
     .map((s) => s.page);
 }
 
-/** Rule 5: a continued block chains to the same-header block on the previous page in sheet order. */
-function buildChains(index: ResolverIndex, pageOrder: readonly number[]): Map<number, Set<string>> {
-  const chains = new Map<number, Set<string>>();
+/**
+ * Rule 5: a continued block chains to the same-header block on the nearest earlier page in sheet order
+ * within the SAME discipline (a page without a sheet key looks only at the page before it). The look-back
+ * stops at the discipline boundary, so E-002 "GENERAL NOTES (CONT.)" never chains to A-001 when E-001 is
+ * not indexed (VERIFY MED-3a). Chains are keyed by "page:regionId" (MED-3b).
+ */
+function buildChains(index: ResolverIndex, pageOrder: readonly number[], keyOf: ReadonlyMap<number, string | null>): Map<string, Set<string>> {
+  const chains = new Map<string, Set<string>>();
   const blocks = index.blocks;
   if (!blocks) return chains;
-  const link = (a: number, ra: string, b: number, rb: string) => {
-    const ma = `${a}:${ra}`;
-    const mb = `${b}:${rb}`;
-    const set = new Set<string>([...(chains.get(a) ?? []), ...(chains.get(b) ?? []), ma, mb]);
-    for (const m of set) chains.set(parseInt(m.split(":")[0], 10), set);
+  const link = (ma: string, mb: string) => {
+    const set = new Set<string>([...(chains.get(ma) ?? [ma]), ...(chains.get(mb) ?? [mb])]);
+    for (const m of set) chains.set(m, set);
   };
   for (let i = 0; i < pageOrder.length; i++) {
     const page = pageOrder[i];
+    const prefix = sheetPrefix(keyOf.get(page));
     for (const b of blocks[String(page)] ?? []) {
       if (!b.continued || b.headerNorm === null) continue;
       for (let j = i - 1; j >= 0; j--) {
         const prev = pageOrder[j];
+        if (prefix === null ? j < i - 1 : sheetPrefix(keyOf.get(prev)) !== prefix) break;
         const match = (blocks[String(prev)] ?? []).find((pb) => pb.headerNorm === b.headerNorm);
         if (match) {
-          link(prev, match.regionId, page, b.regionId);
+          link(`${prev}:${match.regionId}`, `${page}:${b.regionId}`);
           break;
         }
       }
@@ -170,15 +193,24 @@ function entriesOn(ctx: Ctx, page: number, variants: readonly string[], hint: Re
   return out;
 }
 
-/** Same-sheet candidates on `page` plus the regions chained to its blocks on other pages (rule 5). */
-function sameSheetEntries(ctx: Ctx, page: number, variants: readonly string[], hint: RefKindHint, level: ResolveLevel): ResolvedCandidate[] {
+/**
+ * Same-sheet candidates on `page` plus the regions chained to its blocks on other pages (rule 5). When
+ * `hostRegions` names the region(s) the mention lies in and one of them is chained, only those chains
+ * apply; otherwise every chain of the page does.
+ */
+function sameSheetEntries(ctx: Ctx, page: number, variants: readonly string[], hint: RefKindHint, level: ResolveLevel, hostRegions?: ReadonlySet<string>): ResolvedCandidate[] {
   const out = entriesOn(ctx, page, variants, hint, level);
-  const chain = ctx.chains.get(page);
-  if (chain) {
+  const own: Set<string>[] = [];
+  for (const [m, set] of ctx.chains) if (m.startsWith(`${page}:`) && !own.includes(set)) own.push(set);
+  const hosted = hostRegions ? own.filter((set) => [...hostRegions].some((r) => set.has(`${page}:${r}`))) : [];
+  const members = new Set<string>();
+  for (const set of hosted.length > 0 ? hosted : own) for (const m of set) members.add(m);
+  if (members.size > 0) {
     const byPage = new Map<number, Set<string>>();
-    for (const m of chain) {
-      const [p, r] = m.split(":");
-      const pn = parseInt(p, 10);
+    for (const m of members) {
+      const cut = m.indexOf(":");
+      const pn = parseInt(m.slice(0, cut), 10);
+      const r = m.slice(cut + 1);
       if (pn === page) continue;
       if (!byPage.has(pn)) byPage.set(pn, new Set());
       byPage.get(pn)!.add(r);
@@ -223,12 +255,14 @@ function generalPages(ctx: Ctx): number[] {
   return out;
 }
 
-/** Resolve one reference against the index slices (§1.7). */
-export function resolveReference(q: ReferenceQuery, index: ResolverIndex): ResolveOutcome {
-  const pageOrder = orderPages(index.sheets);
-  const sheetOf = new Map<number, ResolverSheet>(index.sheets.map((s) => [s.page, s]));
-  const keyOf = new Map<number, string | null>(index.sheets.map((s) => [s.page, pageKey(s)]));
-  const ctx: Ctx = { index, sheetOf, keyOf, chains: buildChains(index, pageOrder), pageOrder };
+function isPrepared(source: ResolverIndex | PreparedResolverIndex): source is PreparedResolverIndex {
+  return (source as Partial<PreparedResolverIndex>).prepared === true;
+}
+
+/** Resolve one reference against the index slices (§1.7), or against a `prepareResolverIndex` result. */
+export function resolveReference(q: ReferenceQuery, source: ResolverIndex | PreparedResolverIndex): ResolveOutcome {
+  const { ctx } = isPrepared(source) ? source : prepareResolverIndex(source);
+  const { index, keyOf, pageOrder } = ctx;
   const fromKey = keyOf.get(q.page) ?? null;
   const variants = keyLookupVariants(q.key);
 
@@ -257,9 +291,15 @@ export function resolveReference(q: ReferenceQuery, index: ResolverIndex): Resol
     return outcome(dedupe(cands), "spec-section", fromKey) ?? { status: "unresolved", reason: "no-candidates", fallbackPages: [...new Set(list.map(([p]) => p))] };
   }
 
-  // 4. bare reference
-  if (q.kind === "note" || q.kind === "general-note") {
-    // a. same region: the mention lies inside a table-kind region with footnotes
+  // 4. bare reference. The regions the mention lies in (by id or box): 4a's hosts, and the chains 4b follows.
+  const mentionRegions = new Set(
+    regionsOn(index, q.page)
+      .filter((r) => (q.regionId && r.regionId === q.regionId) || (q.b && centreIn(q.b, r.bbox)))
+      .map((r) => r.regionId),
+  );
+  if (q.kind === "note") {
+    // a. same region: the mention lies inside a table-kind region with footnotes. Only for a bare NOTE:
+    // "SEE GENERAL NOTE 3" in a schedule's remarks means the GENERAL NOTES block, not footnote 3 (MED-4)
     const hosts = new Set(
       regionsOn(index, q.page)
         .filter((r) => TABLE_KINDS.has(r.kind) && ((q.regionId && r.regionId === q.regionId) || (q.b && centreIn(q.b, r.bbox))))
@@ -272,7 +312,7 @@ export function resolveReference(q: ReferenceQuery, index: ResolverIndex): Resol
   }
   // b. same sheet (+ chains)
   {
-    const o = outcome(dedupe(sameSheetEntries(ctx, q.page, variants, q.kind, "same-sheet")), "same-sheet", fromKey);
+    const o = outcome(dedupe(sameSheetEntries(ctx, q.page, variants, q.kind, "same-sheet", mentionRegions)), "same-sheet", fromKey);
     if (o) return o;
   }
   // c. general notes: same discipline, then the project's general sheets

@@ -15,9 +15,20 @@
  * - A header is a whole upper-case line (K34). It opens a block and resets numbering (K35: "ELECTRICAL
  *   NOTES › 1" is not note 6 of GENERAL NOTES). `(CONT.)` marks the block `continued` (§1.7 rule 5).
  * - Lines before the first key are kept as unkeyed paragraphs (K35: lead-ins were dropped).
- * - Columns: Textract LAYOUT `list`/`text` blocks inside the box when present, else vertical gutters that
- *   no LINE crosses, with content on both sides; an empty run at the box edge is slack, not a gutter
- *   (K33). Columns read left to right, numbering continues across them.
+ * - Columns: Textract LAYOUT `list`/`text` blocks inside the box when present, else vertical gutters with
+ *   content on both sides. Header lines and lines wider than 60 % of the content do not count against a
+ *   gutter, and one more crossing line is tolerated (two for a long list: 10 % of the peak, the legacy
+ *   splitter's rule) — a title spanning two columns no longer turns detection off (VERIFY HIGH-1). An
+ *   empty run at the box edge is slack, not a gutter (K33). A line that crosses a cut spans the columns:
+ *   the text reads in bands (each column of the band, left to right, then the spanning line).
+ * - A bare key token printed as its own LINE with its text as another LINE on the same row is one row
+ *   (merged before columns), so a keynote list is never split into a key column and a text column
+ *   (VERIFY HIGH-2; K09's failure mode through keys).
+ * - A first-of-class key under an open key column of another class is a child level only when it is
+ *   indented right of its parent's column AND starts its sequence; an unaligned in-sequence key at the
+ *   open paragraph's text indent is a wrapped line ("R-19 WALLS", "(2) LAYERS"; VERIFY MED-1).
+ * - A header-shaped line at the hanging indent of the open paragraph, with no paragraph gap above, is a
+ *   wrapped line ("… WITH MANUFACTURER'S SPECIFICATIONS"; VERIFY MED-2).
  * - A block with no keys whose rows pair as key/value (`kv-pairs.ts`, K09) becomes one paragraph per pair.
  *
  * Boxes are normalised MinMax (E-4). Imports only parse-engine modules (`../lines` is not needed: a
@@ -40,6 +51,10 @@ const DEFAULTS: Required<SegmentOptions> = {
 };
 const GUTTER_BINS = 200;
 const MIN_LINES_PER_COLUMN = 2;
+/** A line wider than this share of the content's x extent spans columns and does not block a gutter. */
+const SPANNING_WIDTH_SHARE = 0.6;
+/** A bare key LINE pairs with a text LINE on its row at most this × the median line height to its right. */
+const KEY_ROW_MAX_GAP_HEIGHTS = 10;
 
 type Box = readonly [number, number, number, number];
 
@@ -68,6 +83,8 @@ export function linesFromEvidence(ev: Pick<EnginePageEvidence, "words" | "lines"
 
 interface Item {
   i: number;
+  /** Input line indices this item stands for (two when a bare key LINE was merged with its text LINE). */
+  parts: number[];
   l: SegmentLine;
   x0: number;
   y0: number;
@@ -96,23 +113,45 @@ function layoutBoundaries(layout: readonly EngineLayoutBlock[] | undefined, bbox
   return cuts;
 }
 
-/** Column boundaries at vertical gutters no LINE crosses, with ≥ 2 lines on each side; edge runs are slack. */
-function gutterBoundaries(items: readonly Item[], bbox: Box, minGutter: number): number[] | null {
+/**
+ * Column boundaries at vertical gutters with ≥ 2 lines on each side; edge runs are slack (K33).
+ * `ignore` lines (headers, lines wider than 60 % of the content) do not count against a gutter, and
+ * `tolerance` further crossing lines are allowed (VERIFY HIGH-1); the cut sits in the least-covered
+ * stretch of the run, so a column's longest line never straddles it.
+ */
+function gutterBoundaries(items: readonly Item[], bbox: Box, minGutter: number, ignore: (it: Item) => boolean): number[] | null {
   const w = bbox[2] - bbox[0];
-  if (w <= 0 || items.length < 2 * MIN_LINES_PER_COLUMN) return null;
+  const counted = items.filter((it) => !ignore(it));
+  if (w <= 0 || counted.length < 2 * MIN_LINES_PER_COLUMN) return null;
   const cover = new Array<number>(GUTTER_BINS).fill(0);
   const binOf = (x: number) => Math.min(GUTTER_BINS - 1, Math.max(0, Math.floor(((x - bbox[0]) / w) * GUTTER_BINS)));
-  for (const it of items) {
+  for (const it of counted) {
     const a = binOf(it.l.b[0]);
     const z = binOf(it.l.b[2]);
     for (let k = a; k <= z; k++) cover[k]++;
   }
+  const peak = Math.max(...cover);
+  const tolerance = counted.length >= 4 * MIN_LINES_PER_COLUMN ? Math.max(1, Math.floor(0.1 * peak)) : 0;
   const cuts: number[] = [];
-  let run = -1;
   const consider = (start: number, end: number) => {
     if (start <= 0 || end >= GUTTER_BINS - 1) return; // touches an edge: box slack (K33)
-    const x0 = bbox[0] + (start / GUTTER_BINS) * w;
-    const x1 = bbox[0] + ((end + 1) / GUTTER_BINS) * w;
+    // the longest stretch of the run's minimum cover
+    let min = Infinity;
+    for (let k = start; k <= end; k++) min = Math.min(min, cover[k]);
+    let bestA = -1;
+    let bestZ = -1;
+    for (let k = start; k <= end; k++) {
+      if (cover[k] !== min) continue;
+      let z = k;
+      while (z + 1 <= end && cover[z + 1] === min) z++;
+      if (z - k > bestZ - bestA) {
+        bestA = k;
+        bestZ = z;
+      }
+      k = z;
+    }
+    const x0 = bbox[0] + (bestA / GUTTER_BINS) * w;
+    const x1 = bbox[0] + ((bestZ + 1) / GUTTER_BINS) * w;
     if (x1 - x0 < minGutter) return;
     const mid = (x0 + x1) / 2;
     let left = 0;
@@ -123,8 +162,9 @@ function gutterBoundaries(items: readonly Item[], bbox: Box, minGutter: number):
     }
     if (left >= MIN_LINES_PER_COLUMN && right >= MIN_LINES_PER_COLUMN) cuts.push(mid);
   };
+  let run = -1;
   for (let k = 0; k < GUTTER_BINS; k++) {
-    if (cover[k] === 0) {
+    if (cover[k] <= tolerance) {
       if (run < 0) run = k;
     } else if (run >= 0) {
       consider(run, k - 1);
@@ -133,6 +173,61 @@ function gutterBoundaries(items: readonly Item[], bbox: Box, minGutter: number):
   }
   if (run >= 0) consider(run, GUTTER_BINS - 1);
   return cuts.length > 0 ? cuts : null;
+}
+
+/**
+ * A bare key token printed as its own LINE ("1", "PT-1") plus the nearest LINE to its right on the same
+ * row become one item ("1 PATCH WALL"), before columns are found (VERIFY HIGH-2). Deterministic: keys
+ * are visited in reading order and take the nearest unclaimed partner (input index breaks ties).
+ */
+function mergeKeyRows(items: readonly Item[], medianH: number): Item[] {
+  const isBareKey = (it: Item) => {
+    const k = matchKey(it.l.text);
+    return k !== null && k.rest === "";
+  };
+  const partnerOf = new Map<Item, Item>();
+  const claimed = new Set<Item>();
+  for (const it of items) {
+    if (claimed.has(it) || !isBareKey(it)) continue;
+    let best: Item | null = null;
+    for (const r of items) {
+      if (r === it || claimed.has(r) || partnerOf.has(r) || r.l.b[0] < it.l.b[2]) continue;
+      const ov = Math.min(it.y1, r.y1) - Math.max(it.y0, r.y0);
+      if (ov < 0.5 * Math.min(it.h, r.h)) continue;
+      if (r.l.b[0] - it.l.b[2] > KEY_ROW_MAX_GAP_HEIGHTS * medianH) continue;
+      if (isBareKey(r)) continue; // another key: a key column, not this key's text
+      if (!best || r.l.b[0] < best.l.b[0] || (r.l.b[0] === best.l.b[0] && r.i < best.i)) best = r;
+    }
+    if (best) {
+      partnerOf.set(it, best);
+      claimed.add(best);
+    }
+  }
+  if (partnerOf.size === 0) return [...items];
+  const out: Item[] = [];
+  for (const it of items) {
+    if (claimed.has(it)) continue;
+    const r = partnerOf.get(it);
+    if (!r) {
+      out.push(it);
+      continue;
+    }
+    const b: BboxMinMax = [Math.min(it.l.b[0], r.l.b[0]), Math.min(it.l.b[1], r.l.b[1]), Math.max(it.l.b[2], r.l.b[2]), Math.max(it.l.b[3], r.l.b[3])];
+    const words = it.l.words && r.l.words ? [...it.l.words, ...r.l.words] : undefined;
+    const l: SegmentLine = { text: `${it.l.text.trim()} ${r.l.text.trim()}`, b, ...(words ? { words } : {}) };
+    out.push({ i: it.i, parts: [it.i, r.i], l, x0: b[0], y0: b[1], y1: b[3], h: Math.max(b[3] - b[1], 1e-4) });
+  }
+  return out.sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0 || a.i - b.i);
+}
+
+/** Where the text of a line starts after its key token (its second word, or an estimate from the characters). */
+function textStartX(it: Item, k: KeyMatch | null): number {
+  if (!k) return it.x0;
+  const ws = it.l.words ? [...it.l.words].sort((a, b) => a.b[0] - b.b[0]) : [];
+  if (ws.length >= 2) return ws[1].b[0];
+  const t = it.l.text.trim();
+  if (t.length === 0 || k.rest === "") return it.l.b[2];
+  return it.x0 + ((it.l.b[2] - it.x0) * (t.length - k.rest.length)) / t.length;
 }
 
 function columnBoxes(bbox: Box, cuts: readonly number[]): BboxMinMax[] {
@@ -153,6 +248,8 @@ interface ParaAcc {
   weak: boolean;
   lines: Item[];
   texts: string[];
+  /** x where the key line's text starts (the hanging indent of a wrapped keyed paragraph). */
+  textX: number;
 }
 interface BlockAcc {
   id: string;
@@ -177,7 +274,8 @@ function inSequence(k: KeyMatch, stack: readonly StackEntry[]): boolean {
   }
   // first of its class in the block
   if (k.cls === "article") return k.ordinal % 100 === 1 || k.ordinal % 100 === 10;
-  if (k.cls === "tag") return k.strong;
+  // a tag list starts a block, or a sub-list at its first tag ("PT-1"); "R-19" mid-note is no list (VERIFY MED-1)
+  if (k.cls === "tag") return k.strong && (stack.length === 0 || k.ordinal <= 1);
   return k.ordinal === 1;
 }
 
@@ -186,19 +284,27 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
   const bbox: Box = finiteBox(req.bbox) ? req.bbox : [0, 0, 1, 1];
   const flags = new Set<string>();
 
-  const items: Item[] = [];
+  const raw: Item[] = [];
   req.lines.forEach((l, i) => {
     if (!l || typeof l.text !== "string" || !finiteBox(l.b) || !centreIn(l.b, bbox)) return;
     if (l.text.trim() === "") return;
-    items.push({ i, l, x0: l.b[0], y0: l.b[1], y1: l.b[3], h: Math.max(l.b[3] - l.b[1], 1e-4) });
+    raw.push({ i, parts: [i], l, x0: l.b[0], y0: l.b[1], y1: l.b[3], h: Math.max(l.b[3] - l.b[1], 1e-4) });
   });
-  items.sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0 || a.i - b.i);
-  const medianH = median(items.map((it) => it.h), 0.01);
+  raw.sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0 || a.i - b.i);
+  const medianH = median(raw.map((it) => it.h), 0.01);
+  const keyTol = o.keyColumnTolHeights * medianH;
+  const items: Item[] = req.mode === "kv" ? raw : mergeKeyRows(raw, medianH);
 
   // columns
   let cuts = layoutBoundaries(req.layout, bbox);
   let layoutUsed = cuts !== null;
-  if (cuts === null) cuts = gutterBoundaries(items, bbox, o.minGutterHeights * medianH);
+  if (cuts === null && items.length > 0) {
+    const cx0 = Math.min(...items.map((it) => it.l.b[0]));
+    const cx1 = Math.max(...items.map((it) => it.l.b[2]));
+    const wide = SPANNING_WIDTH_SHARE * (cx1 - cx0);
+    const ignore = (it: Item) => it.l.b[2] - it.l.b[0] > wide || (req.mode !== "kv" && matchHeader(it.l.text) !== null);
+    cuts = gutterBoundaries(items, bbox, o.minGutterHeights * medianH, ignore);
+  }
   if (cuts !== null && cuts.length > 0) flags.add("multi-column");
   if (layoutUsed) flags.add("layout-columns");
   const columns = columnBoxes(bbox, cuts ?? []);
@@ -208,8 +314,25 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
     for (let k = 0; k < columns.length; k++) if (cx <= columns[k][2]) return k;
     return columns.length - 1;
   };
-  const byColumn: Item[][] = columns.map(() => []);
-  for (const it of items) byColumn[colOf(it)].push(it);
+  // reading order: bands split at the lines that cross a cut; each band's columns left to right, then the spanning line
+  const cutList = cuts ?? [];
+  const spans = (it: Item) => cutList.some((c) => it.l.b[0] < c && it.l.b[2] > c);
+  const segments: Item[][] = [];
+  {
+    let top = -Infinity;
+    const spanning = items.filter(spans);
+    const rest = items.filter((it) => !spans(it));
+    for (const sp of [...spanning, null]) {
+      const bottom = sp ? sp.y0 : Infinity;
+      const byColumn: Item[][] = columns.map(() => []);
+      for (const it of rest) if (it.y0 >= top && it.y0 < bottom) byColumn[colOf(it)].push(it);
+      for (const col of byColumn) if (col.length > 0) segments.push(col);
+      if (sp) {
+        segments.push([sp]);
+        top = sp.y0;
+      }
+    }
+  }
 
   // state
   const blocks: BlockAcc[] = [];
@@ -243,6 +366,7 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
       weak: k ? !k.strong : false,
       lines: [it],
       texts: [k ? k.rest : it.l.text.trim()],
+      textX: textStartX(it, k),
     };
     st.block.paragraphs.push(p);
     st.block.lines.push(it);
@@ -254,12 +378,22 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
     stack.push({ cls: k.cls, key: k.key, ordinal: k.ordinal, group: k.group });
   };
 
-  for (const col of byColumn) {
+  /** The open keyed paragraph wraps with a hanging indent, and `it` starts at that indent. */
+  const atHangingIndent = (it: Item): boolean => {
+    const p = st.para;
+    if (!p || p.key === null) return false;
+    const contX = p.lines.length >= 2 ? p.lines[1].x0 : p.textX;
+    return contX - p.lines[0].x0 > keyTol && Math.abs(it.x0 - contX) <= keyTol;
+  };
+
+  for (const col of segments) {
     keyX = {};
     lastItem = null;
-    for (const it of col) {
+    for (const [ci, it] of col.entries()) {
       const text = it.l.text;
-      const h = keyed ? matchHeader(text) : null;
+      let h = keyed ? matchHeader(text) : null;
+      // MED-2: an all-caps wrapped line ending in NOTES / SPECIFICATIONS at the hanging indent, with no gap, is text
+      if (h && lastItem && atHangingIndent(it) && it.y0 - lastItem.y1 <= o.paragraphGapHeights * medianH) h = null;
       if (h) {
         if (st.block && st.block.header === null && st.block.lines.length === 0) {
           st.block.header = h;
@@ -277,9 +411,30 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
       }
       const k = keyed ? matchKey(text) : null;
       if (k) {
-        const aligned = keyX[k.cls] === undefined || Math.abs(it.x0 - (keyX[k.cls] as number)) <= o.keyColumnTolHeights * medianH;
         const seq = inSequence(k, stack);
-        const accept = k.strong ? aligned || seq : aligned && seq;
+        const own = keyX[k.cls];
+        const others = (Object.keys(keyX) as KeyClass[]).filter((c) => c !== k.cls).map((c) => keyX[c] as number);
+        let accept: boolean;
+        if (own !== undefined) {
+          // the class has a key column: aligned keys follow the strong/weak rule; an unaligned in-sequence
+          // strong key is accepted only when it is not at the open paragraph's text indent (MED-1)
+          accept = Math.abs(it.x0 - own) <= keyTol ? k.strong || seq : k.strong && seq && !atHangingIndent(it);
+        } else if (others.length === 0) {
+          accept = k.strong || seq; // the first key column of this block / column
+        } else {
+          // a child level: indented right of its parent's key column and starting its sequence (MED-1)
+          const parent = stack.length > 0 ? keyX[stack[stack.length - 1].cls] : undefined;
+          const parentX = parent ?? Math.max(...others);
+          accept = seq && it.x0 > parentX + keyTol;
+          // a tag sub-list needs list evidence: "PT-1" in a wrapped line is a material mention (MED-1).
+          // The parent's text introduces it (ends in ":"), or the next line continues the tag sequence.
+          if (accept && k.cls === "tag") {
+            const next = col[ci + 1] ? matchKey(col[ci + 1].l.text) : null;
+            const listNext = next !== null && next.cls === "tag" && next.group === k.group && next.ordinal === k.ordinal + 1;
+            const intro = st.para !== null && /:\s*$/.test(st.para.texts[st.para.texts.length - 1] ?? "");
+            accept = listNext || intro;
+          }
+        }
         if (accept) {
           if (!st.block) st.block = openBlock(null, null); // before the key state: openBlock resets it
           pushKey(k);
@@ -320,6 +475,7 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
         weak: false,
         lines: p.lineIdx.map((k) => bodyLines[k]),
         texts: [hasValue ? p.value : p.key],
+        textX: 0, // unused after accumulation
       };
       return acc;
     });
@@ -337,7 +493,7 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
     if (b.headerItem) assignment.push({ line: b.headerItem.i, paragraph: null, header: b.id });
     for (const p of b.paragraphs) {
       p.id = `p${++n}`;
-      for (const it of p.lines) assignment.push({ line: it.i, paragraph: p.id, header: null });
+      for (const it of p.lines) for (const line of it.parts) assignment.push({ line, paragraph: p.id, header: null });
     }
   }
   assignment.sort((a, b) => a.line - b.line);
@@ -384,6 +540,9 @@ export function segmentParagraphsDetailed(req: SegmentRequest, options: SegmentO
   if (outParas.length > PARSE_ENGINE_CAPS.paragraphs) {
     outParas.length = PARSE_ENGINE_CAPS.paragraphs;
     flags.add("truncated");
+    // the assignment names only paragraphs the doc keeps (VERIFY LOW-3)
+    const kept = new Set(outParas.map((p) => p.id));
+    for (const a of assignment) if (a.paragraph !== null && !kept.has(a.paragraph)) a.paragraph = null;
   }
   if (items.length === 0) flags.add("empty");
   if (outParas.every((p) => p.key === null)) flags.add("no-keys");
