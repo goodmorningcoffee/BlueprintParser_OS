@@ -5,12 +5,18 @@
 
 BlueprintParser is a Next.js PDF-viewer [web app] and a blueprint parsing engine.
 
+BlueprintParser **v2** is a complete refactor of the v1 code previously published in this
+repository: a layered server (`src/server/`), a query layer (`src/queries/`), split viewer stores,
+a deterministic CSI tagger, a Tables & Notes workspace on a new parse engine, and a hardened AWS
+deployment. It is **source-available, not open source** — see [License](#license).
+
 ---
 
 ## Features
 
+
 - Manual and AI-assisted quantity takeoffs 
-- Extract schedules/tables from PDF to Excel/CSV
+- Extract schedules/tables from PDF to CSV
 - LLM chat with entire projects without blowing up context
   - BP includes a context engine that uses multiple methods for creating dense, token-efficient blueprint embeddings
 - Agent tool use _(work in progress)_
@@ -26,6 +32,16 @@ BlueprintParser is a Next.js PDF-viewer [web app] and a blueprint parsing engine
   - Network graph engine: build nodes and edges between sheets in a project and between projects in a portfolio.
 
 See all features and more in the BlueprintParser docs, link up top.
+
+### New in v2
+
+- **Tables & Notes workspace** — table, keynote, general-note and spec proposals found during processing land in one inbox per project; focus one, parse it, correct it, commit it as tag maps. Runs on a new parse engine that replaces the legacy parsers tool by tool behind flags.
+- **CSI tagger v2** — a deterministic span tagger over a MasterFormat lookup table: no model at tagging time, same page → same codes, and every code points at the words that produced it.
+- **Bucket fill** — click inside a boundary to fill it; a raster engine by default and a vector engine (adapted from OpenTakeoff, Apache-2.0) that traces the PDF's own linework.
+- **Project knowledge graph and cross-set links** — sheets that reference each other, within a project and across projects.
+- **Classifier builder** — rule recipes with fitted weights for recognising schedules and other page regions.
+- **Admin data tools** — stuck jobs, duplicate pages and projects, annotation cleanup, permanent delete, and a portable `bp-export/1` project export; per-user and per-company usage quotas; security and usage logs.
+- **Mandatory two-factor login for root admins**, optional Google sign-in, database-backed login lockouts.
 
 ### Current YOLO Classes
 
@@ -63,6 +79,7 @@ The YOLO models used in the demo were hand-labeled and trained by myself.
 
 The trained weights and training datasets are not included in this repository.
 BlueprintParser is designed so users can upload and use their own object-detection models.
+(In this version, uploading weights is a root-admin action that stays off until `ALLOW_MODEL_UPLOAD=true`, and inference runs as an AWS SageMaker job — see [YOLO models](#yolo-models-bring-your-own) below.)
 
 ---
 
@@ -108,807 +125,248 @@ BlueprintParser is a small step in that direction, and hopefully contributes tow
 
 ---
 
-## Quick Start (Local Development)
+## How it works
+
+```
+Upload PDF ─► S3 ─► Step Functions ─► processing task (per page, 8 at a time)
+   Ghostscript raster ─► OCR (AWS Textract → half-res retry → local Tesseract)
+   ─► drawing number ─► CSI codes ─► text annotations ─► page intelligence
+      (text regions, heuristics, table/schedule classification) ─► CSI heatmap ─► search index
+   ─► project analysis ─► knowledge graph and cross-set links
+User-triggered: YOLO (SageMaker GPU job) ─► YOLO-aware re-scoring; table/keynote parsing; Auto-QTO; LLM chat
+```
+
+Every step is independent: one failing step does not stop the page. Everything a step produces is
+stored in PostgreSQL and fed, priority-ordered and budgeted, into the LLM context. The full tour —
+pipeline, CSI tagger, table parsing, tag mapping, Auto-QTO, bucket fill, LLM context builder, viewer
+architecture, admin tabs, database tables and the key design decisions — is in
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+---
+
+## Quick start (local development)
+
+**Prerequisites:** Node.js 24 (`.nvmrc` pins 24.21.0), Docker (for PostgreSQL), and for local page
+processing [Ghostscript](https://ghostscript.com/) (`gs`) and [Tesseract](https://github.com/tesseract-ocr/tesseract)
+on your `PATH`. Python 3.10+ with the packages in `scripts/requirements.txt` (plus PyTorch for TATR)
+adds table-line detection, img2table, TATR and template matching.
 
 ```bash
 git clone https://github.com/goodmorningcoffee/BlueprintParser_OS.git
 cd BlueprintParser_OS
-cp .env.example .env.local       # Edit DATABASE_URL, NEXTAUTH_SECRET at minimum
-docker compose up -d              # PostgreSQL on port 5433
-npm install
-npm run db:migrate                # Create tables (loopback development DB only)
-bash scripts/setup.sh             # Create root admin account (interactive)
+nvm use                           # Node 24.21.0 from .nvmrc
+npm ci
+cp .env.example .env.local        # set NEXTAUTH_SECRET (openssl rand -base64 32); DATABASE_URL already matches compose
+docker compose up -d              # PostgreSQL 16 on 127.0.0.1:5433 (add --profile labeling for a local Label Studio)
+bash scripts/setup.sh             # runs the migrations, creates a "Default" company and your root admin (interactive)
 npm run dev                       # http://localhost:3000
 ```
 
-Works without AWS credentials — PDF viewing, annotations, table parsing, QTO, and search are all functional locally. For the full pipeline, add: `GROQ_API_KEY` (free-tier LLM chat), AWS credentials (Textract OCR, S3 storage, SageMaker YOLO inference).
+The first root-admin login asks you to enrol an authenticator app (TOTP); root two-factor is
+mandatory. Registering through the sign-up page needs a company access key, so on a fresh database
+`scripts/setup.sh` is the way in. `npm run db:seed` adds a demo user (`demo@demo.com` / `password123` —
+local development only) and a sample project record.
 
-## Setup Scripts
+**What works without AWS, and what does not:**
 
-| Script                            | Purpose                                                                                                        | When to Use                                    |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `scripts/setup.sh`                | First-time setup — runs migrations and creates root admin account                                              | After cloning, once PostgreSQL is running      |
-| `scripts/test-db.sh`              | Start/stop/status a user-owned PostgreSQL cluster on `:5433` for the route and migration-boundary tests        | Before running the test suite locally          |
-| `install_setup.sh`                | Interactive config wizard; schema setup is allowed only for a loopback development database                    | Local setup, or updating service configuration |
-| `entrypoint.sh`                   | Container entrypoint. The **first positional argument** selects the mode: `app`, `worker`, `migrate`, `schema-check`, `schema-readiness`, `janitor`. `app` and `worker` assert the schema is current and **never migrate** | Inside the image; not run by hand              |
-| `deploy-aws.sh`                   | The one deploy tool: a menu with no arguments, subcommands otherwise. `bootstrap` walks a first deploy on an empty account phase by phase (state backend, certificate, ECR, images, outage apply, schema, live apply, DNS, first account), resumable; `release` = publish → `terraform apply` → read-only schema check → rolling update; `release --outage` for a schema change; `rollback`, `restart`, `status`, `doctor`. Calls `deploy.sh`, never replaces it. Stock macOS bash | Every deploy: the first one, and each release after |
-| `deploy.sh`                       | Publish an immutable app image, then activate digest-pinned task definitions after migration-history admission | Called by `deploy-aws.sh`; also usable alone   |
-| `scripts/p2-schema-cutover.sh`    | Verify zero writers/readiness, bind and retire old revisions, migrate, and verify restoration                  | One-time P2 schema compatibility boundary      |
-| `scripts/rollback.sh`             | Read-only/advisory. Resolves digests and prints the exact owner command sequence to rebind a prior image; mutates nothing | Planning a rollback (execution is owner-gated) |
-| `deploy-yolo.sh`                  | Build and push YOLO inference container to ECR                                                                 | When updating YOLO models or inference code    |
-| `aws_tools.sh`                    | AWS operations TUI. Diagnosis is read-only and is the default; `pause`/`resume`/`grace`/`redeploy` are guarded mutations behind a typed confirmation. `pause` suspends autoscaling and sets desired count to 0 — **resume before any Terraform apply** | Explaining an ALB 503; deliberate web-service pause |
-| `hardening.sh`                    | Retired fail-closed tombstone; performs no AWS action                                                           | Never; manage reviewed controls through Terraform |
-| `root_admin.sh`                   | Owner break-glass over ECS Exec: list root-admin status, promote one exact email, demote one exact email, `2fa-reset <email>` (delete a root user's authenticator-app enrollment after a lost device). It cannot create an account and has no password-reset channel | Emergency root-admin access recovery           |
-| `scripts/cost-control.sh`         | Read-only ECS, Step Functions, and SageMaker status report                                                     | Production cost and writer-state inspection    |
-| `scripts/sagemaker-killswitch.sh` | Retired fail-closed tombstone; runs no AWS command and exits 64                                                | Never; a working kill switch must deny `sagemaker:*` at the SageMaker execution role |
+- **Uploading a PDF needs an S3 bucket.** Uploads are staged in S3 before a project is created, so set
+  `S3_BUCKET`, `AWS_REGION` and credentials in `.env.local` (a small personal bucket is enough).
+- **Processing runs in-process** in `npm run dev` (no Step Functions needed). Without Textract
+  credentials, OCR falls back to local Tesseract.
+- **CSI tagging needs the lookup table** you build yourself (next section). Without it the app runs
+  normally, every page simply gets no CSI codes (logged once on the server, no warning in the UI).
+- **YOLO** needs your own model and AWS SageMaker; there is no local inference.
+- **LLM chat** needs one provider key: `GROQ_API_KEY` (free tier), `ANTHROPIC_API_KEY` (the only
+  provider with agent tool use) or `OPENAI_API_KEY`, or a per-user key in the app.
 
-This table covers 14 of the repository's 21 shell scripts. The seven not listed —
-`deploy-label-studio.sh`, `deploy-lambda.sh`, `ecs-health.sh`, `ecs-tune.sh`, `setup-lambda-iam.sh`,
-`scripts/record-battery-green.sh`, `scripts/setup-label-studio.sh` — each state their contract in
-their own header comment.
+---
 
-### Full Setup (with AWS)
+## Build prerequisites: data and models that are not in this repository
 
-Before the first full apply against an existing data bucket, an owner must inventory its complete S3
-notification subresource. Terraform's `aws_s3_bucket_notification` resource replaces that whole
-subresource, not just the EventBridge field. Save the current configuration outside the repository
-with owner-only permissions:
+Three inputs are deliberately kept out of git. The app runs without them, with less capability; the
+production container image (`docker build`) needs the first two.
 
-```bash
-umask 077
-aws s3api get-bucket-notification-configuration \
-  --bucket "beaver-data-${AWS_ACCOUNT}" \
-  --region "${AWS_REGION}" \
-  > /owner/private/beaver-data-notification-before-terraform.json
-```
+### CSI lookup table (MasterFormat)
 
-Review and reconcile every `LambdaFunctionConfigurations`, `QueueConfigurations`,
-`TopicConfigurations`, and `EventBridgeConfiguration` entry. The declared end state is
-EventBridge-only; decide explicitly how every pre-existing target is retired or represented before
-setting `acknowledge_beaver_data_notification_takeover = true` in reviewed, untracked Terraform
-values. Its false default deliberately blocks takeover. Terraform enables EventBridge only after the
-durable queue target and both delivery policies exist.
+CSI tagging matches drawing text against a lookup table of MasterFormat section titles and index
+phrases, `src/data/csi-kb.json` (≈ 6.4 MB, 8,935 codes, ≈ 20,300 phrases). It is built from the
+**MasterFormat® 2018 Edition** PDF, which is published by the Construction Specifications Institute
+(CSI); CSI reserves its copyrights and the MASTERFORMAT trademark. So this repository publishes the
+**tools** and not the table: the table and the parser's page fixture are gitignored, and
+`scripts/prepush-check.sh` refuses any push that would add them.
 
-For an ordinary candidate deployment whose database is already exactly current, keep the old digest
-while entering the exact outage tuple, create its local witness, and only then admit the candidate:
+What *is* in the repository: `src/data/csi-masterformat.tsv` and `src/data/csi.tsv` (CSI code numbers
+with section titles and a 1995↔2004 numbering crosswalk; both have been here since v1), the curated
+abbreviation list `src/data/csi_terms.tsv`, and small test samples. What is *not*: the keyword and
+index phrases, and any page text from the PDF.
+
+To build the table, use your own licensed copy of the PDF (the parser was developed against the
+714-page "as of May 2018" printing; another printing may trip the build's self-checks or the
+`csi-mf-parse` census test):
 
 ```bash
-bash install_setup.sh
-./deploy.sh publish                       # retain its candidate sha256 digest
-
-# In untracked tfvars keep the CURRENT digest and set exactly 0/0/1, autoscaling
-# false, and the maintenance schedule false; apply, drain, and observe 900 seconds.
-terraform -chdir=infrastructure/terraform apply
-./deploy.sh preflight-outage sha256:CURRENT_DIGEST sha256:CANDIDATE_DIGEST
-
-# Change only to the CANDIDATE digest while the exact outage tuple remains; apply.
-terraform -chdir=infrastructure/terraform apply
-./deploy.sh bind-quiescent sha256:CANDIDATE_DIGEST
-
-# Restore exactly 1/1/1 with autoscaling and the maintenance schedule true; apply.
-terraform -chdir=infrastructure/terraform apply
-./deploy.sh verify-restored sha256:CANDIDATE_DIGEST
+# from the repository root, after npm ci
+export BP_MF_PDF=/path/to/masterformat-2018.pdf     # or pass the path as the last argument
+npx esbuild eval/csi/build-kb-v2.ts --bundle --platform=node --target=node24 \
+  --alias:@=./src --external:pg-native --outfile=build/csi-kbv2-build.js
+node build/csi-kbv2-build.js        # ≈ 5 s → src/data/csi-kb.json (gitignored) + eval/csi/kb-report.json
+node scripts/verify-csi-kb.mjs      # expect: "ok — … csi-kb/2 and current against 4 inputs"
 ```
 
-If the candidate apply changes the schedule's `LastModificationDate`, wait another 900 seconds before
-`bind-quiescent`. The witness's replay authority is the Terraform-managed writer-mode epoch exposed
-on the canonical ECS service: it rotates on every live/outage transition but stays stable during the
-candidate-only outage apply. The schedule timestamp is retained as supplemental audit evidence.
-Immediately before `UpdateService`, `bind-quiescent` replaces the baseline proof with a short-lived
-`candidate-admitted` receipt containing all four exact candidate task definitions, the pinned database
-secret version, outage epoch, timestamps, and nonce. If the update response is ambiguous or the local
-process stops, rerun `bind-quiescent` while the receipt is valid; it admits only the recorded baseline
-or recorded candidate binding and converts to a nonexpiring receipt only after the candidate is proved
-stable and quiescent.
-`verify-restored` accepts only desired/running/minimum/maximum `1/1/1/1`; there is no count override.
-`deploy.sh activate` is reserved for a same-digest configuration or secret restart and refuses to
-change the service's image digest.
+`build-kb-v2` also rewrites the tracked `eval/csi/kb-report.json` (counts and hashes only, no phrases);
+a different printing of the PDF leaves that file modified — do not commit it unless you mean to.
+Optional, for the parser tests: build `eval/csi/mf-fixture-extract.ts` the same way
+(`--outfile=build/csi-mf-fixture.js`, then `node build/csi-mf-fixture.js`) to write the gitignored
+`src/lib/__tests__/fixtures/csi-v2/mf-pages-excerpt.json`.
 
-Do not use that activation sequence for a new empty RDS database or the first upgrade from the
-durable `0032` checkpoint. A brand-new AWS account needs a two-stage repository bootstrap because
-`deploy.sh publish` cannot push until Terraform has created ECR, while the full stack requires a real
-published digest:
+Without the table: CSI tagging returns no codes, the tests that need it skip (or fail under
+`BP_REQUIRE_CSI_KB=1`), `docker build` stops at `scripts/verify-csi-kb.mjs`, and `deploy-aws.sh`
+refuses to release. The tool headers in `eval/csi/` (and `eval/csi/README.md` for the evaluation
+harness) have the details.
 
-1. Configure the required Terraform values, including a reviewed
-   `heartexlabs/label-studio@sha256:...` manifest digest. Set app desired/minimum to zero, disable
-   autoscaling and the maintenance schedule, and give `beaver_app_image_digest` a syntactically valid
-   temporary value (`sha256:` plus 64 zeroes).
-2. Apply **only** `-target=aws_ecr_repository.beaver_app`. Never apply the full stack with the
-   placeholder digest.
-3. Run `./deploy.sh publish`, replace the placeholder with its printed digest, and run the full apply
-   with exactly desired/minimum/maximum `0/0/1`, autoscaling disabled, and the maintenance schedule
-   disabled.
-4. Leave the new schedule disabled for the documented 900-second observation/drain interval, then
-   run `BP_APP_IMAGE_DIGEST=sha256:... scripts/p2-schema-cutover.sh bootstrap-empty`. A first attempt's
-   read-only readiness task accepts only zero migration history plus no objects in the `public`
-   schema. It then writes a short-lived, owner-only `empty-bootstrap-armed` witness bound to the exact
-   candidate task definitions, database-secret version, writer-mode epoch, timestamps, and nonce
-   before it can launch the armed migrator. Only a retry with that still-valid witness may admit exact
-   current history after an ambiguous success; it reuses the nonce-derived ECS client token to
-   reconcile the same migration request. Every intermediate or otherwise divergent history is refused.
-5. Restore exactly desired/minimum/maximum `1/1/1`, enable autoscaling and the maintenance schedule,
-   apply, and run `BP_APP_IMAGE_DIGEST=sha256:... scripts/p2-schema-cutover.sh verify-restored`.
-   The empty-database proof is the sole safe exception to the old-digest witness requirement.
+### Table Transformer checkpoint (`models/tatr/`)
 
-Use the P2 cutover sequence below for an existing exact `0032`–`0038` history. Restore normal writer
-counts only after `verify-restored` succeeds.
+The TATR table-structure method loads Microsoft's
+[Table Transformer](https://github.com/microsoft/table-transformer) structure-recognition model
+(MIT licence; the PubTables-1M + FinTabNet.c v1.1 checkpoint, e.g. Hugging Face
+`microsoft/table-transformer-structure-recognition-v1.1-all`) from `models/tatr/` — `config.json`,
+`preprocessor_config.json`, `model.safetensors`, ≈ 115 MB. Download it there yourself; `/models/` is
+gitignored and the `Dockerfile` copies it into the image (`COPY … models/tatr`), so `docker build`
+fails without it. Locally, TATR is simply unavailable when the folder is missing.
 
-Terraform deliberately ignores the app service's `task_definition`: an apply registers the reviewed
-digest for every process role but cannot roll the app. Only `deploy.sh activate` after its remote
-migration-history check can restart the already-bound digest. A new digest is bound only by the
-witness-backed zero-count cohort or the deliberate empty-database bootstrap.
+### YOLO models (bring your own)
 
-The setup wizard prompts for: database URL, auth secrets, LLM API keys (Groq/Anthropic/OpenAI), AWS credentials, S3 bucket, CloudFront, Step Functions, SageMaker, and Label Studio. Re-run anytime to update configuration. Its schema command is an operator safety fence for loopback development databases only; it neither proves that a loopback/SSH-tunneled target is non-production nor mutates a cloud database.
+The demo's YOLO weights are the maintainer's own work and are not distributed (see "NOTE on YOLO
+Models" above); every weight file is gitignored and `scripts/prepush-check.sh` refuses weights in any
+pushed commit. To use your own:
 
-Label Studio integration requires `LABEL_STUDIO_URL`, the server-only
-`LABEL_STUDIO_API_KEY`, and a stable `LABEL_STUDIO_INSTANCE_ID`. Terraform
-also requires an immutable `heartexlabs/label-studio@sha256:...` image reference; resolve and review
-the upstream manifest digest rather than supplying a tag. Terraform
-combines the EFS filesystem ID with `label_studio_instance_generation`; increment
-that generation before restarting BlueprintParser whenever the Label Studio
-database is reinitialized, replaced, or restored as a new logical instance,
-even if EFS survives. Bootstrap email and password are consumed only by the
-Label Studio container. The separate `root_admin_email` variable controls
-BlueprintParser root-admin promotion and must never be sourced from the Label
-Studio administrator.
+- **Train** an [Ultralytics](https://docs.ultralytics.com/) YOLO detection model (`.pt`) on your
+  classes. The in-app Label Studio integration (labeling sessions; `docker compose --profile labeling`
+  locally) helps build a dataset.
+- **Upload** it in Admin → AI Models as a root admin, with `ALLOW_MODEL_UPLOAD=true` set (the upload is
+  off by default), then map its classes to CSI codes and keywords there.
+- **Run** it: inference is an AWS SageMaker Processing job using the image from `Dockerfile.yolo`,
+  built and pushed by `deploy-yolo.sh`. There is no local inference path.
 
-Deployment admission also treats task values as exact identities, not merely present environment
-variables. `DOMAIN`, `CLOUDFRONT_DISTRIBUTION_ID`, and the explicitly present `ROOT_ADMIN_EMAIL` come
-from the owner-reviewed `.deploy.env`; an intentionally disabled root-admin email is represented by an
-explicit empty value. App and maintenance definitions must share the validated
-`LABEL_STUDIO_INSTANCE_ID`; all four roles must use the same version-pinned canonical
-`DATABASE_URL` Secrets Manager value. The app accepts a varying YOLO digest only beneath the canonical
-account/Region `beaver-yolo-pipeline` repository. Canonical HTTPS app/Label Studio/CloudFront
-identities, the Step Functions ARN, SageMaker role, data bucket, Region, port, Lambda controls, and
-role-specific allowlists are checked before any task is run or service is changed. The singleton
-migrator has a dedicated ECS task role with no inline or attached permission policies.
+Ultralytics is AGPL-3.0 (see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 
-### P2 schema and Label Studio cutover
+---
 
-Migration `0037` is a **writer-outage compatibility boundary**, not a rolling migration. It requires
-zero legacy Label Studio sessions/intents and adds columns that every new writer must understand.
-Application and worker startup now performs only an exact ordered Drizzle migration-history check
-(timestamps and SQL hashes); it never migrates. This does not claim that arbitrary out-of-band DDL is
-absent—routine helpers expose no DDL, and direct database authority remains break-glass.
-`deploy.sh activate` runs that read-only history check remotely and refuses a pre-0038 database before it
-updates the service. The app, CPU worker, maintenance worker, and singleton migrator task definitions
-all use one ECR digest, so a delayed scheduled task cannot pull a newer mutable `latest` image.
+## Running the tests
 
-Use this owner-run order for the first 0037/0038 deployment and for a simultaneous provider reset:
+```bash
+npm run test:scripts                     # node:test suites for the shell/gate scripts (incl. prepush-check)
+npm test -- --maxWorkers=4               # vitest; fewer workers is faster on slow or networked disks
+npm run check:architecture               # layering and size ratchets
+npm run check:project-security-policy    # security invariants over code and Terraform
+npm run check:schema-cutover             # migration/deploy safety invariants
+npm run check:lint-baseline              # no-growth lint gate
+npx tsc --noEmit
+npm run e2e                              # Playwright golden paths (boots its own servers; needs the test DB)
+```
 
-1. While the old provider is available, close labeling admission, retire every Label Studio session
-   and pending provisioning intent, verify provider cleanup, and rotate historical bootstrap secrets.
-2. Run `./deploy.sh publish` and retain both the currently bound and printed candidate
-   `sha256:...` digests. Do not run `activate`.
-3. With the **currently bound digest unchanged**, set untracked Terraform values to the exact outage
-   tuple: `maintenance_worker_schedule_enabled = false`, `ecs_autoscaling_enabled = false`,
-   `ecs_desired_count = 0`, `ecs_min_count = 0`, and `ecs_max_count = 1`. Apply and wait for the
-   service to drain. Merely setting minimum/desired zero is insufficient because an unsuspended
-   target-tracking policy can scale the service back out. If replacing the provider, also increment
-   `label_studio_instance_generation` in this writer-disabled plan.
-4. Leave the schedule disabled for at least 900 seconds (its declared 600-second retry/event-age
-   window plus a 300-second ECS consistency window), then create the baseline witness while all four
-   latest definitions and the zero-count service still use the old digest:
+The route and migration tests need their own PostgreSQL database
+(`postgres://bp_test:bp_test@localhost:5433/bp_test` by default). Port 5433 is also the compose dev
+database, so either run `scripts/test-db.sh start` (a user-owned cluster, Debian/Ubuntu layout or
+`BP_PG_BIN`) instead of compose, or start one on another port and point the tests at it:
 
-   ```bash
-   BP_APP_IMAGE_DIGEST=sha256:CURRENT_DIGEST \
-   BP_CANDIDATE_IMAGE_DIGEST=sha256:CANDIDATE_DIGEST \
-     scripts/p2-schema-cutover.sh preflight-outage
-   ```
+```bash
+docker run -d --name bp-test-db -p 127.0.0.1:5434:5432 \
+  -e POSTGRES_USER=bp_test -e POSTGRES_PASSWORD=bp_test -e POSTGRES_DB=bp_test postgres:17
+BP_TEST_DATABASE_URL=postgres://bp_test:bp_test@localhost:5434/bp_test BP_REQUIRE_TEST_DB=1 npm test -- --maxWorkers=4
+```
 
-5. Change only `beaver_app_image_digest` to the candidate while preserving the exact outage tuple and
-   apply. If this changes the schedule's `LastModificationDate`, observe another 900 seconds. Then run:
+**The suite skips rather than fails** when an input is missing, and prints why: DB-backed tests skip
+without a test database (fatal under `BP_REQUIRE_TEST_DB=1`, as in CI), CSI tests skip without the
+lookup table and parser fixture (fatal under `BP_REQUIRE_CSI_KB=1`), and the private-golden table
+tests always skip on a public clone. The suite **drops and recreates the `public` schema** of the test
+database on every run — never point `BP_TEST_DATABASE_URL` at data you care about. (Some test headers
+mention `scripts/bp-suite`: that is the maintainer's private wrapper, which runs vitest with
+`--maxWorkers=4`, both `BP_REQUIRE_*` flags set and the full log written to a file.)
 
-   ```bash
-   BP_APP_IMAGE_DIGEST=sha256:CANDIDATE_DIGEST scripts/p2-schema-cutover.sh run
-   ```
+---
 
-   `run` refuses a missing, malformed, expired, replayed-epoch, wrong-candidate, or wrong-identity
-   owner-local witness, and proves that
-   the zero-count service remains bound to its witnessed old revision before admitting the candidate.
-   The Step Functions ARN and all task/schedule family identities are canonical and are not caller
-   selectable. The cohort fails unless the schedule is disabled and old enough to drain delayed
-   delivery, app desired/minimum/running/pending counts are zero, dynamic-in/dynamic-out/scheduled
-   autoscaling are all suspended, there are no live app/CPU/maintenance/migrator tasks (including
-   stopping tasks), there are no running Step Functions executions, all four latest task definitions
-   use the candidate digest and exact role contracts, and both Step Functions and Scheduler target
-   their exact revisions in the canonical cluster. `run` accepts only exact full-history prefixes from
-   `0032` through `0038`, rejects invalid legacy company storage namespaces/paths, waits a fixed
-   additional 300-second observation interval, and repeats the complete launcher preflight. It then
-   runs a separate read-only database-readiness task. For a pre-0037 history that task also requires
-   zero legacy sessions/intents; an exact 0037 or 0038 retry may legitimately contain new-protocol
-   rows. After readiness passes, the tool first persists the short-lived full-candidate
-   `candidate-admitted` receipt, then binds the app revision at desired zero, proves it
-   stable, and deregisters every other ACTIVE revision in all four writer families. It observes the
-   fixed 600-second ECS deregistration enforcement window, re-verifies the retained ACTIVE sets,
-   stable zero-count binding, absence of writer tasks, and the full launcher preflight, then passes the
-   migration mode as a one-run ECS override. The request uses a deterministic client token derived
-   from the admitted nonce. Within ECS's token lifetime—the lower of 24 hours and the task lifetime
-   plus one hour—rerunning `run` with the still-valid receipt reconciles the same RunTask after an
-   ambiguous response. A still-valid six-hour receipt can outlive that ECS token; a later retry may
-   launch the same guarded request again, so the locked, no-permission migrator repeats the history,
-   namespace/path, and conditional legacy-row checks before any SQL and treats exact-current history
-   as a no-op. Do not restore writers if RunTask or its waiter has an ambiguous outcome; use the
-   printed client token/started-by value to verify tasks and migration history while the outage remains
-   in force.
+## Deploying to AWS
 
-6. With the candidate digest unchanged, restore the exact live tuple:
-   `ecs_desired_count = 1`, `ecs_min_count = 1`, `ecs_max_count = 1`,
-   `maintenance_worker_schedule_enabled = true`, and `ecs_autoscaling_enabled = true`. Apply, wait for
-   ECS stability, then run
-   `BP_APP_IMAGE_DIGEST=sha256:CANDIDATE_DIGEST scripts/p2-schema-cutover.sh verify-restored`.
-   Reopen labeling only after it consumes the bound witness successfully and provider generation is
-   verified. Never use `deploy.sh activate` for the initial boundary.
-
-The cutover tool can observe the application-owned service, task families, schedule, and state
-machine, but it cannot revoke unrelated IAM principals. During the bounded outage, operators must
-also prevent external principals from starting the Step Functions state machine or standalone tasks.
-After the boundary, never re-register or directly launch a deregistered pre-boundary task definition:
-those images predate exact schema admission. `ecs-tune.sh` and `scripts/cost-control.sh` are read-only;
-they cannot scale or restore the app. Change writer counts only through reviewed Terraform, use
-the witness-backed `preflight-outage` / `bind-quiescent` / `verify-restored` path for every candidate
-digest, and reserve `deploy.sh activate` for a same-digest configuration or secret restart. Complete
-`verify-restored` after the P2 outage. A deny on the state-machine execution role does not block caller authorization to start an
-execution, so the cost report never labels Step Functions as blocked. Direct ECS Exec/database DDL
-remains break-glass owner authority and is intentionally absent from `root_admin.sh`.
-
-Deferred deployment reproducibility item: the Terraform AWS provider is still constrained by
-`~> 5.0` while `.terraform.lock.hcl` is not tracked. Treat CI/provider resolution as moving until a
-scrubbed, reviewed dependency lock is committed in the planned infrastructure hardening pass.
-
-Label Studio task images use opaque, revocable application URLs because the provider cannot add a
-BlueprintParser authorization header to an imported image request. The bearer is consequently in the
-URL query and the shared ALB records it in the request target before application redaction is possible.
-Treat ALB access logs as secrets: Terraform writes them only to the dedicated
-`beaver-alb-access-logs-*` bucket, blocks public access, enforces bucket ownership and TLS, uses the
-ALB-compatible SSE-S3 encryption mode, restricts delivery to the named `beaver-alb` in this account
-and Region, and expires the `alb-logs/` prefix after one day (the shortest S3 age-based lifecycle
-period;
-deletion is asynchronous). Do not grant routine operators `s3:GetObject`/`s3:ListBucket` on this
-bucket or paste request targets into tickets. A copied bearer remains usable until its grant is
-revoked by Label Studio session retirement; lifecycle deletion limits log persistence but is not
-revocation.
+The deployment is the maintainer's production stack, published as a reference: Terraform for ECS
+Fargate, RDS PostgreSQL, private S3 behind an app gateway, Step Functions, SageMaker, Lambda and
+Secrets Manager, driven by `./deploy-aws.sh` (`doctor`, `bootstrap`, `release`, `rollback`, …). Expect
+roughly $150–300 a month. Read **[docs/DEPLOY.md](docs/DEPLOY.md)** first — it covers the scripts, the
+Terraform resources, the first-deploy bootstrap and the schema-change outage procedure.
 
 ## Configuration
 
-| File                        | Purpose                                                                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `.env.example`              | The environment variables needed for local development, with descriptions. Copy to `.env.local` and fill in your values. Not an exhaustive list of everything the code reads — the server validates its env contract at boot in `src/lib/env.ts`. |
-| `.deploy.env.example`       | AWS deployment variables (ECS, ECR, S3 bucket names). Copy to `.deploy.env` for production deploy.      |
-| `infrastructure/terraform/` | Full AWS infrastructure as code. Copy `backend.hcl.example` outside the repo, set untracked `terraform.tfvars`, and initialize with `-backend-config=/owner/private/beaver-backend.hcl`. |
-
-### Deployment Tiers
-
-| Tier                                 | What You Get                                                                   | Estimated Cost      |
-| ------------------------------------ | ------------------------------------------------------------------------------ | ------------------- |
-| **Local only** (Docker Compose)      | PDF viewer, annotations, table parsing, QTO, search, LLM chat (Groq free tier) | $0                  |
-| **Minimal AWS** (S3 only)            | + Cloud storage for PDFs and thumbnails                                        | ~$5/month           |
-| **Full AWS** (ECS + RDS + SageMaker) | + Textract OCR, YOLO inference, Step Functions orchestration, multi-tenant     | ~$150-300/month     |
-| **SageMaker GPU** (on-demand)        | YOLO model inference jobs (ml.g4dn.xlarge)                                     | ~$0.75/hour per run |
+| File | Purpose |
+| --- | --- |
+| `.env.example` | The app's environment variables, with descriptions. Copy to `.env.local`. The server validates its env contract at boot in `src/lib/env.ts`. |
+| `.deploy.env.example` | Identities the deploy scripts use. Copy to `.deploy.env` (gitignored). |
+| `infrastructure/terraform/*.example` | `terraform.tfvars.example`, `backend.hcl.example`; real values stay outside git. |
 
 ---
 
-## System Architecture
+## Security model
 
-```
-                                 +---------------------------+
-                                 | CloudFront viewer gate    |
-                                 | deny-all; no S3 read grant|
-                                 | (off application path)    |
-                                 +---------------------------+
+| Layer | Implementation |
+| --- | --- |
+| Auth | NextAuth `5.0.0-beta.30` credentials + optional Google OAuth (`GOOGLE_CLIENT_ID`), bcrypt (cost 12), JWT sessions (24 h) |
+| Root admins | Mandatory authenticator-app (TOTP) second factor (`ROOT_2FA_ENFORCE`, default on; seeds sealed with `ROOT_2FA_KEY` when set); recovery via `root_admin.sh 2fa-reset` |
+| Brute force | Lockout from 5 failures (1 min), doubling every 2 further failures up to 60 min, keyed by e-mail + IP, plus an account-wide ceiling of 50 failures per hour; stored in PostgreSQL (`login_lockouts`) |
+| Rate limiting | Per-endpoint, in-process: sign-in 10/min, register and forgot-password 3/15 min, reset 5/15 min, 2FA 5–10/15 min, chat 30/h, CSI detect 20/min, general API 120/min (YOLO runs are bounded by the daily quota instead) |
+| Quotas | Per company per rolling day: uploads 3 (member) / 10 (admin), YOLO jobs 10, chat messages 200, CV Lambda pages 20,000; root admins exempt; per-user and per-company overrides (Admin → Usage) |
+| Multi-tenancy | All queries scoped by `companyId`; registration requires a company access key |
+| Browser assets | Same-origin `/api/project-assets/` gateway with tenant/demo checks and private, no-store responses; CloudFront viewer delivery is deny-all |
+| API key encryption | AES-256-GCM with random IV + auth tag |
+| Secrets | AWS Secrets Manager via the ECS task definitions |
+| Webhooks | HMAC-SHA256 + timestamp validation (reject > 5 min) |
+| Audit | Login, registration, create/delete, YOLO runs, password changes |
+| Headers | nosniff, `X-Frame-Options: DENY`, XSS protection, strict referrer |
+| WAF / GuardDuty / CloudTrail | Owner-managed; not created by this Terraform |
 
-+-------------+    HTTPS    +-------------+-----------+
-|   Browser   +------------>+   ALB (TLS termination) |
-|  (pdf.js +  |             +-------------+-----------+
-|   Zustand)  |                           |
-+-------------+                           v
-                            +-------------+-----------+  task-role read  +------------------+
-                            |   ECS Fargate (2vCPU)   +----------------->+  private S3     |
-                            |   Next.js 16 + API      |                  |  (PDFs, thumbs,  |
-                            |   asset access gateway |                  |   YOLO results,  |
-                            +--+--------+----------+--+                  |   model weights) |
-                               |        |          |                     +------------------+
-                  +------------+   +----+----+   +-+-----------+
-                  |                |         |   |             |
-                  v                v         v   v             v
-           +------+------+  +-----+---+ +---+---+--+  +-------+--------+
-           |  RDS PG 16  |  | Textract| | Secrets  |  | Step Functions  |
-           | (schema.ts) |  | (OCR)   | | Manager  |  | (orchestrator)  |
-           +-------------+  +---------+ +----------+  +-------+--------+
-                                                               |
-                                                               v
-                                                    +----------+---------+
-                                                    | ECS Task (8vCPU)   |
-                                                    | CPU Processing     |
-                                                    | (GS + Textract +   |
-                                                    |  OpenCV + Python)  |
-                                                    +--------------------+
-
-                                                    +--------------------+
-                                                    | SageMaker GPU      |
-                                                    | ml.g4dn.xlarge     |
-                                                    | (YOLOv8 inference) |
-                                                    +--------------------+
-```
-
-Browser PDF, page-image, and thumbnail reads go through the same-origin
-`/api/project-assets/` gateway. Canonical project prefixes remain private;
-`_bp-public/` is reserved and unused. Immutable generation-qualified public
-delivery is deferred until its producer, edge activation/revocation authority,
-and cleanup worker can land as one protocol.
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 ---
 
-## Processing Pipeline (6-System Cascade)
+## Repository layout
 
-The processing pipeline transforms PDFs into 'structured data' through six interconnected systems. Upstream system's outputs feed as inputs into downstream systems. The final processed outputs are machine readable, and context optimised for LLMs.
-
-### System Overview
-
-```
-Raw pixels → OCR words → spatial clusters → semantic regions →
-classified tables → YOLO-text bindings → tag patterns →
-page intelligence → project graph → LLM context
-```
-
-### Upload Processing (per page, concurrency configurable via admin)
-
-```
-Upload PDF → S3
-  │
-  v
-Step Functions → ECS Task
-  │
-  ├── 1. Ghostscript: PDF → PNG per page (300 DPI, -dMaxBitmap=500M)
-  ├── 2. Textract OCR with fallback chain:
-  │     ├── Textract full-res (with retry+backoff for throttling)
-  │     ├── Textract half-res (50% downscale if UnsupportedDocument)
-  │     └── Tesseract local (if Textract unavailable)
-  │     Returns: words[], lines[], tables[] (never throws — empty on total failure)
-  │
-  ├── 3. Drawing number extraction (title block regex + position scoring)
-  ├── 4. CSI code detection (deterministic span tagger over a MasterFormat 2018 lookup table)
-  ├── 5. Text annotation detection (30+ regex detectors: phone, email, equipment, dims...)
-  ├── 6. Page intelligence:
-  │     ├── System 1: Text region classification (OCR word clustering → table-like, notes, key-value)
-  │     ├── System 2: Heuristic engine (rule-based: text keywords + YOLO spatial + CSI affinity)
-  │     └── System 3: Table meta-classifier (combines Systems 1+2 → door-schedule, finish-schedule, etc.)
-  ├── 7. CSI spatial heatmap (NxN configurable grid + title-block + right-margin zones)
-  ├── 8. tsvector generation (full-text search index)
-  └── 9. Project-level analysis (discipline breakdown, reference graph, CSI topology, summaries)
-
-Page concurrency: 8 (configurable via admin dashboard, Textract limit: 10 TPS)
-Each step wrapped in independent try-catch — one step failing doesn't block the pipeline.
-```
-
-### Post-YOLO Processing (user-triggered)
-
-```
-POST /api/yolo/run → SageMaker Processing Job (ml.g4dn.xlarge GPU)
-  │
-  v
-POST /api/yolo/load → Load results from S3
-  ├── Create annotations (source='yolo') with class-level CSI codes from model config
-  ├── Re-run heuristic engine with YOLO spatial signals (System 2, phase 2)
-  ├── Reclassify tables with YOLO-enriched heuristic data
-  └── Merge YOLO CSI codes into page-level csiCodes
-```
+| Path | What |
+| --- | --- |
+| `src/app/` | Next.js App Router pages and API routes (route files are thin shells); in-app docs at `src/app/docs/` |
+| `src/server/` | HTTP shell + services: routes declare `defineRoute()`, every project write goes through `withProjectWrite` |
+| `src/queries/` | TanStack Query layer (canonical keys in `queryKeys.ts`) |
+| `src/lib/` | Processing, OCR, CSI, parsing, tag mapping, LLM context, parse engine, classifier engine |
+| `src/components/`, `src/stores/` | React viewer/admin UI and Zustand stores |
+| `src/workers/` | Web workers (bucket fill) |
+| `drizzle/` | SQL migrations (`0000`–`0039`) and the migration journal |
+| `scripts/` | Gate scripts (`check-*.mjs`), Python CV helpers (`*.py`), setup and operator scripts, `prepush-check.sh` |
+| `eval/` | CSI tagger and parse-engine evaluation harnesses (numbers only; private inputs stay outside) |
+| `e2e/`, `perf/`, `playwright*.config.ts` | Playwright golden paths and performance harnesses |
+| `infrastructure/terraform/` | AWS infrastructure |
+| repo root `*.sh`, `Dockerfile*` | Deploy and operator tools (paths are referenced by the deploy docs, so they stay at the root) |
+| `docs/` | [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DEPLOY.md](docs/DEPLOY.md) |
 
 ---
 
-## CSI Code Detection (Span Tagger)
+## Tech stack
 
-CSI MasterFormat codes are the universal embedding layer that connects every system — OCR text, YOLO detections, parsed tables, spatial zones, and LLM context all tagged with CSI codes.
-
-### Detection Algorithm (`csi-detect.ts` → `csi-page.ts`)
-
-A deterministic tagger — no AI model at detection time, so the same page always gets the same codes, and each code points at the words on the sheet that produced it.
-
-- **Lookup table.** Built once, offline, from the MasterFormat 2018 PDF: 8,935 codes and ~20,300 phrases (section titles, index phrases, alternate titles, "see" cross-references, and a short curated list of drawing abbreviations such as GWB, ACT, HM). The table (`src/data/csi-kb.json`) is not in git — it is rebuilt from the PDF (see the header of `eval/csi/build-kb-v2.ts`) and verified by the image build (`scripts/verify-csi-kb.mjs`).
-- **Spans.** Each OCR line, table cell or sentence is matched on its own. A phrase matches when the words that distinguish it from its parent are all present, ≥ 80% of its weight is present, and the words sit close together without crossing punctuation. Score: 1.00 exact, 0.85 spread out or reordered. A lone generic word ("concrete") is never a tag; one-word matches count only for curated abbreviations.
-- **Ownership.** The most specific matching code wins ("HOLLOW METAL FRAME" → 08 12 13, not 08 10 00). Siblings that tie hand the words to their shared parent; codes from different divisions are settled by the sheet's discipline (A-, S-, M-, P-, E-, FP-, C-) or not at all.
-- **Page rules.** Text ending in BY OTHERS / N.I.C. never tags the page; Division 00/01 only hints on drawings; site and process divisions (33–35, 40–48) need two different matching phrases or a civil sheet.
-- **Confidence.** Best span score × repetition (0.88 once, +0.03 per extra occurrence, 1.00 at five). A code is listed when confidence ≥ `tau` (default 0.75), capped at `maxCodesPerPage` (default 40). Those are the only two settings (Admin → CSI); a company's custom CSI list adds codes on top of the built-in table.
-
-Measured on the 471-page evaluation corpus: 41.5 → 6.4 codes per page versus the previous engine; on 19 hand-labelled (not yet certified) pilot pages, precision 4% → 35% and recall 21% → 37%. Re-measure with `eval/csi/run-eval.sh v2` (see `eval/csi/README.md`). The previous engine is kept unchanged in `src/lib/csi-detect-legacy.ts` as the evaluation baseline only.
-
-### CSI Embedding Strategy
-
-Every element in the system gets CSI-tagged:
-
-```
-Textract words → CSI codes (via csi-detect)
-YOLO detections → CSI codes (via model config classCsiCodes)
-Parsed table rows → CSI codes (via content matching)
-Text annotations → CSI tags (via csi-detect on annotation text)
-Spatial zones → CSI divisions (via csi-spatial heatmap)
-User markups → CSI codes (via manual tagging in annotation editor)
-```
-
-All sources merge into `pages.csiCodes` (page-level). The CSI co-occurrence graph (`csi-graph.ts`) tracks which divisions appear together across pages, building a project-wide network with clusters (MEP, Architectural, Structural, Site) and cross-reference edges.
-
-### CSI Spatial Heatmap (`csi-spatial.ts`)
-
-Each page is divided into a configurable NxN grid (3x3 default, up to 12x12). Special zones: title-block (y > 0.85), right-margin (x > 0.75). All CSI-tagged elements (text annotations, YOLO detections, classified tables, parsed regions, YOLO tags) are binned into zones by bbox center.
-
-Output: per-zone division breakdown + natural language summary (e.g., "Door-related content (Div 08) clusters in center drawing area; Plumbing (Div 22) clusters in bottom-right").
-
-Fed to LLM at priority 7.0 in the context builder. Recomputed client-side after user parsing or YOLO load via `refreshPageCsiSpatialMap()`.
+| | |
+| --- | --- |
+| **Runtime** | Next.js 16 (App Router), React 19, TypeScript 5, Node.js 24 |
+| **State** | Zustand 5 (session/UI/core/tool owners with narrow selectors) + TanStack Query (project-keyed server collections) |
+| **Rendering** | pdfjs-dist 4 (PDF), HTML5 Canvas overlay layers, CSS transform zoom |
+| **Styling** | Tailwind 4, 3 dark themes (Midnight/Slate/Graphite) |
+| **Database** | PostgreSQL 16, Drizzle ORM |
+| **AI/LLM** | Groq / Anthropic / OpenAI / OpenAI-compatible (e.g. Ollama), streaming SSE, priority-ordered context |
+| **CV / OCR** | AWS Textract, Tesseract, Ghostscript, OpenCV, img2table, Table Transformer, Ultralytics YOLO |
+| **Search** | PostgreSQL tsvector + GIN index, ts_rank + ts_headline |
+| **Infra** | Terraform, ECS Fargate, RDS, private S3 + CloudFront deny gate, Step Functions, SageMaker, Lambda |
+| **Tests** | Vitest, node:test, Playwright |
 
 ---
 
-## Table & Schedule Parsing
+## Contributing
 
-Three parsing methods run in parallel on user-drawn bounding boxes, results merged by a grid merger that selects the highest-confidence alignment:
-
-### Method 1: OCR Word Positions (`ocr-grid-detect.ts`)
-
-- Cluster OCR words by Y-center (row tolerance: configurable, default 0.006)
-- Detect columns by X left-edge gap analysis (min gap: configurable, default 0.015)
-- Column stability filter: column must appear in ≥30% of rows (configurable)
-- Layout hint support: force N columns (e.g., 2 for keynotes)
-- Output: row/column boundaries + confidence score
-
-### Method 2: Textract TABLES Feature
-
-- AWS Textract returns structured TABLE blocks with CELL children
-- Extract row/column indices, cell text, bounding boxes
-- Higher confidence on structured tables with clear borders
-
-### Method 3: OpenCV Line Detection (`detect_table_lines.py`)
-
-- Rasterize page region → Hough transform → detect horizontal/vertical lines
-- Build grid from line intersections
-- Best for tables with visible rule lines
-
-### Guided Parse (Tunable)
-
-New "Guided" tab in the Schedules/Tables panel. User draws BB, system auto-proposes grid via `/api/table-parse/propose`, then user can tune with live sliders:
-
-| Slider             | Controls                            | Default | Effect                         |
-| ------------------ | ----------------------------------- | ------- | ------------------------------ |
-| Row Sensitivity    | `rowTolerance` in `clusterRows()`   | 0.006   | Lower = tighter row clustering |
-| Column Sensitivity | `minColGap` in `detectColumns()`    | 0.015   | Lower = more columns detected  |
-| Column Confidence  | `minHitsRatio` in `detectColumns()` | 0.3     | Lower = keeps weaker columns   |
-| Expected Columns   | `layoutHint.columns`                | Auto    | Force exact column count       |
-
-Slider changes trigger debounced re-proposal (300ms). Grid lines rendered as draggable overlays on canvas (GuidedParseOverlay). Repeat Down / Repeat Right buttons tile uniform rows/columns. Available in both table and keynote parsing flows.
-
-### Post-Parse Pipeline
-
-1. Cell extraction via `extractCellsFromGrid()` — reads OCR words within grid boundaries
-2. Generic column headers ("Column 1", "Column 2") — user renames via edit UI
-3. CSI auto-detection on parsed content
-4. Persistence to `pageIntelligence.parsedRegions` + DB
-5. CSI spatial map recomputation
-6. Optional tag mapping (see YOLO-Tag Engine below)
-
----
-
-## YOLO-Tag Engine (`yolo-tag-engine.ts`)
-
-Maps YOLO shape detections to nearby OCR text, creating tag instances that link visual symbols to their alphanumeric identifiers.
-
-### Core Algorithm: `mapYoloToOcrText()`
-
-```
-For each YOLO annotation matching the target class:
-  1. Find all OCR words whose center falls inside the YOLO bbox
-  2. Sort left-to-right, concatenate → candidateText
-  3. Match against target tag:
-     - Exact match → confidence 1.0
-     - Edit distance ≤ 1 (for text ≥ 3 chars) → confidence 0.9
-     - Short tags (1-2 chars) require exact match (prevents "3" matching "8")
-```
-
-### Free-Floating Mode
-
-For tags without YOLO shapes (OCR-only detection):
-
-- Single-word tags: scan all words on page
-- Multi-word tags: sliding window over adjacent words with bbox merging
-
-### Tag Pattern Detection (`tag-patterns.ts`)
-
-Discovers repeating YOLO+text patterns:
-
-```
-Input: 5 circles containing "T-01", "T-02", "T-03", "T-04", "T-05"
-  1. For each YOLO detection, extract overlapping OCR text
-  2. Extract prefix pattern: "T-01" → prefix "T-"
-  3. Group by (yoloClass, prefix): "circle__T-" → 5 instances
-  4. Build TagGroup: { pattern: "T-\\d+", instances: 5, confidence: "confirmed" }
-```
-
-Used by: keynote parsing (auto-create tags after parse), schedule parsing (Map Tags section), Auto-QTO workflow.
-
----
-
-## Auto-QTO Workflow
-
-Guided, material-specific Quantity Takeoff workflow. Walks estimators through: find schedule → parse it → define tag column → scan all pages for tags → review counts → CSV export.
-
-### Workflow State Machine
-
-```
-Step 1: Pick Material → Step 2: Find Schedule Page → Step 3: Parse Schedule
-                                                           ↓
-Step 6: CSV Editor ← Step 5: Review Counts ← Step 4: Map Tags to Drawings
-```
-
-### Key Concepts
-
-- **Tag Column**: User marks which parsed column contains the tag identifiers (e.g., "MARK", "NO."). Auto-suggested via regex + header keyword matching.
-- **Multi-Signal Tag Engine**: OCR text matching (always) + YOLO shape proximity (optional boost). YOLO not required — works on day one without models.
-- **Confidence Scoring**: Each tag instance includes signal breakdown (OCR match, OCR confidence, YOLO proximity, YOLO class).
-- **Flags**: Auto-detected discrepancies (tag in schedule but not found on drawings, tag on drawings but not in schedule, low confidence, qty mismatch).
-
-### Data Model
-
-- `qto_workflows` table: persists workflow state across sessions
-- Phases A-B implemented: foundation + schedule finding/parsing
-- Phases C-E planned: enhanced tag engine (`findTagInstances()` with multi-signal return), review table, CSV editor
-
----
-
-## LLM Context System
-
-The core compression engine. Transforms 250K tokens of raw OCR into ~6K tokens of structured, priority-ordered context — a 40:1 compression ratio that makes small models (Haiku, Llama) viable for blueprint Q&A.
-
-### Context Assembly (`context-builder.ts`)
-
-12+ sections, each with stable ID, priority, and configurable budget allocation:
-
-| Priority | Section                     | Source                                    |
-| -------- | --------------------------- | ----------------------------------------- |
-| 0.5      | Project Intelligence Report | projectIntelligence (auto-generated)      |
-| 1.0      | YOLO Detection Counts       | annotations (source='yolo')               |
-| 1.0      | CSI Network Graph           | projectIntelligence.csiGraph              |
-| 1.5      | Page Classification         | pageIntelligence.classification           |
-| 2.0      | User Annotations            | annotations (source='user')               |
-| 3.0      | Takeoff Notes               | takeoffItems                              |
-| 3.5      | Cross-References            | pageIntelligence.crossRefs                |
-| 4.0      | CSI Codes                   | pages.csiCodes                            |
-| 5.0      | Text Annotations            | pages.textAnnotations (37 types)          |
-| 5.5      | Note Blocks                 | pageIntelligence.noteBlocks               |
-| 5.8      | Parsed Tables/Keynotes      | pageIntelligence.parsedRegions            |
-| 6.0      | Detected Regions            | pageIntelligence.classifiedTables         |
-| 7.0      | CSI Spatial Distribution    | pageIntelligence.csiSpatialMap            |
-| 8.0      | Spatial OCR→YOLO Context    | OCR words mapped to YOLO regions          |
-| 10.0     | Raw OCR Text                | pages.rawText (fallback, often truncated) |
-
-### Percentage-Based Budgeting with Overflow
-
-Each section gets a % of the model-aware budget (Opus: 200K chars, Sonnet: 80K, GPT-4o: 60K, Groq: 24K). Unused allocation flows to a shared overflow pool that redistributes to sections needing more space. Three presets:
-
-- **Balanced**: equal distribution
-- **Structured**: parsed tables 25%, CSI spatial 8%, spatial context 12%, raw OCR 5%
-- **Verbose**: raw OCR 40%, spatial 15%, parsed tables 10%
-
-All configurable via admin LLM/Context tab (4 panels: section control, system prompt, budget, context preview tool).
-
-### Multi-Provider Support
-
-Resolution chain: User API key → Company config → Environment variable. Streaming SSE for all providers.
-
-| Provider      | Models                   | Tool-Use     |
-| ------------- | ------------------------ | ------------ |
-| Anthropic     | Claude Opus/Sonnet/Haiku | Planned      |
-| OpenAI        | GPT-4o, o1/o3            | Planned      |
-| Groq          | Llama 3.3 70B            | Partial      |
-| Custom/Ollama | Any                      | Context-only |
-
----
-
-## Frontend Architecture
-
-### Viewer Component Hierarchy
-
-```
-PDFViewer (root — scroll, zoom, keyboard shortcuts)
-├── ViewerToolbar (mode, zoom, search, panel toggles)
-├── PageSidebar (thumbnails, page filtering, lazy-loaded)
-├── SymbolSearchPanel (floating popup, 4 states)
-├── PDFPage (canvas + overlays)
-│   ├── SearchHighlightOverlay (memo) — search + CSI word highlights
-│   ├── TextAnnotationOverlay — auto-detected text patterns
-│   ├── KeynoteOverlay — keynote markers
-│   ├── GuidedParseOverlay — draggable grid lines for guided parse
-│   ├── ParseRegionLayer (memo) — table/keynote parse BBs
-│   └── AnnotationOverlay (orchestrator — ALL mouse events)
-│       └── DrawingPreviewLayer (memo) — in-progress BB/polygon/calibration
-├── Right panels (toggled):
-│   ├── TextPanel, ChatPanel, TakeoffPanel, DetectionPanel
-│   ├── CsiPanel, PageIntelligencePanel
-│   ├── TableParsePanel (5 tabs: All Tables, Auto Parse, Guided, Manual, Compare/Edit)
-│   ├── KeynotePanel (3 tabs: All Keynotes, Auto Parse, Guided)
-│   └── TableCompareModal (fullscreen side-by-side + overlay mode)
-└── MarkupDialog (modal)
-```
-
-### Performance Architecture
-
-**Drawing state decoupling**: `_drawing`, `_drawStart`, `_drawEnd`, and `_mousePos` live in the Tool Zustand store. `AnnotationOverlay` publishes them and reads them imperatively in event handlers, but does not subscribe to those four hot fields. `DrawingPreviewLayer` owns their reactive preview, so pointer-coordinate updates do not repaint the orchestration overlay.
-
-**Event handler precedence (AnnotationOverlay)**: Strict sequential dispatch with early returns. Order matters:
-
-1. Calibration mode → place points
-2. Takeoff placement → polygon/marker
-3. YOLO/tag picking → select shape
-4. Symbol search / parse drawing → draw BB
-5. Pointer mode → select/click/double-click OCR
-6. Markup mode → draw annotation
-
-**Zoom**: CSS transform for instant feedback, debounced pdf.js re-render (300ms). Cursor-centric (keeps point under cursor stable during zoom).
-
-**Chunking**: 15-page sliding window with catalog/detail split. Catalog data (~100KB — trade lists, schedule names, CSI directory) loads once. Detail data (~80KB/page — textract words, page intelligence) loads on demand with eviction. State snapshot before async fetch prevents race conditions during rapid navigation.
-
-### Zustand Store
-
-Viewer state is split into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; `uiStore` owns presentation state; `viewerCoreStore` owns page navigation, zoom, and page dimensions; `toolStore` owns interaction mode, the drawing cursor, calibration, takeoff placement, bucket/split/tag/symbol sessions, and tool history; `parseFlowStore` owns parse workflows; server collections use publicId-keyed Query facades. The 92-line residual `viewerStore` is an inert compatibility sentinel, not a live data owner. Prefer the domain hook or leaf store over direct cross-domain field access; cross-owner behavior belongs in `viewerCommands` and the project-lifecycle coordinator.
-
----
-
-## Admin Dashboard
-
-The tabs below are the ones most contributors need. They are **a subset, not the full set** — the
-authoritative list is the `TABS` array in `src/app/admin/AdminTabs.tsx`, and several tabs there are
-`rootOnly` and therefore invisible to ordinary admins.
-
-| Tab               | Purpose                                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------------------- |
-| Overview          | Project list, reprocess controls, system status                                                          |
-| Pipeline          | Processing step toggles, page concurrency, CSI spatial grid resolution, table proposals config           |
-| AI Models         | YOLO model registry, S3 upload, run/load/status per project                                              |
-| Heuristics        | Rule editor with YOLO class picker (dropdown from registered models), text keywords, spatial conditions  |
-| LLM / Context     | 4 panels: section control (toggle/priority/%), system prompt editor, budget config, context preview tool |
-| CSI Codes         | CSI database browser, class-level CSI tagging for YOLO models                                            |
-| Text Annotations  | Detector toggle (30+ types), preview per page                                                            |
-| Page Intelligence | Classification results, heuristic inferences, reprocess by scope                                         |
-| Users             | User management, role assignment, API key management                                                     |
-
-All customization lives in admin — code provides defaults only. Different companies have different YOLO models with different class names; the admin dashboard is the authority.
-
----
-
-## Database Schema — core tables
-
-These are the tables a contributor meets first. They are **a subset, not the whole schema** — the
-full set is declared in `src/lib/db/schema.ts`, and the newest layer (the runtime-state family:
-`runtimeCounters`, `loginLockouts`, `manualIpBans`, `abuseEvents`, `opLog`) is introduced by
-`drizzle/0039_runtime_state.sql`.
-
-| Table              | Purpose             | Key Fields                                                            |
-| ------------------ | ------------------- | --------------------------------------------------------------------- |
-| **companies**      | Multi-tenant orgs   | pipelineConfig (JSONB), features (JSONB), dataKey (S3 prefix)         |
-| **users**          | Auth + permissions  | role (admin/member), canRunModels, companyId                          |
-| **userApiKeys**    | BYOK LLM keys       | provider, encryptedKey (AES-256-GCM)                                  |
-| **projects**       | PDF documents       | dataUrl (S3), status, projectIntelligence (JSONB), isDemo             |
-| **pages**          | Per-page OCR data   | textractData (JSONB), csiCodes, pageIntelligence, search_vector (GIN) |
-| **annotations**    | YOLO + user markups | bbox [minX,minY,maxX,maxY], source (yolo/user/takeoff), data (JSONB)  |
-| **takeoffItems**   | QTO categories      | name, shape, color, size, notes                                       |
-| **qtoWorkflows**   | Auto-QTO state      | step, parsedSchedule, lineItems, userEdits (JSONB)                    |
-| **chatMessages**   | Chat history        | role, content, model, pageNumber (nullable = project-wide)            |
-| **processingJobs** | SageMaker tracking  | status, stepFunctionArn                                               |
-| **models**         | YOLO model registry | s3Path, config (JSONB: classCsiCodes, classKeywords)                  |
-| **llmConfigs**     | LLM provider config | provider, model, encryptedApiKey, baseUrl                             |
-| **auditLog**       | Security audit      | action, userId, details (JSONB), ip                                   |
-| **inviteRequests** | Signup queue        | email, name, company                                                  |
-
----
-
-## Security Model
-
-| Layer              | Implementation                                                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth               | NextAuth 5 credentials, bcrypt (cost 12), JWT (24hr)                                                                                       |
-| Brute force        | 5 failures = 15min lockout, 10 = 1hr, per email                                                                                            |
-| Rate limiting      | In-memory middleware, per-endpoint (auth: 3-5/15min, chat: 30/hr, YOLO: 5/hr, general: 120/min)                                            |
-| Multi-tenancy      | All queries scoped by `companyId`. Registration requires company access key                                                                |
-| Browser assets     | Same-origin `/api/project-assets/` gateway with tenant/demo checks and private, no-store responses; CloudFront viewer delivery is deny-all |
-| API key encryption | AES-256-GCM with random IV + auth tag                                                                                                      |
-| Quotas             | Per-company daily: uploads (3 member/10 admin), YOLO (5), chat (200)                                                                       |
-| Secrets            | AWS Secrets Manager via ECS task definition                                                                                                |
-| Webhooks           | HMAC-SHA256 + timestamp validation (reject > 5min)                                                                                         |
-| Audit              | Login, registration, create/delete, YOLO runs, password changes                                                                            |
-| Headers            | nosniff, DENY frame, XSS protection, strict referrer                                                                                       |
-| WAF                | Owner-managed AWS control; the retired `hardening.sh` cannot create or alter it                                                          |
-| Monitoring         | Terraform-managed CloudWatch alarms and secret-bearing ALB logs; audit/import any legacy GuardDuty or CloudTrail controls separately       |
-
----
-
-## Infrastructure (Terraform)
-
-| Resource        | Config                                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------ |
-| VPC             | 10.0.0.0/16, 2 public + 2 private subnets, NAT gateway                                     |
-| ECS Fargate     | 2 vCPU / 4 GB app, 8 vCPU / 16 GB processing tasks, live app capacity fixed at 1 until P5 |
-| ALB             | HTTPS with ACM cert, TLS 1.3, 300s idle, circuit breaker rollback                          |
-| RDS             | PostgreSQL 16, db.t4g.medium, 50GB gp3, encrypted, 7-day backups, Multi-AZ                 |
-| S3 + CloudFront | Versioned private bucket; app-gated reads; CloudFront viewer 404 with no OAC S3 read grant |
-| ECR             | 3 repos (app, cpu-pipeline, yolo-pipeline), scan-on-push                                   |
-| Step Functions  | Blueprint processing orchestrator with retry/catch                                         |
-| SageMaker       | Processing jobs for YOLO (ml.g4dn.xlarge GPU, on-demand)                                   |
-| Secrets Manager | 8 secrets with 7-day recovery window                                                       |
-
-Estimated: ~$155/month baseline. SageMaker GPU ~$0.75/hr on-demand.
-
-### First private CloudFront cutover (owner-run once)
-
-This is a deliberate one-time owner operation, not a routine deploy.
-
-1. Review a targeted plan and apply only `aws_cloudfront_function.beaver_public_snapshot_gate` and `aws_cloudfront_distribution.beaver` plus their required dependencies. Confirm that `aws_s3_bucket_policy.beaver_data` is absent from that apply.
-2. Wait until the distribution status is `Deployed`.
-3. Probe known legacy cached asset URLs and require an HTTP 404 with no asset bytes.
-4. Create a `/*` CloudFront invalidation and wait for it to complete.
-5. Review and run the full Terraform plan/apply, re-read the live data-bucket policy, and repeat the 404 probes.
-
-Never add a reopen/public flag to this gate. Any future public edge delivery requires a separately reviewed publication and revocation protocol; the retired `hardening.sh` is not a cutover path.
-
----
-
-## Python Scripts
-
-| Script                  | Purpose                                                     | Called By             |
-| ----------------------- | ----------------------------------------------------------- | --------------------- |
-| `yolo_inference.py`     | YOLOv8 inference on pages                                   | SageMaker job         |
-| `template_match.py`     | Two-tier template matching (cv2.matchTemplate + SIFT/FLANN) | /api/symbol-search    |
-| `extract_keynotes.py`   | Keynote shape extraction + OCR                              | /api/keynotes/extract |
-| `detect_table_lines.py` | Table grid line detection (Hough transform)                 | /api/table-parse      |
-
-All communicate via JSON stdin/stdout. Called with `execFile` (not `exec`) — no shell injection surface.
-
----
-
-## Local Development
-
-Prerequisites: Node.js 24 (see `.nvmrc`; the Dockerfile and CI use the same major), Docker
-
-```bash
-docker compose up -d          # PostgreSQL on port 5433
-npm install
-cp .env.example .env.local    # Edit: DATABASE_URL, NEXTAUTH_SECRET
-npm run db:migrate             # Refuses production and non-loopback databases
-npm run dev                   # http://localhost:3000
-```
-
-Works without AWS credentials — PDF viewing, annotations, QTO, search all functional. For full pipeline: add `GROQ_API_KEY` (chat), AWS credentials (Textract, S3, SageMaker).
-
----
-
-## Tech Stack
-
-|                |                                                                                                                            |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Runtime**    | Next.js 16 (App Router), React 19, TypeScript 5                                                                            |
-| **State**      | Zustand 5 (session/UI/core/tool/residual owners with narrow selectors) + TanStack Query (project-keyed server collections) |
-| **Rendering**  | pdfjs-dist 4 (PDF), HTML5 Canvas (7 overlay layers), CSS transform zoom                                                    |
-| **Styling**    | Tailwind 4, 3 dark themes (Midnight/Slate/Graphite)                                                                        |
-| **Database**   | PostgreSQL 16, Drizzle ORM (migration history in `drizzle/meta/_journal.json`)                                             |
-| **Auth**       | NextAuth 5 (credentials), bcrypt, JWT                                                                                      |
-| **AI/LLM**     | Multi-provider (Groq/Anthropic/OpenAI/Custom), streaming SSE, priority-ordered context                                     |
-| **CV**         | OpenCV (table lines, keynotes), Tesseract (fallback OCR), YOLOv8/ultralytics                                               |
-| **Search**     | PostgreSQL tsvector + GIN index, ts_rank + ts_headline, global cross-project                                               |
-| **Infra**      | Terraform, ECS Fargate, private S3 + CloudFront deny gate, RDS, SageMaker, Step Functions                                  |
-| **Monitoring** | CloudWatch alarms, one-day private ALB access logs. WAF / GuardDuty / CloudTrail are owner-managed and are **not** created by this IaC — see Security Model |
-
----
-
-## Key Design Decisions
-
-**CSI codes as universal embedding layer.** Every pixel, annotation, tag, table cell, keynote, and spatial zone gets CSI-tagged. The CSI graph is a condensed project representation giving the LLM efficient navigation without reading raw OCR. This is the core architectural insight — structured tags compress information 40:1.
-
-**Confidence scores, never binary decisions.** Every system outputs 0.0–1.0 confidence. A text region at 0.6 flows downstream; the table classifier might boost it to 0.85 if keywords match, or decay it to 0.3. Multiple independent signals that agree compound confidence.
-
-**Normalized coordinates everywhere.** All annotations stored as 0-1 ratios. Rendering multiplies by current canvas dimensions. Zoom-independent, DPI-independent, resolution-independent.
-
-**No migrations for new annotation types.** The `data` jsonb column on annotations absorbs new types without schema changes. Count markers, area polygons, scale calibrations, and YOLO detections all share one table.
-
-**Admin dashboard is the authority.** All customization (heuristic rules, YOLO class names, CSI mappings, LLM config, pipeline toggles) lives in admin UI. Code provides defaults only. Different companies have different models with different class names — the admin adapts without code changes.
-
-**Two-phase heuristic execution.** Rules work in text-only mode during OCR processing, then get re-scored with YOLO spatial signals after model load. Same rules, richer evidence.
-
-**Graceful degradation everywhere.** Each processing step has independent try-catch. Textract failure falls through to Tesseract then to empty. Missing YOLO data → text-only heuristics. Missing CSI database → empty codes. The pipeline always completes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: run the checks above, install the push guard
+(`scripts/prepush-check.sh --install`), and commit with your GitHub noreply e-mail address.
 
 ---
 
@@ -924,3 +382,6 @@ Free for:
 - Internal evaluation
 
 Commercial use requires a separate written license.
+
+Third-party code vendored in this repository (OpenTakeoff, pdf.js) keeps its own licence — see
+[NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

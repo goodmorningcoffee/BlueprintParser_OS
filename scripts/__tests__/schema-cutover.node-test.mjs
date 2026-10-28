@@ -34,6 +34,8 @@ const SCHEMA_POLICY_INPUTS = [
   ".github/workflows/ci.yml",
   "CONTRIBUTING.md",
   "README.md",
+  "docs/ARCHITECTURE.md",
+  "docs/DEPLOY.md",
   "deploy.sh",
   "ecs-tune.sh",
   "entrypoint.sh",
@@ -900,7 +902,7 @@ test("schema cutover policy freezes exact writer tuples, witnessed modes, and le
     "rejects an outage-preflight runbook that omits the intended candidate",
     async (t) => {
       const root = await schemaPolicyFixture(t);
-      await mutateSchemaPolicyFile(root, "README.md", (source) =>
+      await mutateSchemaPolicyFile(root, "docs/DEPLOY.md", (source) =>
         source.replace(
           "./deploy.sh preflight-outage sha256:CURRENT_DIGEST sha256:CANDIDATE_DIGEST",
           "./deploy.sh preflight-outage sha256:CURRENT_DIGEST",

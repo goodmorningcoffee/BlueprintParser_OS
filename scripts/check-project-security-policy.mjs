@@ -8604,7 +8604,8 @@ async function validateLabelStudioProviderBindingPolicy() {
     path.join(ROOT, maintenanceTerraformFileName),
     "utf8",
   );
-  const readmeFileName = "README.md";
+  // The owner deploy runbook moved from README.md to docs/DEPLOY.md (2026-10-28, GitHub publish).
+  const readmeFileName = "docs/DEPLOY.md";
   const readme = await readFile(path.join(ROOT, readmeFileName), "utf8");
   const outageEcsTerraform = await readFile(
     path.join(ROOT, "infrastructure/terraform/ecs.tf"),
@@ -8852,7 +8853,8 @@ async function validateLabelStudioAccessLogSecretPolicy() {
 
   const schemaFileName = "src/lib/db/schema.ts";
   const schema = await readFile(path.join(ROOT, schemaFileName), "utf8");
-  const readmeFileName = "README.md";
+  // The owner deploy runbook moved from README.md to docs/DEPLOY.md (2026-10-28, GitHub publish).
+  const readmeFileName = "docs/DEPLOY.md";
   const readme = await readFile(path.join(ROOT, readmeFileName), "utf8");
 
   if (

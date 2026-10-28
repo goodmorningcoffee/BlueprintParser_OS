@@ -12,6 +12,8 @@ const files = Object.fromEntries(
       ".github/workflows/ci.yml",
       "CONTRIBUTING.md",
       "README.md",
+      "docs/ARCHITECTURE.md",
+      "docs/DEPLOY.md",
       "deploy.sh",
       "ecs-tune.sh",
       "entrypoint.sh",
@@ -1940,7 +1942,7 @@ requireHclExpressionAssignment(
   cloudFrontCutoverInvariant,
 );
 requireAll(
-  "README.md",
+  "docs/DEPLOY.md", // the owner runbook moved here from README.md (2026-10-28)
   [
     "First private CloudFront cutover (owner-run once)",
     "apply only `aws_cloudfront_function.beaver_public_snapshot_gate` and `aws_cloudfront_distribution.beaver`",
@@ -5307,7 +5309,7 @@ if (
 }
 
 requireAll(
-  "README.md",
+  "docs/DEPLOY.md", // the owner runbook moved here from README.md (2026-10-28)
   [
     "Migration `0037` is a **writer-outage compatibility boundary**",
     "scripts/p2-schema-cutover.sh preflight-outage",
@@ -5348,6 +5350,8 @@ requireAll(
 for (const file of [
   "README.md",
   "CONTRIBUTING.md",
+  "docs/ARCHITECTURE.md",
+  "docs/DEPLOY.md",
   "install_setup.sh",
   "scripts/setup.sh",
 ]) {
