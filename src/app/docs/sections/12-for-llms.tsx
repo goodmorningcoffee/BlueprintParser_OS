@@ -85,7 +85,7 @@ export function Section12ForLlms() {
           rows={[
             [<InlineCode key="a1">processProject</InlineCode>, "src/lib/processing.ts", "Auto pipeline entry. 14 per-page stages + project rollup."],
             [<InlineCode key="a2">mapConcurrent</InlineCode>, "src/lib/processing.ts", "Worker-pool concurrency limit. Default 8."],
-            [<InlineCode key="a3">analyzePageImageWithFallback</InlineCode>, "src/lib/textract.ts:~315", "3-tier OCR fallback: full Textract → half-res → Tesseract."],
+            [<InlineCode key="a3">analyzePageImageWithFallback</InlineCode>, "src/lib/textract.ts", "3-tier OCR fallback: full Textract → half-res → Tesseract."],
             [<InlineCode key="a4">detectCsiCodes</InlineCode>, "src/lib/csi-detect.ts", "CSI tagger entry point (v2 span tagger, csi-page.ts). Returns CsiCode[] with trade + division + confidence + matched-word triggers."],
             [<InlineCode key="a5">findOccurrences</InlineCode>, "src/lib/tag-mapping/find-occurrences.ts", "Tag-mapping entry. Dispatches to 5 matcher types + composes scores."],
             [<InlineCode key="a6">processFill</InlineCode>, "src/workers/bucket-fill.worker.ts", "8-stage flood-fill pipeline. Text is a wall."],

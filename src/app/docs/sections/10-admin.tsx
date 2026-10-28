@@ -23,11 +23,11 @@ export function Section10Admin() {
         thresholds, heuristic rules, LLM provider configuration, user and
         invite management, pipeline concurrency, text-annotation detector
         toggles, and root-admin-only settings. It is deliberately flat &mdash;
-        14 tabs across the top of one page &mdash; rather than hidden behind
+        one row of tabs across the top of one page &mdash; rather than hidden behind
         wizards, because the intended audience is technical.
       </p>
 
-      <SubSection title="The 14 tabs">
+      <SubSection title="The main tabs">
         <TableEl
           headers={["Tab", "What it controls", "Backing route(s)"]}
           rows={[
@@ -68,7 +68,7 @@ export function Section10Admin() {
             ],
             [
               <strong key="csi">CSI</strong>,
-              "Company CSI detection config (threshold + tier weights), custom CSI database upload, re-run CSI on all annotations after a database change.",
+              "Company CSI tagger settings (tau and maxCodesPerPage, the only two), custom CSI database upload, re-run CSI on all annotations after a database change.",
               <span key="csa" className="font-mono text-xs">
                 /api/admin/csi/config, /api/admin/csi/upload, /api/admin/models/reprocess-csi
               </span>,

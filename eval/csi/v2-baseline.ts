@@ -10,7 +10,7 @@
  * corpus results (`run-eval.sh`) belong next to it; re-run both after an engine change.
  *
  * Build + run (from the repo root; the bundle name must contain "csi-v2base" — argv guard):
- *   npx esbuild eval/csi/v2-baseline.ts --bundle --platform=node --target=node20 --alias:@=./src \
+ *   npx esbuild eval/csi/v2-baseline.ts --bundle --platform=node --target=node24 --alias:@=./src \
  *     --external:pg-native --outfile=build/csi-v2base.js
  *   node build/csi-v2base.js eval/csi/results/v2-engine-baseline.json
  */

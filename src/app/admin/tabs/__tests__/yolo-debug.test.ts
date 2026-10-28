@@ -31,11 +31,11 @@ describe("redactDebugText", () => {
       "role arn:aws:iam::123456789012:role/beaver-sagemaker-role",
       "image 123456789012.dkr.ecr.us-east-1.amazonaws.com/beaver-yolo-pipeline@sha256:abc",
       "bucket beaver-data-123456789012",
-      "from owner@example.com and someone@else.org",
+      "from owner@example.com and someone@other.example",
       "relative /api/yolo/status?jobName=bp-yolo-doors-x stays",
     ].join("\n");
     const out = redactDebugText(text, "Owner@Example.com");
-    expect(out).not.toMatch(/X-Amz-Signature=abc|AKIAxyz|s3cr3t|hunter2|k-123|AKIAABCDEFGHIJKLMNOP|someone@else\.org|123456789012/u);
+    expect(out).not.toMatch(/X-Amz-Signature=abc|AKIAxyz|s3cr3t|hunter2|k-123|AKIAABCDEFGHIJKLMNOP|someone@other\.example|123456789012/u);
     expect(out).toMatch(/page_0001\.png\?\[redacted\]/u);
     expect(out).toMatch(/Authorization: \[redacted\]/u);
     expect(out).not.toMatch(/eyJ/u);
@@ -56,11 +56,11 @@ describe("debug event log", () => {
   });
 
   it("survives a reload through sessionStorage, redacted on the way in", () => {
-    logYoloDebug("http", "POST /api/yolo/run-batch → 500", { error: { message: "token=abc123 for x@y.com" } });
+    logYoloDebug("http", "POST /api/yolo/run-batch → 500", { error: { message: "token=abc123 for x@y.example" } });
     resetYoloDebugLogForTests(); // a reload: the in-memory copy is gone
     const [e] = readYoloDebugEvents();
     expect(e.kind).toBe("http");
-    expect(JSON.stringify(e.data)).not.toMatch(/abc123|x@y\.com/u);
+    expect(JSON.stringify(e.data)).not.toMatch(/abc123|x@y\.example/u);
     expect(e.t).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
   });
 

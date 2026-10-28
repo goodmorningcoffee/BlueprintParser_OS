@@ -211,7 +211,7 @@ describe("empty and degenerate inputs do not fabricate numbers", () => {
 });
 
 describe("certification cannot be forged (§9)", () => {
-  const certified = { bundle: "b", page: 1, reviewed_by: "chris", expected_groups: [G("g", "08", ["08 71 00"])] };
+  const certified = { bundle: "b", page: 1, reviewed_by: "reviewer", expected_groups: [G("g", "08", ["08 71 00"])] };
 
   it("accepts a genuinely adjudicated page", () => {
     expect(isCertifiedPage(certified)).toBe(true);
@@ -231,6 +231,6 @@ describe("certification cannot be forged (§9)", () => {
     // A page still carrying only the two raw labeler opinions has not been
     // adjudicated, whatever reviewed_by claims.
     expect(isCertifiedPage({ ...certified, expected_groups: [] })).toBe(false);
-    expect(isCertifiedPage({ bundle: "b", page: 1, reviewed_by: "chris" })).toBe(false);
+    expect(isCertifiedPage({ bundle: "b", page: 1, reviewed_by: "reviewer" })).toBe(false);
   });
 });

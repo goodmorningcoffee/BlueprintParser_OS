@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # [refactor jun12 P0.3] Local test database for the route characterization suite.
 #
-# Runs a USER-OWNED postgres cluster on :5433 (no sudo, no docker — the
-# devcontainer has neither docker nor reliable sudo-tty). CI does NOT use
-# this: the GitHub Actions workflow provides a postgres:16 service on the
-# same port/credentials, so DATABASE_URL is identical in both places:
+# Runs a USER-OWNED postgres cluster on :5433 (no sudo, no docker), serving the
+# vitest default test URL:
 #   postgres://bp_test:bp_test@localhost:5433/bp_test
+# CI does NOT use this: the `checks` job runs a postgres:17 service on :5432 (ci:ci)
+# and sets BP_TEST_DATABASE_URL; the `golden-e2e` job uses postgres:17 on :5433 (bp_test).
+# Port 5433 is also the docker-compose dev database — run one or the other, or point
+# BP_TEST_DATABASE_URL at a different port.
+# PostgreSQL binaries: the Debian/Ubuntu layout (/usr/lib/postgresql/<v>/bin) is found
+# automatically; elsewhere set BP_PG_BIN to the directory holding initdb and pg_ctl.
 #
 # Usage: scripts/test-db.sh start|stop|status
 set -euo pipefail
 
-PGBIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)"
+PGBIN="${BP_PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)}"
 DATA_DIR="${BP_TEST_PG_DIR:-$HOME/.bp_test_pg}"
 PORT=5433
 LOG="$DATA_DIR/log"

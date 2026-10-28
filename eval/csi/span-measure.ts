@@ -7,7 +7,7 @@
  * Contains NO drawing text. Every path comes from argv; client text read from a corpus is written
  * ONLY to the `--priv` directory (per-unit records), never to stdout or `--out`.
  *
- *   npx esbuild eval/csi/span-measure.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/span-measure.ts --bundle --platform=node --target=node24 \
  *     --alias:@=./src --outfile=build/csi-span-measure.js
  *   node build/csi-span-measure.js src/data/csi-kb.json [--corpus <corpus.ndjson>] \
  *     [--priv <private dir>] [--out <aggregates.txt>] [--ts <timestamp for file names>]

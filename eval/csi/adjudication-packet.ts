@@ -23,7 +23,7 @@
  *
  * Build + run (from blueprintparser_2/):
  *   npx esbuild eval/csi/adjudication-packet.ts --bundle --platform=node \
- *     --target=node20 --outfile=build/csi-packet.js
+ *     --target=node24 --outfile=build/csi-packet.js
  *   node build/csi-packet.js eval/csi/gold-pilot.json eval/csi/PILOT_ADJUDICATION_PACKET.md
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";

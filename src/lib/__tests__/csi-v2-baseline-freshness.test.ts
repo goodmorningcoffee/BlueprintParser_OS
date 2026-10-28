@@ -5,7 +5,7 @@
  * records the sha256 of every file that defines v2 behaviour (`V2_ENGINE_FILES`, eval/csi/
  * v2-baseline.ts), the sha256 of the KB artifact and the reachability census. THIS TEST IS
  * DESIGNED TO FAIL when the engine or the KB changes: recapture in the SAME commit
- *   npx esbuild eval/csi/v2-baseline.ts --bundle --platform=node --target=node20 --alias:@=./src \
+ *   npx esbuild eval/csi/v2-baseline.ts --bundle --platform=node --target=node24 --alias:@=./src \
  *     --external:pg-native --outfile=build/csi-v2base.js && node build/csi-v2base.js
  * and re-run eval/csi/run-eval.sh so the S5 numbers in eval/csi/results/ describe the same engine.
  * Do not delete this test to make it pass. The KB checks skip when the gitignored KB is absent

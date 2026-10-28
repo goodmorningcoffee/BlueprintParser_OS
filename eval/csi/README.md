@@ -21,15 +21,20 @@ eval/csi/run-eval.sh old   # score the frozen OLD engine baseline only
 eval/csi/run-eval.sh v2    # capture v2 (with and without sheet context) → score → compare → τ sweep
 ```
 
-**Inputs** (all outside the repo; override with the env vars):
+**Inputs** (all outside the repo; set the env vars — the script's built-in defaults point at the
+maintainer's private workspace, which a fresh clone does not have):
 
 | env var | default | what |
 |---|---|---|
 | `CSI_CORPUS` | `$CSI_WORK/corpus.ndjson` | the frozen 471-page corpus (`extract-corpus.sh`); the script checks 471 rows + its sha256 and refuses anything else |
 | `CSI_CORPUS_LINES` | `$CSI_WORK/corpus-lines.ndjson` | the same pages as Textract LINES, which v2 reads; build once with `extract-corpus-lines.sh <bundles-dir> <out.ndjson>` |
-| `CSI_GOLD` | `…/gitignore/projects/csi_private_eval/gold-pilot.json` | the pilot labels (client text — never copy into `eval/csi/`) |
-| `CSI_PRIVATE` | `…/gitignore/projects/csi_private_eval/v2` | where anything carrying drawing text goes |
-| `CSI_WORK` | `…/gitignore/csi_baseline_work` | work dir holding the two corpus files |
+| `CSI_GOLD` | maintainer's private directory | the pilot labels (client text — never copy into `eval/csi/`) |
+| `CSI_PRIVATE` | maintainer's private directory | where anything carrying drawing text goes |
+| `CSI_WORK` | maintainer's private directory | work dir holding the two corpus files |
+
+The corpus and the gold labels come from real drawing sets and are not published; to run the eval
+yourself, export your own projects with the admin Data tools (`bp-export/1`) and label your own pages
+per `LABELING_PROTOCOL.md`.
 
 `src/data/csi-kb.json` must exist (it is gitignored; see the note above). Needs `node`, `npx esbuild`, `jq`.
 
@@ -68,10 +73,9 @@ The old engine is now `src/lib/csi-detect-legacy.ts` (byte-identical to the pre-
 The baseline says what the engine *does*. The gold set is the only thing that can
 say what it *should have done*. Neither alone is an acceptance bar.
 
-**Before building the P2 knowledge base, read
-`claude_notes/CSI_REBUILD/S4_TSV_AUDIT.md`.** Two things there change the plan:
-the 26.4%-unreachable problem is a SCORING problem, not a data one (in-repo
-synonyms rescue only 5.6% of it), and `src/data/csi.tsv` supplies 785 free
+Two findings from the pre-v2 audit of the TSVs (the audit notes themselves are not in this
+repository) shaped the v2 knowledge base: the 26.4%-unreachable problem is a SCORING problem, not a
+data one (in-repo synonyms rescue only 5.6% of it), and `src/data/csi.tsv` supplies 785 free
 significant words as alternate titles for 212 existing codes.
 
 `baseline-old-engine.json` is the **pre-rebuild measurement** of the live CSI text
@@ -122,7 +126,7 @@ Two consecutive captures are byte-identical apart from `capturedAt` and
 eval/csi/extract-corpus.sh <bundles-dir> /path/to/work/corpus.ndjson
 
 # Stage B — score with the live engine (~30 s)
-npx esbuild eval/csi/capture.ts --bundle --platform=node --target=node20 \
+npx esbuild eval/csi/capture.ts --bundle --platform=node --target=node24 \
   --outfile=build/csi-capture.js --alias:@=./src --external:pg-native
 node build/csi-capture.js /path/to/work/corpus.ndjson eval/csi/baseline-old-engine.json
 ```

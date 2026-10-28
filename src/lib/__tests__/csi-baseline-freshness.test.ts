@@ -70,7 +70,7 @@ describe("CSI corpus baseline artifact", () => {
           drifted.map(f => `  • ${f}`).join("\n") +
           `\n\nThat is expected if you meant to change engine behavior. Recapture in THIS commit:\n` +
           `  eval/csi/extract-corpus.sh <bundles-dir> <work>/corpus.ndjson\n` +
-          `  npx esbuild eval/csi/capture.ts --bundle --platform=node --target=node20 \\\n` +
+          `  npx esbuild eval/csi/capture.ts --bundle --platform=node --target=node24 \\\n` +
           `    --outfile=build/csi-capture.js --alias:@=./src --external:pg-native\n` +
           `  node build/csi-capture.js <work>/corpus.ndjson eval/csi/baseline-old-engine.json\n` +
           `\nSee eval/csi/README.md. Do not delete this test to make it pass.\n`,

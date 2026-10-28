@@ -27,7 +27,7 @@
  * Pages with < 10 characters of rawText are skipped (codes []), as the live csi-detect contract does.
  *
  * Build + run (from the repo root; the bundle name must contain `csi-capture-v2`):
- *   npx esbuild eval/csi/capture-v2.ts --bundle --platform=node --target=node20 --alias:@=./src \
+ *   npx esbuild eval/csi/capture-v2.ts --bundle --platform=node --target=node24 --alias:@=./src \
  *     --external:pg-native --outfile=build/csi-capture-v2.js
  *   node build/csi-capture-v2.js <corpus.ndjson> <corpus-lines.ndjson> <out.json> <out-noctx.json> <privateDir>
  */

@@ -35,7 +35,7 @@
  * substitutes the TSV title). Reconciliation with the TSV is S2, not here.
  *
  * Usage (esbuild-bundle convention, IMPLEMENTATION.md):
- *   npx esbuild eval/csi/mf-parse.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/mf-parse.ts --bundle --platform=node --target=node24 \
  *     --alias:@=./src --external:pg-native --outfile=build/csi-mf-parse.js
  *   node build/csi-mf-parse.js [pdfPath] [outPath]
  */

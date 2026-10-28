@@ -70,8 +70,9 @@ Recorded so a future reader does not "restore" it:
 
 ## What is known-limited about what we DID take
 
-`notes/UPSTREAM_KNOWN_LIMITS.md` in the rebuild repo maps upstream's own seven documented ceilings
-onto BP2's RC1–RC9 vocabulary. Two are worth knowing before touching this code:
+Upstream documents seven known ceilings of its own engine (the maintainer's mapping of them onto
+BP2's RC1–RC9 vocabulary is in private notes, not in this repository). Two are worth knowing before
+touching this code:
 
 - **the tuned constants are mask-pixel literals** calibrated on one sheet and one CAD style —
   which is why mask dim is pinned at 3000 and why changing it is a calibration decision;

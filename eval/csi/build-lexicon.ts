@@ -51,7 +51,7 @@
  * P1. That scheduling fact is the most useful thing this file establishes.
  *
  * Build + run (from blueprintparser_2/):
- *   npx esbuild eval/csi/build-lexicon.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/build-lexicon.ts --bundle --platform=node --target=node24 \
  *     --outfile=build/csi-lexicon-build.js
  *   node build/csi-lexicon-build.js <corpus.ndjson> build/csi-lexicon.json eval/csi/lexicon-gap.json
  */

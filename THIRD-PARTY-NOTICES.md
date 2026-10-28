@@ -3,10 +3,9 @@
 Components in this repository that are **not** covered by BlueprintParser's own LICENSE, with
 where their licence text lives and what was changed.
 
-> ⚠ BlueprintParser's own LICENSE is a **non-commercial source-available** licence. It does not
-> and cannot govern the third-party code listed here, which is distributed under its own terms.
-> A §5 carve-out sentence naming that distinction is an owner-only edit to LICENSE and is
-> tracked as decision 2 of the bucket-fill rebuild plan. **It has not been made yet.**
+> BlueprintParser's own LICENSE is a **non-commercial source-available** licence. It does not
+> and cannot govern the third-party code listed here, which is distributed under its own terms
+> (see also `NOTICE`).
 
 ---
 
@@ -37,11 +36,7 @@ the head of that file. That list is the compliance artifact; this table is a sum
 | `oneclick.ts` | **3** — (1) bbox lifted out of the flood pass and returned on the `ok` result; (2) two reusable scratch buffers for the region raster; (3) `LEAK_FRACTION` exported (one keyword, no behavioural change). Full reasoning in the file's own MODIFICATIONS list. |
 | `rastermask.ts` | none — vendored verbatim |
 
-⚠ This table had read *"none yet — vendored verbatim"* for both files from 2026-07-26 until
-2026-07-28, while `oneclick.ts` had in fact carried modifications (1) and (2) since the day it was
-vendored. The in-file list — which is the artifact §4(b) actually requires — was correct
-throughout, so the obligation was met; but a summary that contradicts it is worse than no summary,
-because it is the one a reader checks first. **Update both, or neither.**
+When a vendored file changes, update its in-file MODIFICATIONS list and this table together.
 
 ### Attribution
 
@@ -68,16 +63,28 @@ harness fails loudly when it is absent rather than silently substituting a thinn
 | **Copyright** | Copyright Mozilla Foundation and contributors |
 | **File** | `public/pdf.worker.min.mjs` — redistributed **unmodified** |
 
-This is a pre-existing dependency that predates the bucket-fill work; the notice is added here
-because this repository previously had no `NOTICE` file at all.
-
 The `pdfjs-dist` npm package is also Apache-2.0 and is declared in `package.json` rather than
 vendored, so it is covered by the usual npm dependency provenance rather than by this file.
 
 ---
 
+## Copyleft dependencies installed into the container images (not vendored)
+
+These are not in this repository; the Dockerfiles install them from PyPI when an image is built.
+Their licences apply to whoever builds, distributes or hosts those images — check them before you
+offer a hosted service.
+
+| package | pinned in | licence | used by |
+|---|---|---|---|
+| `ultralytics==8.4.171` | `Dockerfile.yolo` | AGPL-3.0 (or an Ultralytics enterprise licence) | YOLO inference (`scripts/yolo_inference.py`), SageMaker image only |
+| `pymupdf==1.27.2.2` | `Dockerfile` | AGPL-3.0 (or an Artifex commercial licence) | PDF page/vector reading in the Python helpers that `import fitz` under `scripts/` |
+
+---
+
 ## Everything else
 
-Runtime and build dependencies are declared in `package.json` and carry their own licences in
-`node_modules/*/LICENSE`. This file covers only code that is **vendored into the repository** or
-**redistributed as a build artifact**.
+Runtime and build dependencies are declared in `package.json` (npm) and in the Dockerfiles and
+`scripts/requirements*.txt` (pip), and carry their own licences (`node_modules/*/LICENSE`, the
+installed packages' metadata). The Table Transformer checkpoint under `models/tatr/` is not in this
+repository (see the README, "Build prerequisites"). This file covers only code that is **vendored
+into the repository** or **redistributed as a build artifact**, plus the copyleft notes above.

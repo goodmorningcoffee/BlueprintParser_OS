@@ -24,49 +24,47 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
-.env*.local
+# env files — every .env variant (incl. the .env.local.bak.<epoch> backups install_setup.sh writes)
+.env*
 !.env.example
 
 # deployment config
-.deploy.env
+.deploy.env*
+!.deploy.env.example
 
-# secrets / terraform state
-infrastructure/terraform/terraform.tfvars
+# secrets / terraform state, at any depth (real values live outside the repo)
+**/*.tfvars
+!**/*.tfvars.example
+**/*.tfstate*
+**/backend.hcl
 infrastructure/terraform/.terraform/
-infrastructure/terraform/*.tfstate*
 infrastructure/terraform/.terraform.lock.hcl
-# main.tf's backend "s3" block holds the real state bucket name + DynamoDB
-# lock table when used locally. Committed version must have CHANGEME-
-# placeholders — so we gitignore this file entirely to prevent accidental
-# leak into the public OS repo. If you need to commit changes to other parts
-# of main.tf, force-add it with CHANGEME- placeholders restored, then put
-# the real backend values back afterwards.
-infrastructure/terraform/main.tf
+*.bak
+*.bak.*
 
-# YOLO model WEIGHTS (large binary files). ANCHORED to the repo root — the weights live in
-# /models (yolo_*.pt, tatr/model.safetensors); build-artifact copies under .next are covered
-# by the .next ignore. The previous UN-anchored `models/` glob also matched the SOURCE route
-# dir src/app/api/admin/models/, leaving admin/models/route.ts + models/reprocess-csi/route.ts
-# UNTRACKED (fresh clones/CI/deploy were missing them). Weight leaks are additionally blocked
-# by the CloudFront + task-role Deny rules (defense-in-depth). [refactor jul6 S041 — S001-class
-# tree-integrity gap]
+# Model WEIGHTS (large binary files). ANCHORED to the repo root: the weights live in /models
+# (yolo_*.pt, tatr/model.safetensors). An un-anchored `models/` would also match the SOURCE
+# directory src/app/api/admin/models/. scripts/prepush-check.sh refuses a push without this line.
 /models/
 
-# internal planning docs — ANCHORED to repo root (DR004 TREE-1/TREE-2): un-anchored dir/file
-# globs are the same antipattern that gitignored the admin/models SOURCE dir (S041). These
-# only ignore the root-level planning docs; a same-named source file under src/ stays tracked.
-# (NOTE: *.plan / *.pem below stay UN-anchored ON PURPOSE — secret/key protection must match
-# at any depth.)
+# local planning notes and scratch files (anchored: a same-named file under src/ stays tracked)
 /gitignore/
-#put plans, temp files, etc in gitignore
-# owner's private perf capture — stays on the Mac (the tracked baseline is perf/baseline.json)
 /perf/private-gateway-baseline.json
 /plans/
 /REFACTORED_MARCH29.md
 /bucket-fill.md
 /csv-editor-panel.md
 /symbol-search-fix.md
+
+# drawings and logs never belong in git (test PDFs live under the ignored test/fixtures/)
+*.pdf
+*.log
+.pytest_cache/
+
+# editors
+.vscode/
+.idea/
+*.swp
 
 # vercel
 .vercel

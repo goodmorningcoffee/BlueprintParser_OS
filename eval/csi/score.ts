@@ -44,7 +44,7 @@
  * division without the data to detect a regression has not passed a regression test.
  *
  * Build + run (from blueprintparser_2/):
- *   npx esbuild eval/csi/score.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/score.ts --bundle --platform=node --target=node24 \
  *     --outfile=build/csi-score.js
  *   node build/csi-score.js <gold.json> <engine.json> <out.json> [--specificity=section|exact] [--min-units=50]
  */

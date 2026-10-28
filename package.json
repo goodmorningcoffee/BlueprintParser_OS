@@ -1,11 +1,20 @@
 {
   "name": "blueprintparser",
   "version": "1.0.0",
-  "description": "Open-source AI-powered construction blueprint analysis platform",
+  "private": true,
+  "description": "Source-available AI-powered construction blueprint analysis platform",
   "license": "SEE LICENSE IN LICENSE",
+  "author": "goodmorningcoffee",
+  "homepage": "https://github.com/goodmorningcoffee/BlueprintParser_OS#readme",
+  "bugs": {
+    "url": "https://github.com/goodmorningcoffee/BlueprintParser_OS/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/goodmorningcoffee/BlueprintParser_OS.git"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "scripts": {
     "dev": "next dev --turbopack",

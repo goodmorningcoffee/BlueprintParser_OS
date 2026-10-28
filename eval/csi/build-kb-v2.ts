@@ -32,7 +32,7 @@
  *   7. gate    — PLAN §5.6 / E12a report counters must be 0 (the two reach counters are printed).
  *
  * Usage (from blueprintparser_2/; the outfile MUST contain `csi-kbv2` — see the guard below):
- *   npx esbuild eval/csi/build-kb-v2.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/build-kb-v2.ts --bundle --platform=node --target=node24 \
  *     --alias:@=./src --external:pg-native --outfile=build/csi-kbv2-build.js
  *   node build/csi-kbv2-build.js [pdfPath]
  * Writes `src/data/csi-kb.json` (gitignored, see below) and `eval/csi/kb-report.json` (numbers only,

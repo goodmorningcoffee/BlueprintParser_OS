@@ -14,7 +14,7 @@
  * meets OLD's, and the precision there vs 2× OLD.
  *
  * Build + run (from the repo root):
- *   npx esbuild eval/csi/sweep-tau.ts --bundle --platform=node --target=node20 --alias:@=./src \
+ *   npx esbuild eval/csi/sweep-tau.ts --bundle --platform=node --target=node24 --alias:@=./src \
  *     --external:pg-native --outfile=build/csi-sweep-tau.js
  *   node build/csi-sweep-tau.js --gold=<gold.json> --frame=eval/csi/gold-frame.json \
  *     --corpus=<corpus.ndjson> --capture=<v2-engine.json> [--taus=0.5,0.55,…] [--cap=40] \

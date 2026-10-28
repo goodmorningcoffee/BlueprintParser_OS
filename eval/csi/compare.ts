@@ -22,7 +22,7 @@
  * Pattern text (top (code, pattern) pairs) goes only to `--private-out`.
  *
  * Build + run (from the repo root):
- *   npx esbuild eval/csi/compare.ts --bundle --platform=node --target=node20 --alias:@=./src \
+ *   npx esbuild eval/csi/compare.ts --bundle --platform=node --target=node24 --alias:@=./src \
  *     --external:pg-native --outfile=build/csi-compare.js
  *   node build/csi-compare.js --gold=<gold.json> --frame=eval/csi/gold-frame.json \
  *     --corpus=<corpus.ndjson> --engine=old=eval/csi/baseline-old-engine.json [--engine=v2=…] \

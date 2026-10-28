@@ -37,7 +37,7 @@ echo "[run-eval] corpus OK: 471 rows, sha ${sha:0:16}" >&2
 
 # ── 2. bundles (names must contain the argv-guard substring and nothing else's) ─
 mkdir -p build eval/csi/results "$PRIVATE"
-bundle() { npx esbuild "eval/csi/$1.ts" --bundle --platform=node --target=node20 --alias:@=./src \
+bundle() { npx esbuild "eval/csi/$1.ts" --bundle --platform=node --target=node24 --alias:@=./src \
   --external:pg-native --log-level=warning --outfile="build/$2.js"; }
 bundle score csi-score
 bundle compare csi-compare

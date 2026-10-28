@@ -17,7 +17,7 @@
  * describes of csi-mf-parse.test.ts skip (announced by src/test/global-setup.ts; a failure
  * under BP_REQUIRE_CSI_KB=1, the workspace's scripts/bp-suite default).
  *
- *   npx esbuild eval/csi/mf-fixture-extract.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/mf-fixture-extract.ts --bundle --platform=node --target=node24 \
  *     --alias:@=./src --external:pg-native --outfile=build/csi-mf-fixture.js
  *   node build/csi-mf-fixture.js [pdfPath] [outPath]
  *

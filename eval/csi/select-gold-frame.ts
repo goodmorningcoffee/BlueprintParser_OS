@@ -16,7 +16,7 @@
  *
  * Build + run (from blueprintparser_2/):
  *   npx esbuild eval/csi/select-gold-frame.ts --bundle --platform=node \
- *     --target=node20 --outfile=build/csi-select.js
+ *     --target=node24 --outfile=build/csi-select.js
  *   node build/csi-select.js <corpus.ndjson> eval/csi/baseline-old-engine.json \
  *     eval/csi/gold-frame.json
  */

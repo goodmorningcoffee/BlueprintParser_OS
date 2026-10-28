@@ -189,7 +189,7 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
       { method: "POST", path: "/api/admin/llm-config/test", auth: "admin", desc: "Ping the configured LLM to verify credentials and model availability." },
       { method: "GET", path: "/api/admin/models", auth: "admin", desc: "List YOLO models registered in the `models` table." },
       { method: "POST", path: "/api/admin/models", auth: "admin", desc: "Register a new YOLO model (S3 path + config)." },
-      { method: "PUT", path: "/api/admin/models/[id]", auth: "admin", desc: "Update model config (confidence, IoU, classes, class→CSI map)." },
+      { method: "PUT", path: "/api/admin/models", auth: "admin", desc: "Update a model's config (confidence, IoU, classes, class→CSI map); the model id travels in the body." },
       { method: "POST", path: "/api/admin/models/reprocess-csi", auth: "admin", desc: "Re-run CSI assignment on all annotations (after editing class→CSI mappings)." },
       { method: "POST", path: "/api/admin/reprocess", auth: "admin", desc: "Re-trigger the processing pipeline for a project." },
       { method: "GET", path: "/api/admin/recent-parses", auth: "root", desc: "Recent parsing job history (every company; root admin only)." },

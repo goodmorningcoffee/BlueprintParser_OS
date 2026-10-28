@@ -20,7 +20,7 @@
  * that cannot rot.
  *
  * Build + run (from blueprintparser_2/):
- *   npx esbuild eval/csi/capture.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/capture.ts --bundle --platform=node --target=node24 \
  *     --outfile=build/csi-capture.js --alias:@=./src --external:pg-native
  *   node build/csi-capture.js <corpus.ndjson> <out.json>
  */

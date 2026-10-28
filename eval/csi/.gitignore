@@ -3,3 +3,5 @@
 *spans*
 !gold-frame.json
 !select-gold-frame.ts
+*.ndjson
+*toppairs*

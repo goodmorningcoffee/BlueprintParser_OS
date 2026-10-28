@@ -1,3 +1,7 @@
+# Local development only. These credentials are placeholders for a loopback database; never expose
+# these ports or reuse these values anywhere else. Ports bind to 127.0.0.1 only.
+#   docker compose up -d                        → PostgreSQL on 127.0.0.1:5433 (beaver/beaver, db beaverdb)
+#   docker compose --profile labeling up -d     → also a local Label Studio on 127.0.0.1:8080
 services:
   db:
     image: postgres:16-alpine
@@ -7,15 +11,16 @@ services:
       POSTGRES_PASSWORD: beaver
       POSTGRES_DB: beaverdb
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
   label-studio:
     image: heartexlabs/label-studio:latest
+    profiles: ["labeling"]
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
       LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN: "true"

@@ -26,7 +26,7 @@
  * below reports both separately so they are never conflated.
  *
  * Build + run (from blueprintparser_2/):
- *   npx esbuild eval/csi/build-kb.ts --bundle --platform=node --target=node20 \
+ *   npx esbuild eval/csi/build-kb.ts --bundle --platform=node --target=node24 \
  *     --outfile=build/csi-kb-build.js
  *   node build/csi-kb-build.js build/csi-kb.json eval/csi/kb-stats.json
  *
