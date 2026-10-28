@@ -1,11 +1,15 @@
 {
   "capability": "cells",
   "version": 1,
-  "modules": [],
+  "modules": [
+    "src/lib/parse-engine/cells.ts",
+    "src/lib/parse-engine/geometry.ts",
+    "src/lib/parse-engine/lines.ts"
+  ],
   "history": [
     {
       "version": 1,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "02136b77c1b11e8fa2234dd9f1b864dc53cdd1f5d68cb9bb9171890af1903b24"
     }
   ]
 }

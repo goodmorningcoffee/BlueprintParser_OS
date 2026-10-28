@@ -2,8 +2,11 @@
 """
 detect_table_lines.py — OpenCV line detection for table grid structure.
 
-Input: path to a cropped table region PNG image
+Input: path to a cropped table region PNG image (or a full page image with --crop)
 Output: JSON to stdout with detected rows, columns, and grid structure
+
+--crop x0,y0,x1,y1 (normalised page coordinates; table pipeline WP-3.B, K16): cut that box out of the
+image first and use CROP-RELATIVE thresholds (see CROP_* below). Without --crop nothing changes.
 
 Uses morphological operations to find horizontal/vertical lines,
 then computes intersections to define the table grid.
@@ -16,7 +19,7 @@ import numpy as np
 from collections import defaultdict
 
 
-def find_line_masks(image):
+def find_line_masks(image, kernel_min_px=40):
     """Detect horizontal and vertical line masks using morphological operations."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -27,12 +30,12 @@ def find_line_masks(image):
 
     h, w = image.shape[:2]
     # Horizontal lines: kernel width = 5% of image width (min 40px)
-    h_kernel_w = max(40, int(w * 0.05))
+    h_kernel_w = max(kernel_min_px, int(w * 0.05))
     h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (h_kernel_w, 1))
     h_mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, h_kernel, iterations=1)
 
     # Vertical lines: kernel height = 5% of image height (min 40px)
-    v_kernel_h = max(40, int(h * 0.05))
+    v_kernel_h = max(kernel_min_px, int(h * 0.05))
     v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, v_kernel_h))
     v_mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, v_kernel, iterations=1)
 
@@ -113,23 +116,88 @@ def cluster_close_lines(positions, min_separation):
     return merged
 
 
-def detect_grid(image_path, min_h_length=0.15, min_v_length=0.20, tolerance=15):
+# ── crop mode (--crop; table pipeline WP-3.B, K16) ─────────────────────────────────────────────
+# The full-page defaults above are tuned for a whole sheet: a 40 px minimum kernel, line lengths as a share
+# of the PAGE, a fixed 15 px clustering tolerance, and caps that keep the first 20 columns / 50 rows of the
+# sheet. On a crop of one table every threshold is relative to the crop instead. INFERRED values (no crop
+# corpus measured yet; WP-3.Q measures them): a row / column rule spans most of its table, so .35 of the
+# crop rejects glyph strokes and keeps the rules of a two-block table; the tolerance is .4 % of the crop's
+# longer side (min 3 px); the caps are the engine's model caps (500 rows, 40 columns).
+CROP_MIN_H_LENGTH = 0.35
+CROP_MIN_V_LENGTH = 0.35
+CROP_KERNEL_MIN_PX = 10
+CROP_TOLERANCE_SHARE = 0.004
+CROP_MIN_TOLERANCE_PX = 3
+CROP_MAX_ROWS = 500
+CROP_MAX_COLS = 40
+# The page mode's second clustering pass merges lines closer than .8 (cols) / .5 (rows) of the MEDIAN gap,
+# which on one table merges a real narrow column (a tag column) into its neighbour. On a crop the first
+# pass already rejects glyph strokes, so the second pass only merges within the tolerance.
+CROP_MERGE_SHARE = 0.0
+
+
+def parse_crop(text):
+    """'x0,y0,x1,y1' (normalised, 0 <= x0 < x1 <= 1, same for y) -> tuple of floats; ValueError otherwise."""
+    parts = [float(p) for p in str(text).split(",")]
+    if len(parts) != 4 or not all(np.isfinite(parts)):
+        raise ValueError(f"--crop needs 4 numbers, got {text!r}")
+    x0, y0, x1, y1 = parts
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+        raise ValueError(f"--crop must satisfy 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1, got {text!r}")
+    return x0, y0, x1, y1
+
+
+def crop_pixels(shape, crop):
+    """Pixel bounds (x0, y0, x1, y1) of a normalised crop on an image of `shape` (rows, cols, ...)."""
+    h, w = shape[:2]
+    x0 = max(0, min(w - 1, int(np.floor(crop[0] * w))))
+    y0 = max(0, min(h - 1, int(np.floor(crop[1] * h))))
+    x1 = max(x0 + 1, min(w, int(np.ceil(crop[2] * w))))
+    y1 = max(y0 + 1, min(h, int(np.ceil(crop[3] * h))))
+    return x0, y0, x1, y1
+
+
+def detect_grid(image_path, min_h_length=None, min_v_length=None, tolerance=None, crop=None):
     """Main detection: find horizontal/vertical lines and compute grid.
 
     OPENCV-FIX-1a: min_v_length default bumped from 0.10 → 0.20 to reject the
     short vertical line segments that text glyphs and dimension marks create on
     architectural drawings. The wrapper still passes through user overrides via
     `--min-v-length` so the existing ParseOptionsPanel slider keeps working.
+
+    `crop` (normalised page box, WP-3.B): cut it out first and default every threshold to its CROP_* value;
+    positions are then normalised to the crop. An explicit argument always wins over either default set.
     """
     image = cv2.imread(image_path)
     if image is None:
         return {"error": "Failed to load image", "rows": [], "cols": []}
 
+    crop_px = None
+    if crop is not None:
+        crop_px = crop_pixels(image.shape, crop)
+        page_h, page_w = image.shape[:2]
+        image = image[crop_px[1]:crop_px[3], crop_px[0]:crop_px[2]]
+        print(f"Crop {crop_px} of {page_w}x{page_h}", file=sys.stderr)
+        if min_h_length is None:
+            min_h_length = CROP_MIN_H_LENGTH
+        if min_v_length is None:
+            min_v_length = CROP_MIN_V_LENGTH
+        if tolerance is None:
+            tolerance = max(CROP_MIN_TOLERANCE_PX, int(round(CROP_TOLERANCE_SHARE * max(image.shape[:2]))))
+        kernel_min_px, max_rows, max_cols = CROP_KERNEL_MIN_PX, CROP_MAX_ROWS, CROP_MAX_COLS
+        col_merge_share, row_merge_share = CROP_MERGE_SHARE, CROP_MERGE_SHARE
+    else:
+        min_h_length = 0.15 if min_h_length is None else min_h_length
+        min_v_length = 0.20 if min_v_length is None else min_v_length
+        tolerance = 15 if tolerance is None else tolerance
+        kernel_min_px, max_rows, max_cols = 40, MAX_REASONABLE_ROWS, MAX_REASONABLE_COLS
+        col_merge_share, row_merge_share = 0.8, 0.5
+
     h, w = image.shape[:2]
     print(f"Image size: {w}x{h}", file=sys.stderr)
 
     # Detect line masks
-    h_mask, v_mask = find_line_masks(image)
+    h_mask, v_mask = find_line_masks(image, kernel_min_px)
 
     # Filter short lines
     h_filtered = filter_lines(h_mask, is_horizontal=True, min_length_ratio=min_h_length)
@@ -150,11 +218,11 @@ def detect_grid(image_path, min_h_length=0.15, min_v_length=0.20, tolerance=15):
     if len(col_xs) >= 3:
         col_gaps = [col_xs[i + 1] - col_xs[i] for i in range(len(col_xs) - 1)]
         median_col_gap = np.median(col_gaps)
-        col_xs = cluster_close_lines(col_xs, max(int(median_col_gap * 0.8), tolerance))
+        col_xs = cluster_close_lines(col_xs, max(int(median_col_gap * col_merge_share), tolerance))
     if len(row_ys) >= 3:
         row_gaps = [row_ys[i + 1] - row_ys[i] for i in range(len(row_ys) - 1)]
         median_row_gap = np.median(row_gaps)
-        row_ys = cluster_close_lines(row_ys, max(int(median_row_gap * 0.5), tolerance))
+        row_ys = cluster_close_lines(row_ys, max(int(median_row_gap * row_merge_share), tolerance))
 
     if len(col_xs) != raw_col_count or len(row_ys) != raw_row_count:
         print(
@@ -167,21 +235,21 @@ def detect_grid(image_path, min_h_length=0.15, min_v_length=0.20, tolerance=15):
     # this is almost certainly noise — log a warning and trim. Tables with
     # truly that many columns are extreme outliers; trimming gives the merger
     # SOMETHING usable instead of an unfilterable mess.
-    if len(col_xs) > MAX_REASONABLE_COLS:
+    if len(col_xs) > max_cols:
         print(
-            f"WARNING: detected {len(col_xs)} columns exceeds MAX_REASONABLE_COLS={MAX_REASONABLE_COLS}, "
-            f"trimming to first {MAX_REASONABLE_COLS}. Consider using user-tunable --min-v-length to "
+            f"WARNING: detected {len(col_xs)} columns exceeds the cap {max_cols}, "
+            f"trimming to first {max_cols}. Consider using user-tunable --min-v-length to "
             f"reject more short lines.",
             file=sys.stderr,
         )
-        col_xs = col_xs[:MAX_REASONABLE_COLS]
-    if len(row_ys) > MAX_REASONABLE_ROWS:
+        col_xs = col_xs[:max_cols]
+    if len(row_ys) > max_rows:
         print(
-            f"WARNING: detected {len(row_ys)} rows exceeds MAX_REASONABLE_ROWS={MAX_REASONABLE_ROWS}, "
-            f"trimming to first {MAX_REASONABLE_ROWS}.",
+            f"WARNING: detected {len(row_ys)} rows exceeds the cap {max_rows}, "
+            f"trimming to first {max_rows}.",
             file=sys.stderr,
         )
-        row_ys = row_ys[:MAX_REASONABLE_ROWS]
+        row_ys = row_ys[:max_rows]
 
     # Convert to normalized 0-1 coordinates
     rows_normalized = [{"y": round(y / h, 6), "height": 0} for y in row_ys]
@@ -221,28 +289,43 @@ def detect_grid(image_path, min_h_length=0.15, min_v_length=0.20, tolerance=15):
             confidence += regularity * 0.15
         confidence = min(confidence, 0.85)
 
-    return {
+    result = {
         "rows": rows_normalized,
         "cols": cols_normalized,
         "rowCount": max(0, len(row_ys) - 1),  # rows between lines
         "colCount": max(0, len(col_xs) - 1),  # cols between lines
         "confidence": round(confidence, 3),
     }
+    if crop_px is not None:
+        # The crop actually cut (whole pixels), normalised to the page: map positions with THIS box.
+        result["mode"] = "crop"
+        result["crop"] = [round(crop_px[0] / page_w, 6), round(crop_px[1] / page_h, 6),
+                          round(crop_px[2] / page_w, 6), round(crop_px[3] / page_h, 6)]
+    return result
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Detect table grid lines in an image")
     parser.add_argument("image_path", help="Path to the input image")
-    parser.add_argument("--min-h-length", type=float, default=0.15, help="Min horizontal line length ratio (0-1)")
-    parser.add_argument("--min-v-length", type=float, default=0.20, help="Min vertical line length ratio (0-1) — bumped from 0.10 in OPENCV-FIX-1a to reject text-edge false positives")
-    parser.add_argument("--tolerance", type=int, default=15, help="Line clustering tolerance in pixels")
+    # Defaults are resolved in detect_grid (None = "not given"), so --crop can pick crop-relative ones.
+    parser.add_argument("--min-h-length", type=float, default=None, help="Min horizontal line length ratio (0-1); default 0.15, or 0.35 of the crop with --crop")
+    parser.add_argument("--min-v-length", type=float, default=None, help="Min vertical line length ratio (0-1); default 0.20 (bumped from 0.10 in OPENCV-FIX-1a to reject text-edge false positives), or 0.35 of the crop with --crop")
+    parser.add_argument("--tolerance", type=int, default=None, help="Line clustering tolerance in pixels; default 15, or 0.4%% of the crop's longer side with --crop")
+    parser.add_argument("--crop", type=str, default=None, help="x0,y0,x1,y1 normalised page box: crop first, crop-relative thresholds")
     args = parser.parse_args()
+
+    try:
+        crop = parse_crop(args.crop) if args.crop is not None else None
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc), "rows": [], "cols": []}))
+        sys.exit(0)
 
     result = detect_grid(
         args.image_path,
         min_h_length=args.min_h_length,
         min_v_length=args.min_v_length,
         tolerance=args.tolerance,
+        crop=crop,
     )
     print(json.dumps(result))
