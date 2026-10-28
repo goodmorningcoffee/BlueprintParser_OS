@@ -131,7 +131,7 @@ export default function ClassifiersTab({ projects, isRootAdmin }: ClassifiersTab
               ? <RecipeEditor draft={draft} builtIn={builtInOf(draft.id)} catalog={data.catalog} onChange={(next) => setDrafts((d) => ({ ...d, [next.id]: next }))} />
               : <p className="text-xs text-[var(--muted)] italic">Select a recipe on the left, or create a custom one.</p>}
             <div className="border-t border-[var(--border)] pt-3">
-              <PreviewPane draft={draft} projects={projects} companyId={companyId} canRun={companyId === null} />
+              <PreviewPane draft={draft} projects={projects} companyId={companyId} canRun={companyId === null} canParse={isRootAdmin} />
             </div>
           </div>
         </div>

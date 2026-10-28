@@ -5,11 +5,14 @@
 // top contributions ("Div 08 share +1.6"), plus the verdict-agreement table (stored accept / reject /
 // rename labels vs what the draft now says). "Run on project" starts reprocess scope=classifiers for
 // that project (POST /api/admin/classifiers/run, NDJSON) and prints its stream.
+// [TP-3 WP-3.P] Root only: "Parse proposals" parses each structure proposal's box with the parse engine at
+// `instant` (POST /api/admin/classifiers/parse-preview, compute only) and shows the read-only structure under it.
 
 import { useState } from "react";
 import type { ClassifierProposal, ClassifierRecipe } from "@/lib/classifier-engine";
 import { formatReprocessEvent } from "@/app/admin/reprocess-client";
 import { formatContribution, parsePageSpec, pct } from "./draft-ops";
+import { PARSE_PREVIEW_URL, ParsePreview, parsePreviewItems, type ParsePreviewItem } from "./ParsePreview";
 
 const INPUT = "px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none";
 const BTN = "px-3 py-1 text-xs rounded border border-[var(--border)] hover:border-[var(--accent)] disabled:opacity-50";
@@ -31,6 +34,8 @@ export interface PreviewPaneProps {
   companyId: number | null;
   /** Run is reprocess for the caller's OWN company only. */
   canRun: boolean;
+  /** Root only: parse each previewed proposal with the parse engine (the route is root-only). */
+  canParse?: boolean;
 }
 
 async function readError(res: Response): Promise<string> {
@@ -47,7 +52,7 @@ export function runVerdictLines(done: Record<string, unknown> | null, reasons: r
     : "No proposals were written: the engine ran on the pages with YOLO detections but no table candidate cleared the recipe thresholds."];
 }
 
-function ProposalRow({ p }: { p: ClassifierProposal }) {
+function ProposalRow({ p, parse }: { p: ClassifierProposal; parse?: ParsePreviewItem }) {
   const why = [...p.detectWhy.slice(0, 2), ...p.nameWhy.slice(0, 4)];
   return (
     <li className="rounded border border-[var(--border)] px-2 py-1 text-[11px]">
@@ -60,17 +65,19 @@ function ProposalRow({ p }: { p: ClassifierProposal }) {
       <ul className="flex flex-wrap gap-x-3 text-[10px] text-[var(--muted)]">
         {why.map((c) => <li key={c.signalId} title={c.signalId}>{formatContribution(c)}</li>)}
       </ul>
+      {parse && <ParsePreview item={parse} />}
     </li>
   );
 }
 
-export default function PreviewPane({ draft, projects, companyId, canRun }: PreviewPaneProps) {
+export default function PreviewPane({ draft, projects, companyId, canRun, canParse = false }: PreviewPaneProps) {
   const [projectId, setProjectId] = useState("");
   const [pagesText, setPagesText] = useState("1-5");
-  const [busy, setBusy] = useState<"preview" | "run" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "run" | "parse" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [runLog, setRunLog] = useState<string[]>([]);
+  const [parsed, setParsed] = useState<{ byProposal: Map<string, ParsePreviewItem>; note: string } | null>(null);
   const eligible = projects.filter((p) => !p.isDemo && (companyId === null || p.companyId === undefined || p.companyId === companyId));
   const pages = parsePageSpec(pagesText);
   const project = eligible.find((p) => p.id === projectId);
@@ -85,7 +92,23 @@ export default function PreviewPane({ draft, projects, companyId, canRun }: Prev
       });
       if (!res.ok) { setError(await readError(res)); setResult(null); return; }
       setResult((await res.json()) as PreviewResult);
+      setParsed(null);
     } catch (e) { setError(e instanceof Error ? e.message : "Preview failed"); }
+    finally { setBusy(null); }
+  };
+
+  const parseProposals = async () => {
+    if (!result || !project) return;
+    const { items, dropped } = parsePreviewItems(result.pages);
+    if (!items.length) { setParsed({ byProposal: new Map(), note: "No proposal here targets a table or notes block." }); return; }
+    setBusy("parse"); setError(null);
+    try {
+      const res = await fetch(PARSE_PREVIEW_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, items }) });
+      if (!res.ok) { setError(`Parse preview: ${await readError(res)}`); return; }
+      const out = (await res.json()) as { items: ParsePreviewItem[] };
+      const byProposal = new Map(out.items.filter((i) => i.proposalId).map((i) => [i.proposalId!, i]));
+      setParsed({ byProposal, note: `${items.length} parsed at instant${dropped ? ` · ${dropped} more not parsed (max ${items.length} per call)` : ""} · nothing written` });
+    } catch (e) { setError(e instanceof Error ? e.message : "Parse preview failed"); }
     finally { setBusy(null); }
   };
 
@@ -130,13 +153,14 @@ export default function PreviewPane({ draft, projects, companyId, canRun }: Prev
     <div className="space-y-2" data-testid="preview-pane">
       <p className="text-xs font-medium">Preview on real pages (dry run — nothing is written)</p>
       <div className="flex flex-wrap items-center gap-2">
-        <select className={INPUT} value={projectId} aria-label="preview project" onChange={(e) => { setProjectId(e.target.value); setResult(null); }}>
+        <select className={INPUT} value={projectId} aria-label="preview project" onChange={(e) => { setProjectId(e.target.value); setResult(null); setParsed(null); }}>
           <option value="">Select a project…</option>
           {eligible.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.numPages ?? "?"} pages)</option>)}
         </select>
         <label className="text-[10px] text-[var(--muted)]">pages <input className={`${INPUT} w-28`} value={pagesText} aria-label="preview pages" placeholder="1-5, 8" onChange={(e) => setPagesText(e.target.value)} /></label>
         <span className="text-[10px] text-[var(--muted)]">{pages.length ? `${pages.length} page${pages.length === 1 ? "" : "s"} (max 20)` : "no valid pages"}</span>
         <button type="button" className={BTN} disabled={!draft || !project || !pages.length || busy !== null} onClick={preview}>{busy === "preview" ? "Running…" : "Preview draft"}</button>
+        {canParse && <button type="button" className={BTN} title="Parse each table / notes proposal with the parse engine (instant; nothing is written)" disabled={!result || !project || busy !== null} onClick={parseProposals}>{busy === "parse" ? "Parsing…" : "Parse proposals"}</button>}
         {canRun && <button type="button" className={BTN} title="Reprocess scope “classifiers” for this project with the SAVED recipes" disabled={!project || busy !== null} onClick={run}>{busy === "run" ? "Running…" : "Run saved recipes on project"}</button>}
       </div>
       {eligible.length === 0 && <p className="text-[10px] text-amber-400">No non-demo projects to preview on.</p>}
@@ -144,6 +168,7 @@ export default function PreviewPane({ draft, projects, companyId, canRun }: Prev
       {error && <p className="text-xs text-red-400">{error}</p>}
       {result && (
         <div className="space-y-2">
+          {parsed && <p className="text-[10px] text-[var(--muted)]" data-testid="parse-preview-note">{parsed.note}</p>}
           <p className="text-[10px] text-[var(--muted)]">
             {result.summary.pagesRun} pages run ({result.summary.pagesWithYolo} with YOLO rows) · {result.summary.proposals} proposals now vs {result.summary.storedProposals} stored · {result.summary.verdicts} labels compared · recipe {result.recipeId} v{result.recipeVersion}
           </p>
@@ -164,7 +189,7 @@ export default function PreviewPane({ draft, projects, companyId, canRun }: Prev
             <div key={pg.pageNumber}>
               <p className="text-[11px] font-medium">Page {pg.pageNumber} <span className="text-[var(--muted)] font-normal">— {pg.proposals.length} proposal{pg.proposals.length === 1 ? "" : "s"} (stored: {pg.storedCount}) · {pg.ms} ms</span></p>
               {pg.errors.map((e, i) => <p key={i} className="text-[10px] text-red-400">recipe error: {e.message}</p>)}
-              {pg.proposals.length ? <ul className="space-y-1">{pg.proposals.map((p) => <ProposalRow key={p.id} p={p} />)}</ul> : <p className="text-[10px] text-[var(--muted)] italic">nothing proposed</p>}
+              {pg.proposals.length ? <ul className="space-y-1">{pg.proposals.map((p) => <ProposalRow key={p.id} p={p} parse={parsed?.byProposal.get(p.id)} />)}</ul> : <p className="text-[10px] text-[var(--muted)] italic">nothing proposed</p>}
             </div>
           ))}
         </div>
