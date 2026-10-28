@@ -11,8 +11,8 @@
 //   • ⏎ on the detail itself is "Accept & next" (onKeyDown on this section, never on `window`; Enter on a
 //     button or in a field keeps its native meaning; §1.6 rule 14). Opening an item while the keyboard is in
 //     the panel focuses the detail, so ⏎ works without a click first (verify LOW-7).
-// The Structure step (source switcher, corrections, preview grid, paragraphs) is WP-3.N; until it mounts, the
-// step body is a read-only summary of the fused result. Tags and References are TP-4.
+// [WP-3.N] The Structure step is StructureStep (source switcher, corrections, preview grid, wide view, paragraphs);
+// the Accept step shows the result summary. Tags and References are TP-4.
 
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
@@ -27,21 +27,14 @@ import AcceptBar, { LastAcceptLine, useAcceptFlow } from "./AcceptBar";
 import EvidenceStrip from "./EvidenceStrip";
 import KindBar from "./KindBar";
 import StepTabs, { stepsFor } from "./StepTabs";
+import StructureStep, { resultSummary } from "./StructureStep";
 import { KIND_LABELS } from "./WorkspaceHeader";
 
 function freshDraft(qc: QueryClient, publicId: string, item: WorkspaceItemRef) {
   return draftFor(item, regionBaseline(readPageIntelligence(qc, publicId, item.page), item.regionId));
 }
 
-export function resultSummary(result: ParseResult): string {
-  const m = result.model;
-  if ("paragraphs" in m) {
-    const n = m.paragraphs.length;
-    return `${n} paragraph${n === 1 ? "" : "s"} in ${m.blocks.length} block${m.blocks.length === 1 ? "" : "s"}`;
-  }
-  const body = m.rows.filter((r) => r.role !== "header").length;
-  return `${body} row${body === 1 ? "" : "s"} × ${m.cols.length} column${m.cols.length === 1 ? "" : "s"}${m.headerRows ? ` · ${m.headerRows} header row${m.headerRows === 1 ? "" : "s"}` : ""}`;
-}
+export { resultSummary };
 
 function StepBody({ step, result }: { step: string; result: ParseResult | null }) {
   if (step === "tags" || step === "refs") {
@@ -138,7 +131,19 @@ export default function ItemDetail() {
       <EvidenceStrip result={result} busy={parse.busy} error={parse.error} paidAllowed={!isDemo} onRun={(o) => void parse.run(o)} />
       <StepTabs model={result?.model} />
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <StepBody step={active} result={shown} />
+        {active === "structure" && result ? (
+          <StructureStep
+            key={item.id}
+            item={item}
+            result={result}
+            ops={draft?.ops ?? []}
+            rebased={flow.phase.kind === "rebased" ? flow.phase.model : null}
+            title={title}
+            regionId={draft?.regionId}
+          />
+        ) : (
+          <StepBody step={active} result={shown} />
+        )}
       </div>
       <AcceptBar
         flow={flow}
