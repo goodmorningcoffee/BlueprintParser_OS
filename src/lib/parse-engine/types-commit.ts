@@ -29,6 +29,12 @@ export interface CommitRequest {
   /** Re-saving an existing region: its id and the `links.revision` the draft was loaded at (stale → 409). */
   regionId?: string;
   revision?: number;
+  /**
+   * Re-saving: `viewHash(region.data)` (`legacy-view.ts`) of the region the draft was loaded on. Any later change
+   * to its legacy view → 409 `stale`. Required to re-save a region edited in a classic panel since its last
+   * workspace save (PLAN §1.1 row 7); the `stale` and `conflict` refusals carry the current one.
+   */
+  viewHash?: string;
   /** A same-family region already covers the box (409 `conflict`): "keep-both" saves a second region. */
   onConflict?: "keep-both";
   /** The region's display name (`tableName`); defaults to the model's title. */
@@ -78,8 +84,8 @@ export interface CommitResponse {
 
 /** Every 409 carries the standard error envelope plus one of these bodies. */
 export type CommitRefusal =
-  | { reason: "stale"; regionId: string; revision: number | null }
-  | { reason: "conflict"; conflict: { regionId: string; kind: StructureKind; title: string; revision: number; bbox: BboxMinMax } }
+  | { reason: "stale"; regionId: string; revision: number | null; viewHash?: string }
+  | { reason: "conflict"; conflict: { regionId: string; kind: StructureKind; title: string; revision: number; viewHash: string; bbox: BboxMinMax } }
   | { reason: "rebased"; rebased: StructureModel; changedRows: number | null; evidenceHash: string }
   | { reason: "ops-lost"; lost: { index: number; op: CorrectionOp["op"] }[] }
   | { reason: "paid-expired"; paidExpired: true; methods: string[] };

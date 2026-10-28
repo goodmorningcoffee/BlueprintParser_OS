@@ -2,7 +2,8 @@
 // [table pipeline WP-3.G] POST …/parse-engine/commit and DELETE …/parse-engine/region through the real route
 // shells, the real project resolver, the real page-evidence loader, run.ts and Postgres. The engine
 // (`runParseEngine`) and `applyOps` are mocked until WP-3.D fills them; S3 and Textract are in-memory fakes.
-//   • 409 stale revision; 409 conflict → Replace / Keep both; a forged `machine` is ignored;
+//   • 409 stale revision; 409 stale on a classic edit made after the draft loaded (viewHash, PLAN §1.1 row 7);
+//     409 conflict → Replace / Keep both; a forged `machine` is ignored; a failed tag pass does not block Accept;
 //   • page CSI shrinks on replace and on delete (K50); a paid recipe at commit makes ZERO Textract calls on a
 //     cache hit and 409s on a miss; an evidence change rebases with `changedRows`; a lost op refuses;
 //   • accept maps keynote tags on THIS sheet only, links them to the region, retires the replaced classic rows;
@@ -214,7 +215,8 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/parse-engine/commit", () => {
     expect(region.data.rows).toEqual([{ KEY: "QZ7", NOTE: "LOREM" }, { KEY: "QZ8", NOTE: "IPSUM DOLOR" }]);
     expect(region.data.keynotes).toEqual([{ key: "QZ7", description: "LOREM" }, { key: "QZ8", description: "IPSUM DOLOR" }]);
     expect(region.data.structure.cells.find((c: any) => c.row === "r2" && c.col === "c2").text).toBe("IPSUM DOLOR");
-    expect(region.data.links).toMatchObject({ origin: "workspace", revision: 1, proposalId: PROPOSAL.id, acceptedBy: user.id });
+    expect(region.data.links).toMatchObject({ origin: "workspace", revision: 1, proposalId: PROPOSAL.id });
+    expect(region.data.links).not.toHaveProperty("acceptedBy"); // no user id in the page window (verify LOW-3)
     expect(region.data.links.viewHash).toBe(viewHash(region.data));
     expect(region.data.recipe.request).not.toHaveProperty("prior");
     expect(region.data.ops).toHaveLength(2);
@@ -256,6 +258,55 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/parse-engine/commit", () => {
     expect(gone.body).toMatchObject({ reason: "stale", revision: null });
   });
 
+  it("409 stale when the region was edited in a classic panel after the draft loaded (same revision); the reloaded view re-saves", async () => {
+    const { user, project, page } = await world();
+    asUser(user);
+    const first = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [] }));
+    expect(first.status).toBe(200);
+    const regionId = first.body.regionId as string;
+    const loadedView = viewHash((await pageRow(page.id)).pi.parsedRegions[0].data);
+    // a classic rename spreads r.data, so links (revision 1) ride along unchanged
+    const saved = (await pageRow(page.id)).pi.parsedRegions[0];
+    const renamed = { ...saved, data: { ...saved.data, tableName: "Renamed classic" } };
+    const patched = await intelligencePATCH(makeReq("/api/pages/intelligence", {
+      method: "PATCH", body: { publicId: project.publicId, pageNumber: 1, intelligence: { parsedRegions: [renamed] } },
+    }));
+    expect(patched.status).toBe(200);
+    const edited = (await pageRow(page.id)).pi.parsedRegions[0];
+    expect(edited.data.links.revision).toBe(1);
+    const editedView = viewHash(edited.data);
+    expect(editedView).not.toBe(loadedView);
+
+    const blind = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [], regionId, revision: 1 }));
+    expect(blind.status).toBe(409);
+    expect(blind.body).toMatchObject({ reason: "stale", regionId, revision: 1, viewHash: editedView });
+    const old = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [], regionId, revision: 1, viewHash: loadedView }));
+    expect(old.status).toBe(409);
+    expect((await pageRow(page.id)).pi.parsedRegions[0].data.tableName).toBe("Renamed classic"); // nothing overwritten
+
+    const reloaded = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [], regionId, revision: 1, viewHash: blind.body.viewHash, tableName: "Renamed classic" }));
+    expect(reloaded.status).toBe(200);
+    expect(reloaded.body.revision).toBe(2);
+    const after = (await pageRow(page.id)).pi.parsedRegions[0];
+    expect(after.data.links.viewHash).toBe(viewHash(after.data));
+    // an untouched workspace region re-saves at its revision without a viewHash
+    expect((await commit(project.publicId, { recipe: recipe(), ops: [], regionId, revision: 2 })).status).toBe(200);
+  });
+
+  it("a failed tag pass does not block Accept: the region lands, its tags are left as they were, no tagSummary", async () => {
+    const { defaultCommitDeps } = await import("@/server/services/parse-engine/commit");
+    const spy = vi.spyOn(defaultCommitDeps, "matchTags").mockRejectedValueOnce(new Error("synthetic matcher outage"));
+    const { user, project, page } = await world();
+    asUser(user);
+    const r = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [] }));
+    spy.mockRestore();
+    expect(r.status).toBe(200);
+    expect(r.body).not.toHaveProperty("tagSummary");
+    expect(r.body.tags).toEqual({ rows: [], removed: [], replacedRegionIds: [] });
+    expect((await pageRow(page.id)).pi.parsedRegions).toHaveLength(1);
+    expect((await projectPi(project.id)).yoloTags ?? []).toEqual([]);
+  });
+
   it("409 conflict on an overlapping saved region → Replace (its id + revision) retires its classic tags; Keep both saves a second region", async () => {
     const classic = {
       id: "parsed-c", type: "keynote", category: "keynotes", bbox: [0.7, 0.7, 0.95, 0.89], confidence: 0.9,
@@ -276,7 +327,7 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/parse-engine/commit", () => {
     asUser(user);
     const clash = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [] }));
     expect(clash.status).toBe(409);
-    expect(clash.body).toMatchObject({ reason: "conflict", conflict: { regionId: "parsed-c", kind: "keynote", revision: 0, title: "keynotes" } });
+    expect(clash.body).toMatchObject({ reason: "conflict", conflict: { regionId: "parsed-c", kind: "keynote", revision: 0, title: "keynotes", viewHash: viewHash(classic.data) } });
 
     const replaced = await readJson(await commit(project.publicId, { recipe: recipe(), ops: [], regionId: "parsed-c", revision: 0 }));
     expect(replaced.status).toBe(200);

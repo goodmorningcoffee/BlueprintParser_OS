@@ -12,9 +12,11 @@
  *      one-click confirm; when an op no longer lands → 409 `ops-lost` (refused);
  *      also outside the lock: the region's CSI (company context) and the tag matches (accept-tags);
  *   4. `withProjectWrite` (project row first), then the page row FOR UPDATE (rule 11: project → page);
- *   5. region id: a re-save names its `regionId` + `revision` (stale → 409 `stale`); a new item gets
+ *   5. region id: a re-save names its `regionId` + `revision` (stale → 409 `stale`); a region edited in a classic
+ *      panel since its last workspace save (stored `links.viewHash` ≠ the hash of its current legacy view, PLAN
+ *      §1.1 row 7) is also 409 `stale` unless the request's `viewHash` names that current view; a new item gets
  *      `sr-${kind}-${page}-${q3(bbox)}`, unless a same-page same-family region overlaps it at IoU ≥ .8 → 409
- *      `conflict` (Replace = re-send with that region's id and revision; Keep both = `onConflict:"keep-both"`);
+ *      `conflict` (Replace = re-send with that region's id, revision and viewHash; Keep both = `onConflict:"keep-both"`);
  *   6. the region: `data = {...legacyView(model), structure, links, engine, recipe, ops}` (E-5);
  *   7. one UPDATE: `parsedRegions` (`||`), `parseLabels[regionId]` (`jsonb_set`, a `committed` label whose
  *      `machine` snapshot is recomputed here from the re-run), the proposal verdict / text-region verdict;
@@ -96,6 +98,7 @@ export const zCommitBody = z.object({
   base: zStructureModel.optional(),
   evidenceHash: z.string().min(1).max(128).optional(),
   regionId: ID.optional(),
+  viewHash: z.string().min(1).max(128).optional(),
   revision: z.number().int().min(0).optional(),
   onConflict: z.literal("keep-both").optional(),
   tableName: z.string().trim().min(1).max(200).optional(),
@@ -252,6 +255,17 @@ export function regionRevision(region: { data?: unknown } | null | undefined): n
 const hasWorkspaceLinks = (region: { data?: unknown } | null | undefined): boolean =>
   !!(region?.data as { links?: unknown } | undefined)?.links;
 
+/**
+ * PLAN §1.1 row 7: has the stored region's legacy view changed under the client? With a `sent` hash (the view the
+ * draft was loaded on) any difference counts; without one, a workspace region whose view no longer hashes to its
+ * own `links.viewHash` was edited in a classic panel after its last workspace save, so the draft cannot know it.
+ */
+export function viewChangedSince(region: { data?: unknown }, current: string, sent: string | undefined): boolean {
+  if (sent !== undefined) return sent !== current;
+  const stored = (region.data as { links?: { viewHash?: unknown } } | undefined)?.links?.viewHash;
+  return hasWorkspaceLinks(region) && stored !== current;
+}
+
 /** The table / paragraph model's classId (tables only), or the `set-kind` op's. */
 function acceptedClassId(model: StructureModel, ops: readonly CorrectionOp[]): string | undefined {
   for (let i = ops.length - 1; i >= 0; i -= 1) {
@@ -353,6 +367,8 @@ interface Prepared {
   csi: CsiCode[];
   plan: AcceptTagPlan | null;
   matches: AcceptTagMatches | null;
+  /** The tag pass failed: the commit still lands, the region's tag projection is left as it was. */
+  tagsFailed: boolean;
 }
 
 /** Steps 1-3: validate, re-run (cache-only), apply ops, rebase / refuse, CSI and tag matches. No lock held. */
@@ -397,8 +413,16 @@ async function prepare(ctx: CommitContext, deps: CommitDeps, userId: number): Pr
   });
   const csi = regionCsi(model, view, csiCtx);
   const plan = acceptTagPlan(model, request.page);
-  const matches = plan ? await deps.matchTags(ctx.project.id, plan) : null;
-  return { body, recipe, fresh, model, view, tableName, csi, plan, matches };
+  // Tags are a derived convenience: a matcher failure must not block the Accept (it degrades to "no tags mapped").
+  let tagsFailed = false;
+  const matches = plan
+    ? await deps.matchTags(ctx.project.id, plan).catch((err) => {
+      logger.warn("[parse-engine/commit] tag matching failed; region saved, its tags left unchanged", { error: err });
+      tagsFailed = true;
+      return null;
+    })
+    : null;
+  return { body, recipe, fresh, model, view, tableName, csi, plan, matches, tagsFailed };
 }
 
 interface Written {
@@ -452,8 +476,11 @@ async function write(
   if (body.regionId !== undefined) {
     previous = regions.find((r) => r && r.id === body.regionId);
     const stored = previous ? regionRevision(previous) : null;
-    if (!previous || stored !== body.revision) {
-      throw new CommitRefusalError("This item was changed or removed since you opened it; reload it", { reason: "stale", regionId: body.regionId, revision: stored });
+    const current = previous ? viewHash(previous.data) : null;
+    if (!previous || stored !== body.revision || viewChangedSince(previous, current!, body.viewHash)) {
+      throw new CommitRefusalError("This item was changed or removed since you opened it; reload it", {
+        reason: "stale", regionId: body.regionId, revision: stored, ...(current ? { viewHash: current } : {}),
+      });
     }
     regionId = body.regionId;
   } else {
@@ -467,7 +494,7 @@ async function write(
       throw new CommitRefusalError("A saved item already covers this box", {
         reason: "conflict",
         conflict: {
-          regionId: clash.id, kind: (clash.type as StructureKind), revision: regionRevision(clash),
+          regionId: clash.id, kind: (clash.type as StructureKind), revision: regionRevision(clash), viewHash: viewHash(clash.data),
           title: typeof data.tableName === "string" ? data.tableName : clash.category ?? clash.type,
           bbox: parsedRegionMinMax(clash) as BboxMinMax,
         },
@@ -496,7 +523,7 @@ async function write(
     ...(proposal ? { proposalId: proposal.id } : {}),
     ...(trKey ? { textRegionKey: body.links!.textRegionKey! } : {}),
     ...(body.links?.continues ? { continues: body.links.continues } : {}),
-    acceptedAt: at, acceptedBy: userId,
+    acceptedAt: at, // no `acceptedBy`: parsedRegions reach every page-window viewer; the user id lives on the label
   };
   const parsedRegion = {
     id: regionId,
@@ -566,7 +593,7 @@ async function write(
   // 10. tags: the region's projection becomes exactly this accept's mapped rows
   let tags: TagOpsResult = { tags: [], removed: [], replacedRegionIds: [], skipped: [] };
   let tagSummary: TagSummary | undefined;
-  if (p.matches || previous) {
+  if (!p.tagsFailed && (p.matches || previous)) {
     const built = p.matches ? buildAcceptTagRows(p.matches, regionId) : { tags: [] as StoredYoloTag[], summary: undefined };
     tagSummary = built.summary;
     let retireIds: string[] = [];

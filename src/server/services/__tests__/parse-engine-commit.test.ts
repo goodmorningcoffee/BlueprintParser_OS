@@ -14,6 +14,7 @@ import {
   parseCommitBody,
   parseTextRegionKey,
   regionRevision,
+  viewChangedSince,
 } from "@/server/services/parse-engine/commit";
 import { isPageOwnedCsi, pageCsiAfterRegionChange } from "@/server/services/parse-engine/page-csi";
 import {
@@ -119,6 +120,16 @@ describe("commit: ids, revisions, keys, body", () => {
     expect(regionRevision({ data: { headers: [] } })).toBe(0);
     expect(regionRevision({ data: { links: { revision: 4 } } })).toBe(4);
     expect(regionRevision({ data: { links: { revision: -1 } } })).toBe(0);
+  });
+
+  it("a classic edit after the last workspace save is a changed view (PLAN §1.1 row 7); a sent viewHash decides alone", () => {
+    const saved = { data: { headers: ["K"], links: { revision: 2, viewHash: "vh1:a" } } };
+    expect(viewChangedSince(saved, "vh1:a", undefined)).toBe(false); // untouched workspace region
+    expect(viewChangedSince(saved, "vh1:b", undefined)).toBe(true);  // edited in a classic panel, draft cannot know
+    expect(viewChangedSince(saved, "vh1:b", "vh1:b")).toBe(false);   // the draft was (re)loaded on that edit
+    expect(viewChangedSince(saved, "vh1:b", "vh1:a")).toBe(true);
+    expect(viewChangedSince({ data: { headers: ["K"] } }, "vh1:c", undefined)).toBe(false); // classic region: revision 0 rules
+    expect(viewChangedSince({ data: { headers: ["K"] } }, "vh1:c", "vh1:d")).toBe(true);
   });
 
   it("parses the content key of a text region (WP-3.F's `tr:${type}:${q2}`) and refuses junk", () => {
