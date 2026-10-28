@@ -41,11 +41,24 @@
  *
  * Imports: `../lines` (line-aware text), `../geometry`, and the tag-format signature from
  * `tag-mapping/primitives/pattern-infer` (pure; type-only imports beyond it).
+ *
+ * ── v2 (table pipeline WP-3.A; PLAN §1.4 R2–R6) ─────────────────────────────────────────────────────────────
+ * `shapeCentreRows` is the engine's `shape-centres` METHOD over the FUSED shape column (`../shapes.ts`, R10)
+ * plus the R6 anchor centres (`./anchor-prior.ts`): the v1 bands (R3, with the alignment guard) over shapes
+ * and anchors together, the header bottom as the first band's top when a caller knows it, **section rows**
+ * (R5: a line between two shapes with no key that a LAYOUT `SECTION_HEADER` / one-cell Textract row covers,
+ * or an all-caps line spanning ≥ 50 % of the box that starts at the tag column) cut out as their own bands, and the row keys (v1 readers;
+ * an anchor row takes its stored tag, flagged `anchor`). R4 (veto with the key-text exception) and the R5
+ * snapping happen in `../fuse.ts`, because they compare these bands with the other methods' boundaries.
+ * v1's exports are unchanged; the legacy callers (`rowBands`, `table-rows-shapes.ts`) stay on them.
  */
 
 import { centreIn } from "../geometry";
 import { assembleText, wordsToLines, type LineWord } from "../lines";
 import { inferTagPattern, tagSignature } from "@/lib/tag-mapping/primitives/pattern-infer";
+import type { RowKey } from "../types";
+import type { FusedRow, FusedShapeColumn, RowHypothesis, RowsInput, RowsLine } from "../types-rows";
+import type { AnchorCentre } from "./anchor-prior";
 
 type Box = readonly [number, number, number, number];
 type Band = [number, number, number, number];
@@ -259,4 +272,141 @@ export function readShapeKeys(shapes: readonly KeyShape[], words: readonly LineW
       ? { key: repaired, src: "crop", flags: ["key-from-crop", "key-repaired"] }
       : { key: crop, src: "crop", flags: ["key-from-crop"] };
   });
+}
+
+// ─── v2: the engine method (R2–R6) ──────────────────────────────────────────────────────────────────────────
+
+export const SHAPE_CENTRES_VERSION = 2;
+/** R5: a key-less all-caps line between two shapes is a section row when it spans this share of the box width. */
+export const SECTION_MIN_WIDTH_SHARE = 0.5;
+/** R5: a section title is short; a line with more words is a description (MEASURED on the classifier corpus: titles 2–6 words, descriptions 10–24). */
+export const SECTION_MAX_WORDS = 6;
+/** A section band is padded by this many `h` on each side (never past the neighbouring shapes). */
+const SECTION_PAD_H = 0.25;
+
+/** One centre the bands are built on: a live fused shape or an R6 anchor. */
+export interface ShapeCentre {
+  b: Box;
+  cls: string;
+  origin: "shape" | "anchor";
+  key: ShapeKey;
+}
+
+export interface ShapeCentreRowsOptions {
+  /** The header bottom (Textract `hdr` rows, a LAYOUT title, a hint); the first band starts there. */
+  headerBottom?: number | null;
+  /** Section bands other methods know (`RowHypothesis.sections` of textract-cells / layout). */
+  knownSections?: readonly (readonly [number, number])[];
+}
+
+export interface ShapeCentreRows {
+  hypothesis: RowHypothesis;
+  centres: ShapeCentre[];
+  /** Body rows (one per centre) and section rows, in y order; header/footer rows are added by `fuse.ts`. */
+  rows: FusedRow[];
+  align: BandAlign;
+  /** Column x-range (the tag column) for the R4 key-text test. */
+  tagX: [number, number];
+  sectionCount: number;
+}
+
+const lineYc = (l: RowsLine): number => (l.b[1] + l.b[3]) / 2;
+const isAllCaps = (t: string): boolean => /[A-Z]/.test(t) && t === t.toUpperCase();
+
+/**
+ * R5 section lines between consecutive centres `a` (above) and `b` (below): a line whose centre lies below
+ * `a`'s shape and above `b`'s, with no word inside the tag column, that a known section band covers (LAYOUT
+ * `SECTION_HEADER`, a one-cell Textract row), or — in a CENTRE-aligned column only — that is all caps, spans
+ * ≥ 50 % of the box width, starts at or left of the tag column's right edge and has ≤ 6 words. The guards on the
+ * all-caps clause come from a geometry-only probe over the classifier corpus (WP-3.A A/B): all-caps is the default
+ * typography on drawings, so without them the clause cut 123 "sections" out of the labelled tag-map candidates —
+ * wrapped descriptions under their bubble in top-aligned legends (K27), description continuation lines starting in
+ * the description column, and long note lines. Adjacent qualifying lines (gap < h) merge into one band.
+ */
+function sectionBandsBetween(a: Box, b: Box, input: RowsInput, tagX: [number, number], known: readonly (readonly [number, number])[], align: BandAlign): [number, number][] {
+  const out: [number, number][] = [];
+  const minW = SECTION_MIN_WIDTH_SHARE * (input.box[2] - input.box[0]);
+  const lines = input.lines.filter((l) => lineYc(l) > a[3] && lineYc(l) < b[1]).sort((p, q) => lineYc(p) - lineYc(q));
+  for (const l of lines) {
+    const hasKey = l.wordIdx.some((i) => { const w = input.words[i]; const cx = (w.b[0] + w.b[2]) / 2; return cx >= tagX[0] && cx <= tagX[1]; });
+    if (hasKey) continue;
+    const covered = known.some(([y0, y1]) => lineYc(l) >= y0 && lineYc(l) <= y1);
+    const caps = align === "centre" && isAllCaps(l.text) && l.b[2] - l.b[0] >= minW && l.b[0] <= tagX[1] && l.wordIdx.length <= SECTION_MAX_WORDS;
+    if (!covered && !caps) continue;
+    const prev = out[out.length - 1];
+    if (prev && l.b[1] - prev[1] < input.h) prev[1] = Math.max(prev[1], l.b[3]);
+    else out.push([l.b[1], l.b[3]]);
+  }
+  return out;
+}
+
+/** The row key of a centre as the model stores it. */
+function rowKeyOf(c: ShapeCentre): RowKey {
+  return { kind: "shape-text", text: c.key.key, shapeClass: c.cls, shapeBbox: [c.b[0], c.b[1], c.b[2], c.b[3]], textSource: c.key.src === "crop" ? "crop" : "inside" };
+}
+
+/**
+ * The engine's `shape-centres` method (v2): bands over the fused column's shapes plus the anchor centres,
+ * section rows cut out between shapes, keys read per centre. `null` when there is no centre.
+ */
+export function shapeCentreRows(input: RowsInput, col: FusedShapeColumn, anchors: readonly AnchorCentre[], opts: ShapeCentreRowsOptions = {}): ShapeCentreRows | null {
+  const lineWords: LineWord[] = input.words.map((w) => ({ t: w.t, b: w.b }));
+  const shapeKeys = readShapeKeys(col.shapes.map((s) => ({ bbox: s.b, text: s.text })), lineWords);
+  const centres: ShapeCentre[] = col.shapes.map((s, i) => ({ b: s.b, cls: s.cls, origin: "shape", key: shapeKeys[i] }));
+  for (const a of anchors) {
+    const t = clean(a.tag ?? "");
+    centres.push({ b: a.b, cls: a.shapeClass, origin: "anchor", key: t ? { key: t, src: "inside", flags: [] } : { key: null, src: null, flags: [] } });
+  }
+  if (centres.length === 0) return null;
+  centres.sort((p, q) => yc(p.b) - yc(q.b) || p.b[0] - q.b[0]);
+  const box = input.box;
+  const tagX: [number, number] = [Math.min(col.x0, ...centres.map((c) => c.b[0])), Math.max(col.x1, ...centres.map((c) => c.b[2]))];
+  // The first band starts at the header bottom (R3) — unless the header bottom lies ABOVE the first centre's natural
+  // band top (half the first gap above it): then rows without a live shape sit between the header and the first shape,
+  // and `fuse.ts` reads them from the other methods (MEASURED on the private G-TAB gold: detectors miss the first rows).
+  const c0 = yc(centres[0].b);
+  const naturalTop = centres.length > 1 ? Math.min(c0 - 0.5 * (yc(centres[1].b) - c0), centres[0].b[1]) : centres[0].b[1];
+  const top = opts.headerBottom != null ? Math.max(opts.headerBottom, naturalTop) : undefined;
+  const { bands, align } = shapeRowBands(centres.map((c) => c.b), box, input.words.map((w) => w.b), { top });
+
+  // R5 section rows between consecutive centres; the bands above and below are cut at the section's edges.
+  const rows: FusedRow[] = [];
+  const edges: number[] = [];
+  let sectionCount = 0;
+  for (let i = 0; i < centres.length; i++) {
+    const c = centres[i];
+    const band = bands[i];
+    const flags = [...c.key.flags, ...(c.origin === "anchor" ? ["anchor"] : [])];
+    const row: FusedRow = { y0: band[1], y1: band[3], role: "body", key: rowKeyOf(c), flags };
+    rows.push(row);
+    if (i + 1 < centres.length) {
+      const sections = sectionBandsBetween(c.b, centres[i + 1].b, input, tagX, opts.knownSections ?? [], align);
+      let prevBottom = row.y1;
+      for (const [sy0, sy1] of sections) {
+        const pad = Math.min(SECTION_PAD_H * input.h, Math.max(0, (sy0 - c.b[3]) / 2), Math.max(0, (centres[i + 1].b[1] - sy1) / 2));
+        const y0 = Math.max(rows[rows.length - 1].y0, sy0 - pad);
+        const y1 = Math.min(bands[i + 1][3], sy1 + pad);
+        rows[rows.length - 1].y1 = Math.max(rows[rows.length - 1].y0, Math.min(rows[rows.length - 1].y1, y0));
+        rows.push({ y0, y1, role: "section", flags: [] });
+        prevBottom = y1;
+        sectionCount++;
+      }
+      // the band below starts where the last section ends (never above its own bottom)
+      if (sections.length > 0) bands[i + 1] = [bands[i + 1][0], Math.max(bands[i + 1][1], prevBottom), bands[i + 1][2], Math.max(bands[i + 1][3], prevBottom)];
+    }
+  }
+  // Monotone, then the boundary list.
+  for (let k = 1; k < rows.length; k++) { rows[k].y0 = Math.max(rows[k].y0, rows[k - 1].y1); rows[k].y1 = Math.max(rows[k].y1, rows[k].y0); }
+  edges.push(rows[0].y0);
+  for (const r of rows) edges.push(r.y1);
+  const regular = col.gapCv === null || col.gapCv <= 0.5;
+  const hypothesis: RowHypothesis = {
+    method: "shape-centres",
+    methodVersion: SHAPE_CENTRES_VERSION,
+    conf: regular ? 0.9 : 0.7,
+    rowLines: edges,
+    sections: rows.filter((r) => r.role === "section").map((r) => [r.y0, r.y1] as [number, number]),
+    rowAnchors: centres.map((c) => ({ y: yc(c.b), key: rowKeyOf(c) })),
+  };
+  return { hypothesis, centres, rows, align, tagX, sectionCount };
 }

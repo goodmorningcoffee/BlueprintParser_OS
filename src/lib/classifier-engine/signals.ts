@@ -135,7 +135,16 @@ function shapeColumnSignal(spec: Extract<SignalSpec, { type: "shape-column" }>, 
   }
 }
 
-/** Sorted 1-D clusters: a gap wider than `tol` starts a new one. */
+/**
+ * [table pipeline WP-3.A, PLAN §1.5] Textract containment of a box: the best intersection / smaller-area
+ * overlap with any stored table of ≥ `minRows` rows (the `textract-table` signal's rule), 0 when none.
+ * Exported for the engine's `textract-cells` weighting; `textractSignal` is unchanged.
+ */
+export function textractContainment(box: BboxMinMax, tables: readonly { bbox: BboxMinMax; rowCount: number }[], minRows = 0): number {
+  return tables.reduce((m, t) => (t.rowCount >= minRows ? Math.max(m, overlapSmaller(box, t.bbox)) : m), 0);
+}
+
+/** Sorted 1-D clusters: a gap wider than `tol` starts a new one. [WP-3.A] Exported as `ocrGridClusters` (PLAN §1.5). */
 function clusters1d(values: readonly number[], tol: number): number[][] {
   const out: number[][] = [];
   for (const v of [...values].sort((a, b) => a - b)) {
@@ -145,6 +154,8 @@ function clusters1d(values: readonly number[], tol: number): number[][] {
   }
   return out;
 }
+
+export const ocrGridClusters = clusters1d;
 
 /** [shape-tags] The box's OCR words as a grid (region v2 geometry.textGrid's rules on word boxes). */
 function ocrGridSignal(spec: Extract<SignalSpec, { type: "ocr-grid" }>, cand: CandidateEvidence): SignalValue {

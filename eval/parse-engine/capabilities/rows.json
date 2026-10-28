@@ -2,12 +2,22 @@
   "capability": "rows",
   "version": 1,
   "modules": [
-    "src/lib/parse-engine/rows/shape-centres.ts"
+    "src/lib/parse-engine/fuse.ts",
+    "src/lib/parse-engine/parts.ts",
+    "src/lib/parse-engine/rows/anchor-prior.ts",
+    "src/lib/parse-engine/rows/hanging-indent.ts",
+    "src/lib/parse-engine/rows/layout.ts",
+    "src/lib/parse-engine/rows/ocr-lines.ts",
+    "src/lib/parse-engine/rows/primitive-grid.ts",
+    "src/lib/parse-engine/rows/shape-centres.ts",
+    "src/lib/parse-engine/rows/textract-cells.ts",
+    "src/lib/parse-engine/shapes.ts",
+    "src/lib/parse-engine/types-rows.ts"
   ],
   "history": [
     {
       "version": 1,
-      "sha256": "7712a64c37fd591c995c222ead16ce7184266a36d8ec0071a961a6574dfbe6ee"
+      "sha256": "8a90e141b11f2dbd3d025fafb1a2abddda9cb63236d5b0cd591c19f2205824fe"
     }
   ]
 }
