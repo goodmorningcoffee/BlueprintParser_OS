@@ -1,11 +1,14 @@
 {
   "capability": "kind",
   "version": 1,
-  "modules": [],
+  "modules": [
+    "src/lib/parse-engine/engine-kind.ts",
+    "src/lib/parse-engine/engine.ts"
+  ],
   "history": [
     {
       "version": 1,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "9a5863e1e06df12504d4b5bcfb3ead50c706517237ecc62c30c8741bbe916076"
     }
   ]
 }

@@ -70,6 +70,15 @@ const zTitle = z.strictObject({
 });
 const zQuality = z.strictObject({ conf: zProb, agreement: zProb, flags: z.array(z.string().max(SHORT)).max(64) });
 
+const zParagraphOpsBase = z.strictObject({
+  blocks: z.array(z.strictObject({ id: zId, b: zBboxMinMax })).max(CAPS.paragraphs),
+  paragraphs: z.array(z.strictObject({ id: zId, b: zBboxMinMax })).max(CAPS.paragraphs),
+});
+const zTableOpsBase = z.strictObject({
+  rows: z.array(z.strictObject({ id: zId, y0: zUnit, y1: zUnit, part: z.number().int().min(0).max(CAPS.parts).optional() })).max(CAPS.rows),
+  cols: z.array(z.strictObject({ id: zId, x0: zUnit, x1: zUnit })).max(CAPS.cols),
+});
+
 export const zStructureParagraphDoc = z.strictObject({
   v: z.literal(1),
   kind: z.enum(["notes", "spec"]),
@@ -93,6 +102,7 @@ export const zStructureParagraphDoc = z.strictObject({
   })).max(CAPS.paragraphs),
   sources: z.strictObject({ segment: z.array(zMethod).max(METHOD_IDS.length) }),
   quality: zQuality,
+  opsBase: zParagraphOpsBase.optional(),
 });
 
 export const zStructureTableModel = z.strictObject({
@@ -123,6 +133,7 @@ export const zStructureTableModel = z.strictObject({
   notes: zStructureParagraphDoc.optional(),
   sources: z.strictObject({ rows: z.array(zMethod).max(METHOD_IDS.length), cols: z.array(zMethod).max(METHOD_IDS.length) }),
   quality: zQuality,
+  opsBase: zTableOpsBase.optional(),
 });
 
 export const zStructureModel = z.union([zStructureTableModel, zStructureParagraphDoc]);

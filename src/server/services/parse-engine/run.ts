@@ -25,10 +25,10 @@
  *      `ParseEngineNotImplementedError`; this answers 501.
  * No project or page row is written here, and heavy work never runs inside a project write (rule 11).
  *
- * Crop runners: this WP lands the paid Textract crop (the one with an existing implementation). The
- * rulings runner (`server/services/parse-engine/rulings.ts`, WP-3.B), img2table and TATR join
- * `DEFAULT_CROP_RUNNERS` when the engine is assembled (WP-3.D); a requested method with no runner is
- * reported as `error: "unavailable"`, never silently dropped.
+ * Crop runners: the paid Textract crop (WP-3.E) and the crop rulings (`rulings.ts`, WP-3.B; registered by
+ * WP-3.D). img2table and TATR have no geometry runner yet (the classic img2table returns header-keyed TEXT
+ * rows, not lines): a standard / thorough call reports img2table, and a ticked TATR, as
+ * `error: "unavailable"`, never silently dropped.
  */
 
 import { downloadFromS3 } from "@/lib/s3";
@@ -58,6 +58,8 @@ import type {
 import type { TextractTable, TextractWord } from "@/types";
 import { ApiError } from "@/server/api/envelope";
 import { buildPageEvidence, loadPageEvidence, type LoadedPageEvidence } from "./evidence";
+import { detectCropRulings } from "./rulings";
+import type { CropRulings } from "@/lib/parse-engine/types-cols";
 import { readParseEngineFlags } from "./flags";
 import { acquireParseSlot, type ParseCallerKey } from "./concurrency";
 import { q3Box, readCropCache, s3CropCacheStore, writeCropCache, type CropCacheStore } from "./crop-cache";
@@ -206,12 +208,48 @@ export function textractCropRunner(io: TextractCropIo = defaultTextractIo): Crop
   };
 }
 
-/** The runners this release ships. WP-3.D appends rulings (3.B), img2table and TATR. */
-export const DEFAULT_CROP_RUNNERS: readonly CropRunner[] = [textractCropRunner()];
+export interface RulingsCropIo {
+  downloadPagePng(dataUrl: string, page: number): Promise<Buffer>;
+  /** `detect_table_lines.py --crop` on the page image (never throws; a failure comes back as `error`). */
+  detect(png: Buffer, box: BboxMinMax): Promise<CropRulings>;
+}
 
-/** Methods a request asks for that have no runner yet (reported, never dropped silently). */
-const REQUESTED_WITHOUT_RUNNER = (request: ParseRequest, runners: readonly CropRunner[]): CropMethodId[] =>
-  request.budget === "thorough" && request.hints?.tatr && !runners.some((r) => r.method === "tatr") ? ["tatr"] : [];
+const defaultRulingsIo: RulingsCropIo = {
+  downloadPagePng: defaultTextractIo.downloadPagePng,
+  detect: (png, box) => detectCropRulings(png, box),
+};
+
+/**
+ * Crop rulings (standard; WP-3.B's server half, registered by WP-3.D). The script cuts the box out of the page image
+ * itself; its value is the `CropRulings` it reports (positions normalised to the crop), which the engine maps onto
+ * the page (`cols/rulings.ts`). A script error throws here, so the method casts no vote and nothing is cached.
+ */
+export function rulingsCropRunner(io: RulingsCropIo = defaultRulingsIo): CropRunner {
+  return {
+    method: "rulings",
+    budget: "standard",
+    paid: false,
+    wanted: () => true,
+    async run({ project, page, box }) {
+      if (!project.dataUrl) throw new Error("project has no storage root");
+      const r = await io.detect(await io.downloadPagePng(project.dataUrl, page), box);
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  };
+}
+
+/** The runners this release ships: crop rulings (standard) and the paid Textract crop (thorough). */
+export const DEFAULT_CROP_RUNNERS: readonly CropRunner[] = [rulingsCropRunner(), textractCropRunner()];
+
+/** Methods a request asks for that have no runner (reported, never dropped silently): img2table at standard and up, a ticked TATR. */
+function requestedWithoutRunner(request: ParseRequest, runners: readonly CropRunner[]): { method: CropMethodId; budget: Exclude<Budget, "instant">; paid: boolean }[] {
+  const out: { method: CropMethodId; budget: Exclude<Budget, "instant">; paid: boolean }[] = [];
+  const has = (m: CropMethodId): boolean => runners.some((r) => r.method === m);
+  if (request.budget !== "instant" && !has("img2table")) out.push({ method: "img2table", budget: "standard", paid: false });
+  if (request.budget === "thorough" && request.hints?.tatr && !has("tatr")) out.push({ method: "tatr", budget: "thorough", paid: true });
+  return out;
+}
 
 /** A paid crop the commit needs is no longer cached: the user must run it again (and pay) in the workspace. */
 export class PaidCropExpiredError extends ApiError {
@@ -278,8 +316,8 @@ async function gatherCrops(
   const out: Partial<Record<CropMethodId, CropMethodOutcome>> = {};
   const expired: CropMethodId[] = [];
   const runners = deps.runners.filter((r) => BUDGET_RANK[r.budget] <= BUDGET_RANK[request.budget] && r.wanted(request));
-  for (const method of REQUESTED_WITHOUT_RUNNER(request, deps.runners)) {
-    out[method] = { method, budget: "thorough", paid: true, box, cached: false, error: "unavailable" };
+  for (const m of requestedWithoutRunner(request, deps.runners)) {
+    out[m.method] = { ...m, box, cached: false, error: "unavailable" };
   }
   for (const runner of runners) {
     const base = { method: runner.method, budget: runner.budget, paid: runner.paid, box };

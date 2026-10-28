@@ -3,6 +3,7 @@
   "version": 1,
   "modules": [
     "src/lib/parse-engine/cells.ts",
+    "src/lib/parse-engine/engine-table.ts",
     "src/lib/parse-engine/headers.ts",
     "src/lib/parse-engine/tag-column.ts",
     "src/lib/tag-mapping/primitives/pattern-infer.ts"
@@ -10,7 +11,7 @@
   "history": [
     {
       "version": 1,
-      "sha256": "0c041fee9e4ecf8c18e15ed6805ff3e1fda9a27833b0023f1dcab5b97074df1f"
+      "sha256": "1e314aa2d34a1d2f4f019e5a48cf8d407946d7ad01d012c6c26f35e7929c3b5f"
     }
   ]
 }

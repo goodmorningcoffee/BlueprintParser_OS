@@ -35,6 +35,7 @@ import {
   type ParseResult,
   type RegionDataExt,
   type RegionLinks,
+  type StructureModel,
   type StructureParagraphDoc,
   type StructureTableModel,
 } from "@/lib/parse-engine/types";
@@ -235,7 +236,7 @@ describe("parse-engine contract: constant lists", () => {
   });
 });
 
-describe("parse-engine contract: versions and stubs", () => {
+describe("parse-engine contract: versions and entry points", () => {
   it("every capability starts at version 1; stale capabilities are the ones stamped below current", () => {
     expect(PARSE_ENGINE_VERSION).toBe("pe/1.0.0");
     expect(Object.keys(CAPABILITY_VERSIONS).sort()).toEqual(
@@ -247,16 +248,21 @@ describe("parse-engine contract: versions and stubs", () => {
     expect(staleCapabilities(undefined)).toEqual([]);
   });
 
-  it("runParseEngine and applyOps are typed stubs that throw NotImplemented", async () => {
-    const ev = { v: 1, page: 1 } as unknown as EnginePageEvidence;
-    await expect(runParseEngine(ev, request)).rejects.toBeInstanceOf(ParseEngineNotImplementedError);
-    await expect(runParseEngine(ev, request)).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
-    expect(() => applyOps({} as ParseResult, ops)).toThrow(ParseEngineNotImplementedError);
+  it("runParseEngine and applyOps keep their WP-2.E signatures (filled by WP-3.D; the stubs no longer throw)", async () => {
+    const ev = { v: 1, page: 1, sheet: { raw: null, key: null }, channelKind: null, words: [], lines: [], textractTables: [], shapes: [], primitives: [], detections: [], proposals: [], evidenceHash: "e" } as EnginePageEvidence;
+    const result = await runParseEngine(ev, request);
+    expect(result.stamp.engine).toBe(PARSE_ENGINE_VERSION);
+    expect(applyOps(result, [])).toEqual(result.model);
+    expect(new ParseEngineNotImplementedError("x").code).toBe("NOT_IMPLEMENTED"); // kept for callers that map it (run.ts → 501)
+    expectTypeOf(runParseEngine).parameter(0).toEqualTypeOf<EnginePageEvidence>();
+    expectTypeOf(runParseEngine).parameter(1).toEqualTypeOf<ParseRequest>();
     expectTypeOf(runParseEngine).returns.resolves.toEqualTypeOf<ParseResult>();
+    expectTypeOf(applyOps).returns.toEqualTypeOf<StructureModel>();
+    void ops;
   });
 
-  it("the barrel re-exports the contract, versions, stubs and the 2.0b primitives", () => {
-    for (const name of ["PARSE_ENGINE_VERSION", "CAPABILITY_VERSIONS", "runParseEngine", "applyOps", "wordsToLines", "assembleText", "wordsIn", "ltwhToMinMax", "ParseEngineNotImplementedError"]) {
+  it("the barrel re-exports the contract, versions, the engine, ops, snapshots, replay and the 2.0b primitives", () => {
+    for (const name of ["PARSE_ENGINE_VERSION", "CAPABILITY_VERSIONS", "runParseEngine", "applyOps", "applyOpsDetailed", "snapshotOf", "diffSnapshots", "replayRegion", "wordsToLines", "assembleText", "wordsIn", "ltwhToMinMax", "ParseEngineNotImplementedError"]) {
       expect(barrel, name).toHaveProperty(name);
     }
   });
