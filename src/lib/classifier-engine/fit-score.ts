@@ -23,6 +23,9 @@ export interface FitSample {
   isTable?: boolean;
   /** CV fold key (set number); the fitter never reads it. */
   fold?: number;
+  /** [TP-3 WP-3.Q] Weight in the logistic loss (default 1). `samplesFromVerdicts` gives a `via:"parse"` accept
+   *  `PARSE_ACCEPT_WEIGHT`: a parse-save shows the region is a table, not that its stored class is right (K58). */
+  weight?: number;
 }
 
 export interface HeadScore { logit: number; p: number; rejected: boolean }

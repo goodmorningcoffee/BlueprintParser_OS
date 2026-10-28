@@ -25,6 +25,9 @@ import { OTHER_SCHEDULE } from "./vocabulary";
 export const FIT_VERSION = "clf-fit/1";
 export const MIN_POSITIVES = 8;
 export const DEFAULT_LAMBDA = 1;
+/** [TP-3 WP-3.Q, K58] Sample weight of a `via:"parse"` accept: the save of a parse started from the proposal records the
+ *  proposal's OWN class (`classId ?? proposedClassId`), so it is weak evidence for naming and detection alike. */
+export const PARSE_ACCEPT_WEIGHT = 0.25;
 export type RecipePatch = ClassifierOverlay["patches"][string];
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000;
@@ -40,6 +43,8 @@ export interface LogisticOptions {
   maxIter?: number;
   /** Converged when the largest gradient component is below this (default 1e-9). */
   tol?: number;
+  /** Per-sample weights in the loss (default all 1; finite, ≥ 0, one per row of X). */
+  sampleWeights?: readonly number[];
 }
 export interface LogisticResult { bias: number; weights: number[]; iterations: number; converged: boolean; loss: number }
 
@@ -70,6 +75,8 @@ export function fitLogistic(X: readonly (readonly number[])[], y: readonly numbe
   if (X.length !== y.length) throw new Error("fitLogistic: X and y differ in length");
   const d = opts.prior?.weights.length ?? X[0]?.length ?? 0;
   if (X.some((row) => row.length !== d)) throw new Error("fitLogistic: ragged X");
+  const sw = opts.sampleWeights ?? X.map(() => 1);
+  if (sw.length !== X.length || sw.some((w) => !Number.isFinite(w) || w < 0)) throw new Error("fitLogistic: sampleWeights must be one finite weight ≥ 0 per row");
   const m = [opts.prior?.bias ?? 0, ...(opts.prior?.weights ?? new Array<number>(d).fill(0))];
   const reg = [opts.biasLambda ?? 1e-3, ...new Array<number>(d).fill(opts.lambda)];
   const maxIter = opts.maxIter ?? 100;
@@ -77,7 +84,7 @@ export function fitLogistic(X: readonly (readonly number[])[], y: readonly numbe
   const z = (t: readonly number[], row: readonly number[]) => { let v = t[0]; for (let j = 0; j < d; j++) v += t[j + 1] * row[j]; return v; };
   const loss = (t: readonly number[]) => {
     let L = 0;
-    for (let i = 0; i < X.length; i++) { const zi = z(t, X[i]); L += softplus(zi) - y[i] * zi; }
+    for (let i = 0; i < X.length; i++) { const zi = z(t, X[i]); L += sw[i] * (softplus(zi) - y[i] * zi); }
     for (let j = 0; j <= d; j++) L += 0.5 * reg[j] * (t[j] - m[j]) ** 2;
     return L;
   };
@@ -91,9 +98,9 @@ export function fitLogistic(X: readonly (readonly number[])[], y: readonly numbe
     for (let i = 0; i < X.length; i++) {
       const p = sig(z(theta, X[i]));
       const xi = [1, ...X[i]];
-      const w = p * (1 - p);
+      const w = sw[i] * p * (1 - p);
       for (let a = 0; a <= d; a++) {
-        g[a] += (p - y[i]) * xi[a];
+        g[a] += sw[i] * (p - y[i]) * xi[a];
         for (let b = 0; b <= a; b++) H[a][b] += w * xi[a] * xi[b];
       }
     }
@@ -142,7 +149,7 @@ function fitHead(prefix: string, bias: number, signals: readonly WeightedSignal[
   const positives = y.reduce((a: number, b) => a + b, 0);
   const base = { head: prefix, n: usable.length, positives, hand };
   if (positives < minPositives || usable.length - positives < minPositives) return { ...base, status: "small-n" };
-  const fit = fitLogistic(usable.map((s) => keys.map((k) => s.features[k])), y, { lambda, prior: { bias, weights: sigs.map((s) => s.weight) } });
+  const fit = fitLogistic(usable.map((s) => keys.map((k) => s.features[k])), y, { lambda, prior: { bias, weights: sigs.map((s) => s.weight) }, sampleWeights: usable.map((s) => s.weight ?? 1) });
   return {
     ...base, status: "fitted",
     fitted: { bias: r3(fit.bias), weights: Object.fromEntries(keys.map((k, i) => [k, r3(fit.weights[i])])), iterations: fit.iterations, converged: fit.converged },
@@ -285,7 +292,8 @@ export function overlayFromFits(fits: readonly RecipeFit[], at: string): Classif
   return { custom: [], patches, updatedAt: at };
 }
 
-/** Stored verdicts of one recipe → samples. accept → the proposed class (or the accept's own classId); rename → its classId. */
+/** Stored verdicts of one recipe → samples. accept → the proposed class (or the accept's own classId); rename → its classId.
+ *  A `via:"parse"` accept is down-weighted to `PARSE_ACCEPT_WEIGHT` (K58; TP-3 WP-3.Q). */
 export function samplesFromVerdicts(verdicts: Iterable<ProposalVerdict>, recipe: ClassifierRecipe): FitSample[] {
   const classIds = new Set(recipe.classes.map((c) => c.id));
   const out: FitSample[] = [];
@@ -294,7 +302,7 @@ export function samplesFromVerdicts(verdicts: Iterable<ProposalVerdict>, recipe:
     const isTarget = v.verdict !== "reject";
     const raw = v.verdict === "rename" ? v.classId : (v.classId ?? v.proposedClassId);
     const classId = isTarget && raw && raw !== OTHER_SCHEDULE && classIds.has(raw) ? raw : null;
-    out.push({ features: v.features, isTarget, classId });
+    out.push({ features: v.features, isTarget, classId, ...(v.via === "parse" && v.verdict === "accept" ? { weight: PARSE_ACCEPT_WEIGHT } : {}) });
   }
   return out;
 }

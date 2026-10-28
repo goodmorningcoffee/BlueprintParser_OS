@@ -79,20 +79,22 @@ export function loadPage(s: SamplePage, corpus = DEFAULT_CORPUS): LoadedPage | n
  * [table-pipeline WP-2.G, K79] What a corpus bundle holds that the marks do not, parsed once per pid and kept small:
  * the Textract TABLES per page, and the classical crop read (`data.text`) of every shape-parse annotation by id.
  */
-interface BundleIndex { tables: Map<number, TextractTable[]>; shapeText: Map<number, string>; textRegions: Map<number, CorpusTextRegion[]> }
+interface BundleIndex { tables: Map<number, TextractTable[]>; shapeText: Map<number, string>; textRegions: Map<number, CorpusTextRegion[]>; classified: Map<number, CorpusClassifiedSources> }
 /** A System-1 text region from the bundle's `pageIntelligence.textRegions` (type + MinMax box only; no text kept). */
 export interface CorpusTextRegion { type: string; bbox: BboxMinMax }
+/** [table-pipeline WP-3.Q] The page's legacy table detections (`classifiedTables`, `ensembleRegions`; MinMax boxes + score only). */
+export interface CorpusClassifiedSources { classifiedTables: { bbox: BboxMinMax; confidence: number }[]; ensembleRegions: { bbox: BboxMinMax; tableProbability: number }[] }
 const bundleCache = new Map<string, BundleIndex>();
 function bundleIndexOf(pid: string, corpus = DEFAULT_CORPUS): BundleIndex {
   const key = `${corpus}\u0000${pid}`;
   let ix = bundleCache.get(key);
   if (!ix) {
-    ix = { tables: new Map(), shapeText: new Map(), textRegions: new Map() };
+    ix = { tables: new Map(), shapeText: new Map(), textRegions: new Map(), classified: new Map() };
     const file = join(corpus, "data", "bundles", `${pid}.json`);
     if (existsSync(file)) {
       try {
         const bundle = JSON.parse(readFileSync(file, "utf8")) as {
-          pages?: Array<{ pageNumber?: number; textractData?: { tables?: TextractTable[] } | null; pageIntelligence?: { textRegions?: Array<{ type?: unknown; bbox?: unknown }> } | null }>;
+          pages?: Array<{ pageNumber?: number; textractData?: { tables?: TextractTable[] } | null; pageIntelligence?: { textRegions?: Array<{ type?: unknown; bbox?: unknown }>; classifiedTables?: Array<{ bbox?: unknown; confidence?: unknown }>; ensembleRegions?: Array<{ bbox?: unknown; tableProbability?: unknown }> } | null }>;
           annotations?: Array<{ id?: number; source?: string; data?: { text?: unknown } | null }>;
         };
         for (const p of bundle.pages ?? []) {
@@ -104,6 +106,15 @@ function bundleIndexOf(pid: string, corpus = DEFAULT_CORPUS): BundleIndex {
               if (typeof t?.type !== "string" || !Array.isArray(b) || b.length !== 4 || !b.every((v) => typeof v === "number")) return [];
               return [{ type: t.type, bbox: [b[0], b[1], b[0] + b[2], b[1] + b[3]] as BboxMinMax }]; // textRegions are LTWH
             }));
+          }
+          // [WP-3.Q] classifiedTables / ensembleRegions are LTWH too (measured on the corpus: x + w ≤ 1)
+          const ltwh = (b: unknown): BboxMinMax | null => (Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v)) ? [b[0], b[1], b[0] + b[2], b[1] + b[3]] as BboxMinMax : null);
+          const pi = p?.pageIntelligence;
+          if (typeof p?.pageNumber === "number" && pi && (Array.isArray(pi.classifiedTables) || Array.isArray(pi.ensembleRegions))) {
+            ix.classified.set(p.pageNumber, {
+              classifiedTables: (pi.classifiedTables ?? []).flatMap((t) => { const b = ltwh(t?.bbox); return b ? [{ bbox: b, confidence: typeof t.confidence === "number" ? t.confidence : 0 }] : []; }),
+              ensembleRegions: (pi.ensembleRegions ?? []).flatMap((t) => { const b = ltwh(t?.bbox); return b ? [{ bbox: b, tableProbability: typeof t.tableProbability === "number" ? t.tableProbability : 0 }] : []; }),
+            });
           }
         }
         for (const a of bundle.annotations ?? []) {
@@ -147,6 +158,11 @@ export function classicalKeynotes(pid: string, marks: readonly Mark[], corpus = 
  */
 export function textractTablesOf(pid: string, page: number, corpus = DEFAULT_CORPUS): TextractTable[] {
   return bundleIndexOf(pid, corpus).tables.get(page) ?? [];
+}
+
+/** [table-pipeline WP-3.Q] The page's legacy table detections from the bundle (MinMax); empty lists when absent. */
+export function classifiedSourcesOf(pid: string, page: number, corpus = DEFAULT_CORPUS): CorpusClassifiedSources {
+  return bundleIndexOf(pid, corpus).classified.get(page) ?? { classifiedTables: [], ensembleRegions: [] };
 }
 
 /** [table-pipeline WP-2.G] The page's System-1 text regions (type + MinMax) from the bundle; empty when absent. */
