@@ -16,6 +16,8 @@
 //   • An op that no longer lands on this parse (its row or paragraph id is gone after a re-scan) is counted; it
 //     stays in the list (the commit refuses a rebase that loses an op), and Reset or Undo removes it.
 //   • Undo removes the last correction — a "Source ▾" pin of both axes is one correction — and Reset removes all.
+//     The undo groups live in this component: after it unmounts (another step tab, a draft restored from storage)
+//     or after a canvas gesture changes the list, Undo removes one op at a time.
 
 import { useMemo, useRef, useState } from "react";
 import { applyOpsDetailed } from "@/lib/parse-engine/ops";
@@ -58,6 +60,10 @@ export function structurePreview(result: ParseResult, ops: readonly CorrectionOp
   } catch (e) {
     return { model: result.model, lost: 0, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+function sameOps(a: readonly CorrectionOp[], b: readonly CorrectionOp[]): boolean {
+  return a.length === b.length && a.every((op, i) => op === b[i]);
 }
 
 const TINT_LEGEND: ReadonlyArray<[string, string]> = [
@@ -104,10 +110,14 @@ export default function StructureStep({
   const onUndo = () => {
     const current = useTablesWorkspaceStore.getState().drafts[item.id]?.ops ?? [];
     if (current.length === 0) return;
-    const top = groups.current[groups.current.length - 1];
+    const stack = groups.current;
+    const top = stack[stack.length - 1];
     if (top && top.after === current) {
-      groups.current.pop();
-      write(current.slice(0, current.length - top.size));
+      stack.pop();
+      const next = current.slice(0, current.length - top.size);
+      // Write back the array the group below recorded (same ops), so the next Undo still recognizes that group.
+      const below = stack[stack.length - 1];
+      write(below && sameOps(below.after, next) ? below.after : next);
     } else {
       groups.current = [];
       write(current.slice(0, -1));

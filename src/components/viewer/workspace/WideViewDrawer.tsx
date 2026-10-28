@@ -5,13 +5,19 @@
 // here docked to the bottom so the drawing stays visible above it). It edits the SAME draft — every edit is the
 // same correction op the panel grid emits — so closing the drawer loses nothing. Rendered in place inside the
 // panel (no portal), so the panel's focus-scoped key handling still applies (§1.6 rule 14); Esc closes it and
-// still propagates (ProposalFocusLayer owns Esc).
+// still propagates (ProposalFocusLayer owns Esc). An Esc that cancels a cell/label edit or closes an open column ▾
+// does only that: the drawer stays open.
 
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { CorrectionOp, StructureTableModel } from "@/lib/parse-engine/types";
-import { isolateDispatcherKeys } from "./keyboard";
+import { isEditableKeyboardTarget, isolateDispatcherKeys } from "./keyboard";
 import StructurePreviewGrid from "./StructurePreviewGrid";
 import { wsButton } from "./WorkspaceHeader";
+
+/** True when the key came from an open column ▾ (its button, or an item in its menu). */
+function inOpenMenu(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[role="menu"], [aria-haspopup="menu"][aria-expanded="true"]') !== null;
+}
 
 export default function WideViewDrawer({
   title,
@@ -34,7 +40,7 @@ export default function WideViewDrawer({
   }, []);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
-      onClose(); // not stopped: ProposalFocusLayer owns Esc
+      if (!isEditableKeyboardTarget(e.target) && !inOpenMenu(e.target)) onClose(); // not stopped: ProposalFocusLayer owns Esc
       return;
     }
     isolateDispatcherKeys(e);

@@ -14,7 +14,7 @@ import ItemDetail from "@/components/viewer/workspace/ItemDetail";
 import { pinBothOps, sourceChoice } from "@/components/viewer/workspace/CorrectionBar";
 import { pinnedSource } from "@/components/viewer/workspace/SourceSwitcher";
 import { gridIndex, rowKeyText } from "@/components/viewer/workspace/StructurePreviewGrid";
-import { structurePreview } from "@/components/viewer/workspace/StructureStep";
+import { resultSummary, structurePreview } from "@/components/viewer/workspace/StructureStep";
 import { shortText } from "@/components/viewer/workspace/ParagraphPreviewList";
 import { zCorrectionOps } from "@/lib/parse-engine/schema";
 import type { CorrectionOp, ParseResult } from "@/lib/parse-engine/types";
@@ -218,22 +218,61 @@ describe("table corrections preview locally", () => {
   });
 });
 
+describe("grouped Undo", () => {
+  it("a Source ▾ pin undone after a later correction removes both pins (verifier PROBE-1)", async () => {
+    openWith(item({ id: "u-1", proposalId: "u-1" }), scheduleResult());
+    await screen.findByText("3 rows × 3 columns · 1 header row");
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "textract-cells" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Header rows" }), { target: { value: "2" } });
+    expect(ops("u-1")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Undo correction" }));
+    expect(ops("u-1")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Undo correction" }));
+    expect(ops("u-1")).toHaveLength(0);
+    expect(screen.getByText("3 rows × 3 columns · 1 header row")).toBeInTheDocument();
+  });
+
+  it("walks back several groups, each one correction at a time, down to an empty list", async () => {
+    openWith(item({ id: "u-2", proposalId: "u-2" }), scheduleResult());
+    await screen.findByText("3 rows × 3 columns · 1 header row");
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "textract-cells" } }); // 2 ops
+    fireEvent.change(screen.getByRole("combobox", { name: "Header rows" }), { target: { value: "2" } }); // 1 op
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "shape-centres" } }); // 1 op (rows only)
+    fireEvent.change(screen.getByRole("combobox", { name: "Header rows" }), { target: { value: "1" } }); // 1 op
+    const lengths = [ops("u-2").length];
+    for (let i = 0; i < 4; i++) {
+      fireEvent.click(screen.getByRole("button", { name: "Undo correction" }));
+      lengths.push(ops("u-2").length);
+    }
+    expect(lengths).toEqual([5, 4, 3, 2, 0]);
+    expect(screen.getByText("3 rows × 3 columns · 1 header row")).toBeInTheDocument();
+  });
+});
+
 describe("rebase", () => {
   it("while a rebase waits on its confirm, the rebased model (ops already applied) is shown as is and corrections pause", async () => {
     openWith(item({ id: "p-r", proposalId: "p-r" }), scheduleResult());
     await screen.findByText("3 rows × 3 columns · 1 header row");
     fireEvent.change(screen.getByRole("combobox", { name: "Header rows" }), { target: { value: "2" } });
     expect(screen.getByText("2 rows × 3 columns · 2 header rows")).toBeInTheDocument();
-    // the server's rebased model already carries set-header-rows 2 (and one fewer body row after its re-scan)
-    const rebased = structurePreview(scheduleResult(), [{ op: "set-header-rows", n: 2 }, { op: "remove-line", axis: "rows", after: "r3" }], null).model;
+    // a canvas gesture removes a row line (not idempotent, so applying the ops twice would show)
+    act(() => {
+      const s = useTablesWorkspaceStore.getState();
+      s.setDraftOps("p-r", [...s.drafts["p-r"].ops, { op: "remove-line", axis: "rows", after: "r3" }]);
+    });
+    expect(screen.getByText("1 row × 3 columns · 2 header rows")).toBeInTheDocument();
+    // the server's rebased model is authoritative and already carries the ops: here its re-scan kept the row the
+    // draft removed, so applying the draft's remove-line again on top would show one row fewer
+    const rebased = structurePreview(scheduleResult(), [{ op: "set-header-rows", n: 2 }], null).model;
     commitAnswer = { error: { code: "CONFLICT", message: "Refused" }, reason: "rebased", rebased, changedRows: 1, evidenceHash: "ev-2" };
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     expect(await screen.findByText(/Showing the re-scanned result/)).toBeInTheDocument();
-    expect(screen.getByText("1 row × 3 columns · 2 header rows")).toBeInTheDocument(); // not 2 header rows applied again on top
+    expect(screen.getByText("2 rows × 3 columns · 2 header rows")).toBeInTheDocument(); // not the ops applied again on top
+    expect(resultSummary({ model: rebased })).toBe("2 rows × 3 columns · 2 header rows");
     expect(screen.getByRole("combobox", { name: "Header rows" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Undo correction" })).toBeDisabled();
     expect(within(grid()).queryByRole("button", { name: /Role of/ })).toBeNull();
-    expect(ops("p-r")).toEqual([{ op: "set-header-rows", n: 2 }]);
+    expect(ops("p-r")).toEqual([{ op: "set-header-rows", n: 2 }, { op: "remove-line", axis: "rows", after: "r3" }]);
   });
 });
 
@@ -261,6 +300,26 @@ describe("Wide view", () => {
     expect(screen.queryByRole("dialog", { name: "Wide view" })).toBeNull();
     expect(cellText("r3|c17")).toBe("Z17");
     expect(calls).toHaveLength(1);
+  });
+
+  it("Esc in a cell field or an open column ▾ ends only that; Esc on the drawer itself closes it", async () => {
+    openWith(item({ id: "p-e", proposalId: "p-e", b: [0.05, 0.1, 0.95, 0.19] }), wideResult());
+    await screen.findByText("2 rows × 20 columns · 1 header row");
+    fireEvent.click(screen.getByRole("button", { name: "Wide view ▸" }));
+    const drawer = screen.getByRole("dialog", { name: "Wide view" });
+    const wide = within(drawer).getByRole("table", { name: "Wide structure preview" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "Edit cells" }));
+    fireEvent.click(wide.querySelector('[data-cell="r3|c17"]')!);
+    fireEvent.keyDown(within(drawer).getByRole("textbox", { name: /Cell r3 H17/ }), { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Wide view" })).toBeInTheDocument();
+    expect(within(drawer).queryByRole("textbox", { name: /Cell r3 H17/ })).toBeNull();
+    fireEvent.click(within(wide).getByRole("button", { name: "Role of H5" }));
+    fireEvent.keyDown(within(drawer).getByRole("menuitemradio", { name: "QTY" }), { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Wide view" })).toBeInTheDocument();
+    expect(within(drawer).queryByRole("menu")).toBeNull();
+    expect(ops("p-e")).toEqual([]);
+    fireEvent.keyDown(drawer, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Wide view" })).toBeNull();
   });
 });
 

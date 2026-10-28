@@ -138,6 +138,7 @@ describe("click paths (PLAN §3.3)", () => {
     await waitFor(() => expect(commits()).toHaveLength(1));
     const body = expectCommit(0);
     expect(body.ops.map((o) => o.op)).toEqual(["pin-source", "pin-source", "set-header-rows", "set-col-role"]);
+    expect(body.ops.at(-1)).toMatchObject({ op: "set-col-role", role: "qty" });
     expect(body.base).toEqual(scheduleResult().model); // the machine model, not the preview
     expect(body.links).toMatchObject({ proposalId: "p-sched" });
     expect(await screen.findByText(/Mapped 3 tags · 9 hits · 1 with none/)).toBeInTheDocument();
