@@ -8,8 +8,7 @@
  *   legend   → the grid + `symbols[{yoloClass, description}]` when rows are keyed by a YOLO symbol
  *   notes    → NotesData `{headers: ["Key","Note"], rows: [{Key, Note}], tagColumn: "Key", …}`
  *   spec     → SpecData `{sections: [{sectionHeader, body}]}`
- * Header labels are deduped (K06, the `lib/table-headers.ts` `uniqueHeaders` rule, repeated here because
- * this module is client-safe and imports only the parse-engine subset, E-8; a parity test pins the two),
+ * Header labels are deduped (K06, `parse-engine/headers` `uniqueHeaders`, the one copy; client-safe, E-8),
  * and table projections always carry `colBoundaries`/`rowBoundaries` (K14).
  *
  * `viewHash(data)` hashes the LEGACY part of a stored `data` object (every key except the engine's own
@@ -18,6 +17,7 @@
  * region read as "edited in Classic" (`read.ts`). Pure and deterministic (E-7): sorted-key JSON, no clock.
  */
 
+import { uniqueHeaders } from "./headers";
 import type { Paragraph, StructureModel, StructureParagraphDoc, StructureTableModel } from "./types";
 
 /** The keys an engine commit adds next to the projection (`RegionDataExt`); never part of the view. */
@@ -60,25 +60,12 @@ export interface LegacyViewOptions {
   tableName?: string;
 }
 
-/** K06 header dedupe — the `uniqueHeaders` rule of `lib/table-headers.ts` (parity-tested). */
+/**
+ * K06 header dedupe. One implementation: `parse-engine/headers` `uniqueHeaders` (WP-3.B moved it there from
+ * `lib/table-headers.ts`, which re-exports it). Kept under this name for `read.ts`; parity-tested.
+ */
 export function dedupeHeaderLabels(headers: readonly string[]): string[] {
-  const base = headers.map((h, i) => (typeof h === "string" && h.trim() !== "" ? h : `Column ${i + 1}`));
-  const taken = new Set<string>();
-  const nextSuffix = new Map<string, number>();
-  const firstAt = new Map<string, number>();
-  base.forEach((h, i) => {
-    if (!firstAt.has(h)) firstAt.set(h, i);
-  });
-  for (const h of firstAt.keys()) taken.add(h);
-  return base.map((h, i) => {
-    if (firstAt.get(h) === i) return h;
-    let n = nextSuffix.get(h) ?? 2;
-    while (taken.has(`${h} (${n})`)) n++;
-    const label = `${h} (${n})`;
-    nextSuffix.set(h, n + 1);
-    taken.add(label);
-    return label;
-  });
+  return uniqueHeaders(headers);
 }
 
 function isParagraphDoc(model: StructureModel): model is StructureParagraphDoc {
