@@ -13,11 +13,14 @@ import ProposalFocusLayer from "@/components/viewer/ProposalFocusLayer";
 import { useOverlayKeyboardDispatcher } from "@/components/viewer/useOverlayKeyboardDispatcher";
 import TablesWorkspaceHost from "@/components/viewer/workspace/TablesWorkspaceHost";
 import WorkspaceCanvasLayer from "@/components/viewer/workspace/canvas/WorkspaceCanvasLayer";
+import { DRAW_CONTINUATION } from "@/components/viewer/workspace/canvas/BoxDrawCapture";
 import {
   applyLineOps,
+  axisEdges,
   boundaries,
   canvasLines,
   clampLine,
+  editableLine,
   modelLines,
   moveOp,
   previewModel,
@@ -34,11 +37,29 @@ import type {
 import type { WorkspaceItem, WorkspaceItemsResponse } from "@/queries/useWorkspaceItems";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { resetTablesWorkspaceStore, useTablesWorkspaceStore, type WorkspaceDraft } from "@/stores/tablesWorkspaceStore";
+import {
+  resetTablesWorkspaceStore,
+  useTablesWorkspaceStore,
+  type WorkspaceCorrection,
+  type WorkspaceDraft,
+} from "@/stores/tablesWorkspaceStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { resetWorkspaceCanvasStore, useWorkspaceCanvasStore } from "@/stores/workspaceCanvasStore";
 import { drawItemKey, openFromToolbar, startDraw } from "@/stores/workspaceCommands";
+
+// applyOps is the WP-2.E stub on this branch; a test can make it fail differently (VERIFY F3).
+const opsMock = vi.hoisted(() => ({ fail: null as Error | null }));
+vi.mock("@/lib/parse-engine/ops", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/parse-engine/ops")>();
+  return {
+    ...real,
+    applyOps: (...args: Parameters<typeof real.applyOps>) => {
+      if (opsMock.fail) throw opsMock.fail;
+      return real.applyOps(...args);
+    },
+  };
+});
 
 const PUB = "pub-canvas";
 const KEY = "p-synth";
@@ -129,6 +150,8 @@ function openWithDraft(d: WorkspaceDraft | null = draft(), page = 1) {
   });
 }
 const opsOf = (key = KEY): CorrectionOp[] => useTablesWorkspaceStore.getState().drafts[key]?.ops ?? [];
+/** WP-3.M's "+ Add continuation box" (it widens `WorkspaceCorrection` with this value). */
+const armContinuation = () => useTablesWorkspaceStore.getState().setCorrection(DRAW_CONTINUATION as WorkspaceCorrection);
 
 // ── the real window-level overlay dispatcher, with spies for what it would do ─────────────────────
 type DispatcherOptions = Parameters<typeof useOverlayKeyboardDispatcher>[0];
@@ -161,6 +184,7 @@ beforeEach(() => {
   try { localStorage.clear(); } catch { /* jsdom */ }
   resetTablesWorkspaceStore();
   resetWorkspaceCanvasStore();
+  opsMock.fail = null;
   useToolStore.getState().resetProjectToolState();
   useProposalFocusStore.setState({ hover: null, focus: null, fitRequest: 0 });
   useSessionStore.setState({ publicId: PUB, isDemo: false, projectId: 7, pageDrawingNumbers: {}, pageNames: {} });
@@ -211,14 +235,82 @@ describe("lineModel (pure)", () => {
   });
 
   it("an id-less line is edited with set-lines (full boundary list); an id-keyed one with move/remove", () => {
-    const pinned = applyLineOps(RESULT, [{ op: "pin-source", axis: "cols", method: "ocr-lines" }], "cols");
-    const boxes = [TABLE.bbox];
-    expect(moveOp(pinned[0], 0.2, pinned, boxes)).toEqual({ op: "set-lines", axis: "cols", at: [0.1, 0.2, 0.4, 0.6] });
-    expect(removeOp(pinned[1], pinned, boxes)).toEqual({ op: "set-lines", axis: "cols", at: [0.1, 0.25, 0.6] });
+    const pin: CorrectionOp[] = [{ op: "pin-source", axis: "cols", method: "ocr-lines" }];
+    const pinned = applyLineOps(RESULT, pin, "cols");
+    const colEdges = axisEdges(RESULT, pin, previewModel(RESULT, pin), "cols");
+    expect(colEdges).toEqual([0.1, 0.6]);
+    expect(moveOp(pinned[0], 0.2, pinned, colEdges)).toEqual({ op: "set-lines", axis: "cols", at: [0.1, 0.2, 0.4, 0.6] });
+    expect(removeOp(pinned[1], pinned, colEdges)).toEqual({ op: "set-lines", axis: "cols", at: [0.1, 0.25, 0.6] });
     const rows = modelLines(TABLE, "rows");
-    expect(moveOp(rows[1], 0.4, rows, boxes)).toEqual({ op: "move-line", axis: "rows", after: "r1", at: 0.4 });
-    expect(removeOp(rows[0], rows, boxes)).toEqual({ op: "remove-line", axis: "rows", after: "r0" });
-    expect(boundaries("rows", rows, boxes)).toEqual([0.1, 0.2, 0.3, 0.5]);
+    const rowEdges = axisEdges(RESULT, [], previewModel(RESULT, []), "rows");
+    expect(moveOp(rows[1], 0.4, rows, rowEdges)).toEqual({ op: "move-line", axis: "rows", after: "r1", at: 0.4 });
+    expect(removeOp(rows[0], rows, rowEdges)).toEqual({ op: "remove-line", axis: "rows", after: "r0" });
+    expect(boundaries("rows", rows, rowEdges)).toEqual([0.1, 0.2, 0.3, 0.5]);
+  });
+
+  // VERIFY F2: continuation blocks printed side by side share their y-range; a line's part comes from its row.
+  it("side-by-side continuation parts: repeated drags of an added line never move another part's lines", () => {
+    const side: StructureTableModel = {
+      ...TABLE, bbox: [0.1, 0.1, 0.4, 0.5], parts: [[0.5, 0.1, 0.8, 0.5]],
+      rows: [
+        { id: "r0", y0: 0.1, y1: 0.2, role: "header" },
+        { id: "r1", y0: 0.2, y1: 0.3, role: "body" },
+        { id: "r2", y0: 0.3, y1: 0.5, role: "body" },
+        { id: "r3", y0: 0.1, y1: 0.25, role: "body", part: 1 },
+        { id: "r4", y0: 0.25, y1: 0.5, role: "body", part: 1 },
+      ],
+      cols: [{ id: "c0", x0: 0.1, x1: 0.25, label: "Key", labelRaw: "KEY" }, { id: "c1", x0: 0.25, x1: 0.4, label: "Text", labelRaw: "TEXT" }],
+    };
+    const result: ParseResult = { ...RESULT, model: side };
+    const ops: CorrectionOp[] = [{ op: "add-line", axis: "rows", at: 0.45 }];
+    const linesNow = () => {
+      const preview = previewModel(result, ops);
+      return { lines: canvasLines(result, ops, preview, "rows"), edges: axisEdges(result, ops, preview, "rows") };
+    };
+    const asTuples = () => linesNow().lines.map((l) => [l.part, l.after, l.at]);
+    // add-line splits the first band holding it (part 0's r2), as WP-3.D does
+    expect(asTuples()).toEqual([[0, "r0", 0.2], [0, "r1", 0.3], [0, null, 0.45], [1, "r3", 0.25]]);
+    let was = 0.45;
+    for (const to of [0.46, 0.47]) {
+      const { lines, edges } = linesNow();
+      const added = lines.find((l) => l.part === 0 && l.at === was)!;
+      was = to;
+      const op = moveOp(added, to, lines, edges)!;
+      // set-lines carries PART 0's boundary list only (WP-3.D replaces part 0's axis with it)
+      expect(op).toEqual({ op: "set-lines", axis: "rows", at: [0.1, 0.2, 0.3, to, 0.5] });
+      ops.push(op);
+      expect(asTuples()).toEqual([[0, null, 0.2], [0, null, 0.3], [0, null, to], [1, "r3", 0.25]]);
+    }
+    // pin-source replaces part 0's lines and keeps part 1's
+    const pinned = applyLineOps({ ...result, alternatives: [{ ...RESULT.alternatives[1], geometry: { rowLines: [0.1, 0.15, 0.3, 0.5], colLines: [] } }] },
+      [{ op: "pin-source", axis: "rows", method: "ocr-lines" }], "rows");
+    expect(pinned.map((l) => [l.part, l.after, l.at])).toEqual([[0, null, 0.15], [0, null, 0.3], [1, "r3", 0.25]]);
+  });
+
+  it("an id-less line of a later part has no op (set-lines is part 0's) and is not editable", () => {
+    const stacked: StructureTableModel = {
+      ...TABLE, parts: [[0.1, 0.6, 0.6, 0.8]],
+      rows: [...TABLE.rows, { id: "r3", y0: 0.6, y1: 0.8, role: "body", part: 1 }],
+    };
+    const result: ParseResult = { ...RESULT, model: stacked };
+    const ops: CorrectionOp[] = [{ op: "add-line", axis: "rows", at: 0.7 }];
+    const preview = previewModel(result, ops);
+    const lines = canvasLines(result, ops, preview, "rows");
+    const added = lines.find((l) => l.after === null)!;
+    expect(added).toMatchObject({ part: 1, at: 0.7 });
+    expect(editableLine(added)).toBe(false);
+    expect(moveOp(added, 0.72, lines, axisEdges(result, ops, preview, "rows"))).toBeNull();
+    expect(removeOp(added, lines, axisEdges(result, ops, preview, "rows"))).toBeNull();
+  });
+
+  it("only the not-implemented stub falls back to the local preview; any other applyOps failure is surfaced", () => {
+    const ops: CorrectionOp[] = [{ op: "move-line", axis: "rows", after: "r1", at: 0.42 }];
+    expect(previewModel(RESULT, ops)).toEqual({ model: TABLE, exact: false });
+    opsMock.fail = new Error("synthetic validation failure");
+    const preview = previewModel(RESULT, ops);
+    expect(preview).toEqual({ model: TABLE, exact: true, error: "synthetic validation failure" });
+    // the base model is shown unchanged: no local approximation of the op
+    expect(canvasLines(RESULT, ops, preview, "rows").map((l) => l.at)).toEqual([0.2, 0.3]);
   });
 
   it("a dragged line stays inside its box and between its neighbours", () => {
@@ -338,7 +430,7 @@ describe("WorkspaceCanvasLayer: gestures become ops", () => {
     expect(container.querySelector("[data-key-marker='r1']")).toHaveAttribute("data-key-state", "known");
   });
 
-  it('"+ Region" → a draw: item on this page, opened and focused, and a parse request with no kind', () => {
+  it('"+ Region" → a draw: item on this page, opened and focused, with an unparsed draft (WP-3.M parses it)', () => {
     useTablesWorkspaceStore.setState({ enabled: true });
     render(<Page />);
     act(() => startDraw());
@@ -355,9 +447,18 @@ describe("WorkspaceCanvasLayer: gestures become ops", () => {
     expect(ws.selectedKey).toBe(key);
     expect(ws.drafts[key]).toMatchObject({ page: 1, bbox, ops: [], result: null });
     expect(useProposalFocusStore.getState().focus).toMatchObject({ proposalId: key, pageNumber: 1, bbox });
-    expect(useWorkspaceCanvasStore.getState().parseRequest).toMatchObject({ key, request: { page: 1, bbox, budget: "instant" } });
-    expect(useWorkspaceCanvasStore.getState().parseRequest?.request).not.toHaveProperty("kind");
+    expect(useWorkspaceCanvasStore.getState()).not.toHaveProperty("parseRequest"); // no side channel (VERIFY F1)
     expect(document.querySelector("[data-workspace-capture]")).toBeNull();
+
+    // VERIFY F6: the same box again re-opens that draft and keeps its ops
+    const op: CorrectionOp = { op: "set-title", text: "Synthetic" };
+    act(() => useTablesWorkspaceStore.getState().setDraftOps(key, [op]));
+    act(() => startDraw());
+    const again = document.querySelector("[data-workspace-capture='draw-region']") as HTMLElement;
+    fireEvent.pointerDown(again, { button: 0, pointerId: 2, clientX: cx(0.2), clientY: cy(0.6) });
+    fireEvent.pointerUp(again, { pointerId: 2, clientX: cx(0.5), clientY: cy(0.8) });
+    expect(useTablesWorkspaceStore.getState().drafts[key].ops).toEqual([op]);
+    expect(useTablesWorkspaceStore.getState().selectedKey).toBe(key);
   });
 
   it("a tiny drag (a click) draws nothing", () => {
@@ -367,24 +468,63 @@ describe("WorkspaceCanvasLayer: gestures become ops", () => {
     const capture = document.querySelector("[data-workspace-capture='draw-region']") as HTMLElement;
     fireEvent.pointerDown(capture, { button: 0, pointerId: 1, clientX: cx(0.2), clientY: cy(0.6) });
     fireEvent.pointerUp(capture, { pointerId: 1, clientX: cx(0.201), clientY: cy(0.601) });
-    expect(useWorkspaceCanvasStore.getState().parseRequest).toBeNull();
+    expect(useTablesWorkspaceStore.getState().drafts).toEqual({});
     expect(useTablesWorkspaceStore.getState().correction).toBe("draw-region");
   });
 
-  it("the continuation box joins the item's parts and re-requests the parse with them", () => {
+  it('"+ Add continuation box" (WP-3.M\'s correction) → the box joins the selected item\'s parts and clears its result', () => {
     openWithDraft();
     render(<Page />);
-    act(() => useWorkspaceCanvasStore.getState().arm("continuation", KEY));
+    act(() => armContinuation());
     expect(screen.queryAllByRole("slider")).toHaveLength(0); // handles step aside while a box draw is armed
-    const capture = document.querySelector("[data-workspace-capture='continuation']") as HTMLElement;
+    const capture = document.querySelector("[data-workspace-capture='draw-continuation']") as HTMLElement;
+    expect(document.activeElement).toBe(capture);
     fireEvent.pointerDown(capture, { button: 0, pointerId: 1, clientX: cx(0.1), clientY: cy(0.6) });
     fireEvent.pointerUp(capture, { pointerId: 1, clientX: cx(0.6), clientY: cy(0.8) });
-    expect(useTablesWorkspaceStore.getState().drafts[KEY].parts).toEqual([[0.1, 0.6, 0.6, 0.8]]);
-    expect(useWorkspaceCanvasStore.getState().armed).toBeNull();
-    expect(useWorkspaceCanvasStore.getState().parseRequest).toMatchObject({
-      key: KEY,
-      request: { page: 1, bbox: [0.1, 0.1, 0.6, 0.5], parts: [[0.1, 0.6, 0.6, 0.8]], kind: "keynote", budget: "instant", hints: { proposalId: KEY } },
+    const d = useTablesWorkspaceStore.getState().drafts[KEY];
+    expect(d.parts).toEqual([[0.1, 0.6, 0.6, 0.8]]);
+    expect(d.result).toBeNull(); // useEngineParse (WP-3.M) re-parses a draft with no result, parts included
+    expect(useTablesWorkspaceStore.getState().correction).toBeNull();
+
+    // a box already in the table is refused (de-duplicated) and the draw stays armed
+    act(() => {
+      useTablesWorkspaceStore.getState().putDraft(KEY, { ...d, result: RESULT });
+      armContinuation();
     });
+    const again = document.querySelector("[data-workspace-capture='draw-continuation']") as HTMLElement;
+    fireEvent.pointerDown(again, { button: 0, pointerId: 2, clientX: cx(0.1), clientY: cy(0.6) });
+    fireEvent.pointerUp(again, { pointerId: 2, clientX: cx(0.6), clientY: cy(0.8) });
+    expect(useTablesWorkspaceStore.getState().drafts[KEY].parts).toEqual([[0.1, 0.6, 0.6, 0.8]]);
+    expect(useTablesWorkspaceStore.getState().drafts[KEY].result).toBe(RESULT);
+    expect(useTablesWorkspaceStore.getState().correction).toBe(DRAW_CONTINUATION);
+  });
+
+  it("an item-bound draw ends on close and on a selection change, and never comes back armed (VERIFY F4)", () => {
+    openWithDraft();
+    render(<Page />);
+    act(() => useWorkspaceCanvasStore.getState().arm("draw-rows", KEY));
+    expect(document.querySelector("[data-workspace-capture='draw-rows']")).not.toBeNull();
+    act(() => useTablesWorkspaceStore.getState().closeWorkspace());
+    expect(useWorkspaceCanvasStore.getState().armed).toBeNull();
+    act(() => openWithDraft());
+    expect(document.querySelector("[data-workspace-capture]")).toBeNull();
+
+    act(() => armContinuation());
+    expect(document.querySelector("[data-workspace-capture='draw-continuation']")).not.toBeNull();
+    act(() => useTablesWorkspaceStore.getState().select("p-other"));
+    expect(useTablesWorkspaceStore.getState().correction).toBeNull();
+    act(() => useTablesWorkspaceStore.getState().select(KEY));
+    expect(document.querySelector("[data-workspace-capture]")).toBeNull();
+
+    act(() => useWorkspaceCanvasStore.getState().arm("draw-cols", KEY));
+    act(() => useTablesWorkspaceStore.getState().discardDraft(KEY));
+    expect(useWorkspaceCanvasStore.getState().armed).toBeNull();
+  });
+
+  it("the canvas sits above the parsed-table cell overlay (z-index 15) so its handles take the clicks (VERIFY F5)", () => {
+    openWithDraft();
+    const { container } = render(<Page />);
+    expect(Number((container.querySelector("[data-workspace-canvas]") as HTMLElement).style.zIndex)).toBeGreaterThan(15);
   });
 
   it('"Draw cells" boxes become user-boxes ops and the draw stays armed', () => {
@@ -484,10 +624,10 @@ describe("keyboard isolation against the real overlay dispatcher (§1.6 rule 14,
 
     act(() => {
       useProposalFocusStore.getState().focusProposal({ publicId: PUB, proposalId: KEY, pageNumber: 1, bbox: [0.1, 0.1, 0.6, 0.5] });
-      useWorkspaceCanvasStore.getState().arm("continuation", KEY);
+      armContinuation();
     });
-    fireEvent.keyDown(document.querySelector("[data-workspace-capture='continuation']")!, { key: "Escape" });
-    expect(useWorkspaceCanvasStore.getState().armed).toBeNull();
+    fireEvent.keyDown(document.querySelector("[data-workspace-capture='draw-continuation']")!, { key: "Escape" });
+    expect(useTablesWorkspaceStore.getState().correction).toBeNull();
     expect(useProposalFocusStore.getState().focus).toBeNull();
   });
 });

@@ -2,11 +2,16 @@
 
 // [TP-3 WP-3.O] The workspace's own box draw on the page (PLAN §3.1; ARCH C: its own DOM capture, never a
 // `tools/registry.ts` tool, never a toolStore field — §1.6 rule 3). One gesture, three uses:
-//   "draw-region"   "+ Region" (tablesWorkspaceStore.correction, WP-3.L): a `draw:` item and draft on this page,
-//                   opened and focused, and a parse request with NO kind (the engine's kind heads decide, §3.3 F);
-//   "continuation"  KindBar "+ Add continuation box": the box joins the item's `parts` (≤ 4, R11) and the item is
-//                   re-parsed with them;
-//   "draw-rows" / "draw-cols"   "Draw cells": each box is a `user-boxes` op on the open item (stays armed).
+//   "draw-region"         "+ Region" (tablesWorkspaceStore.correction, WP-3.L): a `draw:` item and draft on this
+//                         page, opened and focused. Its draft has no result, so WP-3.M's `useEngineParse` parses it,
+//                         with NO kind for a drawn box (the engine's kind heads decide, §3.3 F). A box that lands on
+//                         an existing `draw:` draft re-opens it instead of wiping its ops;
+//   "draw-continuation"   "+ Add continuation box" (tablesWorkspaceStore.correction, WP-3.M's KindBar), bound to the
+//                         SELECTED item: the box joins its `parts` (≤ 4, R11) the way WP-3.M's
+//                         `addContinuationPart` does — de-duplicated, `result` cleared so the item is re-parsed with
+//                         the parts, the correction cleared;
+//   "draw-rows" / "draw-cols"   "Draw cells" (workspaceCanvasStore.armed): each box is a `user-boxes` op on the open
+//                         item (stays armed).
 // It REFUSES while a viewer tool is active (`toolStore.activeTool !== null`, i.e. not the pointer), so it never
 // competes with a markup, takeoff or parse tool for the same drag. Esc cancels it without being swallowed
 // (ProposalFocusLayer owns Esc); Enter / Del never leave it (§1.6 rule 14).
@@ -22,53 +27,73 @@ import type { ToPage } from "./LineHandles";
 import { boxStyle } from "./StructureLines";
 import { pageUnit } from "./lineModel";
 
-export type DrawMode = "draw-region" | CanvasDrawMode;
+/**
+ * The `tablesWorkspaceStore.correction` value WP-3.M's "+ Add continuation box" arms. Typed `string` so this file
+ * compiles before and after WP-3.M widens `WorkspaceCorrection` with it.
+ */
+export const DRAW_CONTINUATION: string = "draw-continuation";
+
+export type DrawMode = "draw-region" | "draw-continuation" | CanvasDrawMode;
 
 /** A box smaller than this on either side is a click, not a box. */
 export const MIN_BOX = 0.005;
 
 const PROMPTS: Readonly<Record<DrawMode, string>> = {
   "draw-region": "Drag a box around a table or notes block · Esc cancels",
-  continuation: "Drag a box around the next block of this table · Esc cancels",
+  "draw-continuation": "Drag a box around the next block of this table · Esc cancels",
   "draw-rows": "Drag a box over each row · Esc ends",
   "draw-cols": "Drag a box over each column · Esc ends",
 };
 
 function cancel(mode: DrawMode): void {
-  if (mode === "draw-region") useTablesWorkspaceStore.getState().setCorrection(null);
+  if (mode === "draw-region" || mode === "draw-continuation") useTablesWorkspaceStore.getState().setCorrection(null);
   else useWorkspaceCanvasStore.getState().disarm();
+}
+
+const sameBox = (a: readonly number[], b: readonly number[]) => a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+
+/**
+ * Add a continuation box to an item's draft. [integration] Same contract as WP-3.M's
+ * `ContinuationControls.addContinuationPart` (not in this branch yet); once both are merged this lands through it.
+ */
+function landContinuation(itemKey: string, bbox: BboxMinMax): boolean {
+  const ws = useTablesWorkspaceStore.getState();
+  const d = ws.drafts[itemKey];
+  if (!d) return false;
+  const parts = d.parts ?? [];
+  if (parts.length >= PARSE_ENGINE_CAPS.parts || sameBox(d.bbox, bbox) || parts.some((p) => sameBox(p, bbox))) return false;
+  ws.putDraft(itemKey, { ...d, parts: [...parts, [...bbox] as BboxMinMax], result: null });
+  if (ws.correction === DRAW_CONTINUATION) ws.setCorrection(null);
+  return true;
 }
 
 /** What a finished box does in each mode (exported for tests). */
 export function completeBox(mode: DrawMode, pageNumber: number, bbox: BboxMinMax): void {
   const ws = useTablesWorkspaceStore.getState();
-  const canvas = useWorkspaceCanvasStore.getState();
   if (mode === "draw-region") {
     const kind = GROUP_KINDS[ws.group][0];
     const key = drawItemKey(pageNumber, bbox);
-    ws.putDraft(key, { page: pageNumber, bbox, kind, result: null, ops: [], startedAt: 0 });
+    const existing = ws.drafts[key];
+    // `kind` is a placeholder (the draft needs one); the parse request of a drawn box carries none (WP-3.M).
+    if (!existing) ws.putDraft(key, { page: pageNumber, bbox, kind, result: null, ops: [], startedAt: 0 });
     ws.setCorrection(null);
-    openItem({ id: key, page: pageNumber, b: bbox, kind });
-    canvas.requestParse(key, { page: pageNumber, bbox, budget: "instant" });
+    openItem({ id: key, page: pageNumber, b: existing?.bbox ?? bbox, kind: existing?.kind ?? kind });
     return;
   }
+  if (mode === "draw-continuation") {
+    const key = ws.selectedKey;
+    if (!key || ws.drafts[key]?.page !== pageNumber) {
+      ws.setCorrection(null);
+      return;
+    }
+    landContinuation(key, bbox);
+    return;
+  }
+  const canvas = useWorkspaceCanvasStore.getState();
   const key = canvas.armed?.itemKey;
   const draft = key ? ws.drafts[key] : undefined;
   if (!key || !draft || draft.page !== pageNumber) {
     canvas.disarm();
-    return;
-  }
-  if (mode === "continuation") {
-    canvas.disarm();
-    const parts = draft.parts ?? [];
-    if (parts.length >= PARSE_ENGINE_CAPS.parts) return;
-    const next = [...parts, bbox];
-    ws.putDraft(key, { ...draft, parts: next });
-    const proposalId = ws.queue.find((q) => q.id === key)?.proposalId;
-    canvas.requestParse(key, {
-      page: draft.page, bbox: draft.bbox, parts: next, kind: draft.kind, budget: "instant",
-      ...(proposalId ? { hints: { proposalId } } : {}),
-    });
     return;
   }
   if (draft.ops.length >= PARSE_ENGINE_CAPS.ops) return;

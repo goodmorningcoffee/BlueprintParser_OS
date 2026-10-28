@@ -2,7 +2,8 @@
 
 // [TP-3 WP-3.O] "Adjust lines" on the canvas (PLAN §3.3 A step 3): every row / column line of the open table has a
 // focusable handle.
-//   drag          → `move-line` (or `set-lines` for a line without an id) at the page-normalised drop position;
+//   drag          → `move-line` (or `set-lines`, part 0's boundary list, for a line without an id) at the
+//                   page-normalised drop position; an id-less line of a later part gets no handle (no op fits it);
 //   double-click  on the rail left of the table (rows) or above it (cols) → `add-line` there;
 //   Del / ⌫       on the FOCUSED handle → `remove-line`. The key never reaches the window-level annotation
 //                 dispatcher, so a selected annotation is never deleted by it (§1.6 rule 14, C2-M11).
@@ -12,7 +13,7 @@
 import { useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import type { Axis, BboxMinMax, CorrectionOp } from "@/lib/parse-engine/types";
 import { focusScopedKeys } from "../keyboard";
-import { clampLine, LINE_EPS, moveOp, pageUnit, removeOp, type CanvasLine } from "./lineModel";
+import { clampLine, editableLine, LINE_EPS, moveOp, pageUnit, removeOp, type CanvasLine } from "./lineModel";
 import { LINE_COLORS, pct } from "./StructureLines";
 
 /** Client point → page-normalised [x, y], or null when the layer has no size yet. */
@@ -27,11 +28,13 @@ interface Props {
   rows: CanvasLine[];
   cols: CanvasLine[];
   boxes: BboxMinMax[];
+  /** Part 0's outer edges per axis (the ends of a `set-lines` list). */
+  edges: Record<Axis, [number, number]>;
   toPage: ToPage;
   emit: (op: CorrectionOp) => void;
 }
 
-function Handle({ line, index, lines, boxes, toPage, emit }: { line: CanvasLine; index: number; lines: CanvasLine[] } & Omit<Props, "rows" | "cols">) {
+function Handle({ line, index, lines, boxes, edges, toPage, emit }: { line: CanvasLine; index: number; lines: CanvasLine[] } & Omit<Props, "rows" | "cols">) {
   const [dragAt, setDragAt] = useState<number | null>(null);
   const dragging = useRef(false);
   const box = boxes[line.part] ?? boxes[0];
@@ -61,13 +64,17 @@ function Handle({ line, index, lines, boxes, toPage, emit }: { line: CanvasLine;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     const v = positionAt(e) ?? dragAt;
     setDragAt(null);
-    if (v !== null && Math.abs(v - line.at) > LINE_EPS / 2) emit(moveOp(line, v, lines, boxes));
+    const op = v !== null && Math.abs(v - line.at) > LINE_EPS / 2 ? moveOp(line, v, lines, edges[line.axis]) : null;
+    if (op) emit(op);
   };
   const onPointerCancel = () => {
     dragging.current = false;
     setDragAt(null);
   };
-  const remove = () => emit(removeOp(line, lines, boxes));
+  const remove = () => {
+    const op = removeOp(line, lines, edges[line.axis]);
+    if (op) emit(op);
+  };
 
   const label = `${rows ? "Row" : "Column"} line ${index + 1}`;
   const style: CSSProperties = rows
@@ -107,7 +114,7 @@ function Handle({ line, index, lines, boxes, toPage, emit }: { line: CanvasLine;
   );
 }
 
-function Rail({ axis, boxes, toPage, emit }: { axis: Axis } & Omit<Props, "rows" | "cols">) {
+function Rail({ axis, boxes, toPage, emit }: { axis: Axis } & Omit<Props, "rows" | "cols" | "edges">) {
   const b = boxes[0];
   const onDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -136,16 +143,16 @@ function Rail({ axis, boxes, toPage, emit }: { axis: Axis } & Omit<Props, "rows"
   );
 }
 
-export default function LineHandles({ rows, cols, boxes, toPage, emit }: Props) {
+export default function LineHandles({ rows, cols, boxes, edges, toPage, emit }: Props) {
   return (
     <div data-workspace-handles="" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
       <Rail axis="rows" boxes={boxes} toPage={toPage} emit={emit} />
       <Rail axis="cols" boxes={boxes} toPage={toPage} emit={emit} />
-      {rows.map((line, i) => (
-        <Handle key={`r-${line.part}-${line.after ?? `#${i}`}`} line={line} index={i} lines={rows} boxes={boxes} toPage={toPage} emit={emit} />
+      {rows.map((line, i) => editableLine(line) && (
+        <Handle key={`r-${line.part}-${line.after ?? `#${i}`}`} line={line} index={i} lines={rows} boxes={boxes} edges={edges} toPage={toPage} emit={emit} />
       ))}
-      {cols.map((line, i) => (
-        <Handle key={`c-${line.after ?? `#${i}`}`} line={line} index={i} lines={cols} boxes={boxes} toPage={toPage} emit={emit} />
+      {cols.map((line, i) => editableLine(line) && (
+        <Handle key={`c-${line.after ?? `#${i}`}`} line={line} index={i} lines={cols} boxes={boxes} edges={edges} toPage={toPage} emit={emit} />
       ))}
     </div>
   );

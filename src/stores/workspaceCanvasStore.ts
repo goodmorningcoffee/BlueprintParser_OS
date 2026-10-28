@@ -1,15 +1,16 @@
 import { create } from "zustand";
-import type { ParseRequest } from "@/lib/parse-engine/types";
 
 // [TP-3 WP-3.O] Canvas-side state of the Tables & Notes workspace (PLAN §3.1 WorkspaceCanvasLayer). LEAF store:
-// zustand + types only. It sits beside `tablesWorkspaceStore` (whose `correction` keeps "+ Region" =
-// "draw-region", WP-3.L) so this WP adds the other box-draw modes without editing a sibling WP's store:
-//   armed          a box draw bound to ONE workspace item: "continuation" (KindBar "+ Add continuation box", R11)
-//                  or "draw-rows" / "draw-cols" (CorrectionBar "Draw cells" → a `user-boxes` op per box)
-//   parseRequest   the last box the canvas turned into a parse request ("+ Region", a continuation box). The parse
-//                  query (WP-3.M `useEngineParse`) runs it; `seq` makes a repeated identical box a new request.
+// zustand + types only. It sits beside `tablesWorkspaceStore`, whose `correction` owns the box draws that the
+// panel arms there ("+ Region" = "draw-region", WP-3.L; "+ Add continuation box" = "draw-continuation", WP-3.M).
+// This store holds only what no sibling store has:
+//   armed   a "Draw cells" box draw bound to ONE workspace item: "draw-rows" / "draw-cols" (WP-3.N's CorrectionBar
+//           → a `user-boxes` op per box). The canvas disarms it when the workspace closes, the selection moves or
+//           the item's draft is gone.
+// A drawn box never carries its own parse request: a draft whose `result` is null is (re-)parsed by WP-3.M's
+// `useEngineParse`, built from the draft (VERIFY F1).
 
-export type CanvasDrawMode = "continuation" | "draw-rows" | "draw-cols";
+export type CanvasDrawMode = "draw-rows" | "draw-cols";
 
 export interface CanvasArmed {
   mode: CanvasDrawMode;
@@ -17,32 +18,19 @@ export interface CanvasArmed {
   itemKey: string;
 }
 
-export interface CanvasParseRequest {
-  /** Draft key the result belongs to (a `draw:` key for "+ Region"). */
-  key: string;
-  request: ParseRequest;
-  seq: number;
-}
-
 interface WorkspaceCanvasState {
   armed: CanvasArmed | null;
-  parseRequest: CanvasParseRequest | null;
   arm: (mode: CanvasDrawMode, itemKey: string) => void;
   disarm: () => void;
-  requestParse: (key: string, request: ParseRequest) => void;
-  clearParseRequest: (seq: number) => void;
 }
 
-const defaults = { armed: null, parseRequest: null };
-let requestSeq = 0;
+const defaults = { armed: null };
 
 export const useWorkspaceCanvasStore = create<WorkspaceCanvasState>((set, get) => ({
   ...defaults,
   arm: (mode, itemKey) => set({ armed: { mode, itemKey } }),
-  disarm: () => set({ armed: null }),
-  requestParse: (key, request) => set({ parseRequest: { key, request, seq: ++requestSeq } }),
-  clearParseRequest: (seq) => {
-    if (get().parseRequest?.seq === seq) set({ parseRequest: null });
+  disarm: () => {
+    if (get().armed) set({ armed: null });
   },
 }));
 
