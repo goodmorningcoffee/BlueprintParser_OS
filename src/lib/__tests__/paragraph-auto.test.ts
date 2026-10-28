@@ -205,6 +205,19 @@ describe("A12 note blocks on the segmenter (analyzePageIntelligence)", () => {
     })]);
   });
 
+  it("the page-wide false-positive guards: one note is not a block, and a headerless list must start at 1 (VERIFY LOW-1)", () => {
+    // Measured first: logs/TP-3/WP-3.J-fix-probe-guards.log.
+    const list = (keys: string[], header?: string) => page([...(header ? [[header, 0.1, 0.1] as [string, number, number]] : []),
+      ...keys.map((k, i) => [`${k} ZFKMP SNIEV HTJWZ`, 0.1, 0.1 + (i + 2) * p] as [string, number, number])]);
+    const counts = (td: TextractPageData) => analyzePageIntelligence(null, td, [], { notesAuto: "engine" }).noteBlocks?.map((b) => [b.title, b.noteCount]);
+    expect(counts(list(["1."]))).toBeUndefined(); // >= 2 notes
+    expect(counts(list(["1."], "GENERAL NOTES"))).toBeUndefined(); // a header does not lift the >= 2 rule
+    expect(counts(list(["1.", "2."]))).toEqual([["NOTES", 2]]);
+    expect(counts(list(["3.", "4.", "5."]))).toBeUndefined(); // no NOTES header and the first key is not 1
+    expect(counts(list(["3.", "4.", "5."], "GENERAL NOTES"))).toEqual([["GENERAL NOTES", 3]]); // the header admits it
+    expect(counts(list(["1.", "2.", "3."]))).toEqual([["NOTES", 3]]); // so does a first key of 1
+  });
+
   it("legacy is the default and the other analyses are unchanged; deterministic", () => {
     const { td } = fixture("syn-notes-subblocks");
     const legacy = analyzePageIntelligence("A-101", td, []);
