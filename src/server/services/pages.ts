@@ -82,6 +82,7 @@ import { requireVerifiedRoot } from "@/server/api/root-authority";
 import { observeRegionDataBatch } from "@/server/services/region-data-observe";
 import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
 import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
+import { pruneOrphanParseLabels } from "@/server/services/parse-labels";
 
 // ── shared dual-ID resolvers ───────────────────────────────────────────────────────────────
 // [refactor jul8 P1-review PR-C1] resolveByPublicId / resolveByDbId / resolveDual were defined
@@ -216,6 +217,8 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     }>;
     const incomingTags = parsedRegions.flatMap((r) => r.csiTags ?? []);
     const newCsi = mergeCsiCodes(existingCsi, incomingTags);
+    // [TP-3 WP-3.G] a region this PATCH dropped takes its label with it (the merge input above is untouched).
+    if (merged.parseLabels !== undefined) merged.parseLabels = pruneOrphanParseLabels(merged.parseLabels, merged.parsedRegions);
 
     await tx
       .update(pages)
