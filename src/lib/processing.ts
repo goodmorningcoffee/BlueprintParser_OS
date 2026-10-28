@@ -243,7 +243,7 @@ async function retireProjectStagingFiles(
  */
 export async function processProject(
   projectId: number,
-  writeCapability: ProjectWriteCapability,
+  writeCapability: ProjectWriteCapability, options: { notesAuto?: "legacy" | "engine" } = {}, // [WP-3.J] caller-read flag
 ): Promise<{
   pagesProcessed: number;
   pageErrors: number;
@@ -252,13 +252,13 @@ export async function processProject(
   return withProjectMutationLease(
     writeCapability,
     { kind: "project-processing", idempotencyKey: String(projectId) },
-    async () => processProjectWithLease(projectId, writeCapability),
+    async () => processProjectWithLease(projectId, writeCapability, options),
   );
 }
 
 async function processProjectWithLease(
   projectId: number,
-  writeCapability: ProjectWriteCapability,
+  writeCapability: ProjectWriteCapability, options: { notesAuto?: "legacy" | "engine" },
 ): Promise<{
   pagesProcessed: number;
   pageErrors: number;
@@ -524,11 +524,7 @@ async function processProjectWithLease(
         // Analyze page intelligence (classification, cross-refs, note blocks)
         let pageIntelligence: Record<string, unknown> | null = null;
         try {
-          const intel = analyzePageIntelligence(
-            drawingNumber,
-            textractData,
-            csiCodes,
-          );
+          const intel = analyzePageIntelligence(drawingNumber, textractData, csiCodes, options);
           if (intel.classification || intel.crossRefs || intel.noteBlocks) {
             pageIntelligence = { ...intel };
           }
@@ -541,7 +537,7 @@ async function processProjectWithLease(
 
         // Classify text regions (OCR-based table/notes/spec detection)
         try {
-          const textRegions = classifyTextRegions(textractData, csiCodes, { zones: pageZones });
+          const textRegions = classifyTextRegions(textractData, csiCodes, { zones: pageZones, notesAuto: options.notesAuto });
           if (textRegions.length > 0) {
             if (!pageIntelligence) pageIntelligence = {};
             pageIntelligence.textRegions = textRegions;

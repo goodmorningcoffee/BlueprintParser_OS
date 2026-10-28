@@ -23,13 +23,19 @@ import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import type { CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
 import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
+// [table-pipeline WP-3.J] Spec Auto on the paragraph engine under tools.specAuto (default legacy; /propose stays legacy).
+import { parseEngineMode, readParseEngineFlags } from "./parse-engine/flags";
+import { specAutoOnEngine } from "./parse-engine/classic-paragraphs";
 
 const OPTS = { bboxMessage: LONG_BBOX_MESSAGE, allowDemo: true };
 
 export async function specParse(rawBody: Record<string, unknown>) {
-  const { textractData, regionBbox, companyId } = await resolveRegionPage(rawBody, OPTS);
+  const { textractData, regionBbox, companyId, pageNumber } = await resolveRegionPage(rawBody, OPTS);
   // [refactor jul9 P2-A C1] resolve company CSI context for the detect below (no tx here).
   const csiCtx = await getCompanyCsiContext(companyId);
+  if (parseEngineMode(await readParseEngineFlags(), "specAuto") === "engine") {
+    return specAutoOnEngine({ page: pageNumber, regionBbox, textractData, csiCtx });
+  }
   const { includeSubSections } = rawBody as { includeSubSections?: boolean };
   const [x0, y0, x1, y1] = regionBbox;
 

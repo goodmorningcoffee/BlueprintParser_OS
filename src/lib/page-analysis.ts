@@ -19,6 +19,7 @@ import type {
 } from "@/types";
 import { mergeBbox, isSameLine, wordsToText } from "@/lib/ocr-utils";
 import { logger } from "@/lib/logger";
+import { engineNoteBlocks, isNotesAutoEngine, notesAutoPage, type NotesAutoOption } from "@/lib/specnote-parser/paragraph-auto";
 
 // ═══════════════════════════════════════════════════════════════════
 // Page Classification
@@ -276,11 +277,16 @@ function finalizeBlock(block: { title: string; notes: string[]; words: TextractW
  * Analyze a page and produce PageIntelligence.
  * Each sub-analysis is wrapped in try/catch so one failure
  * doesn't block the others.
+ *
+ * `opts.notesAuto` [table-pipeline WP-3.J]: `"engine"` reads the note blocks through the paragraph segmenter
+ * (`specnote-parser/paragraph-auto.ts` `engineNoteBlocks`); absent / `"legacy"` = `detectNoteBlocks`. The caller
+ * reads the flag (never `app_settings` here).
  */
 export function analyzePageIntelligence(
   drawingNumber: string | null,
   textractData: TextractPageData | null,
   csiCodes: CsiCode[] | null,
+  opts?: NotesAutoOption,
 ): PageIntelligence {
   const result: PageIntelligence = {};
 
@@ -305,7 +311,7 @@ export function analyzePageIntelligence(
   // Note blocks
   try {
     if (textractData) {
-      const noteBlocks = detectNoteBlocks(textractData);
+      const noteBlocks = isNotesAutoEngine(opts) ? engineNoteBlocks(notesAutoPage(textractData)) : detectNoteBlocks(textractData);
       if (noteBlocks.length > 0) result.noteBlocks = noteBlocks;
     }
   } catch (err) {

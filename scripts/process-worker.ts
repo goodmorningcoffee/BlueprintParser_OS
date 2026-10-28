@@ -13,6 +13,7 @@ import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { assertProjectWritable } from "@/server/api/project-write-capability";
 import { notifyProcessingWebhook } from "@/lib/processing-webhook-notify";
+import { parseEngineMode, readParseEngineFlags } from "@/server/services/parse-engine/flags";
 
 async function main() {
   const projectId = parseInt(process.env.PROJECT_ID || "", 10);
@@ -36,7 +37,9 @@ async function main() {
   if (!project) throw new Error(`Project ${projectId} not found`);
 
   console.log(`[worker] Processing project ${projectId}...`);
-  const result = await processProject(projectId, assertProjectWritable(project));
+  // [table-pipeline WP-3.J] tools.notesAuto for the A03/A12 notes stages (read here; lib never reads app_settings).
+  const notesAuto = parseEngineMode(await readParseEngineFlags(), "notesAuto");
+  const result = await processProject(projectId, assertProjectWritable(project), { notesAuto });
   console.log(
     `[worker] Done: ${result.pagesProcessed} pages processed, ${result.pageErrors} errors, ${result.processingTime}s`
   );

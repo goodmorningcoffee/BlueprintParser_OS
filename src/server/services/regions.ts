@@ -84,6 +84,8 @@ import { observeRegionData } from "@/server/services/region-data-observe";
 // [TP-1 WP-1.B K03] promote/delete responses carry the page-window projection (denylisted keys out), like GET /pages.
 import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 import { withoutParseLabel } from "@/server/services/parse-labels";
+import { parseEngineMode, readParseEngineFlags } from "@/server/services/parse-engine/flags";
+import { classicAcceptOnEngine } from "@/server/services/parse-engine/classic-paragraphs";
 import type {
   TextractPageData,
   PageIntelligence,
@@ -162,6 +164,10 @@ export async function promoteRegion(body: Record<string, unknown>) {
   // the tx below, whose page SELECT takes a FOR UPDATE row lock (I-1 — no async detect-dep
   // work may run while the lock is held). The engine stays sync and receives the resolved bundle.
   const csiCtx = await getCompanyCsiContext(project.companyId);
+  // [table-pipeline WP-3.J] notes/spec Accept on the paragraph engine under tools.notesClassifier / specClassifier
+  // (default legacy). The flag is read here, before the lock (rule 11), and only on that path.
+  const paragraphEngine = !!sourceTextRegionId && (type === "notes" || type === "spec")
+    && parseEngineMode(await readParseEngineFlags(), type === "notes" ? "notesClassifier" : "specClassifier") === "engine";
 
   const result = await withProjectWrite(writeCapability, project.id, async (tx) => {
     const [pageRow] = await tx
@@ -208,7 +214,18 @@ export async function promoteRegion(body: Record<string, unknown>) {
       const [tL, tT, tW, tH] = textRegion.bbox;
       regionBbox = [tL, tT, tL + tW, tT + tH];
 
-      if (type === "spec") {
+      if (paragraphEngine) {
+        // [table-pipeline WP-3.J] the segmenter replaces the stored grid and both binders; data = projection +
+        // structure/links/engine/recipe (E-5). Same 400 messages as the legacy branches.
+        const accepted = await classicAcceptOnEngine({
+          kind: type as "notes" | "spec", page: pageNumber, textRegion: { type: textRegion.type, bbox: textRegion.bbox },
+          textractData: (pageRow.textractData as TextractPageData | null) ?? null,
+          tableName: textRegion.headerText ?? defaultTableName(type, pageNumber), csiSeed: regionCsiTags, csiCtx,
+          previous: currentIntel.parsedRegions?.find((r) => r.id === overrides?.regionId) ?? null, at: new Date().toISOString(),
+        });
+        regionData = accepted.data;
+        regionCsiTags = accepted.csiTags;
+      } else if (type === "spec") {
         // Spec branch: section-keyed data, not grid-shape. The binder receives the ORIGINAL LTWH bbox.
         if (!pageRow.textractData) {
           // [diff B] → 400 VALIDATION (precondition failure), message byte-exact.
