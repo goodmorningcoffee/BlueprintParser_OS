@@ -34,6 +34,7 @@ import type {
 } from "@/lib/classifier-engine/types";
 import { scheduleKind } from "@/lib/classifier-engine/vocabulary";
 import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
+import { inboxSliceUpdate, readInboxSliceState } from "@/server/services/parse-engine/inbox-slice";
 
 const VERDICTS: readonly VerdictKind[] = ["accept", "reject", "rename"];
 const CLASS_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -233,6 +234,19 @@ async function mirrorOnSummary(
     .where(eq(projects.id, projectId));
 }
 
+/**
+ * [TP-3 WP-3.F] Refresh `PJ.structureIndex.inbox[pageNumber]` from the page intelligence as just written, in
+ * the caller's `withProjectWrite` (project row locked first, rule 11). Every proposal verdict and undo runs it,
+ * the classic verdict bar's included, so the derived slice never lags the summary mirror (verify MED-1). The
+ * workspace verdict route calls it for its text-region writes too. False when no index exists yet (C1-B2).
+ */
+export async function refreshInboxSlice(tx: WriteTx, projectId: number, pageNumber: number, pageIntelligence: unknown): Promise<boolean> {
+  const update = inboxSliceUpdate(await readInboxSliceState(tx, projectId, pageNumber), pageNumber, pageIntelligence);
+  if (!update) return false;
+  await tx.update(projects).set({ projectIntelligence: update.value }).where(eq(projects.id, projectId));
+  return true;
+}
+
 export async function recordProposalVerdict(
   accessProject: ProjectAccessRow,
   session: AuthSession | null,
@@ -242,19 +256,38 @@ export async function recordProposalVerdict(
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
   const parsed = parseVerdictInput(body);
   return withProjectWrite(writeCapability, accessProject.id, async (tx) => {
-    const page = await lockPage(tx, accessProject.id, parsed.pageNumber);
-    const pi = (page.pageIntelligence ?? {}) as Record<string, unknown>;
-    const proposal = findStoredProposal(pi, parsed.proposalId);
-    if (!proposal && parsed.via === "parse") return { verdict: null }; // a forged / stale id is ignored
-    if (!proposal) throw new ApiError("NOT_FOUND", "Proposal not found");
-    const input = parsed.via === "parse" ? parseAcceptInput(pi, proposal, parsed) : parsed;
-    if (!input) return { verdict: null };
-    const verdict = buildVerdict(proposal, input, session.user.dbId, new Date());
-    const existing = (pi.proposalVerdicts ?? {}) as PageProposalVerdicts;
-    await writeVerdicts(tx, page.id, { ...existing, [proposal.id]: verdict });
-    await mirrorOnSummary(tx, accessProject.id, proposal.id, verdict.verdict);
+    const { verdict } = await applyProposalVerdict(tx, accessProject.id, session.user.dbId, parsed);
     return { verdict };
   });
+}
+
+/**
+ * The verdict write inside the caller's `withProjectWrite` (project row already locked; the page row is
+ * locked here, rule 11). Shared by this route and the workspace verdict route (TP-3 WP-3.F). The page's inbox
+ * slice is refreshed in the same transaction. Returns the page intelligence as written.
+ */
+export async function applyProposalVerdict(
+  tx: WriteTx,
+  projectId: number,
+  userId: number,
+  parsed: VerdictInput,
+): Promise<{ verdict: ProposalVerdict | null; pageNumber: number; pageIntelligence: Record<string, unknown>; inboxRefreshed: boolean }> {
+  const page = await lockPage(tx, projectId, parsed.pageNumber);
+  const pi = (page.pageIntelligence ?? {}) as Record<string, unknown>;
+  const unchanged = { verdict: null, pageNumber: parsed.pageNumber, pageIntelligence: pi, inboxRefreshed: false };
+  const proposal = findStoredProposal(pi, parsed.proposalId);
+  if (!proposal && parsed.via === "parse") return unchanged; // a forged / stale id is ignored
+  if (!proposal) throw new ApiError("NOT_FOUND", "Proposal not found");
+  const input = parsed.via === "parse" ? parseAcceptInput(pi, proposal, parsed) : parsed;
+  if (!input) return unchanged;
+  const verdict = buildVerdict(proposal, input, userId, new Date());
+  const existing = (pi.proposalVerdicts ?? {}) as PageProposalVerdicts;
+  const verdicts = { ...existing, [proposal.id]: verdict };
+  await writeVerdicts(tx, page.id, verdicts);
+  await mirrorOnSummary(tx, projectId, proposal.id, verdict.verdict);
+  const written = { ...pi, proposalVerdicts: verdicts };
+  const inboxRefreshed = await refreshInboxSlice(tx, projectId, parsed.pageNumber, written);
+  return { verdict, pageNumber: parsed.pageNumber, pageIntelligence: written, inboxRefreshed };
 }
 
 /** Undo. Works even when the proposal itself is gone (the label is user-owned). Idempotent. */
@@ -267,13 +300,25 @@ export async function deleteProposalVerdict(
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
   const { pageNumber, proposalId } = readTarget(body);
   return withProjectWrite(writeCapability, accessProject.id, async (tx) => {
-    const page = await lockPage(tx, accessProject.id, pageNumber);
-    const pi = (page.pageIntelligence ?? {}) as Record<string, unknown>;
-    const existing = (pi.proposalVerdicts ?? {}) as PageProposalVerdicts;
-    if (!Object.prototype.hasOwnProperty.call(existing, proposalId)) return { removed: false };
-    const { [proposalId]: _removed, ...rest } = existing;
-    await writeVerdicts(tx, page.id, rest);
-    await mirrorOnSummary(tx, accessProject.id, proposalId, undefined);
-    return { removed: true };
+    const { removed } = await removeProposalVerdict(tx, accessProject.id, pageNumber, proposalId);
+    return { removed };
   });
+}
+
+/** The undo inside the caller's `withProjectWrite` (see `applyProposalVerdict`). Idempotent. */
+export async function removeProposalVerdict(
+  tx: WriteTx,
+  projectId: number,
+  pageNumber: number,
+  proposalId: string,
+): Promise<{ removed: boolean; pageIntelligence: Record<string, unknown>; inboxRefreshed: boolean }> {
+  const page = await lockPage(tx, projectId, pageNumber);
+  const pi = (page.pageIntelligence ?? {}) as Record<string, unknown>;
+  const existing = (pi.proposalVerdicts ?? {}) as PageProposalVerdicts;
+  if (!Object.prototype.hasOwnProperty.call(existing, proposalId)) return { removed: false, pageIntelligence: pi, inboxRefreshed: false };
+  const { [proposalId]: _removed, ...rest } = existing;
+  await writeVerdicts(tx, page.id, rest);
+  await mirrorOnSummary(tx, projectId, proposalId, undefined);
+  const written = { ...pi, proposalVerdicts: rest };
+  return { removed: true, pageIntelligence: written, inboxRefreshed: await refreshInboxSlice(tx, projectId, pageNumber, written) };
 }

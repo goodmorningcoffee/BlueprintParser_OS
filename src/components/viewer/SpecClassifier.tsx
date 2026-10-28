@@ -13,6 +13,7 @@ import {
 } from "@/queries/usePageWindow";
 import type { PageIntelligence, TextRegion } from "@/types";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
+import { useTextRegionVerdictFilter } from "@/components/viewer/specs-notes/useTextRegionVerdictFilter";
 
 interface SpecClassifierProps {
   onEditInParser: () => void;
@@ -87,7 +88,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
     isRenderedLifecycleCurrent,
   ]);
 
-  const visibleRegions = useMemo(() => {
+  const visibleRegions = useTextRegionVerdictFilter(useMemo(() => {
     if (!intel?.textRegions) return [];
     const rejected = new Set(intel.rejectedTextRegionIds ?? []);
     const promotedSources = new Set(
@@ -101,7 +102,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
       if (promotedSources.has(tr.id)) return false;
       return true;
     });
-  }, [intel]);
+  }, [intel]), pageNumber);
 
   const rowKey = (id: string) => JSON.stringify([publicId, pageNumber, id]);
   const setRowState = (key: string, s: RowAction) =>
