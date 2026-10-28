@@ -433,6 +433,13 @@ describe("segmentParagraphs: verify-round probes", () => {
     }
   });
 
+  it("MED-1: a flush or out-of-sequence first-of-class key under a key column is text, not a child", () => {
+    const lines = [line("1. ZFKMP DCZRP PER", 0.11, 0.11), line("D. SNIEV HTJWZ.", 0.11, 0.11 + dy), line("2. ZFKMP", 0.11, 0.11 + 2 * dy), line("C. DCZRP HTJWZ.", 0.125, 0.11 + 3 * dy), line("3. SNIEV", 0.11, 0.11 + 4 * dy)];
+    const doc = segmentParagraphs({ lines, bbox });
+    expect(keys(doc)).toEqual(["1", "2", "3"]);
+    expect(doc.paragraphs.map((p) => p.text)).toEqual(["ZFKMP DCZRP PER D. SNIEV HTJWZ.", "ZFKMP C. DCZRP HTJWZ.", "SNIEV"]);
+  });
+
   it("MED-1: an indented tag sub-list with list evidence is still a child level", () => {
     const lines = [line("1. ZFKMP FINISHES:", 0.11, 0.11), line("PT-1 DCZRP", 0.125, 0.11 + dy), line("PT-2 SNIEV", 0.125, 0.11 + 2 * dy), line("2. HTJWZ", 0.11, 0.11 + 3 * dy)];
     const doc = segmentParagraphs({ lines, bbox });
