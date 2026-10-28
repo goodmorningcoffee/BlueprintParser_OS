@@ -18,6 +18,7 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { isEditableKeyboardTarget } from "@/lib/keyboard-target";
 import { centerDelta, findScrollContainer, fitScaleForBox } from "./proposals/proposalViewport";
 import ProposalOutlinesLayer from "./ProposalOutlinesLayer";
+import WorkspaceCanvasLayer from "./workspace/canvas/WorkspaceCanvasLayer";
 
 export const FOCUS_COLOR = "#00E676";
 export const DIM_ALPHA = 0.25;
@@ -116,6 +117,7 @@ export default function ProposalFocusLayer({ pageNumber }: { pageNumber: number 
       style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
     >
       <ProposalOutlinesLayer pageNumber={pageNumber} focusedId={focused?.proposalId ?? null} />
+      <WorkspaceCanvasLayer pageNumber={pageNumber} />
       {hovered && (
         <div
           data-proposal-hover={hovered.proposalId}
