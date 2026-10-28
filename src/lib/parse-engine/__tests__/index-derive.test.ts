@@ -6,6 +6,7 @@ import type { PageIntelligence, TextRegion } from "@/types";
 import {
   countLeadingKeys,
   deriveInboxForPage,
+  deriveInboxIndex,
   deriveStructureIndex,
   textRegionContentKey,
   textRegionKind,
@@ -156,5 +157,19 @@ describe("deriveInboxForPage", () => {
   it("the index carries the inbox by page", () => {
     const idx = deriveStructureIndex([{ pageNumber: 5, pageIntelligence: pi({ textRegions: [tr({})] }) }], AT);
     expect(idx.inbox["5"]).toHaveLength(1);
+  });
+});
+
+describe("deriveInboxIndex", () => {
+  it("is exactly the inbox slice of deriveStructureIndex (page order, empty pages omitted)", () => {
+    const rows = [
+      { pageNumber: 5, pageIntelligence: pi({ textRegions: [tr({ id: "region-1" })], rejectedTextRegionIds: ["region-1"] }) },
+      { pageNumber: 2, pageIntelligence: pi({ textRegions: [tr({})], parsedRegions: [notes] }) },
+      { pageNumber: 3, pageIntelligence: pi({ parsedRegions: [schedule] }) },
+    ];
+    const inbox = deriveInboxIndex(rows);
+    expect(inbox).toEqual(deriveStructureIndex(rows, AT).inbox);
+    expect(Object.keys(inbox)).toEqual(["2", "5"]);
+    expect(inbox["5"][0].state).toBe("rejected");
   });
 });

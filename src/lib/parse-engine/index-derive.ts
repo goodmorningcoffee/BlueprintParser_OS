@@ -14,13 +14,17 @@
  *   keys          → server-only: keyNorm → [regionId, kind, targetId (rowId | paragraphId), blockHeaderNorm]
  *   specSections  → server-only: "087100" → [page, regionId][]
  *   inbox         → server-only: the page's text-region items (`deriveInboxForPage`, shared with the
- *                   WP-3.F verdict route's one-page `jsonb_set` refresh)
+ *                   WP-3.F verdict route's one-page `jsonb_set` refresh). Because that route writes the
+ *                   slice too, the summaries pass re-derives `inbox` from page rows read INSIDE its project
+ *                   lock (`withLockedInbox` in project-analysis.ts), so a verdict that
+ *                   commits between the pre-lock read and the lock is never overwritten (WP-3.H verify MED-2).
  *
  * Pure and deterministic (E-7): the caller passes `at`; ordering follows page then region order.
  */
 
-import type { BboxMinMax as LegacyMinMax, PageIntelligence, ParsedRegion, TextRegion } from "@/types";
+import type { PageIntelligence, ParsedRegion, TextRegion } from "@/types";
 import type { PageProposalVerdicts } from "@/lib/classifier-engine/types";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 import { ltwhToMinMax } from "./geometry";
 import { readStructure, itemKeyNorm, sectionNorm, specSectionOf } from "./read";
 import type {
@@ -125,7 +129,12 @@ function regionFamily(r: ParsedRegion): "table" | "paragraphs" {
   return r.type === "notes" || r.type === "spec" ? "paragraphs" : "table";
 }
 
-/** The inbox slice of ONE page: its classifier text regions with their state (todo / parsed / rejected). */
+/**
+ * The inbox slice of ONE page: its classifier text regions with their state (todo / parsed / rejected).
+ * It reads ONLY `textRegions`, `textRegionVerdicts`, `rejectedTextRegionIds` and `parsedRegions[].{id, type,
+ * bbox, sourceTextRegionId}`. `withLockedInbox` (project-analysis.ts) projects exactly those keys for the
+ * in-lock re-read; widen both together (the route test pins their parity).
+ */
 export function deriveInboxForPage(pi: PageIntelligence | null | undefined, options: DeriveInboxOptions = {}): InboxSlim[] {
   const intel = (pi ?? {}) as IndexPageIntelligence;
   const regions = Array.isArray(intel.parsedRegions) ? intel.parsedRegions : [];
@@ -141,7 +150,10 @@ export function deriveInboxForPage(pi: PageIntelligence | null | undefined, opti
       .filter((v) => v && v.type === tr.type && finiteBox(v.b) && iou(v.b, b) >= TEXT_REGION_VERDICT_IOU)
       .sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0))[0];
     const parsed = regions.find((r) => r.sourceTextRegionId === tr.id)
-      ?? regions.find((r) => regionFamily(r) === FAMILY[kind] && finiteBox(r.bbox) && iou(r.bbox as LegacyMinMax, b) >= TEXT_REGION_PARSED_IOU);
+      ?? regions.find((r) => {
+        const rb = parsedRegionMinMax(r); // the one ParsedRegion bbox reader (K04)
+        return regionFamily(r) === FAMILY[kind] && !!rb && iou(rb, b) >= TEXT_REGION_PARSED_IOU;
+      });
     const legacyBox = options.legacyRejectBoxes?.[tr.id];
     const legacyReject = legacyRejected.has(tr.id) && (!legacyBox || iou(legacyBox, b) >= TEXT_REGION_VERDICT_IOU);
     const state: InboxSlim["state"] = verdict
@@ -217,7 +229,8 @@ export function deriveStructureIndexForPage(page: IndexPageInput, options: Deriv
   const keys: Record<string, StructureIndexKeyEntry[]> = {};
   const specSections: [string, string][] = [];
   for (const region of Array.isArray(intel.parsedRegions) ? intel.parsedRegions : []) {
-    if (!region || typeof region.id !== "string" || !finiteBox(region.bbox)) continue;
+    const box = parsedRegionMinMax(region); // the one ParsedRegion bbox reader (K04)
+    if (!region || typeof region.id !== "string" || !box) continue;
     const read = readStructure(region);
     const model = read.model;
     const kind = (model?.kind ?? region.type) as StructureKind;
@@ -232,7 +245,7 @@ export function deriveStructureIndexForPage(page: IndexPageInput, options: Deriv
       kind,
       title: String(title),
       ...(classId ? { classId } : {}),
-      bbox: [region.bbox[0], region.bbox[1], region.bbox[2], region.bbox[3]],
+      bbox: box,
       ...modelRows(model),
       ...(links ? { revision: links.revision } : {}),
       ...(proposalId ? { proposalId } : {}),
@@ -246,6 +259,16 @@ export function deriveStructureIndexForPage(page: IndexPageInput, options: Deriv
     }
   }
   return { regions, keys, specSections, inbox: deriveInboxForPage(page.pageIntelligence, options) };
+}
+
+/** Only the `inbox` slice of the project index (same shape and rule as `deriveStructureIndex(...).inbox`). */
+export function deriveInboxIndex(pages: readonly IndexPageInput[]): StructureIndexV1["inbox"] {
+  const inbox: StructureIndexV1["inbox"] = {};
+  for (const page of [...pages].sort((a, b) => a.pageNumber - b.pageNumber)) {
+    const slice = deriveInboxForPage(page.pageIntelligence);
+    if (slice.length) inbox[String(page.pageNumber)] = slice;
+  }
+  return inbox;
 }
 
 /** The whole project index from its VISIBLE pages (the caller filters hidden duplicates). */

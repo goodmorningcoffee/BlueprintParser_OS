@@ -30,15 +30,46 @@ import { buildCsiGraph } from "@/lib/csi-graph";
 import { DIVISION_NAMES } from "@/lib/csi-divisions";
 import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { onVisiblePage, visiblePage } from "@/lib/page-dedup";
 import { summaryTableName } from "@/lib/parsed-table-summary";
-import { deriveStructureIndex } from "@/lib/parse-engine/index-derive"; // [TP-3 WP-3.H] PJ.structureIndex is derived here, never hand-written (C1-B2)
+import { deriveInboxIndex, deriveStructureIndex } from "@/lib/parse-engine/index-derive"; // [TP-3 WP-3.H] PJ.structureIndex is derived here, never hand-written (C1-B2)
+import type { StructureIndexV1 } from "@/lib/parse-engine/types";
+import { logger } from "@/lib/logger";
 import {
   assertProjectWriteCapability,
   type ProjectWriteCapability,
+  type ProjectWriteTransaction,
   withProjectWrite,
 } from "@/server/api/project-write-capability";
+
+// ─── [TP-3 WP-3.H verify MED-2] structureIndex.inbox, re-derived under the project lock ───
+// The WP-3.F verdict route jsonb_sets one page's `inbox` slice under the project lock. The summaries pass
+// derives the index from page rows read BEFORE its lock, so a verdict committed in between would be
+// overwritten; rows read inside the lock are current (lock order project → page, rule 11). Only the keys
+// deriveInboxForPage reads are projected, so no parse data moves while the lock is held; widen this when it
+// reads a new key (structure-index.route.test.ts pins the parity). The other slices have no other writer,
+// and every parsedRegions writer recomputes summaries after it commits.
+const INBOX_PARSED_REGION = sql.raw(`jsonb_build_object('id', r->'id', 'type', r->'type', 'bbox', r->'bbox', 'sourceTextRegionId', r->'sourceTextRegionId')`);
+
+async function withLockedInbox(tx: ProjectWriteTransaction, projectId: number, index: StructureIndexV1): Promise<StructureIndexV1 | null> {
+  const pi = pages.pageIntelligence;
+  const rows = await tx
+    .select({
+      pageNumber: pages.pageNumber,
+      pageIntelligence: sql<PageIntelligence>`jsonb_build_object('textRegions', ${pi}->'textRegions', 'textRegionVerdicts', ${pi}->'textRegionVerdicts',
+        'rejectedTextRegionIds', ${pi}->'rejectedTextRegionIds', 'parsedRegions', (SELECT jsonb_agg(${INBOX_PARSED_REGION}) FROM jsonb_array_elements(
+        CASE jsonb_typeof(${pi}->'parsedRegions') WHEN 'array' THEN ${pi}->'parsedRegions' ELSE '[]'::jsonb END) r))`,
+    })
+    .from(pages)
+    .where(and(eq(pages.projectId, projectId), visiblePage(pi)));
+  try {
+    return { ...index, inbox: deriveInboxIndex(rows) };
+  } catch (e) {
+    logger.error("[summaries] structureIndex inbox derive failed; the previous index is kept:", e);
+    return null; // the caller keeps the stored index (verify LOW-5)
+  }
+}
 
 interface PageSummary {
   pageNumber: number;
@@ -558,7 +589,12 @@ export async function computeProjectSummaries(
       .sort((a, b) => a.code.localeCompare(b.code)),
   };
 
-  const structureIndex = deriveStructureIndex(pageRows, new Date().toISOString()); // visible pages only (hidden duplicates out)
+  let structureIndex: StructureIndexV1 | null = null; // visible pages only; a derive failure keeps the stored index (verify LOW-5)
+  try {
+    structureIndex = deriveStructureIndex(pageRows, new Date().toISOString());
+  } catch (e) {
+    logger.error("[summaries] structureIndex derive failed; the previous index is kept:", e);
+  }
   // The potentially long read/analysis phase stays outside a transaction. Re-read merge state and
   // publish only after acquiring the parent project lock for this exact lifecycle generation.
   await withProjectWrite(writeCapability, projectId, async (tx) => {
@@ -568,10 +604,12 @@ export async function computeProjectSummaries(
       .where(eq(projects.id, projectId));
 
     const existingPi = currentProject?.pi || {};
+    // inbox re-derived from rows read under this lock: the verdict route jsonb_sets that slice (verify MED-2)
+    const index = structureIndex ? await withLockedInbox(tx, projectId, structureIndex) : null;
     await tx
       .update(projects)
       .set({
-        projectIntelligence: { ...existingPi, summaries, ...{ structureIndex } }, // typed PJ has no structureIndex field (types/index.ts at its ceiling)
+        projectIntelligence: { ...existingPi, summaries, ...(index ? { structureIndex: index } : {}) }, // typed PJ has no structureIndex field (types/index.ts at its ceiling)
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId));

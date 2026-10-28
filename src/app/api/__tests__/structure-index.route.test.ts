@@ -12,7 +12,7 @@ vi.mock("@/lib/auth", async () => {
   return { auth: async () => sessionState.current };
 });
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { POST as promotePOST } from "@/app/api/regions/promote/route";
 import { DELETE as regionsDELETE } from "@/app/api/regions/route";
 import { GET as projectGET } from "@/app/api/projects/[id]/route";
@@ -20,7 +20,9 @@ import { GET as demoProjectGET } from "@/app/api/demo/projects/[id]/route";
 import { db } from "@/lib/db";
 import { pages, projects } from "@/lib/db/schema";
 import { computeProjectSummaries } from "@/lib/project-analysis";
+import { deriveStructureIndex } from "@/lib/parse-engine/index-derive";
 import { assertProjectWritable } from "@/server/api/access";
+import { withProjectWrite } from "@/server/api/project-write-capability";
 import { humanWorkPages } from "@/server/services/page-duplicates-apply";
 import { asUser, createPage, createWorld, makeReq, params, publishDemoFixture, readJson, signedOut } from "@/test/harness";
 
@@ -98,6 +100,92 @@ describe.skipIf(!dbUp)("PJ.structureIndex is derived in computeProjectSummaries"
     expect(Object.keys(after.keys)).toEqual(["4"]);
     expect(JSON.stringify(after)).not.toContain("A-101");
     expect(JSON.stringify(after)).not.toContain("A-999");
+  });
+});
+
+/** Wait until some backend is blocked on a lock held by backend `holderPid` (5 s bound). */
+async function waitForWaiterOn(holderPid: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await db.execute(sql`
+      SELECT 1 FROM pg_stat_activity
+       WHERE datname = current_database() AND wait_event_type = 'Lock'
+         AND ${holderPid}::int = ANY(pg_blocking_pids(pid))
+       LIMIT 1`);
+    if ((result as unknown as { rows: unknown[] }).rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for the summaries pass to block on the project lock");
+}
+
+// LTWH text region; its MinMax box is [0.6, 0.1, 0.9, 0.5].
+const textRegion = (id: string, over: Record<string, unknown> = {}) =>
+  ({ id, type: "notes-numbered", bbox: [0.6, 0.1, 0.3, 0.4], confidence: 0.7, wordCount: 40, headerText: "GENERAL NOTES", ...over });
+const rejectVerdict = { verdict: "reject", type: "notes-numbered", b: [0.6, 0.1, 0.9, 0.5], at: "2026-10-28T00:00:00.000Z" };
+
+describe.skipIf(!dbUp)("the summaries pass re-derives the inbox under its project lock (WP-3.H verify MED-2)", () => {
+  it("a verdict that commits between the summaries' page read and its lock is not overwritten (deterministic)", async () => {
+    const { project } = await createWorld();
+    const page = await createPage(project.id, 1, { pageIntelligence: { textRegions: [textRegion("region-0")] } as never });
+    await recompute(project.id);
+    expect((await projectPi(project.id)).structureIndex.inbox["1"][0].state).toBe("todo");
+
+    const capability = assertProjectWritable(project);
+    let summaries: Promise<unknown> | undefined;
+    await withProjectWrite(capability, project.id, async (tx) => {
+      const [{ pid }] = (await tx.execute(sql`SELECT pg_backend_pid() AS pid`) as unknown as { rows: { pid: number }[] }).rows;
+      summaries = recompute(project.id);
+      // The summaries pass has read every page (pre-lock) and now waits for this project lock.
+      await waitForWaiterOn(pid);
+      // What the WP-3.F verdict route does in its one withProjectWrite: the page verdict, then the inbox slice.
+      await tx.update(pages)
+        .set({ pageIntelligence: sql`${pages.pageIntelligence} || ${JSON.stringify({ textRegionVerdicts: { "tr:k": rejectVerdict } })}::jsonb` })
+        .where(eq(pages.id, page.id));
+      await tx.update(projects)
+        .set({ projectIntelligence: sql`jsonb_set(${projects.projectIntelligence}, '{structureIndex,inbox,1,0,state}', '"rejected"'::jsonb)` })
+        .where(eq(projects.id, project.id));
+    });
+    await summaries;
+    const after = (await projectPi(project.id)).structureIndex;
+    expect(after.inbox["1"]).toEqual([expect.objectContaining({ origin: "text-region", kind: "notes", state: "rejected" })]);
+  });
+
+  it("the projected in-lock inputs give the same inbox as the full page intelligence (parity)", async () => {
+    const { project } = await createWorld();
+    const notesRegion = {
+      id: "parsed-n", type: "notes", category: "general-notes", bbox: [0.6, 0.1, 0.9, 0.5], confidence: 0.8, source: "user",
+      data: { headers: ["Key", "Note"], rows: [{ Key: "1", Note: "ALPHA" }], tagColumn: "Key", tableName: "GENERAL NOTES" },
+    };
+    const rich = [
+      { textRegions: [textRegion("region-0")], parsedRegions: [{ ...notesRegion, sourceTextRegionId: "region-0", bbox: [0, 0, 0.1, 0.1] }] }, // parsed by id
+      { textRegions: [textRegion("region-0")], parsedRegions: [notesRegion] }, // parsed by same-family IoU
+      { textRegions: [textRegion("region-3")], textRegionVerdicts: { "tr:k": rejectVerdict } }, // content verdict
+      { textRegions: [textRegion("region-2"), textRegion("region-5", { bbox: [0.1, 0.6, 0.2, 0.2] })], rejectedTextRegionIds: ["region-2"] }, // legacy reject + todo
+      { textRegions: [textRegion("region-0")], parsedRegions: "not-an-array" }, // malformed parsedRegions
+    ];
+    for (const [i, pageIntelligence] of rich.entries()) await createPage(project.id, i + 1, { pageIntelligence: pageIntelligence as never });
+    await recompute(project.id);
+    const stored = (await projectPi(project.id)).structureIndex;
+    const full = await db.select({ pageNumber: pages.pageNumber, pageIntelligence: pages.pageIntelligence }).from(pages).where(eq(pages.projectId, project.id));
+    expect(stored.inbox).toEqual(deriveStructureIndex(full, "t").inbox);
+    expect(stored.inbox["1"][0]).toMatchObject({ state: "parsed", regionId: "parsed-n" });
+    expect(stored.inbox["2"][0]).toMatchObject({ state: "parsed", regionId: "parsed-n" });
+    expect(stored.inbox["3"][0].state).toBe("rejected");
+    expect(stored.inbox["4"].map((x: { state: string }) => x.state)).toEqual(["rejected", "todo"]);
+    expect(stored.inbox["5"][0].state).toBe("todo");
+  });
+
+  it("a derive failure keeps the previously stored index and still writes the summaries (verify LOW-5)", async () => {
+    const { project } = await createWorld();
+    const previous = { v: 1, at: "previous", regions: {}, keys: {}, specSections: {}, inbox: {} };
+    await db.update(projects).set({ projectIntelligence: { structureIndex: previous } as never }).where(eq(projects.id, project.id));
+    // A non-string headerText (bad stored data) makes the inbox derive throw.
+    await createPage(project.id, 1, { pageIntelligence: { textRegions: [textRegion("region-0", { headerText: 5 })] } as never });
+    const summaries = await recompute(project.id);
+    expect(summaries).toBeTruthy();
+    const pi = await projectPi(project.id);
+    expect(pi.summaries).toBeTruthy();
+    expect(pi.structureIndex).toEqual(previous);
   });
 });
 
