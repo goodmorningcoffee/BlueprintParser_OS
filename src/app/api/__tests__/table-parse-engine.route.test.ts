@@ -156,19 +156,24 @@ describe.skipIf(!dbUp)("POST /api/table-parse — tablesRoute = engine", () => {
     expect((r.body.csiTags as { code: string }[]).map((c) => c.code)).toContain("99 99 98");
   });
 
-  it("a signed-out demo caller's in-flight cap is keyed by its own client address (the route forwards `req`)", async () => {
+  // [TP-3 integrate g3] The route does NOT forward `req`: `hardening-wiring.test.ts` pins its handler line verbatim
+  // (`tableParse(body)`), and rule 1 forbids rebaselining a source pin. Until the owner updates that pin, every
+  // signed-out demo caller on the engine leg shares the `ip:unknown` in-flight key. This test pins that fallback; when
+  // the pin moves and the route passes `req`, it flips to per-address keying (WP-3.I LOW-2's original assertion).
+  it("a signed-out demo caller's in-flight cap: the route does not forward `req`, so signed-out callers share one key", async () => {
     const { project } = await world({ demo: true });
     signedOut();
     const body = { projectId: project.id, pageNumber: 1, regionBbox: FX.region };
-    // 198.51.100.4 already holds both of its standard slots (PARSE_CONCURRENCY_LIMITS.standard = 2).
-    const held = [acquireParseSlot("ip:198.51.100.4", "standard"), acquireParseSlot("ip:198.51.100.4", "standard")];
+    // ip:unknown already holds both standard slots (PARSE_CONCURRENCY_LIMITS.standard = 2).
+    const held = [acquireParseSlot("ip:unknown", "standard"), acquireParseSlot("ip:unknown", "standard")];
     expect(held.every(Boolean)).toBe(true);
     try {
       expect((await call(body)).status).toBe(429);
-      expect((await call(body, "198.51.100.9")).status).toBe(200);
+      expect((await call(body, "198.51.100.9")).status).toBe(429);
     } finally {
       for (const s of held) s?.release();
     }
+    expect((await call(body, "198.51.100.9")).status).toBe(200);
   });
 
   it("validation, access and the OCR check run before the engine (unchanged order)", async () => {

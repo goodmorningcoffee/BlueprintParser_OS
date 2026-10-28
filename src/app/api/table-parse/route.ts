@@ -11,8 +11,7 @@
  * (symbol-search S024 shape). body:zLooseBody — shell owns body-parse (sanctioned
  * diff E; legacy req.json was pre-try → raw rejections). The service returns the
  * response body as a plain object (shell wraps json) or the demo-gate NextResponse
- * verbatim (instanceof-Response passthrough). [TP-3 WP-3.I] `req` gives the engine leg the trusted client
- * address (the in-flight cap key of a signed-out demo caller).
+ * verbatim (instanceof-Response passthrough).
  */
 
 import { defineRoute } from "@/server/api/defineRoute";
@@ -23,5 +22,5 @@ import { tableParse } from "@/server/services/table-parse";
 export const POST = defineRoute({
   auth: "none",
   body: zLooseBody,
-  handler: ({ body, req }) => withAnonymousHeavySlot(() => tableParse(body, req)),
+  handler: ({ body }) => withAnonymousHeavySlot(() => tableParse(body)),
 });
