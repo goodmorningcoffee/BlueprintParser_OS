@@ -13,6 +13,7 @@ import {
 } from "@/queries/usePageWindow";
 import type { PageIntelligence, TextRegion } from "@/types";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
+import { useTextRegionVerdictFilter } from "@/components/viewer/specs-notes/useTextRegionVerdictFilter";
 
 interface NotesClassifierProps {
   /** Called after the user clicks Edit so NotesPanel can switch to the Parser
@@ -102,7 +103,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     isRenderedLifecycleCurrent,
   ]);
 
-  const visibleRegions = useMemo(() => {
+  const visibleRegions = useTextRegionVerdictFilter(useMemo(() => {
     if (!intel?.textRegions) return [];
     const rejected = new Set(intel.rejectedTextRegionIds ?? []);
     const promotedSources = new Set(
@@ -116,7 +117,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
       if (promotedSources.has(tr.id)) return false;
       return true;
     });
-  }, [intel]);
+  }, [intel]), pageNumber);
 
   const rowKey = (id: string) => JSON.stringify([publicId, pageNumber, id]);
   const setRowState = (key: string, s: RowAction) =>

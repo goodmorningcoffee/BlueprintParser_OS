@@ -20,6 +20,8 @@ const PAGE_WINDOW_OMITTED_INTELLIGENCE_KEYS = [
   "proposalVerdicts",
   // [TP-2 WP-2.F] the verdict bar's labels (machine snapshots, user ids); read via GET …/parse-labels?page=.
   "parseLabels",
+  // [TP-3 WP-3.F] workspace text-region verdicts (user ids); read via GET …/parse-engine/verdicts?page=.
+  "textRegionVerdicts",
 ] as const;
 
 /**

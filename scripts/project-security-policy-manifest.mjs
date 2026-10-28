@@ -551,6 +551,16 @@ export const MUTATION_SURFACES = [
   mutation("parse-engine-region-delete", "/api/projects/[id]/parse-engine/region", "DELETE", "shared-guard", [
     ["src/server/services/parse-engine/region-delete.ts", "deleteWorkspaceRegion"],
   ]),
+  // [table pipeline WP-3.F 2026-10-27] C2-M12/K30: workspace verdicts (content-keyed PI.textRegionVerdicts, or a
+  // proposal verdict delegated to applyProposalVerdict) + the page's PJ.structureIndex.inbox slice, one
+  // withProjectWrite; demo refused for every role by assertProjectWritable (allowDemo:true only to answer 403).
+  // The GETs (…/parse-engine/verdicts, …/parse-engine/items) have no allowDemo and refuse a demo project in the service.
+  mutation("parse-engine-verdict-record", "/api/projects/[id]/parse-engine/verdict", "POST", "shared-guard", [
+    ["src/server/services/parse-engine/verdict.ts", "recordWorkspaceVerdict"],
+  ]),
+  mutation("parse-engine-verdict-delete", "/api/projects/[id]/parse-engine/verdict", "DELETE", "shared-guard", [
+    ["src/server/services/parse-engine/verdict.ts", "deleteWorkspaceVerdict"],
+  ]),
   mutation("region-promote", "/api/regions/promote", "POST", "shared-guard", [
     ["src/server/services/regions.ts", "promoteRegion"],
   ]),
