@@ -29,6 +29,7 @@ import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { DISCIPLINE_NAMES, extractDisciplinePrefix } from "@/lib/page-utils";
 import { acceptTableParseRegion, navigateViewerPage, transitionTableParseTab } from "@/stores/viewerCommands";
+import { openItem, proposalWorkspaceKind } from "@/stores/workspaceCommands";
 import {
   buildProposalGroups,
   filterCounts,
@@ -198,6 +199,10 @@ export default function ProposedTablesSection() {
   // [TP-2 WP-2.F, K58] Always a hint with the proposalId (shape-centre rows only "with tags"). No verdict here: the
   // SAVE of this parse posts `accept` with the stored class, and only when the proposal has no verdict yet.
   const parseThis = (item: ProposalSummaryItem, withTags = false) => {
+    // [TP-3 WP-3.L] Workspace on: the proposal opens as a workspace item of its own kind (it closes this panel),
+    // "with tags" at the Tags step; a non-structure target keeps the hint path.
+    const kind = proposalWorkspaceKind(item.target, item.classId);
+    if (kind && openItem({ id: item.id, page: item.pageNumber, b: [...item.bbox] as typeof item.bbox, kind, proposalId: item.id, classId: item.classId }, withTags && item.tagRows ? "tags" : "structure")) return;
     useTableParseHintStore.getState().setHint({
       publicId, pageNumber: item.pageNumber, bbox: [...item.bbox] as typeof item.bbox, proposalId: item.id,
       ...(withTags && item.tagRows ? { rowSource: "shape-centres" as const } : {}),

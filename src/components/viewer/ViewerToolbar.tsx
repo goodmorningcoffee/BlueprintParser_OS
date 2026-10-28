@@ -16,9 +16,9 @@ import {
   toggleTakeoffPanel,
   toggleDetectionPanel,
   toggleParsePanel,
-  toggleSpecsNotesParsePanel,
-  toggleTableParsePanel,
 } from "@/stores/viewerCommands";
+import { openFromToolbar } from "@/stores/workspaceCommands";
+import { useTablesWorkspaceStore } from "@/stores/tablesWorkspaceStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
@@ -53,6 +53,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     showToolsPanel,
     showViewAllPanel,
   } = usePanelVisibility();
+  const workspaceGroup = useTablesWorkspaceStore((s) => (s.open ? s.group : null));
   const { toggleChatPanel, toggleToolsPanel, toggleViewAllPanel } =
     usePanelUiActions();
   const { allTrades, allCsiCodes } = useProjectCatalogs();
@@ -633,9 +634,9 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </HelpTooltip>
         <HelpTooltip id="table-panel-button">
           <button
-            onClick={toggleTableParsePanel}
+            onClick={() => openFromToolbar("tables")}
             className={`px-2 py-0.5 text-[10px] leading-tight text-center ${
-              showTableParsePanel
+              showTableParsePanel || workspaceGroup === "tables"
                 ? "border-r border-pink-400/60 text-pink-300 bg-pink-400/12"
                 : "border-r border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
@@ -646,9 +647,9 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </HelpTooltip>
         <HelpTooltip id="specs-notes-button">
           <button
-            onClick={toggleSpecsNotesParsePanel}
+            onClick={() => openFromToolbar("notes")}
             className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded-r ${
-              showSpecsNotesPanel
+              showSpecsNotesPanel || workspaceGroup === "notes"
                 ? "text-amber-300 bg-amber-400/12"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}

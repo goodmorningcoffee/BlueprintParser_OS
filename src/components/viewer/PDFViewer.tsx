@@ -29,6 +29,7 @@ import TableCompareModal from "./TableCompareModal";
 import TagBrowseBar from "./TagBrowseBar";
 import KeynotePanel from "./KeynotePanel";
 import SpecsNotesPanel from "./SpecsNotesPanel";
+import TablesWorkspaceHost from "./workspace/TablesWorkspaceHost";
 import ParsePanel from "./ParsePanel";
 import ToolsPanel from "./ToolsPanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
@@ -750,6 +751,7 @@ function ViewerPanels({ pdfDoc }: { pdfDoc: PDFDocumentProxy | null }) {
       {showTableParsePanel && <TableParsePanel />}
       {showKeynoteParsePanel && <KeynotePanel />}
       {showSpecsNotesPanel && <SpecsNotesPanel />}
+      <TablesWorkspaceHost />
       {showParsePanel && <ParsePanel pdfDoc={pdfDoc} />}
       {showToolsPanel && <ToolsPanel />}
       {showViewAllPanel && <ViewAllPanel />}
