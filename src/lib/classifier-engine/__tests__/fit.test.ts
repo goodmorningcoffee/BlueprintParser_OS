@@ -3,7 +3,7 @@
 // proposed patch, verdict → sample mapping, and the overlay's head-qualified signal keys + detectBias.
 import { describe, expect, it } from "vitest";
 import { evaluateRecipe, scoreFeatures, type FitSample } from "../fit-score";
-import { fitLogistic, fitRecipe, MIN_POSITIVES, overlayFromFits, samplesFromVerdicts } from "../fit";
+import { fitLogistic, fitRecipe, MIN_POSITIVES, overlayFromFits, PARSE_ACCEPT_WEIGHT, samplesFromVerdicts } from "../fit";
 import { applyOverlay, validateRecipe } from "../recipes";
 import type { ClassifierRecipe, ProposalVerdict } from "../types";
 
@@ -156,6 +156,35 @@ describe("samplesFromVerdicts", () => {
       v("accept", { proposedClassId: null }), v("rename", { classId: "window" }), v("accept", { recipeId: "other" }),
     ], toy());
     expect(s.map((x) => [x.isTarget, x.classId])).toEqual([[true, "door"], [true, "panel"], [false, null], [true, null], [true, null], [true, null]]);
+  });
+
+  it("[TP-3 WP-3.Q, K58] a via:\"parse\" accept is down-weighted; every other verdict keeps weight 1", () => {
+    const s = samplesFromVerdicts([v("accept", { via: "parse" }), v("accept"), v("reject"), v("rename", { classId: "panel", via: "parse" })], toy());
+    expect(s.map((x) => x.weight)).toEqual([PARSE_ACCEPT_WEIGHT, undefined, undefined, undefined]);
+    expect(PARSE_ACCEPT_WEIGHT).toBeGreaterThan(0);
+    expect(PARSE_ACCEPT_WEIGHT).toBeLessThan(1);
+  });
+});
+
+describe("[TP-3 WP-3.Q] fitLogistic sample weights", () => {
+  const X = [[0], [0.2], [0.4], [0.6], [0.8], [1], [0.5]];
+  const y = [0, 0, 1, 0, 1, 1, 1];
+  it("weight 2 equals the row duplicated, weight 0 equals the row dropped, all-1 equals no weights", () => {
+    const base = fitLogistic(X, y, { lambda: 0.5 });
+    expect(fitLogistic(X, y, { lambda: 0.5, sampleWeights: X.map(() => 1) })).toEqual(base);
+    const w2 = fitLogistic(X, y, { lambda: 0.5, sampleWeights: [1, 1, 1, 1, 1, 1, 2] });
+    const dup = fitLogistic([...X, [0.5]], [...y, 1], { lambda: 0.5 });
+    expect(w2.bias).toBeCloseTo(dup.bias, 6);
+    expect(w2.weights[0]).toBeCloseTo(dup.weights[0], 6);
+    const w0 = fitLogistic(X, y, { lambda: 0.5, sampleWeights: [1, 1, 1, 1, 1, 1, 0] });
+    const drop = fitLogistic(X.slice(0, 6), y.slice(0, 6), { lambda: 0.5 });
+    expect(w0.bias).toBeCloseTo(drop.bias, 6);
+    expect(w0.weights[0]).toBeCloseTo(drop.weights[0], 6);
+  });
+  it("rejects a weight list of the wrong length or with a negative / non-finite weight", () => {
+    expect(() => fitLogistic(X, y, { lambda: 1, sampleWeights: [1] })).toThrow(/sampleWeights/);
+    expect(() => fitLogistic(X, y, { lambda: 1, sampleWeights: [1, 1, 1, 1, 1, 1, -1] })).toThrow(/sampleWeights/);
+    expect(() => fitLogistic(X, y, { lambda: 1, sampleWeights: [1, 1, 1, 1, 1, 1, NaN] })).toThrow(/sampleWeights/);
   });
 });
 

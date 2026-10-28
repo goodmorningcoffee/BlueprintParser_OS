@@ -5,7 +5,7 @@
  *   NODE_OPTIONS=--max-old-space-size=3584 npx tsx scripts/parse-engine-measure.ts [--sets odd|even|all]
  *       [--private-dir <dir>] [--json <out.json>] [--tool ocr-positions,merger,…] [--gold G-TAB,G-PARA]
  *       [--seed 20261027] [--resamples 2000] [--baseline-tab legacy:merger] [--baseline-para legacy:notes-auto]
- *       [--synthetic] [--accept-headline-gaps]
+ *       [--synthetic] [--accept-headline-gaps] [--engine] [--profile <profile.json>]
  *     --sets       odd (fit) | even (held out, default) | all — split by the gold line's set number
  *     --private-dir the private gold root (else $BP_PRIVATE_GOLD_DIR; required except with --synthetic):
  *                  reads gold/G-TAB.v1.jsonl, gold/G-PARA.v1.jsonl and slices/<sliceId>.json
@@ -13,12 +13,19 @@
  *                  checkout. Without it the markdown goes to stdout only.
  *     --tool       legacy paths to run (default: every path that applies to the gold set)
  *     --synthetic  dry run on the committed synthetic fixtures (their `truth` as gold; set n = fixture order)
+ *     --engine     add the engine leg (`engine`, TP-3 WP-3.Q: runParseEngine on the same slice, `instant` budget; see
+ *                  scripts/lib/parse-engine-leg.ts); async, so only through `runAsync` / the CLI
+ *     --profile    with --engine: score these R8 weights instead of the shipped src/data/parse-engine/profile.json
+ *     --promotion  with --engine: add the per-tool §6.4 table (tool's legacy baseline vs the engine; PROMOTION_TOOLS in
+ *                  scripts/lib/parse-engine-leg.ts) to the markdown and the JSON (`promotion`)
+ *     --inbox-coverage  instead of the gold: the corpus coverage of the inbox's sources vs `classifiedTables` /
+ *                  `ensembleRegions` (scripts/lib/inbox-coverage.ts) [--corpus <corpus_v2>] [--research <dir>]
  *     --accept-headline-gaps  let §6.4 promote although some §6.3 headlines are not measured (HEADLINE_GAPS in
  *                  lib/parse-measure.ts); only once the owner / integrator has accepted the narrowed set. Without it a
  *                  would-be promote is reported undecided, and the report names the missing headlines either way.
  *
- * Legs: one per legacy path (`legacy:<path>`, through the WP-2.0a adapters in lib/legacy-joins/legacy-paths.ts).
- * The engine leg lands in TP-3.Q with the same `Leg` shape (scripts/lib/parse-measure.ts). Every headline gets a
+ * Legs: one per legacy path (`legacy:<path>`, through the WP-2.0a adapters in lib/legacy-joins/legacy-paths.ts),
+ * plus the engine leg with --engine (TP-3 WP-3.Q, the same `Leg` shape, precomputed because the engine is async). Every headline gets a
  * seeded bootstrap 95 % CI over units, per stratum too, and a PAIRED CI of (leg − baseline) with the §6.4 verdict.
  * The report holds numbers, leg ids, strata and opaque gold ids only — never drawing text.
  */
@@ -28,7 +35,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { LegacyPathId, LegacySlice } from "@/lib/legacy-joins/legacy-paths";
 import { LEGACY_PATH_IDS } from "@/lib/legacy-joins/legacy-paths";
 import { argOf, inSplit, optionalPrivateDirOf, privateDirOf, readJsonl, refuseWrite, validateRecords, writePrivate, type GoldLine, type TabTruth } from "./gold/gold-lib";
-import { legacyLegs, measure, reportMarkdown, type MeasureReport, type Unit } from "./lib/parse-measure";
+import { legacyLegs, measure, reportMarkdown, type Leg, type MeasureReport, type Unit } from "./lib/parse-measure";
+import { engineLeg, fixedKindLegs, promotionMarkdown, promotionTable, type ToolVerdict } from "./lib/parse-engine-leg";
+import { corpusCoveragePages, coverageMarkdown, coverageOf, type InboxCoverage } from "./lib/inbox-coverage";
+import { resolveParseEngineProfile, type ParseEngineProfile } from "@/lib/parse-engine/profile";
 
 type MinMax = [number, number, number, number];
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -108,7 +118,8 @@ export function privateUnits(privateDir: string, sets: string, golds: readonly s
   return { units, skipped, adjudicated };
 }
 
-export function run(argv: readonly string[]): { report: MeasureReport; markdown: string; written: string[] } {
+/** The units, legs and options a run needs (shared by the sync legacy-only `run` and `runAsync`). */
+function prepare(argv: readonly string[]) {
   const sets = argOf(argv, "sets") ?? "even";
   if (!["odd", "even", "all"].includes(sets)) throw new Error(`--sets must be odd, even or all (got ${sets})`);
   const golds = (argOf(argv, "gold") ?? "G-TAB,G-PARA").split(",");
@@ -120,14 +131,23 @@ export function run(argv: readonly string[]): { report: MeasureReport; markdown:
   let units: Unit[], skipped: Record<string, number> = {}, adjudicated: Record<string, number> = {};
   if (synthetic) units = syntheticUnits().filter((u) => golds.includes(u.gold) && inSplit(u.setId, sets));
   else ({ units, skipped, adjudicated } = privateUnits(privateDir as string, sets, golds));
-  const report = measure(units, legacyLegs(tools ? (id: LegacyPathId) => tools.includes(id) : undefined), {
+  const legs = legacyLegs(tools ? (id: LegacyPathId) => tools.includes(id) : undefined);
+  const options = {
     sets, seed: Number(argOf(argv, "seed") ?? 20261027), resamples: Number(argOf(argv, "resamples") ?? 2000),
     baseline: { "G-TAB": argOf(argv, "baseline-tab"), "G-PARA": argOf(argv, "baseline-para") },
     acceptHeadlineGaps: argv.includes("--accept-headline-gaps"),
-  });
+  };
+  return { synthetic, privateDir, units, skipped, adjudicated, legs, options };
+}
+
+/** Score, then write the JSON + markdown where allowed. */
+function finish(argv: readonly string[], p: ReturnType<typeof prepare>, legs: readonly Leg[], promotion?: readonly ToolVerdict[]): { report: MeasureReport & { promotion?: readonly ToolVerdict[] }; markdown: string; written: string[] } {
+  const { synthetic, privateDir, units, skipped, adjudicated, options } = p;
+  const report: MeasureReport & { promotion?: readonly ToolVerdict[] } = measure(units, legs, options);
   Object.assign(report.skipped, skipped);
   for (const [g, n] of Object.entries(adjudicated)) if (report.gold[g]) report.gold[g].adjudicated = n;
-  const markdown = reportMarkdown(report);
+  if (promotion) report.promotion = promotion;
+  const markdown = reportMarkdown(report) + (promotion ? `\n${promotionMarkdown(promotion)}` : "");
   const written: string[] = [];
   const json = argOf(argv, "json");
   if (json) {
@@ -143,13 +163,58 @@ export function run(argv: readonly string[]): { report: MeasureReport; markdown:
   return { report, markdown, written };
 }
 
+/** Legacy legs only (synchronous). `--engine` needs `runAsync`. */
+export function run(argv: readonly string[]): { report: MeasureReport; markdown: string; written: string[] } {
+  if (argv.includes("--engine")) throw new Error("--engine is async: call runAsync (the CLI does)");
+  const p = prepare(argv);
+  return finish(argv, p, p.legs);
+}
+
+/** A profile file for --profile (refused when malformed: a silent fallback would score the defaults under another name). */
+export function profileFromFile(file: string): ParseEngineProfile {
+  const r = resolveParseEngineProfile(JSON.parse(readFileSync(file, "utf8")));
+  if (r.error) throw new Error(`--profile ${file}: ${r.error}`);
+  return r.profile;
+}
+
+/** Legacy legs, plus the engine leg with --engine (TP-3 WP-3.Q). */
+export async function runAsync(argv: readonly string[]): Promise<{ report: MeasureReport & { promotion?: readonly ToolVerdict[] }; markdown: string; written: string[] }> {
+  const p = prepare(argv);
+  if (!argv.includes("--engine")) return finish(argv, p, p.legs);
+  const file = argOf(argv, "profile");
+  const profile = file ? { profile: profileFromFile(file) } : {};
+  const leg = await engineLeg(p.units, profile);
+  if (leg.errors) p.skipped["engine threw (scored as empty)"] = leg.errors;
+  const legs = [...p.legs, leg];
+  // the fixed-kind legs (a route that requests one kind on every unit) feed the promotion table only
+  const extra = argv.includes("--promotion") ? await fixedKindLegs(p.units, leg.id, profile) : [];
+  for (const x of extra) if (x.errors) p.skipped[`${x.id} threw (scored as empty)`] = x.errors;
+  const promotion = argv.includes("--promotion") ? promotionTable(p.units, [...legs, ...extra], leg.id, { seed: p.options.seed, resamples: p.options.resamples }) : undefined;
+  return finish(argv, p, legs, promotion);
+}
+
+/** --inbox-coverage: the corpus coverage table (numbers and set ids only); JSON beside the markdown with --json. */
+export function runInboxCoverage(argv: readonly string[]): { coverage: InboxCoverage; markdown: string; written: string[] } {
+  const coverage = coverageOf(corpusCoveragePages({ corpus: argOf(argv, "corpus"), research: argOf(argv, "research"), sets: argOf(argv, "sets") ?? "all" }));
+  const markdown = coverageMarkdown(coverage);
+  const written: string[] = [];
+  const json = argOf(argv, "json");
+  if (json) {
+    const root = dirname(resolve(json));
+    writePrivate(json, JSON.stringify(coverage, null, 1) + "\n", root, false);
+    writePrivate(json.replace(/\.json$/, "") + ".md", markdown, root, false);
+    written.push(json, json.replace(/\.json$/, "") + ".md");
+  }
+  return { coverage, markdown, written };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  try {
-    const { markdown, written } = run(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  (argv.includes("--inbox-coverage") ? Promise.resolve().then(() => runInboxCoverage(argv)) : runAsync(argv)).then(({ markdown, written }) => {
     process.stdout.write(markdown);
     for (const w of written) console.error(`parse-engine-measure: wrote ${w}`);
-  } catch (e) {
+  }, (e: unknown) => {
     console.error(`parse-engine-measure: ${(e as Error).message}`);
     process.exitCode = 1;
-  }
+  });
 }
