@@ -5,11 +5,14 @@
 // runs only when the stored tables miss the box and is read through the crop cache (K17), demo calls never pay, the
 // kind is always a table kind, CSI comes from the company context (K15) and the history entry is written.
 // Synthetic evidence only (rule 12).
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // run.ts reaches lib/auth through demo-features → api-utils; no session is read here.
 vi.mock("@/lib/auth", () => ({ auth: async () => null }));
 import type { AuthSession } from "@/lib/api-utils";
+import { parseCsiTsv } from "@/lib/csi-database";
 import { runParseEngine } from "@/lib/parse-engine/engine";
 import { legacyView, legacyPart } from "@/lib/parse-engine/legacy-view";
 import type { EnginePageEvidence, EngineShape, ParseEngineFlags, ParseRequest, StructureTableModel } from "@/lib/parse-engine/types";
@@ -279,5 +282,26 @@ describe("budget and the paid crop (E-3, K17)", () => {
       expect(h.chargePaid).not.toHaveBeenCalled();
       expect(h.cache.puts).toEqual([]);
     }
+  });
+});
+
+// K15 (verify MED-1): a code only the tenant's custom CSI list knows. The pseudo-phrase is in every synthetic fixture
+// row text; the builtin KB has no code for it, so it can only come from the company context. (A division-01 code is
+// not emitted from grid cells — measured — hence division 99.) The custom-list overlay
+// needs the gitignored KB (`src/data/csi-kb.json`), as in csi-detect.test.ts.
+const HAS_KB = existsSync(join(process.cwd(), "src/data/csi-kb.json"));
+const TENANT_CODE = "99 99 98";
+const TENANT_DB = parseCsiTsv(["c0\tc1\tcode\tdescription\ttrade\tdivision", `x\tx\t${TENANT_CODE}\tnekqka kxbduu\tFixture Trade\t99 00 00`].join("\n"));
+
+describe.skipIf(!HAS_KB)("K15: csiTags use the company's CSI context", () => {
+  it("a code only the tenant's custom list knows is in csiTags; without the context it is not", async () => {
+    const f = fixture("syn-sched-basic");
+    const codes = (b: Record<string, unknown>) => (b.csiTags as { code: string }[]).map((c) => c.code);
+    const tenant = await tableParseOnEngine(input(f.region, { csiCtx: { config: undefined, db: TENANT_DB } }), harness(fixtureEvidence(f)).deps);
+    const bare = await tableParseOnEngine(input(f.region), harness(fixtureEvidence(f)).deps);
+    expect(codes(tenant)).toContain(TENANT_CODE);
+    expect(codes(bare)).not.toContain(TENANT_CODE);
+    expect(tenant.csiTags).toEqual(regionCsi(tenant.structure as StructureTableModel, legacyView(tenant.structure as StructureTableModel) as never, { config: undefined, db: TENANT_DB })
+      .map((c) => ({ code: c.code, description: c.description })));
   });
 });

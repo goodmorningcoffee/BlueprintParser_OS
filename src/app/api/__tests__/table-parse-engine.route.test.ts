@@ -47,18 +47,22 @@ vi.mock("@/server/services/parse-engine/flags", async (orig) => {
 });
 vi.mock("@/lib/parse-history", () => ({ addToHistory: vi.fn(async (e: unknown) => { h.history.push(e); }) }));
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { POST } from "@/app/api/table-parse/route";
 import { legacyView } from "@/lib/parse-engine/legacy-view";
 import type { StructureTableModel } from "@/lib/parse-engine/types";
+import { eq } from "drizzle-orm";
+import { csiDbKeyPrefix } from "@/lib/csi-database";
 import { db } from "@/lib/db";
-import { annotations } from "@/lib/db/schema";
-import { resetParseSlotsForTest } from "@/server/services/parse-engine/concurrency";
+import { annotations, companies } from "@/lib/db/schema";
+import { acquireParseSlot, resetParseSlotsForTest } from "@/server/services/parse-engine/concurrency";
 import { asUser, createWorld, createPage, makeReq, publishDemoFixture, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
+// The custom-list CSI overlay needs the gitignored KB (`src/data/csi-kb.json`), as in csi-detect.test.ts.
+const HAS_KB = existsSync(join(process.cwd(), "src/data/csi-kb.json"));
 
 interface Fx { region: [number, number, number, number]; page: { words: unknown[] }; shapes: { bbox: [number, number, number, number]; label: string }[]; truth: { rows: string[][] } }
 const FX = JSON.parse(readFileSync(join(process.cwd(), "src/lib/parse-engine/__fixtures__/syn-keynote-shapes.synthetic.json"), "utf8")) as Fx;
@@ -79,7 +83,7 @@ async function world(opts: { demo?: boolean; storedTable?: boolean } = {}) {
   return w;
 }
 
-const call = (body: unknown) => POST(makeReq("/api/table-parse", { body, headers: { "x-forwarded-for": "198.51.100.4" } }));
+const call = (body: unknown, ip = "198.51.100.4") => POST(makeReq("/api/table-parse", { body, headers: { "x-forwarded-for": ip } }));
 
 beforeEach(() => {
   h.uploads.length = 0;
@@ -138,6 +142,33 @@ describe.skipIf(!dbUp)("POST /api/table-parse — tablesRoute = engine", () => {
     expect(r.status).toBe(200);
     expect("structure" in r.body).toBe(false);
     expect("engine" in r.body).toBe(false);
+  });
+
+  it.skipIf(!HAS_KB)("K15: csiTags carry a code only the company's custom CSI list knows (the route's company context)", async () => {
+    const { company, user, project } = await world({ storedTable: true });
+    const key = `${csiDbKeyPrefix(company.id)}tenant.tsv`;
+    // A pseudo-phrase in the fixture's keynote text; the builtin KB has no code for it (synthetic, rule 12).
+    h.objects.set(key, Buffer.from(["c0\tc1\tcode\tdescription\ttrade\tdivision", "x\tx\t99 99 98\tnekqka kxbduu\tFixture Trade\t99 00 00"].join("\n")));
+    await db.update(companies).set({ pipelineConfig: { csi: { customDatabaseS3Key: key } } as never }).where(eq(companies.id, company.id));
+    asUser(user);
+    const r = await readJson(await call({ projectId: project.id, pageNumber: 1, regionBbox: FX.region }));
+    expect(r.status).toBe(200);
+    expect((r.body.csiTags as { code: string }[]).map((c) => c.code)).toContain("99 99 98");
+  });
+
+  it("a signed-out demo caller's in-flight cap is keyed by its own client address (the route forwards `req`)", async () => {
+    const { project } = await world({ demo: true });
+    signedOut();
+    const body = { projectId: project.id, pageNumber: 1, regionBbox: FX.region };
+    // 198.51.100.4 already holds both of its standard slots (PARSE_CONCURRENCY_LIMITS.standard = 2).
+    const held = [acquireParseSlot("ip:198.51.100.4", "standard"), acquireParseSlot("ip:198.51.100.4", "standard")];
+    expect(held.every(Boolean)).toBe(true);
+    try {
+      expect((await call(body)).status).toBe(429);
+      expect((await call(body, "198.51.100.9")).status).toBe(200);
+    } finally {
+      for (const s of held) s?.release();
+    }
   });
 
   it("validation, access and the OCR check run before the engine (unchanged order)", async () => {
