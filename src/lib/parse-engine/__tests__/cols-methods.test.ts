@@ -42,6 +42,33 @@ describe("textract-cells columns", () => {
     expect(h.conf).toBe(0.794); // the table covers .4 × .1 of the .42 × .12 box
   });
 
+  it("the loader's shape (covered cells kept, anchor widened): same lines, and `cells` never overlap (VERIFY LOW-1)", () => {
+    const spans = [{ r: 0, c: 1, rs: 1, cs: 2 }, { r: 2, c: 3, rs: 2, cs: 1 }];
+    // evidence.ts engineTables: EVERY grid CELL, each with its own box; the anchor gets rs/cs and the union box
+    const cells: EngineTextractCell[] = [];
+    for (let r = 0; r + 1 < YS.length; r++) {
+      for (let c = 0; c + 1 < XS.length; c++) {
+        const s = spans.find((p) => p.r === r && p.c === c);
+        const rs = s?.rs ?? 1;
+        const cs = s?.cs ?? 1;
+        cells.push({ r, c, rs, cs, b: [XS[c], YS[r], XS[c + cs], YS[r + rs]], ...(r === 0 ? { hdr: true as const } : {}) });
+      }
+    }
+    const h = textractCellsColumns([{ b: [XS[0], YS[0], XS[4], YS[5]], cells }], [0.09, 0.19, 0.51, 0.31]);
+    expect(h.colLines).toEqual(XS);
+    expect(h.rowLines).toEqual(YS);
+    expect(h.headerRows).toBe(1);
+    expect(h.cells?.length).toBe(18); // 20 grid cells, 2 covered by the anchors
+    expect(h.cells?.some((c) => (c.r === 0 && c.c === 2) || (c.r === 3 && c.c === 3))).toBe(false);
+    expect(h.cells?.filter((c) => c.header).length).toBe(3);
+    const occupied = new Set<string>();
+    for (const c of h.cells ?? []) for (let r = c.r; r < c.r + c.rs; r++) for (let k = c.c; k < c.c + c.cs; k++) {
+      expect(occupied.has(`${r}:${k}`), `${r}:${k} listed twice`).toBe(false);
+      occupied.add(`${r}:${k}`);
+    }
+    expect(occupied.size).toBe(20);
+  });
+
   it("a box over part of the table re-indexes rows", () => {
     const t = table(XS, YS, { spans: [{ r: 2, c: 3, rs: 2, cs: 1 }] });
     // rows 3..4 only: the span (rows 2-3) is centred at y .26, above the box

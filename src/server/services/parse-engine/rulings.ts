@@ -67,8 +67,10 @@ export async function detectCropRulings(
   deps: { run?: RunPython; scriptPath?: string } = {},
 ): Promise<CropRulings> {
   if (!validCrop(crop)) return { rows: [], cols: [], confidence: 0, error: "invalid crop" };
-  const dir = await mkdtemp(join(tmpdir(), "bp2-rulings-"));
+  // mkdtemp sits inside the try (VERIFY MED-2): a full /tmp (ENOSPC) is an `error`, never a rejection.
+  let dir: string | undefined;
   try {
+    dir = await mkdtemp(join(tmpdir(), "bp2-rulings-"));
     const img = join(dir, "page.png");
     await writeFile(img, pagePng);
     const script = deps.scriptPath ?? join(process.cwd(), "scripts/detect_table_lines.py");
@@ -85,7 +87,7 @@ export async function detectCropRulings(
   } catch (err) {
     return { rows: [], cols: [], confidence: 0, error: err instanceof Error ? err.message.slice(0, 500) : "rulings failed" };
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    if (dir !== undefined) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

@@ -14,6 +14,10 @@
  * that START in that column (any span); the outer lines are the median left edge of the first column and the
  * median right edge of the cells ending in the last column. Rows alike. `headerRows` counts the consecutive
  * rows from the top that hold a header-flagged cell. `conf` is the table's cover of the box (0..1).
+ *
+ * The evidence loader keeps EVERY Textract CELL, including the ones a merged anchor covers (only the anchor is
+ * widened). Those covered cells still give line edges, but `cells` lists only the anchor, so the cells never
+ * overlap (VERIFY LOW-1).
  */
 
 import type { BboxMinMax, EnginePageEvidence, EngineTextractCell } from "../types";
@@ -92,6 +96,9 @@ export function textractCellsColumns(tables: readonly Table[], box: BboxMinMax):
     .sort((a, b) => a.r - b.r || a.c - b.c);
   const colLines = axisLines(cells, (c) => c.c, (c) => c.cs, 0, 2, colsPresent.length);
   const rowLines = axisLines(cells, (c) => c.r, (c) => c.rs, 1, 3, rowsPresent.length);
+  const covered = (x: (typeof cells)[number]): boolean =>
+    cells.some((a) => a !== x && (a.rs > 1 || a.cs > 1) && x.r >= a.r && x.r < a.r + a.rs && x.c >= a.c && x.c < a.c + a.cs);
+  const outCells = cells.filter((x) => !covered(x));
   let headerRows = 0;
   while (headerRows < rowsPresent.length && cells.some((c) => c.r === headerRows && c.hdr)) headerRows++;
   return {
@@ -100,7 +107,7 @@ export function textractCellsColumns(tables: readonly Table[], box: BboxMinMax):
     colLines,
     rowLines,
     headerRows,
-    cells: cells.map((c) => ({ r: c.r, c: c.c, rs: c.rs, cs: c.cs, b: [...c.b] as BboxMinMax, ...(c.hdr ? { header: true as const } : {}) })),
+    cells: outCells.map((c) => ({ r: c.r, c: c.c, rs: c.rs, cs: c.cs, b: [...c.b] as BboxMinMax, ...(c.hdr ? { header: true as const } : {}) })),
     tableIndex: pick.index,
   };
 }

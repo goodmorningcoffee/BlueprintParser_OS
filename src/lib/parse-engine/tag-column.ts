@@ -10,11 +10,15 @@
  * 3. `header` — columns whose label names a tag (`roleOfLabel` = "tag"), arbitrated by the BODY: the
  *    candidate with the highest tag score wins, provided its score is ≥ .35 (row numbers score .35);
  * 4. `body` — the column whose filled values read as tags: score ≥ .5 (≥ .35 for keynotes and legends,
- *    whose keys are often bare numbers), filled in ≥ half the body rows, and ≥ 80 % distinct.
+ *    whose keys are often bare numbers), filled in ≥ half the body rows, and ≥ 80 % distinct;
+ * 5. `header` (weak) — a tag-named column whose body is filled (≥ .5) and distinct (≥ .8) though its values
+ *    do not read as tags (legacy `table-parse.ts` picks a MARK / TAG / NO column by its name alone, so R9
+ *    never finds less than legacy; VERIFY MED-1).
  * Ties go to the leftmost column.
  *
  * Tag score of one value (LabelFactory `tags.py` `is_tag_like` order): letters + digits (`RTU-1`, `A-101`,
- * `EF-10`) 1.0; letters only, ≤ 3 (`A`, `CL`) .8; digits only, ≤ 3 (`12`) .35; else 0 — dimensions
+ * `EF-10`) 1.0; digits then 1-2 letters (`101A`, `1B` — room-number door marks) .9; letters only, ≤ 3 (`A`,
+ * `CL`) .8; digits only, ≤ 3 (`12`) .35; else 0 — dimensions
  * (`3'-0"`), words over 8 characters and the stop list (`TYP`, `NO`, `SEE`, …) score 0. The column score is
  * the mean over its non-empty body values. `pattern` is `inferTagPattern` over those values (regex source).
  * `scope`: "project" for schedules, "sheet" for keynotes and legends (PLAN §3.3 accept-tags defaults).
@@ -41,6 +45,8 @@ const STOP = new Set([
 ]);
 const RE_DIMENSION = /^\d+['"]|^\d+\/\d+"?$|\d+'-\d+/;
 const RE_TAG = /^[A-Z]{1,4}[-.]?\d{1,4}[A-Z]?$|^[A-Z]{1,3}\d{0,3}[-.]\d{1,3}$/;
+/** Room-number marks (`101A`, `1B`): digits then a 1-2 letter suffix (VERIFY MED-1). */
+const RE_NUM_SUFFIX = /^\d{1,4}[A-Z]{1,2}$/;
 const RE_ALPHA = /^[A-Z]{1,3}$/;
 const RE_DIGITS = /^\d{1,3}$/;
 
@@ -49,6 +55,7 @@ export function tagValueScore(value: string): number {
   const t = value.trim().toUpperCase().replace(/^[.:;,()[\]]+|[.:;,()[\]]+$/g, "");
   if (!t || STOP.has(t) || RE_DIMENSION.test(t) || t.length > 8) return 0;
   if (RE_TAG.test(t) && /\d/.test(t)) return 1;
+  if (RE_NUM_SUFFIX.test(t)) return 0.9;
   if (RE_ALPHA.test(t)) return 0.8;
   if (RE_DIGITS.test(t)) return 0.35;
   return 0;
@@ -135,5 +142,12 @@ export function pickTagColumn(input: TagColumnInput): TagColumnPick | null {
     if (s.score < bodyMin || s.filled < 0.5 || s.distinct < 0.8) return;
     if (bestBody < 0 || s.score > stats[bestBody].score) bestBody = c;
   });
-  return bestBody >= 0 ? finish(bestBody, "body") : null;
+  if (bestBody >= 0) return finish(bestBody, "body");
+
+  let weak = -1;
+  for (const c of nominated) {
+    if (stats[c].filled < 0.5 || stats[c].distinct < 0.8) continue;
+    if (weak < 0 || stats[c].score > stats[weak].score) weak = c;
+  }
+  return weak >= 0 ? finish(weak, "header") : null;
 }
