@@ -10,48 +10,22 @@
 // array is a contract break and is raised as an ERROR (the panel says "could not be loaded"), never read as an
 // empty inbox (WP-3.L verify HIGH-1). Single rows that are malformed are dropped.
 //
-// ⚠ INTEGRATION: `types-items.ts` is WP-3.F's file and is not on this branch (§5.1: no two WPs share a file), so
-// the wire types below MIRROR it field for field. When 3.F merges, replace the mirror block with
-// `import type { WorkspaceItem as WireItem, WorkspaceItemsGroup, WorkspaceItemsResponse } from
-// "@/lib/parse-engine/types-items";` and delete the mirror.
+// [TP-3 integrate g2b] The wire types are IMPORTED from WP-3.F's `types-items.ts` (the mirror is gone; WP-3.L
+// integration item 1, WP-3.F L-1) and re-exported for the panel and its tests.
 
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { getJson, persistFetch } from "@/lib/client-persist";
-import type { BboxMinMax, StructureKind } from "@/lib/parse-engine/types";
+import type {
+  WorkspaceItem as WireItem,
+  WorkspaceItemOrigin,
+  WorkspaceItemsGroup,
+  WorkspaceItemsResponse,
+  WorkspaceVerdictRequest as WireVerdictRequest,
+} from "@/lib/parse-engine/types-items";
 import { workspaceKeys } from "@/queries/workspaceKeys";
 import type { WorkspaceFilter, WorkspaceScope } from "@/stores/tablesWorkspaceStore";
 
-// ── MIRROR of WP-3.F `types-items.ts` (see INTEGRATION above) ────────────────────────────────────
-export type WorkspaceItemOrigin = "proposal" | "text-region" | "region" | "classified-table" | "ensemble";
-export interface WireItem {
-  id: string;
-  origin: WorkspaceItemOrigin;
-  page: number;
-  kind: StructureKind;
-  classId?: string | null;
-  title: string | null;
-  b: BboxMinMax;
-  p: number;
-  tableP?: number;
-  score: number;
-  state: "todo" | "parsed" | "rejected";
-  proposalId?: string;
-  regionId?: string;
-  verdict?: "accept" | "reject" | "rename";
-  regionType?: string;
-  legacyId?: string;
-  tagRows?: number;
-  regionOrigin?: "workspace" | "classic";
-}
-export interface WorkspaceItemsGroup { page: number; items: WireItem[]; lowConfidence: WireItem[] }
-export interface WorkspaceItemsResponse {
-  scope: "all" | "sheet";
-  page?: number;
-  indexReady: boolean;
-  threshold: number;
-  groups: WorkspaceItemsGroup[];
-}
-// ── end mirror ──────────────────────────────────────────────────────────────────────────────────
+export type { WireItem, WorkspaceItemOrigin, WorkspaceItemsGroup, WorkspaceItemsResponse };
 
 /**
  * One inbox row: the wire item, plus `stale`, which the items read does not carry yet. WP-5.A adds the stale
@@ -171,16 +145,8 @@ export function inboxView(
 
 // ── verdict writes (route: WP-3.F `POST …/parse-engine/verdict`) ─────────────────────────────────
 
-export interface WorkspaceVerdictRequest {
-  pageNumber: number;
-  itemId: string;
-  origin: WorkspaceItem["origin"];
-  kind: WorkspaceItem["kind"];
-  bbox: WorkspaceItem["b"];
-  proposalId?: string;
-  verdict: "reject" | "accept";
-  classId?: string;
-}
+/** WP-3.F's verdict body, as the inbox sends it: the item's own fields are always present. */
+export type WorkspaceVerdictRequest = WireVerdictRequest & Required<Pick<WireVerdictRequest, "itemId" | "origin" | "kind" | "bbox">>;
 
 export function verdictRequestFor(item: WorkspaceItem, verdict: "reject" | "accept", classId?: string): WorkspaceVerdictRequest {
   return {

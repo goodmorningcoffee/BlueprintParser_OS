@@ -3,14 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 import type { PageIntelligence, TextRegion } from "@/types";
-import {
-  countLeadingKeys,
-  deriveInboxForPage,
-  deriveInboxIndex,
-  deriveStructureIndex,
-  textRegionContentKey,
-  textRegionKind,
-} from "../index-derive";
+import { deriveStructureIndex } from "../index-derive";
+// [TP-3 integrate g2b] the inbox is WP-3.F's one derive (HIGH-1); 3.H's local copy and its kind table were
+// removed, and these tests now pin the index's use of the shared functions.
+import { deriveInboxForPage as deriveInbox, deriveInboxIndex, type InboxEntry } from "../inbox-derive";
+import { countParagraphKeys, textRegionInboxKind as textRegionKind, textRegionKey } from "../text-region-verdicts";
 import { legacyView, viewHash } from "../legacy-view";
 import { fromLegacy } from "../read";
 import { CAPABILITY_VERSIONS } from "../version";
@@ -30,6 +27,9 @@ const spec = {
   id: "parsed-2", type: "spec", category: "spec", bbox: [0.1, 0.5, 0.5, 0.9], confidence: 0.8,
   data: { sections: [{ sectionHeader: "SECTION 08 71 00 - ALPHA", body: "1.01 GENERAL\nA. ONE" }] },
 };
+
+/** One page's inbox through the shared derive (`prev` = the page's stored slice). */
+const deriveInboxForPage = (p: PageIntelligence | null, prev?: InboxEntry[]) => deriveInbox({ page: 1, pageIntelligence: p, prev });
 
 const tr = (over: Partial<TextRegion>): TextRegion => ({
   id: "region-0", type: "notes-numbered", bbox: [0.6, 0.1, 0.3, 0.4], confidence: 0.7, wordCount: 40, ...over,
@@ -111,7 +111,7 @@ describe("textRegionKind (§2.1 table)", () => {
   });
   it("paragraph: numbered with ≥ 3 keys from containedText or rowCount only", () => {
     const text = "1. ALPHA\n2. BETA\n3. GAMMA";
-    expect(countLeadingKeys(text)).toBe(3);
+    expect(countParagraphKeys(text)).toBe(3);
     expect(textRegionKind(tr({ type: "paragraph", hasNumberedItems: true, containedText: text }))).toBe("notes");
     expect(textRegionKind(tr({ type: "paragraph", hasNumberedItems: true, containedText: "1. ALPHA\n2. BETA" }))).toBeNull();
     expect(textRegionKind(tr({ type: "paragraph", hasNumberedItems: true, rowCount: 4 }))).toBe("notes");
@@ -123,7 +123,10 @@ describe("deriveInboxForPage", () => {
   const B = [0.6, 0.1, 0.9, 0.5];
   it("lists text-region items with a content-keyed id and MinMax box", () => {
     const [item] = deriveInboxForPage(pi({ textRegions: [tr({ headerText: "GENERAL NOTES" })] }));
-    expect(item).toEqual({ id: `tr:${textRegionContentKey("notes-numbered", B)}`, origin: "text-region", kind: "notes", b: expect.any(Array), title: "GENERAL NOTES", p: 0.7, state: "todo" });
+    expect(item).toEqual({
+      id: textRegionKey("notes-numbered", B as [number, number, number, number]), origin: "text-region", kind: "notes", b: expect.any(Array),
+      title: "GENERAL NOTES", p: 0.7, state: "todo", legacyId: "region-0", regionType: "notes-numbered",
+    });
     item.b.forEach((v, i) => expect(v).toBeCloseTo(B[i], 12)); // LTWH → MinMax (0.6 + 0.3 is not exactly 0.9)
     expect(item.id).toBe("tr:notes-numbered:0.60,0.10,0.90,0.50");
   });
@@ -142,11 +145,14 @@ describe("deriveInboxForPage", () => {
     expect(deriveInboxForPage(otherType)[0].state).toBe("todo");
   });
 
-  it("legacy rejectedTextRegionIds: honoured, but IoU-checked when the reject-time box is known", () => {
+  it("legacy rejectedTextRegionIds: honoured, but IoU-checked against the box the stored slice bound it to", () => {
     const page = pi({ textRegions: [tr({ id: "region-0" })], rejectedTextRegionIds: ["region-0"] });
-    expect(deriveInboxForPage(page)[0].state).toBe("rejected");
-    expect(deriveInboxForPage(page, { legacyRejectBoxes: { "region-0": [0.6, 0.1, 0.9, 0.5] } })[0].state).toBe("rejected");
-    expect(deriveInboxForPage(page, { legacyRejectBoxes: { "region-0": [0, 0, 0.1, 0.1] } })[0].state).toBe("todo");
+    const first = deriveInboxForPage(page);
+    expect(first[0].state).toBe("rejected"); // first sight binds the reject to the current box
+    expect(deriveInboxForPage(page, first)[0].state).toBe("rejected");
+    const bound = (b: number[]) => [{ ...first[0], legacyRejectB: b as [number, number, number, number] }];
+    expect(deriveInboxForPage(page, bound([0.6, 0.1, 0.9, 0.5]))[0].state).toBe("rejected");
+    expect(deriveInboxForPage(page, bound([0, 0, 0.1, 0.1]))[0].state).toBe("todo"); // renumbered: not honoured
   });
 
   it("drops non-inbox types and malformed boxes", () => {
@@ -161,7 +167,7 @@ describe("deriveInboxForPage", () => {
 });
 
 describe("deriveInboxIndex", () => {
-  it("is exactly the inbox slice of deriveStructureIndex (page order, empty pages omitted)", () => {
+  it("is exactly the inbox slice of deriveStructureIndex (page order; every visible page keyed, an empty one included)", () => {
     const rows = [
       { pageNumber: 5, pageIntelligence: pi({ textRegions: [tr({ id: "region-1" })], rejectedTextRegionIds: ["region-1"] }) },
       { pageNumber: 2, pageIntelligence: pi({ textRegions: [tr({})], parsedRegions: [notes] }) },
@@ -169,7 +175,19 @@ describe("deriveInboxIndex", () => {
     ];
     const inbox = deriveInboxIndex(rows);
     expect(inbox).toEqual(deriveStructureIndex(rows, AT).inbox);
-    expect(Object.keys(inbox)).toEqual(["2", "5"]);
+    expect(Object.keys(inbox)).toEqual(["2", "3", "5"]);
+    expect(inbox["3"]).toEqual([]);
     expect(inbox["5"][0].state).toBe("rejected");
+  });
+
+  it("deriveStructureIndex carries the stored inbox (prevInbox) into the derive, as deriveInboxIndex does", () => {
+    const page = { pageNumber: 4, pageIntelligence: pi({ textRegions: [tr({ id: "region-1" })], rejectedTextRegionIds: ["region-1"] }) };
+    const stored = deriveStructureIndex([page], AT).inbox;
+    expect(stored["4"][0].state).toBe("rejected");
+    // A reprocess renumbers: region-1 now names a different block. The stored binding keeps the reject off it.
+    const renumbered = { pageNumber: 4, pageIntelligence: pi({ textRegions: [tr({ id: "region-1", bbox: [0.1, 0.6, 0.2, 0.2] })], rejectedTextRegionIds: ["region-1"] }) };
+    expect(deriveStructureIndex([renumbered], AT, stored).inbox["4"][0].state).toBe("todo");
+    expect(deriveStructureIndex([renumbered], AT, stored).inbox).toEqual(deriveInboxIndex([renumbered], stored));
+    expect(deriveStructureIndex([renumbered], AT).inbox["4"][0].state).toBe("rejected"); // without prevInbox the guard is lost
   });
 });

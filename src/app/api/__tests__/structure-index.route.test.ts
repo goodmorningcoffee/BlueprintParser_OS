@@ -21,6 +21,7 @@ import { db } from "@/lib/db";
 import { pages, projects } from "@/lib/db/schema";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { deriveStructureIndex } from "@/lib/parse-engine/index-derive";
+import { viewHash } from "@/lib/parse-engine/legacy-view";
 import { assertProjectWritable } from "@/server/api/access";
 import { withProjectWrite } from "@/server/api/project-write-capability";
 import { humanWorkPages } from "@/server/services/page-duplicates-apply";
@@ -156,12 +157,22 @@ describe.skipIf(!dbUp)("the summaries pass re-derives the inbox under its projec
       id: "parsed-n", type: "notes", category: "general-notes", bbox: [0.6, 0.1, 0.9, 0.5], confidence: 0.8, source: "user",
       data: { headers: ["Key", "Note"], rows: [{ Key: "1", Note: "ALPHA" }], tagColumn: "Key", tableName: "GENERAL NOTES" },
     };
+    // [TP-3 integrate g2b] WP-3.F's derive joins a promoted region by sourceTextRegionId only while it still
+    // overlaps (IoU ≥ .5, any family), so case 1 uses a schedule-typed region over the text region (no
+    // same-family fallback); cases 6-7 cover the proposal keys the projection was widened to (INBOX_DERIVE_PI_KEYS).
+    const proposal = (id: string, over: Record<string, unknown> = {}) =>
+      ({ id, target: "schedule", classId: "door-schedule", bbox: [0.1, 0.1, 0.4, 0.4], displayName: "Door Schedule", className: "Door schedule", p: 0.9, tableP: 0.8, extra: { big: [1, 2, 3] }, ...over });
     const rich = [
-      { textRegions: [textRegion("region-0")], parsedRegions: [{ ...notesRegion, sourceTextRegionId: "region-0", bbox: [0, 0, 0.1, 0.1] }] }, // parsed by id
+      { textRegions: [textRegion("region-0")], parsedRegions: [{ ...notesRegion, type: "schedule", sourceTextRegionId: "region-0" }] }, // parsed by id
       { textRegions: [textRegion("region-0")], parsedRegions: [notesRegion] }, // parsed by same-family IoU
       { textRegions: [textRegion("region-3")], textRegionVerdicts: { "tr:k": rejectVerdict } }, // content verdict
       { textRegions: [textRegion("region-2"), textRegion("region-5", { bbox: [0.1, 0.6, 0.2, 0.2] })], rejectedTextRegionIds: ["region-2"] }, // legacy reject + todo
       { textRegions: [textRegion("region-0")], parsedRegions: "not-an-array" }, // malformed parsedRegions
+      { classifierProposals: { proposals: [proposal("p-a"), proposal("p-b", { bbox: [0.5, 0.5, 0.9, 0.9], tableP: undefined }), "junk"] },
+        proposalVerdicts: { "p-b": { verdict: "reject", at: "t" } } }, // proposals: todo + rejected
+      { classifierProposals: { proposals: [proposal("p-c")] }, proposalVerdicts: { "p-c": { verdict: "accept", regionId: "pr-x" } },
+        parsedRegions: [{ ...notesRegion, id: "pr-x", type: "schedule", bbox: [0.7, 0.7, 0.8, 0.8] }] }, // parsed through the K58 regionId
+      {}, // a visible page with nothing: still keyed
     ];
     for (const [i, pageIntelligence] of rich.entries()) await createPage(project.id, i + 1, { pageIntelligence: pageIntelligence as never });
     await recompute(project.id);
@@ -173,14 +184,20 @@ describe.skipIf(!dbUp)("the summaries pass re-derives the inbox under its projec
     expect(stored.inbox["3"][0].state).toBe("rejected");
     expect(stored.inbox["4"].map((x: { state: string }) => x.state)).toEqual(["rejected", "todo"]);
     expect(stored.inbox["5"][0].state).toBe("todo");
+    expect(stored.inbox["6"].map((x: { id: string; state: string }) => [x.id, x.state])).toEqual([["p-a", "todo"], ["p-b", "rejected"]]);
+    expect(stored.inbox["7"][0]).toMatchObject({ id: "p-c", state: "parsed", regionId: "pr-x" });
+    expect(stored.inbox["8"]).toEqual([]);
   });
 
   it("a derive failure keeps the previously stored index and still writes the summaries (verify LOW-5)", async () => {
     const { project } = await createWorld();
     const previous = { v: 1, at: "previous", regions: {}, keys: {}, specSections: {}, inbox: {} };
     await db.update(projects).set({ projectIntelligence: { structureIndex: previous } as never }).where(eq(projects.id, project.id));
-    // A non-string headerText (bad stored data) makes the inbox derive throw.
-    await createPage(project.id, 1, { pageIntelligence: { textRegions: [textRegion("region-0", { headerText: 5 })] } as never });
+    // Bad stored data that makes the derive throw: a workspace model (its viewHash matches) with a null row.
+    // [TP-3 integrate g2b] The old trigger (a non-string headerText) no longer throws: WP-3.F's inbox derive is total.
+    const data: Record<string, unknown> = { tableName: "T", structure: { v: 1, kind: "schedule", rows: [null], cols: [], cells: [] } };
+    data.links = { viewHash: viewHash(data), revision: 1 };
+    await createPage(project.id, 1, { pageIntelligence: { parsedRegions: [{ id: "pr-bad", type: "schedule", bbox: [0.1, 0.1, 0.4, 0.4], data }] } as never });
     const summaries = await recompute(project.id);
     expect(summaries).toBeTruthy();
     const pi = await projectPi(project.id);

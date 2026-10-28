@@ -210,8 +210,11 @@ async function writeVerdicts(tx: WriteTx, pageId: number, verdicts: PageProposal
     .where(eq(pages.id, pageId));
 }
 
-/** Mirror the verdict onto projectIntelligence.proposals (merging ONE key; other writers' keys survive). */
-async function mirrorOnSummary(
+/**
+ * Mirror the verdict onto projectIntelligence.proposals (merging ONE key; other writers' keys survive). Exported for
+ * the workspace commit (WP-3.G deviation 1, TP-3 integrate g2b), which writes its verdict in its own page UPDATE.
+ */
+export async function mirrorOnSummary(
   tx: WriteTx,
   projectId: number,
   proposalId: string,

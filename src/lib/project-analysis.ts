@@ -33,7 +33,8 @@ import { pages, annotations, projects } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { onVisiblePage, visiblePage } from "@/lib/page-dedup";
 import { summaryTableName } from "@/lib/parsed-table-summary";
-import { deriveInboxIndex, deriveStructureIndex } from "@/lib/parse-engine/index-derive"; // [TP-3 WP-3.H] PJ.structureIndex is derived here, never hand-written (C1-B2)
+import { deriveStructureIndex } from "@/lib/parse-engine/index-derive"; // [TP-3 WP-3.H] PJ.structureIndex is derived here, never hand-written (C1-B2)
+import { deriveInboxIndex } from "@/lib/parse-engine/inbox-derive"; // [TP-3 WP-3.F HIGH-1] the one inbox derive (integrate g2b)
 import type { StructureIndexV1 } from "@/lib/parse-engine/types";
 import { logger } from "@/lib/logger";
 import {
@@ -47,24 +48,28 @@ import {
 // The WP-3.F verdict route jsonb_sets one page's `inbox` slice under the project lock. The summaries pass
 // derives the index from page rows read BEFORE its lock, so a verdict committed in between would be
 // overwritten; rows read inside the lock are current (lock order project → page, rule 11). Only the keys
-// deriveInboxForPage reads are projected, so no parse data moves while the lock is held; widen this when it
-// reads a new key (structure-index.route.test.ts pins the parity). The other slices have no other writer,
-// and every parsedRegions writer recomputes summaries after it commits.
+// WP-3.F's deriveInboxForPage reads (INBOX_DERIVE_PI_KEYS) are projected, so no parse data moves while the
+// lock is held; widen this with that list (structure-index.route.test.ts pins the parity). `prevInbox` is the
+// locked row's stored inbox: it carries the legacy-reject bindings forward (WP-3.F HIGH-1, integrate g2b).
+// The other slices have no other writer, and every parsedRegions writer recomputes summaries after it commits.
 const INBOX_PARSED_REGION = sql.raw(`jsonb_build_object('id', r->'id', 'type', r->'type', 'bbox', r->'bbox', 'sourceTextRegionId', r->'sourceTextRegionId')`);
+const INBOX_PROPOSAL = sql.raw(`jsonb_build_object('id', q->'id', 'target', q->'target', 'classId', q->'classId', 'bbox', q->'bbox', 'displayName', q->'displayName', 'className', q->'className', 'p', q->'p', 'tableP', q->'tableP')`);
 
-async function withLockedInbox(tx: ProjectWriteTransaction, projectId: number, index: StructureIndexV1): Promise<StructureIndexV1 | null> {
+async function withLockedInbox(tx: ProjectWriteTransaction, projectId: number, index: StructureIndexV1, prevInbox: StructureIndexV1["inbox"] | null): Promise<StructureIndexV1 | null> {
   const pi = pages.pageIntelligence;
   const rows = await tx
     .select({
       pageNumber: pages.pageNumber,
       pageIntelligence: sql<PageIntelligence>`jsonb_build_object('textRegions', ${pi}->'textRegions', 'textRegionVerdicts', ${pi}->'textRegionVerdicts',
         'rejectedTextRegionIds', ${pi}->'rejectedTextRegionIds', 'parsedRegions', (SELECT jsonb_agg(${INBOX_PARSED_REGION}) FROM jsonb_array_elements(
-        CASE jsonb_typeof(${pi}->'parsedRegions') WHEN 'array' THEN ${pi}->'parsedRegions' ELSE '[]'::jsonb END) r))`,
+        CASE jsonb_typeof(${pi}->'parsedRegions') WHEN 'array' THEN ${pi}->'parsedRegions' ELSE '[]'::jsonb END) r),
+        'proposalVerdicts', ${pi}->'proposalVerdicts', 'classifierProposals', jsonb_build_object('proposals', (SELECT jsonb_agg(${INBOX_PROPOSAL}) FROM jsonb_array_elements(
+        CASE jsonb_typeof(${pi}->'classifierProposals'->'proposals') WHEN 'array' THEN ${pi}->'classifierProposals'->'proposals' ELSE '[]'::jsonb END) q)))`,
     })
     .from(pages)
     .where(and(eq(pages.projectId, projectId), visiblePage(pi)));
   try {
-    return { ...index, inbox: deriveInboxIndex(rows) };
+    return { ...index, inbox: deriveInboxIndex(rows, prevInbox) };
   } catch (e) {
     logger.error("[summaries] structureIndex inbox derive failed; the previous index is kept:", e);
     return null; // the caller keeps the stored index (verify LOW-5)
@@ -605,7 +610,8 @@ export async function computeProjectSummaries(
 
     const existingPi = currentProject?.pi || {};
     // inbox re-derived from rows read under this lock: the verdict route jsonb_sets that slice (verify MED-2)
-    const index = structureIndex ? await withLockedInbox(tx, projectId, structureIndex) : null;
+    const storedInbox = (existingPi as { structureIndex?: Partial<StructureIndexV1> }).structureIndex?.inbox ?? null;
+    const index = structureIndex ? await withLockedInbox(tx, projectId, structureIndex, storedInbox) : null;
     await tx
       .update(projects)
       .set({

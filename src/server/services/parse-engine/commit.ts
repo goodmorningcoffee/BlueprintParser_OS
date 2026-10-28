@@ -46,6 +46,7 @@ import { scheduleKind } from "@/lib/classifier-engine/vocabulary";
 import type { ClassifierProposal, PageProposalVerdicts } from "@/lib/classifier-engine/types";
 import { applyOps as engineApplyOps } from "@/lib/parse-engine/ops";
 import { ltwhToMinMax } from "@/lib/parse-engine/geometry";
+import { TEXT_REGION_VERDICT_IOU, textRegionKey } from "@/lib/parse-engine/text-region-verdicts";
 import { legacyView, viewHash, type LegacyView } from "@/lib/parse-engine/legacy-view";
 import { zCorrectionOps, zParseRecipe, zStructureModel } from "@/lib/parse-engine/schema";
 import type {
@@ -73,7 +74,7 @@ import {
 } from "@/server/api/project-write-capability";
 import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 import { regionSnapshot, snapshotHashOf } from "@/server/services/parse-labels";
-import { buildVerdict, findStoredProposal, patchSummaryVerdict } from "@/server/services/proposal-verdicts";
+import { buildVerdict, findStoredProposal, mirrorOnSummary, refreshInboxSlice } from "@/server/services/proposal-verdicts";
 import { applyTagOps, type StoredYoloTag, type TagOpsResult } from "@/server/services/tag-ops";
 import {
   acceptTagPlan,
@@ -281,15 +282,18 @@ function opCounts(ops: readonly CorrectionOp[]): { op: CorrectionOpName; n: numb
   return [...counts].map(([op, n]) => ({ op, n }));
 }
 
-/** `tr:${type}:${x0},${y0},${x1},${y1}` (WP-3.F's content key) → its parts, or null. */
+/**
+ * `tr:${type}:${x0},${y0},${x1},${y1}` (WP-3.F's content key) → its parts, or null. Only a key in the CANONICAL
+ * form WP-3.F's `textRegionKey` writes is accepted (one key format; WP-3.G deviation 2, TP-3 integrate g2b).
+ */
 export function parseTextRegionKey(key: string): { type: string; b: BboxMinMax } | null {
   const m = /^tr:([a-z][a-z-]{0,40}):(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(key);
   if (!m) return null;
   const b = [Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])] as BboxMinMax;
-  return b[2] > b[0] && b[3] > b[1] ? { type: m[1], b } : null;
+  return b[2] > b[0] && b[3] > b[1] && textRegionKey(m[1], b) === key ? { type: m[1], b } : null;
 }
 
-const TEXT_REGION_MATCH_IOU = 0.7;
+const TEXT_REGION_MATCH_IOU = TEXT_REGION_VERDICT_IOU; // WP-3.F's read-side match (K30)
 
 function defaultTableName(kind: StructureKind, page: number): string {
   const label = kind === "notes" ? "Notes" : kind === "spec" ? "Spec" : kind;
@@ -449,17 +453,6 @@ const pageBase = sql`coalesce(${pages.pageIntelligence}, '{}'::jsonb)`;
 const objectKey = (key: string): SQL =>
   sql`case when jsonb_typeof(${pageBase}->${key}) = 'object' then ${pageBase}->${key} else '{}'::jsonb end`;
 
-/** Mirror one verdict on the project's proposal list (project row already locked by withProjectWrite). */
-async function mirrorProposalSummary(tx: WriteTx, projectId: number, proposalId: string): Promise<void> {
-  const [row] = await tx.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, projectId)).limit(1);
-  const next = patchSummaryVerdict((row?.pi as Record<string, unknown> | null)?.proposals, proposalId, "accept");
-  if (!next) return;
-  await tx
-    .update(projects)
-    .set({ projectIntelligence: sql`coalesce(${projects.projectIntelligence}, '{}'::jsonb) || ${JSON.stringify({ proposals: next })}::jsonb` })
-    .where(eq(projects.id, projectId));
-}
-
 /** Steps 4-10, inside `withProjectWrite`. */
 async function write(
   tx: WriteTx, capability: ProjectWriteCapability, projectId: number, userId: number, p: Prepared, deps: CommitDeps,
@@ -588,7 +581,10 @@ async function write(
     .set({ pageIntelligence: value, csiCodes })
     .where(eq(pages.id, page.id))
     .returning({ pageIntelligence: pages.pageIntelligence });
-  if (proposal) await mirrorProposalSummary(tx, projectId, proposal.id);
+  // WP-3.F's summary mirror and inbox-slice refresh, in this transaction (WP-3.G deviation 1, TP-3 integrate g2b).
+  // applyProposalVerdict itself is not called: its accept carries no `regionId` (K58) and needs a second page UPDATE.
+  if (proposal) await mirrorOnSummary(tx, projectId, proposal.id, "accept");
+  if (written) await refreshInboxSlice(tx, projectId, pageNumber, written.pageIntelligence);
 
   // 10. tags: the region's projection becomes exactly this accept's mapped rows
   let tags: TagOpsResult = { tags: [], removed: [], replacedRegionIds: [], skipped: [] };

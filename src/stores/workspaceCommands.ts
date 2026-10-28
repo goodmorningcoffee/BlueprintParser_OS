@@ -8,6 +8,7 @@
 //     (`tr:<…>` text region, `draw:<…>` drawn box, a region id) — the focus layer only compares ids.
 // This module never writes parseFlowStore, uiStore or toolStore state directly (PLAN §1.6 rule 3).
 
+import { proposalInboxKind } from "@/lib/parse-engine/inbox-derive";
 import type { BboxMinMax, StructureKind } from "@/lib/parse-engine/types";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -34,24 +35,10 @@ export function drawItemKey(pageNumber: number, bbox: BboxMinMax): string {
 
 /**
  * Inbox kind of a classifier proposal, or null when its target is not a structure (page units, plans, cuts).
- * ⚠ MIRROR of WP-3.F's `proposalInboxKind` (`src/lib/parse-engine/inbox-derive.ts`), which is not on this branch
- * (§5.1: no shared files inside a group). The items read and "Parse this table" must give one proposal ONE kind,
- * so at integration replace this body with a re-export of that function (WP-3.L verify MED-4).
+ * WP-3.F's `proposalInboxKind` itself (`src/lib/parse-engine/inbox-derive.ts`), so the items read and "Parse this
+ * table" give one proposal ONE kind (WP-3.L verify MED-4; the mirror was replaced at TP-3 integrate g2b).
  */
-export function proposalWorkspaceKind(target: unknown, classId: unknown): StructureKind | null {
-  const cls = typeof classId === "string" ? classId : "";
-  switch (target) {
-    case "schedule": return "schedule";
-    case "keynote-table": return "keynote";
-    case "symbol-legend": return "legend";
-    case "general-notes": return "notes";
-    case "text-region":
-      if (cls === "keynotes") return "keynote";
-      if (cls === "symbol-legend" || cls === "abbreviations") return "legend";
-      return "notes";
-    default: return null;
-  }
-}
+export const proposalWorkspaceKind = proposalInboxKind;
 
 /**
  * Closing the workspace takes its canvas marks with it: the hover outline and the green focus box (with its dim),

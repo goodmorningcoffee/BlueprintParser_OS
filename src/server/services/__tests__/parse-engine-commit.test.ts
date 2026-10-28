@@ -136,6 +136,8 @@ describe("commit: ids, revisions, keys, body", () => {
     expect(parseTextRegionKey("tr:notes-numbered:0.10,0.20,0.40,0.50")).toEqual({ type: "notes-numbered", b: [0.1, 0.2, 0.4, 0.5] });
     expect(parseTextRegionKey("tr:notes-numbered:0.40,0.20,0.10,0.50")).toBeNull();
     expect(parseTextRegionKey("notes-numbered:0.1,0.2,0.4,0.5")).toBeNull();
+    // [TP-3 integrate g2b] only WP-3.F's canonical `textRegionKey` form (2 decimals) is accepted: one key format
+    expect(parseTextRegionKey("tr:notes-numbered:0.1,0.2,0.4,0.5")).toBeNull();
   });
 
   it("drops fields the server computes (a forged machine snapshot), requires a revision with a regionId", () => {

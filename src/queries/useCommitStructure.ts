@@ -24,6 +24,7 @@ import { refreshPageCsiSpatialMapForTarget } from "@/lib/csi-spatial-refresh-tar
 import { viewHash } from "@/lib/parse-engine/legacy-view";
 import type { BboxMinMax, CorrectionOp, ParseRecipe, StructureKind, StructureModel } from "@/lib/parse-engine/types";
 import type { CommitRefusal, CommitRequest, CommitResponse, TagSummary } from "@/lib/parse-engine/types-commit";
+import type { WorkspaceVerdictRequest, WorkspaceVerdictUndoRequest } from "@/lib/parse-engine/types-items";
 import { ensurePageIntelligence, readPageIntelligence, setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { invalidateWorkspaceItems } from "@/queries/useWorkspaceItems";
@@ -242,12 +243,13 @@ export async function commitStructure(qc: QueryClient, target: CommitTarget, bod
 
 export type ItemVerdict = { verdict: "reject" } | { verdict: "accept"; classId: string };
 
-/** The verdict body for a proposal or a text-region item (WP-3.F `WorkspaceVerdictRequest`). */
-export function verdictBody(item: WorkspaceItemRef & { origin?: unknown }, v: ItemVerdict): Record<string, unknown> {
+/** The verdict body for a proposal or a text-region item (WP-3.F `WorkspaceVerdictRequest`, typed from `types-items.ts`). */
+export function verdictBody(item: WorkspaceItemRef & { origin?: unknown }, v: ItemVerdict): WorkspaceVerdictRequest {
   if (item.proposalId) {
     return { pageNumber: item.page, proposalId: item.proposalId, verdict: v.verdict, ...(v.verdict === "accept" ? { classId: v.classId } : {}) };
   }
-  return { pageNumber: item.page, itemId: item.id, origin: originOf(item), kind: item.kind, bbox: [...item.b], verdict: v.verdict };
+  const origin = originOf(item); // a `draw:` item has no wire origin; verdictsFor never offers it a verdict
+  return { pageNumber: item.page, itemId: item.id, ...(origin !== "draw" ? { origin } : {}), kind: item.kind, bbox: [...item.b], verdict: v.verdict };
 }
 
 /** Which verdicts the route takes for this item: proposals both, text regions reject only (WP-3.F LOW-1). */
@@ -265,7 +267,7 @@ export async function recordItemVerdict(qc: QueryClient, publicId: string, item:
 }
 
 export async function undoItemVerdict(qc: QueryClient, publicId: string, item: WorkspaceItemRef): Promise<void> {
-  const body = item.proposalId ? { pageNumber: item.page, proposalId: item.proposalId } : { pageNumber: item.page, itemId: item.id };
+  const body: WorkspaceVerdictUndoRequest = item.proposalId ? { pageNumber: item.page, proposalId: item.proposalId } : { pageNumber: item.page, itemId: item.id };
   try {
     await persistFetch(verdictUrl(publicId), body, "DELETE");
   } finally {

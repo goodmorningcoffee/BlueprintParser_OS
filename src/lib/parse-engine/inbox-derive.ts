@@ -44,6 +44,7 @@ import {
   textRegionMinMax,
   type TextRegionLike,
 } from "./text-region-verdicts";
+import { parsedRegionMinMax } from "@/lib/parsed-region-bbox";
 import type { BboxMinMax, InboxSlim, StructureKind } from "./types";
 
 /** A saved region overlapping an item at IoU ≥ this (same kind family) parses it (fallback join). */
@@ -134,7 +135,7 @@ function savedRegions(pi: Rec): SavedRegion[] {
   const out: SavedRegion[] = [];
   for (const r of records(pi.parsedRegions)) {
     const id = str(r.id);
-    const b = savedBox(r.bbox);
+    const b = parsedRegionMinMax(r as { bbox?: readonly number[] }); // the one ParsedRegion bbox reader (K04; WP-3.H LOW-6, integrate g2b)
     if (!id || !b) continue;
     const kind = KINDS.includes(r.type as StructureKind) ? (r.type as StructureKind) : "schedule";
     out.push({ id, kind, b, sourceTextRegionId: str(r.sourceTextRegionId) });

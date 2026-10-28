@@ -11,13 +11,14 @@
 // (WP-3.L `useParseEngineFlags`, always mounted) owns that fetch under the SAME key, `workspaceKeys.flags`
 // (`["project", id, "parseEngine", "flags"]`), so a classic card on its own adds no request. With the workspace
 // off, existing verdicts are kept but not applied to the classic cards. (WP-3.F fix round, verify HIGH-2: the
-// key was a private one the host never filled, so the cards never filtered. At integration this module imports
-// `workspaceKeys.flags` instead of spelling it; the test pins the literal until then.)
+// key was a private one the host never filled, so the cards never filtered. Since TP-3 integrate g2b this module
+// imports `workspaceKeys.flags` instead of spelling it; the test still pins the literal tuple.)
 
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { getJson, persistFetch } from "@/lib/client-persist";
 import type { BboxMinMax, ParseEngineFlags } from "@/lib/parse-engine/types";
 import type { TextRegionVerdictSlim, TextRegionVerdictsResponse, WorkspaceVerdictResponse } from "@/lib/parse-engine/types-items";
+import { workspaceKeys } from "@/queries/workspaceKeys";
 import { useProject } from "@/stores/sessionStore";
 
 export type PageTextRegionVerdicts = Record<string, TextRegionVerdictSlim>;
@@ -29,8 +30,8 @@ export const textRegionVerdictKeys = {
   all: (publicId: string) => ["project", publicId, "textRegionVerdicts"] as const,
   page: (publicId: string, pageNumber: number) => ["project", publicId, "textRegionVerdicts", pageNumber] as const,
 };
-/** The parse-engine flags query key: the same tuple as WP-3.L `workspaceKeys.flags`, whose host fetches it. */
-export const parseEngineFlagsKey = (publicId: string) => ["project", publicId, "parseEngine", "flags"] as const;
+/** The parse-engine flags query key: WP-3.L's `workspaceKeys.flags`, whose host fetches it (one key; integrate g2b, WP-3.F L-2). */
+export const parseEngineFlagsKey = workspaceKeys.flags;
 
 /** GET the effective flags (the same URL and shape as WP-3.L `useParseEngineFlags`). */
 export function fetchParseEngineFlags(publicId: string, signal?: AbortSignal): Promise<ParseEngineFlags> {
