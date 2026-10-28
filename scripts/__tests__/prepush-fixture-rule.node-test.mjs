@@ -27,11 +27,13 @@ const GOOD = [
   "scripts/parse-engine-fixtures/layouts.ts",
 ];
 
+// Check 8 (AUTHORS) refuses any identity outside the allowlist, so the fixture commits as the owner's noreply identity.
+const ID = { GIT_AUTHOR_NAME: "goodmorningcoffee", GIT_AUTHOR_EMAIL: "goodmorningcoffee@users.noreply.github.com", GIT_COMMITTER_NAME: "goodmorningcoffee", GIT_COMMITTER_EMAIL: "goodmorningcoffee@users.noreply.github.com" };
 function git(cwd, ...args) {
   const r = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t.invalid" },
+    env: { ...process.env, ...ID },
   });
   assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
@@ -49,7 +51,14 @@ async function repoWith(files) {
   git(repo, "commit", "-q", "-m", "init");
   return repo;
 }
-const run = (repo, stdin = "") => spawnSync("bash", [SCRIPT], { cwd: repo, input: stdin, encoding: "utf8" });
+// No private-terms list unless a case supplies one (check 9 then WARNs and passes).
+const run = (repo, stdin = "") =>
+  spawnSync("bash", [SCRIPT], {
+    cwd: repo,
+    input: stdin,
+    encoding: "utf8",
+    env: { ...process.env, BP_PREPUSH_TERMS_FILE: "/nonexistent/forbidden-terms.txt", BP_PREPUSH_REQUIRE_TERMS: "" },
+  });
 
 test("clean: synthetic fixtures, the eval allow-list, and __fixtures__ outside parse-engine", async () => {
   const repo = await repoWith(GOOD);
