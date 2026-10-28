@@ -14,6 +14,7 @@ import { useProject } from "@/stores/sessionStore";
 import { useTablesWorkspaceStore } from "@/stores/tablesWorkspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import { openClassicTools } from "@/stores/workspaceCommands";
+import { WorkspaceKeyScope } from "./keyboard";
 import TablesWorkspacePanel from "./TablesWorkspacePanel";
 
 class WorkspaceErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -68,7 +69,7 @@ export default function TablesWorkspaceHost() {
   if (!open || !enabled) return null;
   return (
     <WorkspaceErrorBoundary>
-      <TablesWorkspacePanel />
+      <WorkspaceKeyScope><TablesWorkspacePanel /></WorkspaceKeyScope>
     </WorkspaceErrorBoundary>
   );
 }
