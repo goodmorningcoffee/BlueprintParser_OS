@@ -36,7 +36,7 @@ import type { LegacyPathId, LegacySlice } from "@/lib/legacy-joins/legacy-paths"
 import { LEGACY_PATH_IDS } from "@/lib/legacy-joins/legacy-paths";
 import { argOf, inSplit, optionalPrivateDirOf, privateDirOf, readJsonl, refuseWrite, validateRecords, writePrivate, type GoldLine, type TabTruth } from "./gold/gold-lib";
 import { legacyLegs, measure, reportMarkdown, type Leg, type MeasureReport, type Unit } from "./lib/parse-measure";
-import { engineLeg, promotionMarkdown, promotionTable, type ToolVerdict } from "./lib/parse-engine-leg";
+import { engineLeg, fixedKindLegs, promotionMarkdown, promotionTable, type ToolVerdict } from "./lib/parse-engine-leg";
 import { corpusCoveragePages, coverageMarkdown, coverageOf, type InboxCoverage } from "./lib/inbox-coverage";
 import { resolveParseEngineProfile, type ParseEngineProfile } from "@/lib/parse-engine/profile";
 
@@ -182,10 +182,14 @@ export async function runAsync(argv: readonly string[]): Promise<{ report: Measu
   const p = prepare(argv);
   if (!argv.includes("--engine")) return finish(argv, p, p.legs);
   const file = argOf(argv, "profile");
-  const leg = await engineLeg(p.units, file ? { profile: profileFromFile(file) } : {});
+  const profile = file ? { profile: profileFromFile(file) } : {};
+  const leg = await engineLeg(p.units, profile);
   if (leg.errors) p.skipped["engine threw (scored as empty)"] = leg.errors;
   const legs = [...p.legs, leg];
-  const promotion = argv.includes("--promotion") ? promotionTable(p.units, legs, leg.id, { seed: p.options.seed, resamples: p.options.resamples }) : undefined;
+  // the fixed-kind legs (a route that requests one kind on every unit) feed the promotion table only
+  const extra = argv.includes("--promotion") ? await fixedKindLegs(p.units, leg.id, profile) : [];
+  for (const x of extra) if (x.errors) p.skipped[`${x.id} threw (scored as empty)`] = x.errors;
+  const promotion = argv.includes("--promotion") ? promotionTable(p.units, [...legs, ...extra], leg.id, { seed: p.options.seed, resamples: p.options.resamples }) : undefined;
   return finish(argv, p, legs, promotion);
 }
 

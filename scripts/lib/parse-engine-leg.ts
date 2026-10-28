@@ -5,7 +5,8 @@
  * The engine leg runs `runParseEngine` on the same page slice every legacy leg reads (the gold region as the box, the
  * `instant` budget: stored evidence only, no Python, no paid crop — the same evidence the offline legacy merger sees,
  * which also skips opencv / img2table). Evidence goes through the REAL loader (`buildPageEvidence`), the slice's tag
- * shapes are passed as the fused shape set. The kind is the one the tool under test would request (`ENGINE_KIND`).
+ * shapes are passed as the fused shape set. The kind is the stratum's (`ENGINE_KIND`), or the one a tool's route
+ * requests whatever the stratum (`PromotionTool.kind`; e.g. tablesRoute asks for `schedule`, `classicTableKind`).
  * `runParseEngine` is async, so the leg is PRECOMPUTED (`engineLeg`) and `measure` stays synchronous and pure.
  *
  * The prediction is read from the structure model, not from the legacy projection: a table's body and section rows
@@ -88,6 +89,8 @@ export interface EngineLegOptions {
   id?: string;
   /** R8 weights (default: the shipped profile, `src/data/parse-engine/profile.json`). */
   profile?: ParseEngineProfile;
+  /** The requested kind per unit (default `engineKindOf`, the stratum's kind). */
+  kindOf?: (u: Unit) => StructureKind;
   /** Test seam: the engine call (default `runParseEngine` with the pinned `at`). */
   runner?: (evidence: EnginePageEvidence, request: ParseRequest, profile?: ParseEngineProfile) => Promise<{ model: StructureModel }>;
 }
@@ -100,13 +103,14 @@ const defaultRunner: NonNullable<EngineLegOptions["runner"]> = (ev, req, profile
  *  throws on scores as an empty prediction (counted in `errors`, like a legacy leg that throws). */
 export async function engineLeg(units: readonly Unit[], o: EngineLegOptions = {}): Promise<PrecomputedLeg> {
   const runner = o.runner ?? defaultRunner;
+  const kindOf = o.kindOf ?? engineKindOf;
   const preds = new Map<string, Prediction>();
   const ran: string[] = [];
   let errors = 0;
   for (const u of units) {
     ran.push(u.goldId);
     try {
-      const res = await runner(sliceEvidence(u.slice), { page: 1, bbox: u.slice.region, budget: "instant", kind: engineKindOf(u) }, o.profile);
+      const res = await runner(sliceEvidence(u.slice), { page: 1, bbox: u.slice.region, budget: "instant", kind: kindOf(u) }, o.profile);
       preds.set(u.goldId, enginePrediction(res.model));
     } catch {
       errors++;
@@ -132,14 +136,24 @@ export interface PromotionTool {
   baseline: string;
   /** Where the flag is read (MEASURED by grep at the TP-3 g3 head 8e30e81), or null when nothing reads it. */
   readBy: string | null;
+  /** The kind the tool's route requests on every unit, whatever its stratum (absent: the stratum's kind). */
+  kind?: StructureKind;
 }
 
 const SCHEDULE_STRATA = ["shape-tag-schedule", "ruled-no-shape", "unruled", "two-tier-wrapped", "continued-split"] as const;
 const KEYNOTE_STRATA = ["keynote-legend-shapes", "kv-legend", "symbol-legend"] as const;
 const NOTES_STRATA = ["notes", "multi-column-notes"] as const;
 
+/**
+ * tablesRoute governs every classic `/api/table-parse` call, keynote Auto Parse included (KeynotePanel posts there), so it
+ * is scored on the schedule AND keynote / legend strata with the kind that route requests: `classicTableKind` gives
+ * `schedule` unless an owning proposal names a keynote / legend class, and an offline slice carries no proposals.
+ * keynoteRoute keeps the keynote strata at their own kinds, and nothing reads it. The notes baseline
+ * (`legacy:notes-auto`, autoSplitColumns on) is a PROXY for the classic notes Accept (stored grid, else
+ * parseNotesFromRegion without autoSplitColumns); the spec baseline is the same call the classic Accept makes.
+ */
 export const PROMOTION_TOOLS: readonly PromotionTool[] = [
-  { tool: "tablesRoute", gold: "G-TAB", strata: SCHEDULE_STRATA, baseline: "legacy:merger", readBy: "server/services/table-parse.ts" },
+  { tool: "tablesRoute", gold: "G-TAB", strata: [...SCHEDULE_STRATA, ...KEYNOTE_STRATA], baseline: "legacy:merger", readBy: "server/services/table-parse.ts", kind: "schedule" },
   { tool: "keynoteRoute", gold: "G-TAB", strata: KEYNOTE_STRATA, baseline: "legacy:merger", readBy: null },
   { tool: "notesClassifier", gold: "G-PARA", strata: NOTES_STRATA, baseline: "legacy:notes-auto", readBy: "server/services/regions.ts" },
   { tool: "notesAuto", gold: "G-PARA", strata: NOTES_STRATA, baseline: "legacy:notes-auto", readBy: "server/services/notes-parse.ts, reprocess.ts" },
@@ -150,8 +164,24 @@ export const PROMOTION_TOOLS: readonly PromotionTool[] = [
 /** The units a tool is scored on. */
 export const toolUnits = (t: PromotionTool, units: readonly Unit[]): Unit[] => units.filter((u) => u.gold === t.gold && t.strata.includes(u.stratum));
 
+/** The engine leg id a tool is scored with: `<id>@<kind>` for a fixed-kind route, else the per-stratum leg. */
+export const toolEngineLegId = (t: PromotionTool, engineLegId: string): string => (t.kind ? `${engineLegId}@${t.kind}` : engineLegId);
+
+/** The extra engine legs the promotion table needs: one per fixed route kind, on that tool's units only. */
+export async function fixedKindLegs(units: readonly Unit[], engineLegId: string, o: Omit<EngineLegOptions, "id" | "kindOf"> = {}): Promise<PrecomputedLeg[]> {
+  const out: PrecomputedLeg[] = [];
+  for (const t of PROMOTION_TOOLS) {
+    if (!t.kind || out.some((l) => l.id === toolEngineLegId(t, engineLegId))) continue;
+    const kind = t.kind;
+    out.push(await engineLeg(PROMOTION_TOOLS.filter((x) => x.kind === kind).flatMap((x) => toolUnits(x, units)).filter((u, i, a) => a.indexOf(u) === i), { ...o, id: toolEngineLegId(t, engineLegId), kindOf: () => kind }));
+  }
+  return out;
+}
+
 export interface ToolVerdict {
   tool: PromotionTool["tool"]; readBy: string | null; gold: UnitGold["gold"]; baseline: string;
+  /** The engine leg scored (`<id>@<kind>` when the route requests one kind on every unit). */
+  engineLeg: string;
   units: number; byStratum: Record<string, number>;
   metrics: Record<string, PairedCI>;
   /** §6.4 over every §6.3 headline (the unmeasured ones withhold promote). */
@@ -160,19 +190,22 @@ export interface ToolVerdict {
   measured: ReturnType<typeof promotionVerdict>;
 }
 
-/** The §6.4 table per tool on the given (held-out) units: the tool's legacy baseline vs `engineLegId`. */
+/** The §6.4 table per tool on the given (held-out) units: the tool's legacy baseline vs its engine leg
+ *  (`toolEngineLegId`; `legs` must hold the `fixedKindLegs` too, else a fixed-kind tool reads "no units"). */
 export function promotionTable(units: readonly Unit[], legs: readonly Leg[], engineLegId: string, o: { seed?: number; resamples?: number } = {}): ToolVerdict[] {
   return PROMOTION_TOOLS.map((t) => {
     const tu = toolUnits(t, units);
     const byStratum: Record<string, number> = {};
     for (const u of tu) byStratum[u.stratum] = (byStratum[u.stratum] ?? 0) + 1;
-    const pick = legs.filter((l) => l.id === t.baseline || l.id === engineLegId);
-    const none = { verdict: "undecided" as const, reason: "no units" };
-    if (!tu.length || pick.length < 2) return { tool: t.tool, readBy: t.readBy, gold: t.gold, baseline: t.baseline, units: tu.length, byStratum, metrics: {}, strict: none, measured: none };
+    const legId = toolEngineLegId(t, engineLegId);
+    const pick = legs.filter((l) => l.id === t.baseline || l.id === legId);
+    const head = { tool: t.tool, readBy: t.readBy, gold: t.gold, baseline: t.baseline, engineLeg: legId, units: tu.length, byStratum };
+    const none = { verdict: "undecided" as const, reason: pick.length < 2 ? `leg ${legId} or ${t.baseline} missing` : "no units" };
+    if (!tu.length || pick.length < 2) return { ...head, metrics: {}, strict: none, measured: none };
     const r = measure(tu, pick, { sets: "held-out", seed: o.seed, resamples: o.resamples, baseline: { [t.gold]: t.baseline } });
-    const metrics = r.paired[t.gold]?.legs[engineLegId]?.metrics ?? {};
+    const metrics = r.paired[t.gold]?.legs[legId]?.metrics ?? {};
     return {
-      tool: t.tool, readBy: t.readBy, gold: t.gold, baseline: t.baseline, units: tu.length, byStratum, metrics,
+      ...head, metrics,
       strict: promotionVerdict(metrics, { gaps: HEADLINE_GAPS[t.gold] }),
       measured: promotionVerdict(metrics, { gaps: HEADLINE_GAPS[t.gold], acceptGaps: true }),
     };
@@ -184,11 +217,12 @@ const f3 = (v: number): string => (Number.isFinite(v) ? v.toFixed(3) : "n/a");
 /** The §6.4 table as markdown (numbers, tool ids, strata counts only). */
 export function promotionMarkdown(rows: readonly ToolVerdict[]): string {
   const out = ["## §6.4 promotion table (held-out units; engine − the tool's legacy baseline, paired 95 % CI)", "",
-    "| tool | read by | units | baseline | headline diffs | §6.4 (every headline) | §6.4 (measured headlines only) |", "|---|---|---|---|---|---|---|"];
+    "| tool | read by | units | baseline | engine leg | headline diffs | §6.4 (every headline) | §6.4 (measured headlines only) |", "|---|---|---|---|---|---|---|---|"];
   for (const r of rows) {
     const diffs = Object.entries(r.metrics).map(([k, c]) => `${k} ${f3(c.diff)} [${f3(c.lo)}, ${f3(c.hi)}] n=${c.n}`).join("; ") || "—";
-    const v = (x: ToolVerdict["strict"]) => `${x.verdict}${x.needUnits ? ` (need ~${x.needUnits} units)` : ""}`;
-    out.push(`| ${r.tool} | ${r.readBy ?? "**nothing reads it**"} | ${r.units} | ${r.baseline} | ${diffs} | ${v(r.strict)} | ${v(r.measured)} |`);
+    // "undecided" always says why: the units it needs when a CI is too wide, else the verdict's reason (§6.4 wording)
+    const v = (x: ToolVerdict["strict"]) => `${x.verdict}${x.needUnits ? ` (need ~${x.needUnits} units)` : x.verdict === "undecided" ? ` (${x.reason})` : ""}`;
+    out.push(`| ${r.tool} | ${r.readBy ?? "**nothing reads it**"} | ${r.units} | ${r.baseline} | ${r.engineLeg} | ${diffs} | ${v(r.strict)} | ${v(r.measured)} |`);
   }
   out.push("");
   return out.join("\n");

@@ -10,12 +10,17 @@
  *                proposal / tag labels that are not gold lines), queue.json (the unadjudicated lines + why), summary.json
  *                (counts); slices to <dir>/slices/prv-<goldId>.json
  *     --merge    also merge the ADJUDICATED lines into <dir>/gold/<G-SET>.v1.jsonl (same goldId replaced, the rest kept;
- *                the previous file kept as .bak). An existing gold file with any problem is refused, never filtered.
+ *                the previous file kept as .bak; an unchanged file is not rewritten). Every set is merged and validated
+ *                before any file is written, so a refused merge writes nothing. An existing gold file with any problem
+ *                is refused, never filtered. Any error → exit 1.
  *
  * Label rules (PLAN §5 WP-3.Q, amended 2026-10-27 after the WP-2.F verify):
  *   ✓ `correct` (verdict bar), the region still matching the verdict's snapshot → adjudicated truth = the region's data
  *     (labeller `owner:app`). ✓/✗ stay adjudicated for their stored machine snapshot.
- *   `committed` (workspace accept) → adjudicated truth = the committed region (labeller `owner:app`).
+ *   `committed` (workspace accept), the region still matching the commit's snapshot → adjudicated truth = the
+ *     committed region (labeller `owner:app`). A committed region re-saved under the same id since (an edit-save or an
+ *     Auto Parse re-run) → UNADJUDICATED (labeller `app:changed-after-commit`, owner queue): the label keeps only
+ *     the accepted snapshot's cell HASHES, so the committed truth cannot be rebuilt, and the current region is not it.
  *   `corrected` (server-inferred: the region changed since a ✓/✗) → UNADJUDICATED (labeller `app:corrected`, owner
  *     queue): a TP-2 region carries no origin marker, and an Auto Parse re-run auto-saves under the same id, so a
  *     `corrected` pair may be (machine, machine). Never truth until the owner decides.
@@ -23,7 +28,8 @@
  *   `missedDetection` → a recall record. Proposal verdicts → detect / naming records; a `via:"parse"` accept is marked
  *     `weak` (weight `PARSE_ACCEPT_WEIGHT`, the same down-weight the classifier fit applies, K58).
  *   Tag statuses (`PJ.tagMaps`, TP-4) → per-instance records, and a G-TAGMAP line for an imported table: the confirmed
- *     instances, adjudicated only when no instance is still `auto`.
+ *     instances, adjudicated only when no instance is still `auto` AND its table line is adjudicated (a merged map
+ *     must name a merged table).
  * Sets: a project keeps ONE set number across every batch (else a project could sit in both halves): the pid → set
  * map is read from the corpus research sample (`--research`, default the classifier research dir; `none` skips it),
  * every `gold/batches/<b>/sample.json` and `gold/imports/set-map.json`; a new pid WITH owner labels gets the next free
@@ -36,7 +42,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PARSE_ACCEPT_WEIGHT } from "@/lib/classifier-engine/fit";
 import type { ParseLabel, StructureTableModel } from "@/lib/parse-engine/types";
-import { effectiveParseLabel } from "@/server/services/parse-labels";
+import { effectiveParseLabel, regionSnapshot, snapshotHashOf } from "@/server/services/parse-labels";
 import { enginePrediction } from "../lib/parse-engine-leg";
 import { DEFAULT_RESEARCH } from "../lib/corpus-v2-marks";
 import { cutSlice, tabTruthFrom, type SliceFile } from "./prefill";
@@ -203,12 +209,15 @@ export function importBundle(bundle: Bundle, setId: string, pid: string): Import
       };
       if (!region) { out.labels.push({ ...base, reason: "region gone (orphan label)" }); bump("parse: orphan"); continue; }
       if (label.verdict === "wrong") { out.labels.push({ ...base, adjudicated: true, reason: "negative: the stored machine snapshot is wrong" }); bump("parse: wrong (negative)"); continue; }
-      const adjudicated = label.verdict === "correct" || label.verdict === "committed";
-      if (!adjudicated && label.verdict !== "corrected") { out.labels.push({ ...base, reason: `verdict ${label.verdict} not imported` }); bump(`parse: ${label.verdict} skipped`); continue; }
+      // a commit is truth only for the snapshot it committed (effectiveParseLabel re-checks ✓/✗ only)
+      const currentHash = label.verdict === "committed" ? snapshotHashOf(regionSnapshot(region as never)) : null;
+      const changedAfterCommit = currentHash !== null && currentHash !== label.snapshotHash;
+      const adjudicated = label.verdict === "correct" || (label.verdict === "committed" && !changedAfterCommit);
+      if (!adjudicated && label.verdict !== "corrected" && label.verdict !== "committed") { out.labels.push({ ...base, reason: `verdict ${label.verdict} not imported` }); bump(`parse: ${label.verdict} skipped`); continue; }
       const t = regionTruth(region);
       const box = regionBox(region.bbox);
       if (!t || !box) { out.labels.push({ ...base, reason: "region data unusable as truth" }); bump("parse: no truth"); continue; }
-      const goldId = `${t.gold === "G-TAB" ? "tab" : "para"}-app-${hash(`${pid}|${regionId}|${label.snapshotHash}|${label.verdict}`)}`;
+      const goldId = `${t.gold === "G-TAB" ? "tab" : "para"}-app-${hash(`${pid}|${regionId}|${label.snapshotHash}|${label.verdict}${changedAfterCommit ? `|now:${currentHash}` : ""}`)}`;
       const slice = cutSlice(`prv-${goldId}`, "import", box, page as Parameters<typeof cutSlice>[3], anns);
       if (!slice) { out.labels.push({ ...base, reason: "no page evidence (no Textract words / lines)" }); bump("parse: no page evidence"); continue; }
       const stratum = stratumOf(str(region.type), t.gold, slice, t.truth);
@@ -216,16 +225,18 @@ export function importBundle(bundle: Bundle, setId: string, pid: string): Import
       slice.title = `private ${stratum} app-label slice`;
       const common = {
         schema: "bp-gold/1" as const, goldId, setId, page: page.pageNumber, sheet: page.drawingNumber ?? null, stratum, tags: ["import"],
-        labellers: [adjudicated ? "owner:app" : "app:corrected"], adjudicated, protocol: "v1" as const, mode: "import" as const, sliceId: slice.id, region: box,
+        labellers: [adjudicated ? "owner:app" : changedAfterCommit ? "app:changed-after-commit" : "app:corrected"], adjudicated, protocol: "v1" as const, mode: "import" as const, sliceId: slice.id, region: box,
       };
       const line = (t.gold === "G-TAB" ? { ...common, gold: "G-TAB", truth: t.truth } : { ...common, gold: "G-PARA", truth: t.truth }) as GoldLine;
       out.lines.push(line);
       out.slices.set(slice.id, slice);
       if (t.gold === "G-TAB") tableGold.set(regionId, goldId);
-      const reason = adjudicated ? `${label.verdict}: owner truth` : `corrected: the region changed after a ${label.was ?? "verdict"}; an edit and a same-id re-parse look alike (owner queue)`;
+      const reason = adjudicated ? `${label.verdict}: owner truth`
+        : changedAfterCommit ? "committed, then the region changed (an edit-save or a same-id re-parse); the commit's truth is not stored (owner queue)"
+          : `corrected: the region changed after a ${label.was ?? "verdict"}; an edit and a same-id re-parse look alike (owner queue)`;
       out.labels.push({ ...base, goldId, adjudicated, reason });
       if (!adjudicated) out.queue.push({ goldId, reason });
-      bump(`parse: ${label.verdict}${adjudicated ? "" : " (queued)"}`);
+      bump(`parse: ${label.verdict}${changedAfterCommit ? " changed after commit" : ""}${adjudicated ? "" : " (queued)"}`);
     }
     const verdicts = isObj(pi.proposalVerdicts) ? pi.proposalVerdicts : {};
     for (const pidKey of Object.keys(verdicts).sort()) {
@@ -265,15 +276,15 @@ export function importBundle(bundle: Bundle, setId: string, pid: string): Import
     if (!table || !tags.length) { if (tags.length) bump("tag: map of a table not imported"); continue; }
     const page = Number(m.page) || 1;
     const goldId = `tagmap-app-${hash(`${pid}|${regionId}|${table}`)}`;
-    const adjudicated = auto === 0;
     const tableLine = out.lines.find((l) => l.goldId === table)!;
+    const adjudicated = auto === 0 && tableLine.adjudicated;
     out.lines.push({
       schema: "bp-gold/1", gold: "G-TAGMAP", goldId, setId, page, sheet: tableLine.sheet ?? null, stratum: m.scope === "sheet" ? "keynote-sheet" : "schedule-project",
-      tags: ["import"], labellers: [adjudicated ? "owner:app" : "app:partial-review"], adjudicated, protocol: "v1", mode: "import", region: tableLine.region,
+      tags: ["import"], labellers: [adjudicated ? "owner:app" : auto ? "app:partial-review" : "app:table-unadjudicated"], adjudicated, protocol: "v1", mode: "import", region: tableLine.region,
       truth: { table, scope: m.scope === "sheet" ? "sheet" : "project", tags },
     } as GoldLine);
-    if (!adjudicated) out.queue.push({ goldId, reason: `${auto} instance(s) still auto (unreviewed)` });
-    bump(adjudicated ? "tagmap: adjudicated" : "tagmap: queued (partial review)");
+    if (!adjudicated) out.queue.push({ goldId, reason: auto ? `${auto} instance(s) still auto (unreviewed)` : "its table line is unadjudicated (queued)" });
+    bump(adjudicated ? "tagmap: adjudicated" : auto ? "tagmap: queued (partial review)" : "tagmap: queued (table unadjudicated)");
   }
   return out;
 }
@@ -288,34 +299,58 @@ function bundleFiles(arg: string): string[] {
   });
 }
 
-/** Merge adjudicated lines into <dir>/gold/<G>.v1.jsonl (same goldId replaced). Refuses a gold file with problems. */
+/**
+ * Merge adjudicated lines into <dir>/gold/<G>.v1.jsonl (same goldId replaced). Refuses a gold file with problems.
+ * All-or-nothing: every set is merged and validated (a G-TAGMAP against the MERGED G-TAB ids) before any file is
+ * written; a set whose merged text equals the file on disk is not rewritten (its .bak keeps the earlier backup).
+ */
 export function mergeIntoGold(privateDir: string, lines: readonly GoldLine[]): Record<string, number> {
-  const merged: Record<string, number> = {};
-  const all: Record<string, GoldLine[]> = {};
+  const fileOf = (g: GoldSet) => join(privateDir, "gold", `${g}.v1.jsonl`);
+  const raw = Object.fromEntries(GOLD_SETS.map((g) => [g, existsSync(fileOf(g)) ? readJsonl(fileOf(g)) : []])) as Record<GoldSet, unknown[]>;
+  // an existing G-TAGMAP file is validated against the existing G-TAB ids (a map file never validates alone)
+  const existingTabs = new Set(raw["G-TAB"].filter(isObj).map((r) => r.goldId).filter((id): id is string => typeof id === "string"));
+  const all = {} as Record<GoldSet, GoldLine[]>;
   for (const g of GOLD_SETS) {
-    const f = join(privateDir, "gold", `${g}.v1.jsonl`);
-    const existing = existsSync(f) ? readJsonl(f) : [];
-    const { lines: ls, problems } = validateRecords(existing);
-    if (problems.length) throw new Error(`${f}: ${problems.length} problems — fix with validate.ts first (first: ${problems[0]})`);
+    const { lines: ls, problems } = validateRecords(raw[g], g === "G-TAGMAP" ? existingTabs : undefined);
+    if (problems.length) throw new Error(`${fileOf(g)}: ${problems.length} problems — fix with validate.ts first (first: ${problems[0]})`);
     all[g] = ls;
   }
-  const known = new Set(Object.values(all).flat().filter((l) => l.gold === "G-TAB").map((l) => l.goldId));
+  const next = {} as Record<GoldSet, GoldLine[]>;
+  const merged: Record<string, number> = {};
   for (const g of GOLD_SETS) {
     const add = lines.filter((l) => l.gold === g && l.adjudicated);
-    if (!add.length) continue;
     const ids = new Set(add.map((l) => l.goldId));
-    const next = [...all[g].filter((l) => !ids.has(l.goldId)), ...add].sort((a, b) => (a.goldId < b.goldId ? -1 : 1));
-    const { problems } = validateRecords(next, known);
-    if (problems.length) throw new Error(`merge into ${g}: ${problems.length} problems (first: ${problems[0]})`);
-    const f = join(privateDir, "gold", `${g}.v1.jsonl`);
-    if (existsSync(f)) writePrivate(`${f}.bak`, readFileSync(f, "utf8"), privateDir);
-    writePrivate(f, toJsonl(next), privateDir);
-    merged[g] = add.length;
+    next[g] = add.length ? [...all[g].filter((l) => !ids.has(l.goldId)), ...add].sort((a, b) => (a.goldId < b.goldId ? -1 : 1)) : all[g];
+    if (add.length) merged[g] = add.length;
+  }
+  const known = new Set(next["G-TAB"].map((l) => l.goldId));
+  for (const g of GOLD_SETS) {
+    if (!merged[g]) continue;
+    const { problems } = validateRecords(next[g], known);
+    if (problems.length) throw new Error(`merge into ${g}: ${problems.length} problems, nothing written (first: ${problems[0]})`);
+  }
+  for (const g of GOLD_SETS) {
+    if (!merged[g]) continue;
+    const f = fileOf(g), text = toJsonl(next[g]);
+    const prev = existsSync(f) ? readFileSync(f, "utf8") : null;
+    if (prev === text) continue;
+    if (prev !== null) writePrivate(`${f}.bak`, prev, privateDir);
+    writePrivate(f, text, privateDir);
   }
   return merged;
 }
 
+/** The CLI. Any error (a refused dir, a bad bundle, a refused merge) is printed and returns 1. */
 export function main(argv: readonly string[]): number {
+  try {
+    return runMain(argv);
+  } catch (e) {
+    console.error(`import-app-labels: ${(e as Error).message}`);
+    return 1;
+  }
+}
+
+function runMain(argv: readonly string[]): number {
   const batch = argOf(argv, "batch"), bundles = argOf(argv, "bundles");
   if (!batch || !bundles || !/^[a-z0-9-]+$/.test(batch)) {
     console.error("usage: import-app-labels.ts --batch <name, [a-z0-9-]> --bundles <file|dir>[,…] [--private-dir d] [--merge]");

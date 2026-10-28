@@ -5,11 +5,11 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { readJsonl, toJsonl, validateRecords, writePrivate, type GoldLine } from "../../../../scripts/gold/gold-lib";
-import { assignSets, hasAppLabels, importBundle, main as importMain, readSetMap, regionTruth, type Bundle } from "../../../../scripts/gold/import-app-labels";
+import { assignSets, hasAppLabels, importBundle, main as importMain, mergeIntoGold, readSetMap, regionTruth, type Bundle } from "../../../../scripts/gold/import-app-labels";
 import { coverageOf } from "../../../../scripts/lib/inbox-coverage";
-import { engineKindOf, engineLeg, enginePrediction, PROMOTION_TOOLS, promotionTable } from "../../../../scripts/lib/parse-engine-leg";
+import { engineKindOf, engineLeg, enginePrediction, fixedKindLegs, PROMOTION_TOOLS, promotionMarkdown, promotionTable } from "../../../../scripts/lib/parse-engine-leg";
 import { legacyLegs, type Leg, type Unit } from "../../../../scripts/lib/parse-measure";
 import {
   assertFitUnits, defaultLegFactory, fitWeights, objectiveOf, parseProfileText, profileId, runFit, serializeProfile, type LegFactory,
@@ -68,13 +68,32 @@ describe("engine leg (parse-engine-measure --engine)", () => {
 
   it("the promotion table pairs each tool with its own baseline and strata", async () => {
     const leg = await engineLeg(even);
-    const rows = promotionTable(even, [...legacyLegs(), leg], "engine", { resamples: 50 });
+    const rows = promotionTable(even, [...legacyLegs(), leg, ...await fixedKindLegs(even, leg.id)], "engine", { resamples: 50 });
     const tables = rows.find((r) => r.tool === "tablesRoute")!;
     expect(tables.baseline).toBe("legacy:merger");
     expect(Object.keys(tables.byStratum).every((s) => PROMOTION_TOOLS[0].strata.includes(s))).toBe(true);
     expect(rows.find((r) => r.tool === "keynoteRoute")!.readBy).toBeNull();
     // every §6.3 headline gap withholds a strict promote
     for (const r of rows) expect(r.strict.verdict).not.toBe("promote");
+    // "undecided" always says why (need ~n units, or the reason)
+    for (const line of promotionMarkdown(rows).split("\n").filter((l) => /\| undecided/.test(l))) expect(line).toMatch(/undecided \(/);
+  });
+
+  it("tablesRoute is scored on keynote / legend strata too, with the kind the classic route requests (schedule)", async () => {
+    const tables = PROMOTION_TOOLS.find((t) => t.tool === "tablesRoute")!;
+    for (const s of ["keynote-legend-shapes", "kv-legend", "symbol-legend", "shape-tag-schedule"]) expect(tables.strata).toContain(s);
+    expect(tables.kind).toBe("schedule");
+    expect(PROMOTION_TOOLS.find((t) => t.tool === "keynoteRoute")!.kind).toBeUndefined();
+    const kinds: string[] = [];
+    const kn = units.filter((u) => u.gold === "G-TAB" && engineKindOf(u) !== "schedule");
+    expect(kn.length).toBeGreaterThan(0);
+    const [fixed] = await fixedKindLegs(kn, "engine", { runner: async (ev, req) => { kinds.push(req.kind!); return { model: { v: 1, kind: "schedule", bbox: req.bbox, headerRows: 0, sources: { rows: [], cols: [] }, quality: { conf: 1, agreement: 1, flags: [] }, cols: [], rows: [], cells: [] } as never }; } });
+    expect(fixed.id).toBe("engine@schedule");
+    expect(kinds).toHaveLength(kn.length);
+    expect(new Set(kinds)).toEqual(new Set(["schedule"]));
+    // without the fixed-kind leg the row says the leg is missing instead of scoring the per-stratum kinds
+    const rows = promotionTable(units, [...legacyLegs(), await engineLeg(units.slice(0, 1))], "engine", { resamples: 10 });
+    expect(rows.find((r) => r.tool === "tablesRoute")!.strict.reason).toMatch(/engine@schedule/);
   });
 });
 
@@ -103,6 +122,21 @@ describe("parse-engine-fit (R8 weights; odd sets only)", () => {
     expect(peaked.profile.rows["ocr-lines"]).toBe(1.5);
     expect(peaked.steps.map((s) => s.method)).toEqual(["ocr-lines"]);
     expect(peaked.profile.id).toBe(profileId(peaked.profile));
+  });
+
+  it("adopt needs the §6.4 hold-out pass (a +0.03 gain; unmeasured headlines withhold it unless accepted)", async () => {
+    // a leg that is perfect at ocr-lines 1.5 and empty otherwise: the fit moves, the hold-out gains on every measured headline
+    const factory: LegFactory = async (_us, p, id) => ({ id, applies: () => true, run: (u: Unit) => ({ grid: p.rows["ocr-lines"] === 1.5 && u.gold === "G-TAB" ? u.truth.rows.map((r) => r.cells) : [] }) });
+    const strict = await runFit(odd, even, { factory, resamples: 50, passes: 1 });
+    expect(strict.fit.steps.length).toBeGreaterThan(0);
+    expect(strict.decision).toBe("keep-default");
+    expect(strict.reason).toMatch(/not measured/);
+    const narrowed = await runFit(odd, even, { factory, resamples: 50, passes: 1, acceptHeadlineGaps: true });
+    expect(narrowed.decision).toBe("adopt");
+    // a flat hold-out (no +0.03 gain) is not adopted even though no lower bound is below −0.01
+    const flatHoldOut: LegFactory = async (us, p, id) => (id === "engine:trial" ? factory(us, p, id) : { id, applies: () => true, run: () => ({ grid: [] }) });
+    const flat = await runFit(odd, even, { factory: flatHoldOut, resamples: 50, passes: 1, acceptHeadlineGaps: true });
+    expect(flat.decision).toBe("keep-default");
   });
 
   it("the profile file round-trips byte-equal and the shipped file is the R8 default", () => {
@@ -246,8 +280,77 @@ describe("import-app-labels (owner actions → private gold)", () => {
     expect(toJsonl(gold)).toBe(before);
   });
 
-  it("refuses a private dir inside a BP2 checkout", () => {
-    expect(() => importMain(["--private-dir", join(REPO, "tmp-gold"), "--batch", "x", "--research", "none", "--bundles", join(REPO, "src/lib/parse-engine/__fixtures__/syn-sched-basic.synthetic.json")])).toThrow(/BP2 checkout/);
+  it("refuses a private dir inside a BP2 checkout (exit 1, nothing written)", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(importMain(["--private-dir", join(REPO, "tmp-gold"), "--batch", "x", "--research", "none", "--bundles", join(REPO, "src/lib/parse-engine/__fixtures__/syn-sched-basic.synthetic.json")])).toBe(1);
+      expect(err.mock.calls.flat().join(" ")).toMatch(/BP2 checkout/);
+      expect(existsSync(join(REPO, "tmp-gold"))).toBe(false);
+    } finally { err.mockRestore(); }
+  });
+
+  it("a committed region re-saved under the same id since the commit is queued, never adjudicated", () => {
+    const committed = sched("r1"), resaved = sched("r1", fx.truth.rows.slice(1));
+    const b: Bundle = { schemaVersion: "bp-export/1", project: { publicId: "P4" }, pages: [{ pageNumber: 1, textractData: { words: fx.page.words, lines: fx.page.lines }, pageIntelligence: {
+      parsedRegions: [resaved], parseLabels: { r1: label(committed, "committed", { source: "workspace" }) } } }], annotations: [] };
+    const r = importBundle(b, "set-1", "P4");
+    expect(r.lines).toHaveLength(1);
+    expect(r.lines[0]).toMatchObject({ adjudicated: false, labellers: ["app:changed-after-commit"] });
+    expect(r.queue.map((q) => q.goldId)).toEqual([r.lines[0].goldId]);
+    expect(r.counts["parse: committed changed after commit (queued)"]).toBe(1);
+    // an unchanged commit stays adjudicated, under another gold id
+    const same = importBundle({ ...b, pages: [{ ...b.pages![0], pageIntelligence: { parsedRegions: [committed], parseLabels: { r1: label(committed, "committed", { source: "workspace" }) } } }] }, "set-1", "P4");
+    expect(same.lines[0]).toMatchObject({ adjudicated: true, labellers: ["owner:app"] });
+    expect(same.lines[0].goldId).not.toBe(r.lines[0].goldId);
+  });
+
+  // a fully reviewed tag map (no `auto` instance) on r1; r1's verdict decides whether its table line is adjudicated
+  const reviewed = (r1Label: "fresh" | "corrected"): Bundle => {
+    const r1 = sched("r1");
+    return {
+      schemaVersion: "bp-export/1",
+      project: { publicId: "P5", projectIntelligence: { tagMaps: { r1: { v: 1, regionId: "r1", page: 1, scope: "project", defs: {
+        a: { targetId: "row1", text: "QX-1", norm: "QX1", instances: [{ id: "i1", page: 2, b: [0.3, 0.3, 0.32, 0.32], status: "confirmed" }] } } } } } },
+      pages: [{ pageNumber: 1, textractData: { words: fx.page.words, lines: fx.page.lines }, pageIntelligence: {
+        parsedRegions: [r1], parseLabels: { r1: label(r1Label === "fresh" ? r1 : sched("r1", fx.truth.rows.slice(1)), "correct") } } }],
+      annotations: [],
+    };
+  };
+
+  it("--merge of a table and its fully reviewed tag map in one batch succeeds first time, and a re-run is a no-op", () => {
+    const dir = tmp();
+    writePrivate(join(dir, "bundles", "p.json"), JSON.stringify(reviewed("fresh")), dir);
+    const args = ["--private-dir", dir, "--batch", "m", "--bundles", join(dir, "bundles"), "--merge", "--research", "none"];
+    expect(importMain(args)).toBe(0);
+    const tab = readJsonl(join(dir, "gold", "G-TAB.v1.jsonl")) as GoldLine[], map = readJsonl(join(dir, "gold", "G-TAGMAP.v1.jsonl")) as GoldLine[];
+    expect(map).toHaveLength(1);
+    expect(map[0]).toMatchObject({ adjudicated: true, truth: { table: tab[0].goldId } });
+    const before = ["G-TAB", "G-TAGMAP"].map((g) => readFileSync(join(dir, "gold", `${g}.v1.jsonl`), "utf8"));
+    expect(importMain(args)).toBe(0); // the existing G-TAGMAP file validates against the existing G-TAB file
+    expect(["G-TAB", "G-TAGMAP"].map((g) => readFileSync(join(dir, "gold", `${g}.v1.jsonl`), "utf8"))).toEqual(before);
+    expect(existsSync(join(dir, "gold", "G-TAB.v1.jsonl.bak"))).toBe(false); // unchanged → not rewritten, no .bak
+  });
+
+  it("a fully reviewed tag map of a queued (corrected) table is queued too, and --merge never throws on it", () => {
+    const r = importBundle(reviewed("corrected"), "set-1", "P5");
+    const map = r.lines.find((l) => l.gold === "G-TAGMAP")!;
+    expect(map).toMatchObject({ adjudicated: false, labellers: ["app:table-unadjudicated"] });
+    expect(r.queue.map((q) => q.goldId)).toContain(map.goldId);
+    const dir = tmp();
+    writePrivate(join(dir, "bundles", "p.json"), JSON.stringify(reviewed("corrected")), dir);
+    const args = ["--private-dir", dir, "--batch", "c", "--bundles", join(dir, "bundles"), "--merge", "--research", "none"];
+    expect(importMain(args)).toBe(0);
+    expect(importMain(args)).toBe(0);
+    expect(existsSync(join(dir, "gold", "G-TAGMAP.v1.jsonl"))).toBe(false);
+  });
+
+  it("a refused merge writes no gold file at all", () => {
+    const dir = tmp();
+    const r = importBundle(reviewed("fresh"), "set-1", "P5");
+    const tab = r.lines.find((l) => l.gold === "G-TAB")!, map = r.lines.find((l) => l.gold === "G-TAGMAP")!;
+    // the map names a table that is neither merged nor on disk → the whole merge is refused before any write
+    expect(() => mergeIntoGold(dir, [tab, { ...map, truth: { ...(map as Extract<GoldLine, { gold: "G-TAGMAP" }>).truth, table: "tab-app-0000000000" } } as GoldLine])).toThrow(/nothing written/);
+    for (const g of ["G-TAB", "G-PARA", "G-TAGMAP"]) expect(existsSync(join(dir, "gold", `${g}.v1.jsonl`))).toBe(false);
   });
 
   it("region data of every kind becomes truth (keynote / legend → G-TAB, notes / spec → G-PARA)", () => {

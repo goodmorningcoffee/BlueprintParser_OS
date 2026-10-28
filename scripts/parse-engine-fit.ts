@@ -4,12 +4,15 @@
  * (table-pipeline WP-3.Q; PLAN §1.4 R8, §5 WP-3.Q, §6.4). Runs once per release.
  *
  *   NODE_OPTIONS=--max-old-space-size=3584 npx tsx scripts/parse-engine-fit.ts [--private-dir <dir>]
- *       [--json <out.json>] [--write] [--passes 2] [--seed 20261027] [--resamples 2000]
+ *       [--json <out.json>] [--write [--allow-unadjudicated]] [--accept-headline-gaps] [--passes 2] [--seed 20261027] [--resamples 2000]
  *     --private-dir the private gold root (else $BP_PRIVATE_GOLD_DIR): gold/G-TAB.v1.jsonl + slices/
  *     --json       the fit report (numbers, method ids and opaque gold ids only) + a markdown table beside it;
  *                  refused inside a BP2 checkout
  *     --write      when the decision is `adopt`, write the refit to src/data/parse-engine/profile.json (PROFILE_PATH, a
- *                  ledger of numbers only, statically imported by the server). Never written on `keep-default`.
+ *                  ledger of numbers only, statically imported by the server). Never written on `keep-default`, and
+ *                  refused while any fit or hold-out G-TAB line is unadjudicated (PLAN §5 WP-3.Q depends on adjudicated
+ *                  gold) unless `--allow-unadjudicated` is passed too.
+ *     --accept-headline-gaps  decide over the MEASURED §6.3 headlines only (as parse-engine-measure's flag)
  *
  * 1. FIT (odd sets only): coordinate search over the weights the `instant` budget can exercise offline
  *    (`FIT_DIMS`), one weight at a time over `FIT_GRID`, `passes` sweeps in a fixed order. A move is kept only when it
@@ -18,8 +21,9 @@
  *    leg's per-metric mean (NaN units skipped). Paid / Python methods (rulings, img2table, tatr) never run offline and
  *    keep R8. Paragraph docs do not read the R8 weights, so G-PARA is not part of the fit.
  * 2. HOLD-OUT (even sets only): `engine:fitted` vs `engine:default` paired bootstrap per headline (§6.2).
- *    Decision `adopt` when the odd objective gained AND every even headline's lower bound is ≥ −0.01 (the §6.4
- *    non-regression bar); otherwise `keep-default` (the shipped profile stays `{v:1,id:"default"}` = R8).
+ *    Decision `adopt` when the odd objective gained AND the hold-out passes §6.4 (`promotionVerdict`: every headline's
+ *    lower bound ≥ −0.01, one gains ≥ +0.03, the HEADLINE_GAPS unmeasured headlines withhold it unless
+ *    --accept-headline-gaps); otherwise `keep-default` (the shipped profile stays `{v:1,id:"default"}` = R8).
  * Deterministic: no clock, seeded bootstrap; the same gold and seed give a byte-equal report.
  */
 import { createHash } from "node:crypto";
@@ -31,7 +35,7 @@ import type { MethodId } from "@/lib/parse-engine/types";
 import { argOf, inSplit, privateDirOf, refuseWrite, writePrivate } from "./gold/gold-lib";
 import { privateUnits } from "./parse-engine-measure";
 import { engineLeg } from "./lib/parse-engine-leg";
-import { measure, scoreUnit, TAB_METRICS, type Leg, type PairedCI, type Unit } from "./lib/parse-measure";
+import { HEADLINE_GAPS, measure, promotionVerdict, scoreUnit, TAB_METRICS, type Leg, type PairedCI, type Unit } from "./lib/parse-measure";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -144,7 +148,7 @@ export interface FitReport {
 }
 
 /** Fit on `oddUnits`, score on `evenUnits`, decide. The two lists are checked: odd ones only odd sets, even ones only even. */
-export async function runFit(oddUnits: readonly Unit[], evenUnits: readonly Unit[], o: { seed?: number; resamples?: number; passes?: number; factory?: LegFactory } = {}): Promise<FitReport> {
+export async function runFit(oddUnits: readonly Unit[], evenUnits: readonly Unit[], o: { seed?: number; resamples?: number; passes?: number; factory?: LegFactory; acceptHeadlineGaps?: boolean } = {}): Promise<FitReport> {
   const seed = o.seed ?? 20261027, resamples = o.resamples ?? 2000, factory = o.factory ?? defaultLegFactory;
   const odd = oddUnits.filter((u) => u.gold === "G-TAB");
   const even = evenUnits.filter((u) => u.gold === "G-TAB");
@@ -165,9 +169,9 @@ export async function runFit(oddUnits: readonly Unit[], evenUnits: readonly Unit
   const m = measure(even, legs, { sets: "even", seed, resamples, baseline: { "G-TAB": "engine:default" } });
   const metrics = m.paired["G-TAB"].legs["engine:fitted"].metrics;
   report.holdOut = { units: even.length, metrics, objective: { default: r4(objectiveOf(even, legs[0])), fitted: r4(objectiveOf(even, legs[1])) } };
-  const blocking = Object.entries(metrics).filter(([, c]) => c.n > 0 && c.lo < -0.01).map(([k]) => k);
-  if (blocking.length) report.reason = `held-out lower bound < −0.01 on ${blocking.join(", ")}`;
-  else { report.decision = "adopt"; report.reason = "odd objective gained and every held-out headline's lower bound ≥ −0.01"; }
+  const v = promotionVerdict(metrics, { gaps: HEADLINE_GAPS["G-TAB"], acceptGaps: !!o.acceptHeadlineGaps });
+  if (v.verdict === "promote") { report.decision = "adopt"; report.reason = `odd objective gained; held-out §6.4: ${v.reason}`; }
+  else report.reason = `held-out §6.4 ${v.verdict}: ${v.reason}`;
   return report;
 }
 
@@ -193,12 +197,15 @@ export function fitMarkdown(r: FitReport): string {
 
 export async function main(argv: readonly string[]): Promise<{ report: FitReport; markdown: string; written: string[] }> {
   const dir = privateDirOf(argOf(argv, "private-dir"));
-  const odd = privateUnits(dir, "odd", ["G-TAB"]).units;
-  const even = privateUnits(dir, "even", ["G-TAB"]).units;
+  const oddP = privateUnits(dir, "odd", ["G-TAB"]), evenP = privateUnits(dir, "even", ["G-TAB"]);
+  const odd = oddP.units, even = evenP.units;
+  const unadjudicated = odd.length + even.length - (oddP.adjudicated["G-TAB"] ?? 0) - (evenP.adjudicated["G-TAB"] ?? 0);
   const report = await runFit(odd, even, {
     seed: Number(argOf(argv, "seed") ?? 20261027), resamples: Number(argOf(argv, "resamples") ?? 2000), passes: Number(argOf(argv, "passes") ?? 2),
+    acceptHeadlineGaps: argv.includes("--accept-headline-gaps"),
   });
-  const markdown = fitMarkdown(report);
+  const refuseWriteUnadjudicated = argv.includes("--write") && report.decision === "adopt" && unadjudicated > 0 && !argv.includes("--allow-unadjudicated");
+  const markdown = fitMarkdown(report) + (refuseWriteUnadjudicated ? `--write refused: ${unadjudicated} of ${odd.length + even.length} G-TAB units are unadjudicated (pass --allow-unadjudicated to override).\n` : "");
   const written: string[] = [];
   const json = argOf(argv, "json");
   if (json) {
@@ -209,7 +216,7 @@ export async function main(argv: readonly string[]): Promise<{ report: FitReport
     writePrivate(json.replace(/\.json$/, "") + ".md", markdown, root, false);
     written.push(json, json.replace(/\.json$/, "") + ".md");
   }
-  if (argv.includes("--write") && report.decision === "adopt") {
+  if (argv.includes("--write") && report.decision === "adopt" && !refuseWriteUnadjudicated) {
     // numbers only (method ids and weights); this is the one BP2 file the fit writes
     const target = join(REPO_ROOT, PROFILE_PATH);
     writeFileSync(target, serializeProfile(parseProfileText(serializeProfile({ id: report.candidate.id, rows: report.candidate.rows as MethodWeights, cols: report.candidate.cols as MethodWeights }))));
