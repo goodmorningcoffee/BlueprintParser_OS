@@ -83,6 +83,7 @@ import {
 } from "@/lib/specnote-parser/shared";
 import { bindNumberedGrid } from "@/lib/specnote-parser/bind-numbered";
 import { bindKeyValueGrid } from "@/lib/specnote-parser/bind-key-value";
+import { engineNotesGrid, isNotesAutoEngine, notesAutoPage, type NotesAutoOption, type NotesAutoPage } from "@/lib/specnote-parser/paragraph-auto";
 import { zoneOf, type PageZones } from "@/lib/page-zones";
 import { ltwh2minmax } from "@/lib/bbox-utils";
 export { parseNotesFromRegion, type ParsedNotesGrid } from "@/lib/specnote-parser/parse-notes";
@@ -517,7 +518,7 @@ function discoverWhitespaceRects(
 // Main export
 // ═══════════════════════════════════════════════════════════════════
 
-export interface ClassifyTextRegionsOptions {
+export interface ClassifyTextRegionsOptions extends NotesAutoOption {
   /** If true, populates a ClassifierDebugBundle via `onDebug`. */
   debug?: boolean;
   /** Called once per invocation when `debug: true`. */
@@ -526,6 +527,8 @@ export interface ClassifyTextRegionsOptions {
   pageNumber?: number;
   /** [zones T2] Detector zones for the title-block drop. Omitted or fixed-fallback ⇒ legacy fixed zone. */
   zones?: PageZones;
+  // (NotesAutoOption) `notesAuto: "engine"` [table-pipeline WP-3.J]: the notes grids come from the paragraph
+  // segmenter (`paragraph-auto.ts`) instead of bindNumberedGrid / bindKeyValueGrid. The caller reads the flag.
 }
 
 /**
@@ -582,6 +585,7 @@ export function classifyTextRegions(
   const decisions = analyses.map((a) => classifyRegion(a, opts?.zones));
 
   const regions: TextRegion[] = [];
+  let enginePage: NotesAutoPage | undefined; // [table-pipeline WP-3.J] the page's segmenter lines, built once
   for (let i = 0; i < analyses.length; i++) {
     const a = analyses[i];
     const d = decisions[i];
@@ -594,7 +598,10 @@ export function classifyTextRegions(
     const containedText = wordsToText(allWords);
 
     let grid: TextRegion["grid"];
-    if (d.type === "notes-numbered") grid = bindNumberedGrid(a.lines);
+    if (isNotesAutoEngine(opts) && (d.type === "notes-numbered" || d.type === "notes-key-value")) {
+      enginePage ??= notesAutoPage(textractData);
+      grid = engineNotesGrid(enginePage, a.bbox, d.type);
+    } else if (d.type === "notes-numbered") grid = bindNumberedGrid(a.lines);
     else if (d.type === "notes-key-value") grid = bindKeyValueGrid(a.lines);
 
     const classifiedLabels = {

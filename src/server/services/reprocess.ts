@@ -31,6 +31,7 @@ import { computePageZones, storedPageZones, type PageZoneDetection, type PageZon
 import { buildEvidenceSummary } from "@/lib/evidence";
 import { classifyRegionsV2, type RegionsV2 } from "@/lib/region-classifier-v2";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
+import { parseEngineMode, readParseEngineFlags } from "@/server/services/parse-engine/flags";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
@@ -501,6 +502,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       }
 
       if (scope === "intelligence") {
+        const notesAuto = parseEngineMode(await readParseEngineFlags(), "notesAuto"); // [WP-3.J] A03/A12 segmenter flag
         // Intelligence-only reprocess: re-run page analysis + project analysis on existing data.
         // Pulls existing YOLO annotations from the `annotations` table (no SageMaker
         // re-run). If YOLO data exists for a page, it's passed to runHeuristicRecipes
@@ -580,7 +582,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               // semantics as yolo/load. See src/lib/intelligence-merge.ts.
               let pageIntelligence: Record<string, unknown> = carryNonComputedIntelligence(page.storedIntelligence);
               // Page intelligence: classification, cross-refs, note blocks
-              const intel = analyzePageIntelligence(page.drawingNumber, textractData, csiCodes);
+              const intel = analyzePageIntelligence(page.drawingNumber, textractData, csiCodes, { notesAuto });
               if (intel.classification || intel.crossRefs || intel.noteBlocks) {
                 pageIntelligence = { ...pageIntelligence, ...intel };
               }
@@ -597,14 +599,8 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               // Text region classification (with optional debug bundle to S3)
               const debugWrites: Promise<void>[] = [];
               const textRegions = classifyTextRegions(textractData, csiCodes, {
-                debug: debugClassifier,
-                pageNumber: page.pageNumber,
-                zones: pageZones,
-                onDebug: (bundle) => {
-                  debugWrites.push(
-                    writeClassifierDebugBundle(project.dataUrl, page.pageNumber, bundle),
-                  );
-                },
+                debug: debugClassifier, pageNumber: page.pageNumber, zones: pageZones, notesAuto,
+                onDebug: (bundle) => { debugWrites.push(writeClassifierDebugBundle(project.dataUrl, page.pageNumber, bundle)); },
               });
               if (textRegions.length > 0) pageIntelligence.textRegions = textRegions;
 

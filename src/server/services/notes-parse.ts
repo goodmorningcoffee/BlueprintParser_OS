@@ -23,13 +23,19 @@ import type { BboxLTWH } from "@/types";
 import { logger } from "@/lib/logger";
 import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
 import { notesGuidedProposal } from "@/lib/legacy-joins/notes-guided-proposal";
+// [table-pipeline WP-3.J] Notes Auto on the paragraph engine under tools.notesAuto (default legacy; Guided stays legacy).
+import { parseEngineMode, readParseEngineFlags } from "./parse-engine/flags";
+import { notesAutoOnEngine } from "./parse-engine/classic-paragraphs";
 
 const OPTS = { bboxMessage: LONG_BBOX_MESSAGE, allowDemo: true };
 
 export async function notesParse(rawBody: Record<string, unknown>) {
-  const { textractData, regionBbox, companyId } = await resolveRegionPage(rawBody, OPTS);
+  const { textractData, regionBbox, companyId, pageNumber } = await resolveRegionPage(rawBody, OPTS);
   // [refactor jul9 P2-A C1] resolve company CSI context for the detect below (no tx here).
   const csiCtx = await getCompanyCsiContext(companyId);
+  if (parseEngineMode(await readParseEngineFlags(), "notesAuto") === "engine") {
+    return notesAutoOnEngine({ page: pageNumber, regionBbox, textractData, csiCtx });
+  }
   const { autoSplitColumns } = rawBody as { autoSplitColumns?: boolean };
   const [x0, y0, x1, y1] = regionBbox;
   const ltwhBbox: BboxLTWH = [x0, y0, x1 - x0, y1 - y0];
