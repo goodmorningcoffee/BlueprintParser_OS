@@ -2,7 +2,14 @@
 // [table pipeline WP-3.B] Server half of the column work: the printed-title band (deriveName, server-only by
 // E-8), the crop-rulings runner (`detect_table_lines.py --crop`, K16; subprocess injected) and the K70
 // img2table rotation guard. Synthetic words only.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// VERIFY MED-2: mkdtemp is a pass-through spy so one test can make it fail (ENOSPC on a full /tmp).
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, mkdtemp: vi.fn(actual.mkdtemp) };
+});
+import { mkdtemp } from "node:fs/promises";
 import { deriveTitle } from "@/server/services/parse-engine/title";
 import { cropRulingsArgs, detectCropRulings, img2tableSkipReason, type RunPython } from "@/server/services/parse-engine/rulings";
 import type { ColWord } from "@/lib/parse-engine/cells";
@@ -68,6 +75,16 @@ describe("crop rulings", () => {
     const boom: RunPython = async () => { throw new Error("timeout"); };
     expect((await detectCropRulings(Buffer.from(""), [0, 0, 1, 1], {}, { run: boom })).error).toBe("timeout");
     expect((await detectCropRulings(Buffer.from(""), [0.5, 0, 0.4, 1])).error).toBe("invalid crop");
+  });
+
+  it("never throws when the temp dir cannot be made (ENOSPC): an `error`, and the runner never starts", async () => {
+    vi.mocked(mkdtemp).mockRejectedValueOnce(Object.assign(new Error("ENOSPC: no space left on device, mkdtemp"), { code: "ENOSPC" }));
+    let ran = false;
+    const run: RunPython = async () => { ran = true; return "{}"; };
+    const r = await detectCropRulings(Buffer.from("png"), [0.1, 0.2, 0.3, 0.4], {}, { run, scriptPath: "s.py" });
+    expect(r).toMatchObject({ rows: [], cols: [], confidence: 0 });
+    expect(r.error).toMatch(/ENOSPC/);
+    expect(ran).toBe(false);
   });
 });
 

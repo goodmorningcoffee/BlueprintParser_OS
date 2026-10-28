@@ -110,3 +110,21 @@ def test_cli_crop_and_bad_crop(tmp_path):
     assert ok["mode"] == "crop" and len(ok["rows"]) == 3
     bad = json.loads(subprocess.run([sys.executable, SCRIPT, path, "--crop", "0.5,0,0.4,1"], capture_output=True, text=True, check=True).stdout)
     assert "error" in bad and bad["rows"] == []
+
+
+def test_crop_min_lengths_reject_a_short_in_table_stroke(tmp_path):
+    """VERIFY LOW-3: pins the .35 crop length floors. A stroke inside the table that spans .2-.3 of the crop
+    (a divider tick, a glyph run) is not a rule at .35; the page-mode floors (.15 / .20) would keep it."""
+    box = (480, 400, 1200, 900)
+    rows_y = [400, 500, 600, 700, 800, 900]
+    cols_x = [480, 640, 960, 1200]
+    path = _page(tmp_path, rows_y, cols_x, box, border=False, glyphs=False)
+    img = cv2.imread(path)
+    cv2.line(img, (800, 510), (800, 660), (0, 0, 0), 2)    # vertical, 150 px of the 520 px crop (~.29)
+    cv2.line(img, (1000, 650), (1185, 650), (0, 0, 0), 2)  # horizontal, 185 px of the 740 px crop (~.25)
+    cv2.imwrite(path, img)
+    crop = _norm_crop((470, 390, 1210, 910))
+    out = dtl.detect_grid(path, crop=crop)
+    assert (len(out["rows"]), len(out["cols"])) == (len(rows_y), len(cols_x))
+    page_floors = dtl.detect_grid(path, crop=crop, min_h_length=0.15, min_v_length=0.20)
+    assert len(page_floors["rows"]) == len(rows_y) + 1 and len(page_floors["cols"]) == len(cols_x) + 1

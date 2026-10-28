@@ -3,12 +3,13 @@
   "version": 1,
   "modules": [
     "src/lib/classifier-engine/derive-name.ts",
+    "src/lib/classifier-engine/evidence.ts",
     "src/server/services/parse-engine/title.ts"
   ],
   "history": [
     {
       "version": 1,
-      "sha256": "ea6217a4179b628ab883589aa542710cd37a8fa959a855302c3ddff64f67cfc5"
+      "sha256": "c9af1d08cbcc2d7a22380a6d140a8da6c7044a6eed55d4d5874f442e56a0b24b"
     }
   ]
 }

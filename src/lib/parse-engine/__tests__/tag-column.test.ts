@@ -25,6 +25,14 @@ describe("tagValueScore", () => {
     expect(tagValueScore("DESCRIPTION")).toBe(0);
     expect(tagValueScore("(K-01)")).toBe(1);
   });
+
+  it("room-number door marks (digits + a 1-2 letter suffix) score .9 (VERIFY MED-1)", () => {
+    expect(tagValueScore("101A")).toBe(0.9);
+    expect(tagValueScore("1B")).toBe(0.9);
+    expect(tagValueScore("2104AB")).toBe(0.9);
+    expect(tagValueScore("101")).toBe(0.35);
+    expect(tagValueScore("101ABC")).toBe(0);
+  });
 });
 
 describe("pickTagColumn (R9)", () => {
@@ -60,6 +68,23 @@ describe("pickTagColumn (R9)", () => {
   it("the user's column wins; out of range is ignored", () => {
     expect(pickTagColumn({ kind: "schedule", cols: cols(["A", "B", "C", "D"]), body: BODY, user: 1 })).toMatchObject({ col: 1, src: "user" });
     expect(pickTagColumn({ kind: "schedule", cols: cols(["A", "B", "C", "D"]), body: BODY, user: 9 })?.src).toBe("body");
+  });
+
+  it("a MARK column of room-number marks is the tag column (VERIFY MED-1: it was null)", () => {
+    const body = [["101", "Q PANEL"], ["101A", "Q PANEL"], ["102", "X PANEL"], ["102A", "X PANEL"], ["103", "Z PANEL"]];
+    expect(pickTagColumn({ kind: "schedule", cols: cols(["MARK", "DESCRIPTION"]), body })).toMatchObject({ col: 0, src: "header", score: 0.57 });
+    // no header naming it: the body rule (≥ .5) finds it too
+    expect(pickTagColumn({ kind: "schedule", cols: cols(["Column 1", "DESCRIPTION"]), body })).toMatchObject({ col: 0, src: "body" });
+  });
+
+  it("a tag-named column with a filled, distinct body holds even when its values do not read as tags; a body tag column beats it", () => {
+    const body = [["1-A", "Q PANEL", "x"], ["1-B", "Q PANEL", "x"], ["2-A", "X PANEL", "x"], ["2-B", "X PANEL", "x"]];
+    expect(pickTagColumn({ kind: "schedule", cols: cols(["MARK", "DESCRIPTION", "C"]), body })).toMatchObject({ col: 0, src: "header", score: 0 });
+    const withTags = body.map((r, i) => [r[0], r[1], `EF-${i + 1}`]);
+    expect(pickTagColumn({ kind: "schedule", cols: cols(["MARK", "DESCRIPTION", "C"]), body: withTags })).toMatchObject({ col: 2, src: "body" });
+    // a tag-named column that repeats its values is not one
+    const repeated = body.map((r) => ["SAME", r[1], r[2]]);
+    expect(pickTagColumn({ kind: "schedule", cols: cols(["MARK", "DESCRIPTION", "C"]), body: repeated })).toBeNull();
   });
 
   it("null when no column reads as tags", () => {
