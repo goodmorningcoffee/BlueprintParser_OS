@@ -31,7 +31,7 @@ root_admin_email = ""
 # aws_s3_bucket_notification owns the data bucket's complete notification
 # subresource. Keep this false until an owner has saved and reconciled the
 # existing Lambda/SQS/SNS/EventBridge configuration exactly as documented in
-# README.md. Set true only in the reviewed, untracked tfvars used for takeover.
+# docs/DEPLOY.md. Set true only in the reviewed, untracked tfvars used for takeover.
 acknowledge_beaver_data_notification_takeover = false
 
 # Provider identity epoch. Increment this before starting BlueprintParser after
@@ -41,7 +41,7 @@ label_studio_instance_generation = "generation-1"
 label_studio_image = "heartexlabs/label-studio@sha256:REPLACE_WITH_64_LOWERCASE_HEX_DIGEST"
 
 # Maintenance worker launch gate. Set false during the provider-replacement
-# writer-outage sequence documented in README.md; restore only after the app
+# writer-outage sequence documented in docs/DEPLOY.md; restore only after the app
 # service is bound to the new generation's task definition.
 maintenance_worker_schedule_enabled = true
 # Disable alongside desired/minimum zero during a writer outage so target

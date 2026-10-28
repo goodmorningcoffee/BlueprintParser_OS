@@ -283,7 +283,7 @@ Restore the exact live tuple with this same digest and finish with:
   ./deploy.sh verify-restored ${digest}
 
 \`activate\` is reserved for a same-digest configuration/secret restart.
-For an existing database at the one-time P2 boundary, follow README.md: create
+For an existing database at the one-time P2 boundary, follow docs/DEPLOY.md: create
 the old-digest \`preflight-outage\` witness before applying this candidate, then
 run scripts/p2-schema-cutover.sh with this digest while the outage remains exact.
 Only a proven-empty new database may use the documented \`bootstrap-empty\`
