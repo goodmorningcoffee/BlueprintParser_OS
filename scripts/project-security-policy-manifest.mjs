@@ -1469,6 +1469,7 @@ export const ROOT_ONLY_SURFACES = [
   rootOnly("/api/admin/stuck-jobs/yolo-fix", ["POST"]),
   rootOnly("/api/admin/classifiers/fit", ["POST"]),
   // cross-company data / security
+  rootOnly("/api/admin/classifiers/parse-preview", ["POST"]), // TP-3 WP-3.P: compute-only, spans companies
   rootOnly("/api/admin/projects", ["GET"]),
   rootOnly("/api/admin/project-duplicates/scan", ["POST"]),
   rootOnly("/api/admin/project-duplicates/delete", ["POST"]),
