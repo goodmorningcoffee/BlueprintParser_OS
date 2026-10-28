@@ -58,7 +58,7 @@ describe("deriveStructureIndex", () => {
     const before = deriveStructureIndex([{ pageNumber: 1, pageIntelligence: pi({ parsedRegions: [schedule] }) }], AT);
     const after = deriveStructureIndex([{ pageNumber: 1, pageIntelligence: pi({ parsedRegions: [] }) }], AT);
     expect(Object.keys(before.regions)).toEqual(["1"]);
-    expect(after).toEqual({ v: 1, at: AT, regions: {}, keys: {}, specSections: {}, inbox: {} });
+    expect(after).toEqual({ v: 1, at: AT, regions: {}, keys: {}, specSections: {}, inbox: { "1": [] } }); // the visible page stays keyed (WP-3.F)
   });
 
   it("is deterministic and orders pages numerically", () => {

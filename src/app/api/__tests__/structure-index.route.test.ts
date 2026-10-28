@@ -182,7 +182,8 @@ describe.skipIf(!dbUp)("the summaries pass re-derives the inbox under its projec
     expect(stored.inbox["1"][0]).toMatchObject({ state: "parsed", regionId: "parsed-n" });
     expect(stored.inbox["2"][0]).toMatchObject({ state: "parsed", regionId: "parsed-n" });
     expect(stored.inbox["3"][0].state).toBe("rejected");
-    expect(stored.inbox["4"].map((x: { state: string }) => x.state)).toEqual(["rejected", "todo"]);
+    // WP-3.F orders text regions by content key: region-5's box (x 0.10) sorts before region-2's (x 0.60).
+    expect(stored.inbox["4"].map((x: { legacyId: string; state: string }) => [x.legacyId, x.state])).toEqual([["region-5", "todo"], ["region-2", "rejected"]]);
     expect(stored.inbox["5"][0].state).toBe("todo");
     expect(stored.inbox["6"].map((x: { id: string; state: string }) => [x.id, x.state])).toEqual([["p-a", "todo"], ["p-b", "rejected"]]);
     expect(stored.inbox["7"][0]).toMatchObject({ id: "p-c", state: "parsed", regionId: "pr-x" });
