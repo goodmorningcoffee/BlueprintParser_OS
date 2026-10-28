@@ -28,6 +28,8 @@ export interface LlmHighlight {
   pageNumber: number;
   bbox: [number, number, number, number];
   label?: string;
+  /** Zoom so the box fills the viewport (View All table rows); otherwise the viewer only centres it. */
+  fit?: boolean;
 }
 
 export interface TableTagView {

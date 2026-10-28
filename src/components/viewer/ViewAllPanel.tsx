@@ -1451,7 +1451,7 @@ export default function ViewAllPanel() {
         {/* ─── Tables (parsed) ─────────────────────────────── */}
         {/* User-saved schedules / keynote tables / legends / general notes,
             aggregated from pageIntelligence[pn].parsedRegions. Row click sets
-            page + llmHighlight → PDFViewer scrolls the region into view. No
+            page + llmHighlight(fit) → PDFViewer zooms to + centres it. No
             per-region visibility toggle in v1 (parsed regions don't have a
             canvas-hide flag today). */}
         <TreeSection
@@ -1520,7 +1520,7 @@ export default function ViewAllPanel() {
                               useUiStore.getState().setLlmHighlight({
                                 pageNumber: pnNum,
                                 bbox: [x0, y0, x1, y1],
-                                label: r.category,
+                                label: r.category, fit: true, // zoom to the table, then centre it
                               });
                             }}
                             className="flex items-center gap-2 flex-1 text-left truncate"
