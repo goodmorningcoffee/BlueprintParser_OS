@@ -2,13 +2,16 @@
   "capability": "headers",
   "version": 1,
   "modules": [
+    "src/lib/parse-engine/assemble.ts",
     "src/lib/parse-engine/cells.ts",
-    "src/lib/parse-engine/headers.ts"
+    "src/lib/parse-engine/engine-table.ts",
+    "src/lib/parse-engine/headers.ts",
+    "src/lib/parse-engine/lines.ts"
   ],
   "history": [
     {
       "version": 1,
-      "sha256": "0a3aaafd793b2d266da49af87987875ca4f181029efc4e17bfda05a7e0fc2263"
+      "sha256": "0e9fc7937465a9ff99824824ac4a6de6dc2fb6fef2c31cf6539356a37a52fdd1"
     }
   ]
 }

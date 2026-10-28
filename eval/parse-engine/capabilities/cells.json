@@ -2,6 +2,7 @@
   "capability": "cells",
   "version": 1,
   "modules": [
+    "src/lib/parse-engine/assemble.ts",
     "src/lib/parse-engine/cells.ts",
     "src/lib/parse-engine/geometry.ts",
     "src/lib/parse-engine/lines.ts"
@@ -9,7 +10,7 @@
   "history": [
     {
       "version": 1,
-      "sha256": "02136b77c1b11e8fa2234dd9f1b864dc53cdd1f5d68cb9bb9171890af1903b24"
+      "sha256": "2ea2b3999f361e567d2cc25b5bc88262a393f34b99da61f28022735a1a7ed449"
     }
   ]
 }

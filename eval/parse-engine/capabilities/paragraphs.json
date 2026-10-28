@@ -2,6 +2,7 @@
   "capability": "paragraphs",
   "version": 1,
   "modules": [
+    "src/lib/parse-engine/engine-paragraphs.ts",
     "src/lib/parse-engine/paragraphs/address.ts",
     "src/lib/parse-engine/paragraphs/keys.ts",
     "src/lib/parse-engine/paragraphs/kv-pairs.ts",
@@ -11,7 +12,7 @@
   "history": [
     {
       "version": 1,
-      "sha256": "0a65839591edb522b65a41c2112126d261738901fc3d7d1b26c16264f572d984"
+      "sha256": "efacca314dce3b3f9b77feb72c26fb09ea8162c9d5b05ce8b864980980ad533b"
     }
   ]
 }

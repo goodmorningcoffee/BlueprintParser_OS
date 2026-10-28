@@ -24,6 +24,7 @@ const CLIENT_SAFE = [
   "cells",
   "headers",
   "ops",
+  "assemble",
   "legacy-view",
   "snapshot",
   "read",
@@ -32,7 +33,7 @@ const CLIENT_SAFE = [
   "paragraphs/address",
 ] as const;
 
-const MUST_EXIST = ["types", "lines", "geometry", "ops"] as const; // + types, ops: WP-2.E (2.0b VERIFY LOW-4)
+const MUST_EXIST = ["types", "lines", "geometry", "ops", "assemble", "snapshot"] as const; // + types, ops: WP-2.E (2.0b VERIFY LOW-4); assemble, snapshot: WP-3.D
 
 function sourceFile(mod: string): string | null {
   for (const ext of [".ts", ".tsx"]) {

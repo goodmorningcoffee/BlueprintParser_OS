@@ -7,14 +7,16 @@
     "src/lib/parse-engine/cols/rulings.ts",
     "src/lib/parse-engine/cols/textract-cells.ts",
     "src/lib/parse-engine/cols/x-starts.ts",
+    "src/lib/parse-engine/engine-table.ts",
     "src/lib/parse-engine/geometry.ts",
     "src/lib/parse-engine/lines.ts",
+    "src/lib/parse-engine/profile.ts",
     "src/server/services/parse-engine/rulings.ts"
   ],
   "history": [
     {
       "version": 1,
-      "sha256": "0f444b402bc447f0522de8ab8502df15232578094edbfc8194a4e41c73f796b8"
+      "sha256": "48611af275b6414ac8c5e5bdd49f91fa9bdccb8db028773ae215c5b3451eb613"
     }
   ]
 }

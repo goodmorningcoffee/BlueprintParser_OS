@@ -2,8 +2,10 @@
   "capability": "rows",
   "version": 1,
   "modules": [
+    "src/lib/parse-engine/engine-table.ts",
     "src/lib/parse-engine/fuse.ts",
     "src/lib/parse-engine/parts.ts",
+    "src/lib/parse-engine/profile.ts",
     "src/lib/parse-engine/rows/anchor-prior.ts",
     "src/lib/parse-engine/rows/hanging-indent.ts",
     "src/lib/parse-engine/rows/layout.ts",
@@ -17,7 +19,7 @@
   "history": [
     {
       "version": 1,
-      "sha256": "8a90e141b11f2dbd3d025fafb1a2abddda9cb63236d5b0cd591c19f2205824fe"
+      "sha256": "9dcf4c6c6c2c5c0c1abbcdbee307fcbe061214e1c4d46f4931d14154ca5012de"
     }
   ]
 }
