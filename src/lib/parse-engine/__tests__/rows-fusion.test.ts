@@ -268,19 +268,66 @@ describe("fuseBoundaries — R7 weighted majority", () => {
 });
 
 describe("parts — R11 continuations", () => {
+  const header = (x: number, y: number) => [word("MARK", x, y), word("DESCRIPTION", x + 0.04, y)];
+  const rowsA = [0.17, 0.19, 0.21].flatMap((y, i) => [word(`O-10${i + 1}`, 0.11, y), word(`ZFKMP SNIEV`, 0.15, y)]);
+  const rowsB = [0.17, 0.19, 0.21].flatMap((y, i) => [word(`O-20${i + 1}`, 0.36, y), word(`NEKQKA KXB`, 0.4, y)]);
+  const A: Box = [0.1, 0.14, 0.3, 0.22];
+  const B: Box = [0.35, 0.14, 0.55, 0.22];
+
   it("a repeated header at the top of the second block is dropped; rows are appended in part order with their part index", () => {
-    const header = (x: number, y: number) => [word("MARK", x, y), word("DESCRIPTION", x + 0.04, y)];
-    const rowsA = [0.17, 0.19, 0.21].flatMap((y, i) => [word(`O-10${i + 1}`, 0.11, y), word(`ZFKMP SNIEV`, 0.15, y)]);
-    const rowsB = [0.17, 0.19, 0.21].flatMap((y, i) => [word(`O-20${i + 1}`, 0.36, y), word(`NEKQKA KXB`, 0.4, y)]);
     const ev = evidence({ words: [...header(0.11, 0.15), ...rowsA, ...header(0.36, 0.15), ...rowsB] });
-    const f = fuseRowsForParts(ev, [0.1, 0.14, 0.3, 0.22], [[0.35, 0.14, 0.55, 0.22]]);
+    const f = fuseRowsForParts(ev, A, [B], { headerRows: 1 });
+    expect(f.headerRows).toBe(1);
     expect(f.rows.map((r) => r.part)).toEqual([0, 0, 0, 0, 1, 1, 1]);
+    expect(f.rows.filter((r) => r.part === 1).every((r) => r.role === "body")).toBe(true);
+    expect(f.flags).toContain("parts-headers-dropped:1");
+    expect(f.flags.some((fl) => fl.startsWith("parts-header-unmatched"))).toBe(false);
+    // a second block whose first row is NOT the header keeps all its rows; the hinted header row it was given is flagged
+    const g = fuseRowsForParts(evidence({ words: [...header(0.11, 0.15), ...rowsA, ...rowsB] }), A, [B], { headerRows: 1 });
+    expect(g.rows.filter((r) => r.part === 1)).toHaveLength(3);
+    expect(g.flags.some((fl) => fl.startsWith("parts-headers-dropped"))).toBe(false);
+    expect(g.flags).toContain("parts-header-unmatched:1");
+  });
+
+  it("part 0 without header rows: a data row that repeats most of part 0's first row is never dropped (VERIFY MED-2)", () => {
+    const sched = (x: number, ys: number[], ids: string[]) => ys.flatMap((y, i) => [word(ids[i], x, y), word("HM", x + 0.03, y), word("3'-0\"", x + 0.05, y), word("7'-0\"", x + 0.08, y), word("WD", x + 0.11, y)]);
+    const ev = evidence({ words: [...sched(0.11, [0.15, 0.17, 0.19], ["Q1", "Q2", "Q3"]), ...sched(0.36, [0.15, 0.17, 0.19], ["Q4", "Q5", "Q6"])] });
+    const f = fuseRowsForParts(ev, [0.1, 0.14, 0.33, 0.2], [[0.35, 0.14, 0.58, 0.2]]);
+    expect(f.headerRows).toBe(0);
+    expect(f.rows.filter((r) => r.part === 1)).toHaveLength(3);
+    expect(f.flags.some((fl) => fl.startsWith("parts-headers-dropped"))).toBe(false);
+    // with no header known anywhere, a header-looking first row is not dropped either (nothing is a header)
+    const h = fuseRowsForParts(evidence({ words: [...header(0.11, 0.15), ...rowsA, ...header(0.36, 0.15), ...rowsB] }), A, [B]);
+    expect(h.rows.filter((r) => r.part === 1)).toHaveLength(4);
+  });
+
+  it("part 0 without header rows: a later row that its OWN part fused as a header and that matches part 0's row is dropped", () => {
+    // only the second block has a stored Textract table, with its first row flagged `hdr`
+    const tB = table([[0.14, 0.16], [0.16, 0.18], [0.18, 0.2], [0.2, 0.22]], [[0.355, 0.39], [0.39, 0.55]], 1);
+    const ev = evidence({ words: [...header(0.11, 0.15), ...rowsA, ...header(0.36, 0.15), ...rowsB], textractTables: [tB] });
+    const f = fuseRowsForParts(ev, A, [B]);
+    expect(f.headerRows).toBe(0);
     expect(f.rows.filter((r) => r.part === 1)).toHaveLength(3);
     expect(f.flags).toContain("parts-headers-dropped:1");
-    // a second block whose first row is NOT the header keeps all its rows
-    const g = fuseRowsForParts(evidence({ words: [...header(0.11, 0.15), ...rowsA, ...rowsB] }), [0.1, 0.14, 0.3, 0.22], [[0.35, 0.14, 0.55, 0.22]]);
-    expect(g.rows.filter((r) => r.part === 1)).toHaveLength(3);
-    expect(g.flags).not.toContain("parts-headers-dropped:1");
+  });
+
+  it("a repeated two-row header is dropped row by row; a header row that matches nothing is kept as body and flagged (VERIFY MED-3)", () => {
+    const hdr = (x: number, second: string) => [word("ZORP", x, 0.13), word("FLIM", x + 0.06, 0.13), word("MARK", x, 0.15), word("WIDTH", x + 0.04, 0.15), word(second, x + 0.08, 0.15)];
+    const body = (x: number, p: string) => [0.17, 0.19, 0.21].flatMap((y, i) => [word(`${p}${i}`, x, y), word("QZX", x + 0.04, y), word("VBN", x + 0.08, y)]);
+    const mkT = (x0: number) => table([[0.12, 0.14], [0.14, 0.16], [0.16, 0.18], [0.18, 0.2], [0.2, 0.22]], [[x0, x0 + 0.04], [x0 + 0.04, x0 + 0.08], [x0 + 0.08, x0 + 0.13]], 2);
+    const P0: Box = [0.1, 0.115, 0.3, 0.225];
+    const P1: Box = [0.35, 0.115, 0.55, 0.225];
+    const ev = evidence({ words: [...hdr(0.11, "HEIGHT"), ...body(0.11, "K"), ...hdr(0.36, "HEIGHT"), ...body(0.36, "L")], textractTables: [mkT(0.105), mkT(0.355)] });
+    const f = fuseRowsForParts(ev, P0, [P1]);
+    expect(f.headerRows).toBe(2);
+    expect(f.rows.filter((r) => r.part === 1).map((r) => r.role)).toEqual(["body", "body", "body"]);
+    expect(f.flags).toContain("parts-headers-dropped:2");
+    expect(f.flags.some((fl) => fl.startsWith("parts-header-unmatched"))).toBe(false);
+    // the later block's second header row differs (2 of 3 tokens < .8): row 1 dropped, row 2 kept as body + flagged
+    const g = fuseRowsForParts(evidence({ words: [...hdr(0.11, "HEIGHT"), ...body(0.11, "K"), ...hdr(0.36, "DEPTH"), ...body(0.36, "L")], textractTables: [mkT(0.105), mkT(0.355)] }), P0, [P1]);
+    expect(g.rows.filter((r) => r.part === 1)).toHaveLength(4);
+    expect(g.flags).toContain("parts-headers-dropped:1");
+    expect(g.flags).toContain("parts-header-unmatched:1");
   });
 
   it("tokenOverlap is the share of the reference tokens present", () => {

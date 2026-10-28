@@ -52,7 +52,7 @@ export interface RowHypothesis extends Hypothesis {
 export interface FusedShape {
   b: BboxMinMax;
   cls: string;
-  /** The source whose box was kept (the more confident of a yolo/classical double: yolo wins ties, it carries the live box). */
+  /** The source whose box was kept: always yolo for a yolo/classical double (it carries the live box); classical only when yolo did not see it. */
   src: "yolo" | "classical";
   /** Both sources saw this shape (the dropped twin's crop read is folded into `text` when the kept one had none). */
   both: boolean;

@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { COLUMN_SHAPE_LABELS } from "@/lib/classifier-engine/shape-column";
+import { buildPageEvidence } from "@/server/services/parse-engine/evidence";
 import { rowsInputFor, runRowMethods } from "../fuse";
 import { anchorCentres, owningProposal } from "../rows/anchor-prior";
 import { KEY_LIKE_RE, findKeyColumn, hangingIndentRows } from "../rows/hanging-indent";
@@ -72,6 +73,29 @@ describe("textract-cells", () => {
     expect(h.cells).toHaveLength(7);
     expect(h.cells!.filter((c) => c.header)).toHaveLength(2);
     expect(h.conf).toBe(1);
+  });
+  it("a merged section row as the loader builds it (every grid CELL kept, the anchor widened) is a section (VERIFY MED-1)", () => {
+    // stored the way lib/textract.ts stores a Textract TABLE (1-based, LTWH, one CELL per grid cell, MERGED_CELL in
+    // `merged`), then read through the real loader: row 3 is a title merged across both columns
+    const rows: [number, number][] = [[0.19, 0.21], [0.22, 0.24], [0.25, 0.27], [0.28, 0.3]];
+    const cols: [number, number][] = [[0.1, 0.2], [0.2, 0.5]];
+    const ev = buildPageEvidence({
+      pageNumber: 1, drawingNumber: null, keynotes: null, csiCodes: [], words: [], layout: null,
+      tables: [{
+        bbox: [0.1, 0.19, 0.4, 0.11], rowCount: 4, colCount: 2, merged: [{ r: 3, c: 1, rs: 1, cs: 2 }],
+        cells: rows.flatMap(([y0, y1], r) => cols.map(([x0, x1], c) => ({ row: r + 1, col: c + 1, rowSpan: 1, colSpan: 1, text: "", bbox: [x0, y0, x1 - x0, y1 - y0], confidence: 90, ...(r === 0 ? { hdr: true } : {}) }))),
+      }],
+      pageZones: undefined, regionsV2: undefined, parsedRegions: null, channels: null, classifierProposals: null, yolo: [],
+    });
+    const t = ev.textractTables[0];
+    expect(t.cells.filter((c) => c.r === 2)).toHaveLength(2); // the covered cell is kept beside the widened anchor
+    expect(t.cells.find((c) => c.r === 2 && c.c === 0)?.cs).toBe(2);
+    const h = textractCellRows(rowsInputFor(evidence({ words: [], textractTables: [t] }), BOX));
+    expect(h.headerRows).toBe(1);
+    expect(h.sections?.map((s) => s.map(r6))).toEqual([[0.245, 0.275]]);
+    // no merged cell → no section
+    const plain = textractCellRows(rowsInputFor(evidence({ words: [], textractTables: [table(rows, cols, 1)] }), BOX));
+    expect(plain.sections).toBeUndefined();
   });
   it("a table elsewhere on the page (containment < .5) is not read; a spanning anchor never sets a row edge", () => {
     const far = table([[0.7, 0.72], [0.73, 0.75]], [[0.1, 0.5]]);

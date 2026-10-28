@@ -1,7 +1,9 @@
 // @vitest-environment node
 // [table pipeline WP-3.A acceptance] The fused rows against the PRIVATE G-TAB gold (PLAN §6.1; DR-2.2), scored with
 // the WP-2.G harness as an extra leg beside the legacy paths: word → row accuracy must not regress against the
-// legacy merger (paired bootstrap 95 % CI; §6.4: lower bound ≥ −0.01 = non-regressing, a CI too wide = undecided). The gold and the slices
+// legacy merger (paired bootstrap 95 % CI). The §5 WP-3.A merge-gate line is "CI lower bound ≥ −0.01"; §6.4's "undecided"
+// wording is the FLAG-PROMOTION rule, not this gate. On G-TAB batch 1 the gate line is NOT met (VERIFY MED-4): this test
+// logs the gate line and every stratum surely below 0, and the integrator/owner decides (see the WP-3.A report). The gold and the slices
 // hold drawing text, so they live only in the private docs repo; absent → SKIPPED with a logged reason (rule 12).
 // The report is numbers, leg ids, strata and opaque gold ids only — it is printed into the suite log.
 import { existsSync } from "node:fs";
@@ -52,11 +54,12 @@ describe.skipIf(!present)("fused rows vs the private G-TAB gold (word → row ac
     for (const [stratum, m] of Object.entries(byStratum)) {
       const w = m.wordRowAcc;
       const e = engine.byStratum[stratum]?.metrics.wordRowAcc;
-      console.info(`[rows-private-gold] ${stratum}: n=${w.n} engine ${e?.mean} merger ${w.meanBase} diff ${w.diff} [${w.lo}, ${w.hi}]`);
+      console.info(`[rows-private-gold] ${stratum}: n=${w.n} engine ${e?.mean} merger ${w.meanBase} diff ${w.diff} [${w.lo}, ${w.hi}]${w.hi < 0 ? " — SURELY BELOW 0" : ""}`);
     }
-    // §6.4 reads the paired CI: lower bound ≥ −0.01 = non-regressing; a CI too wide to decide is "undecided — need
-    // ~n more units", never a failure of the build (PLAN §6.4). With 75 units the half-width is ≈ 0.04, so this test
-    // pins what the batch CAN decide — the engine is not worse on average and not surely worse — and logs the verdict.
+    console.info(`[rows-private-gold] §5 WP-3.A merge-gate line (paired lower bound ≥ −0.01): ${paired.lo >= -0.01 ? "MET" : `NOT MET (lo ${paired.lo}) — integrator/owner call, see VERIFY MED-4`}`);
+    // With 75 units the half-width is ≈ 0.04, so the merge-gate line cannot be reached by a small positive estimate. The
+    // assertions pin only what the batch CAN decide — the engine is not worse on average and not surely worse — and
+    // they do NOT enforce the gate line (logged above); holding or accepting it is the integrator's/owner's call.
     const verdict = paired.lo >= -0.01 ? "non-regressing (lower bound ≥ −0.01)" : paired.hi < -0.01 ? "REGRESSION (upper bound < −0.01)" : "undecided — CI too wide (needs more G-TAB units; WP-3.Q)";
     console.info(`[rows-private-gold] §6.4 verdict on wordRowAcc: ${verdict}`);
     expect(engine.units).toBe(units.length);

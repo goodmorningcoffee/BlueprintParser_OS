@@ -7,10 +7,12 @@
  *   candidate row per line, cut at the midpoint of the white gap between consecutive lines (the midpoint of
  *   the line centres when two lines overlap vertically). This generalises row groupers #1, #2, #3, #5, #6
  *   and #8 of INVENTORY §5b: each of them is "one text line = one row" with a different tolerance.
- * - `"legacy"`: byte parity with `methodOcrPositions` (`lib/services/table-parse.ts:91-108`): words whose
- *   centre lies inside the box, sorted by y-centre, chained to the cluster's FIRST word within .006 of the
- *   page; boundaries `[box top, midpoints of consecutive cluster mean centres, box bottom]`; the same
- *   bail-outs (< 6 words, < 3 clusters) become `error`. `legacyRowClusters` is exported for the parity test.
+ * - `"legacy"`: parity with `methodOcrPositions` (`lib/services/table-parse.ts:91-108`) on the boxes where
+ *   legacy succeeds (positions equal to 1e-12, not byte-equal): words whose centre lies inside the box, sorted
+ *   by y-centre, chained to the cluster's FIRST word within .006 of the page; boundaries `[box top, midpoints of
+ *   consecutive cluster mean centres, box bottom]`. Two of legacy's four bail-outs are copied (< 6 words,
+ *   < 3 clusters → `error`); "no stable column clusters", "< 2 data rows" and legacy's dropping of empty-text
+ *   clusters are not (VERIFY LOW-6). `legacyRowClusters` is exported for the parity test.
  *
  * Confidence (lines mode): .55 + .3 × pitch regularity (1 − CV of the line-centre steps, clamped), so a
  * tidy schedule votes ≈ .85 and ragged prose ≈ .55; the R7 weight (.5) does the rest. A method with fewer

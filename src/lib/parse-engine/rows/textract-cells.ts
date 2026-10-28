@@ -11,7 +11,9 @@
  * - boundaries: the first row's top, the midpoint of the gap between consecutive rows (the midpoint of the row
  *   centres when the cells overlap vertically, as tall symbol cells do), the last row's bottom;
  * - `headerRows` / `headerBottom`: the run of `hdr` rows from the top;
- * - `sections`: a body row that holds one cell spanning the table's columns (a merged section title, R5);
+ * - `sections`: a body row with a cell spanning the table's columns (a merged section title, R5). The loader
+ *   (`evidence.ts` `engineTables`) keeps every grid CELL and widens the MERGED_CELL anchor, so such a row
+ *   carries the anchor (`cs` ≥ the column count) AND the cells it covers; the anchor decides (VERIFY MED-1);
  * - `cells` carry the geometry on for WP-3.B (spans, header flags).
  *
  * Confidence = the containment (how well the table coincides with the box). The share of the table's cells inside
@@ -89,7 +91,7 @@ export function textractCellRows(input: RowsInput): RowHypothesis {
   const sections: [number, number][] = [];
   rows.forEach((row, i) => {
     if (i < headerRows) return;
-    if (row.cells.length === 1 && colCount >= 2 && row.cells[0].cs >= colCount) sections.push([rowLines[i], rowLines[i + 1]]);
+    if (colCount >= 2 && row.cells.some((c) => c.cs >= colCount)) sections.push([rowLines[i], rowLines[i + 1]]);
   });
   const conf = Math.round(Math.max(0, Math.min(1, best.containment)) * 1000) / 1000;
   const b = (c: EngineTextractCell): BboxMinMax => c.b;
