@@ -1,8 +1,10 @@
 // @vitest-environment node
-// [table pipeline WP-3.D] R8 fusion weights: defaults, the optional eval/parse-engine/profile.json override, and
-// a malformed file never half-applied.
+// [table pipeline WP-3.D] R8 fusion weights: defaults, the shipped src/data/parse-engine/profile.json override, a
+// malformed file never half-applied, and the production path reads the file the image ships (verify MED-2).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_COL_WEIGHTS, DEFAULT_PROFILE, PROFILE_PATH, loadParseEngineProfile, parseProfile } from "../profile";
+import { DEFAULT_COL_WEIGHTS, DEFAULT_PROFILE, PROFILE_PATH, loadParseEngineProfile, parseEngineProfile, parseEngineProfileError, parseProfile, resetParseEngineProfileCache } from "../profile";
 import { DEFAULT_ROW_WEIGHTS } from "../types-rows";
 
 describe("parse-engine profile (R8)", () => {
@@ -32,5 +34,20 @@ describe("parse-engine profile (R8)", () => {
       expect(r.error).toBeTruthy();
     }
     expect(parseProfile([])).toEqual({ error: "profile is not an object" });
+  });
+
+  it("production reads the shipped file: under src/data (copied into the image, not dockerignored), statically imported, R8 values", () => {
+    expect(PROFILE_PATH.startsWith("src/data/")).toBe(true);
+    const ignored = readFileSync(join(process.cwd(), ".dockerignore"), "utf8").split("\n").map((l) => l.trim().replace(/^\/+|\/+$/g, "")).filter((l) => l && !l.startsWith("#"));
+    for (const prefix of ["src", "src/data", "src/data/parse-engine", PROFILE_PATH]) expect(ignored, prefix).not.toContain(prefix);
+    expect(readFileSync(join(process.cwd(), "Dockerfile"), "utf8")).toMatch(/COPY --from=builder \/app\/src\/data \.\/src\/data/);
+    const src = readFileSync(join(process.cwd(), "src/lib/parse-engine/profile.ts"), "utf8");
+    expect(src).toContain('from "@/data/parse-engine/profile.json"');
+    resetParseEngineProfileCache();
+    const onDisk = loadParseEngineProfile(process.cwd());
+    expect(onDisk.error).toBeUndefined();
+    expect(parseEngineProfile()).toEqual(onDisk.profile);
+    expect(parseEngineProfileError()).toBeUndefined();
+    resetParseEngineProfileCache();
   });
 });

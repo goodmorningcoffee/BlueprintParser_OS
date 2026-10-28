@@ -8,8 +8,8 @@
  * index, so a list recorded on one parse lands on a re-parse whose ids were re-matched through `prior`.
  *
  * Tables are applied in two phases, so a text edit survives a later line move:
- * 1. **geometry**, in list order — `pin-source` (an alternative's lines on that axis; `method: null` = back to the
- *    fused axis), `set-lines` (an axis wholesale: classic Guided import, replay), `move-line` (the boundary BELOW row
+ * 1. **geometry**, in list order — `pin-source` (an alternative's lines on that axis, a column pin framed by the box
+ *    edges as fusion does; `method: null` = back to the fused axis), `set-lines` (an axis wholesale: classic Guided import, replay), `move-line` (the boundary BELOW row
  *    / RIGHT of column `after`; on the last row / column it moves the outer edge), `add-line` (splits the band that
  *    holds `at` strictly inside; the upper / left part keeps its id, the other part gets a new id), `remove-line`
  *    (merges `after` with the next band of the same part; `after` keeps its id), `user-boxes` ("Draw cells": the
@@ -26,6 +26,10 @@
  * its block, its printed key becoming text), `set-paragraph-key`, `mark-block-header` (the line at `lineIndex` of
  * `paragraphLines(doc, words)` heads a new block; the paragraphs after it in its block move under it), `set-csi`,
  * `set-title`, `set-kind`.
+ *
+ * When the ops change any band (id or extent), the result carries `opsBase`: the base's band ids, the ids the ops were
+ * recorded on. A re-parse with the result as `prior` re-matches against them (`engine-table.ts`, `engine-paragraphs.ts`),
+ * so replaying the same list mints the same ids again (WP-3.D verify HIGH-1).
  *
  * An op whose target no longer exists (an id gone, a cross-family `set-kind`, an index out of range) does not land:
  * `applyOpsDetailed` reports `landed[i] = false` and leaves the model as it was for that op. The commit refuses a
@@ -54,11 +58,13 @@ import {
   type CorrectionOp,
   type MethodId,
   type Paragraph,
+  type ParagraphOpsBase,
   type ParseResult,
   type StructureModel,
   type StructureParagraphDoc,
   type StructureRow,
   type StructureTableModel,
+  type TableOpsBase,
 } from "./types";
 
 export interface ApplyOpsResult {
@@ -215,7 +221,12 @@ function geometryOp(g: TableGeometry, op: CorrectionOp, base: ParseResult, baseM
     case "pin-source": {
       if (op.method === null) { replaceAxis(g, op.axis, null, baseModel); return true; }
       const alt = base.alternatives.find((a) => a.method === op.method);
-      const lines = alt ? cleanLines(op.axis === "rows" ? alt.geometry.rowLines : alt.geometry.colLines) : null;
+      let lines = alt ? cleanLines(op.axis === "rows" ? alt.geometry.rowLines : alt.geometry.colLines) : null;
+      // columns: the box edges are the outer lines, as in fusion (a method's own frame is not a separator)
+      if (lines && op.axis === "cols") {
+        const [x0, , x1] = baseModel.bbox;
+        lines = cleanLines([x0, ...lines.slice(1, -1).filter((x) => x > x0 && x < x1), x1]);
+      }
       if (!lines) return false;
       replaceAxis(g, op.axis, lines, baseModel);
       return true;
@@ -516,13 +527,38 @@ function paragraphOp(doc: StructureParagraphDoc, op: CorrectionOp, words: Words)
 // ── entry points ────────────────────────────────────────────────────────────────────────────────
 
 /** Apply `ops` on top of the fused model in `base` and report which ops landed (see the file header). Pure. */
+// ── the machine ids the ops were recorded on (`opsBase`) ──────────────────────────────────────────
+
+function tableIds(m: StructureTableModel): TableOpsBase {
+  return {
+    rows: m.rows.map((r) => ({ id: r.id, y0: r.y0, y1: r.y1, ...(r.part ? { part: r.part } : {}) })),
+    cols: m.cols.map((c) => ({ id: c.id, x0: c.x0, x1: c.x1 })),
+  };
+}
+
+function paragraphIds(d: StructureParagraphDoc): ParagraphOpsBase {
+  return { blocks: d.blocks.map((b) => ({ id: b.id, b: [...b.b] as BboxMinMax })), paragraphs: d.paragraphs.map((p) => ({ id: p.id, b: [...p.b] as BboxMinMax })) };
+}
+
+/**
+ * `out.opsBase` = the base's own `opsBase` when it has one (the earliest machine bands win), else the base's bands
+ * when the ops changed any band id or extent; absent when they changed none (ids then re-match on `out` itself).
+ */
+function withOpsBase<M extends StructureModel>(base: M, out: M, ids: (m: M) => object): M {
+  delete out.opsBase;
+  if (base.opsBase) { out.opsBase = clone(base.opsBase); return out; }
+  const b = ids(base);
+  if (JSON.stringify(b) !== JSON.stringify(ids(out))) out.opsBase = b as M["opsBase"];
+  return out;
+}
+
 export function applyOpsDetailed(base: ParseResult, ops: readonly CorrectionOp[]): ApplyOpsResult {
   const landed = ops.map(() => false);
   const list = ops.slice(0, PARSE_ENGINE_CAPS.ops);
-  if (isTable(base.model)) return { model: applyTableOps(base, base.model, list, landed), landed };
+  if (isTable(base.model)) return { model: withOpsBase(base.model, applyTableOps(base, base.model, list, landed), tableIds), landed };
   const doc = clone(base.model);
   list.forEach((op, i) => { landed[i] = paragraphOp(doc, op, base.words); });
-  return { model: doc, landed };
+  return { model: withOpsBase(base.model, doc, paragraphIds), landed };
 }
 
 /** Apply `ops` in order, by id, on top of the fused model in `base` (user corrections always win). Pure. */

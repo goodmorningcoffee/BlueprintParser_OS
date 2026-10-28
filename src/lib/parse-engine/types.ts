@@ -155,7 +155,15 @@ export interface StructureTableModel {
   notes?: StructureParagraphDoc;                                      // the schedule's own NOTES block (footnotes, C2-M3d)
   sources: { rows: MethodId[]; cols: MethodId[] };
   quality: StructureQuality;
+  opsBase?: TableOpsBase;                                             // set by applyOps (see TableOpsBase)
 }
+/**
+ * The band ids of the MACHINE model a correction list was applied to. `applyOps` sets it when the ops changed a band
+ * (and keeps an existing one); a re-parse with this model as `prior` re-matches ids against it, never against the
+ * corrected bands, so a replayed `add-line` / `split-paragraph` mints the same id again (WP-3.D verify HIGH-1).
+ */
+export interface TableOpsBase { rows: { id: string; y0: number; y1: number; part?: number }[]; cols: { id: string; x0: number; x1: number }[] }
+export interface ParagraphOpsBase { blocks: { id: string; b: BboxMinMax }[]; paragraphs: { id: string; b: BboxMinMax }[] }
 export interface CsiRef { code: string; description: string; conf?: number; src: "engine" | "company" | "user" }
 
 // ── the paragraph model (notes, specs, text keynote lists): planset › sheet# › paragraph# ─────────
@@ -173,6 +181,7 @@ export interface StructureParagraphDoc {
   spec?: { section?: string /* "08 71 00" */ };
   blocks: ParagraphBlock[]; paragraphs: Paragraph[];
   sources: { segment: MethodId[] }; quality: StructureQuality;
+  opsBase?: ParagraphOpsBase;                                         // set by applyOps (see TableOpsBase)
 }
 export type StructureModel = StructureTableModel | StructureParagraphDoc;
 // Address. NOT stored anywhere: computed at read time from the page's CURRENT drawing number (C2-M8).

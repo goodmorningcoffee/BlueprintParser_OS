@@ -18,7 +18,8 @@
  *    by `fuseBoundaries` within `tableRelativeGap(W)`; the outer lines are the box edges (the user's box). When no
  *    cluster reaches the weighted majority, the strongest single hypothesis (w · conf) is used (flag
  *    `cols-fallback`). At most 40 columns (cap; flag `truncated`).
- * 4. **ids** — rows `r<n>`, columns `c<n>`, re-matched to `request.prior` at band IoU ≥ .5 (`assemble.ts`).
+ * 4. **ids** — rows `r<n>`, columns `c<n>`, re-matched to `request.prior` at band IoU ≥ .5 (`assemble.ts`); a corrected
+ *    prior is matched through its `opsBase` (the machine bands), never its corrected bands.
  * 5. **header rows** — the fused count (Textract `hdr`, LAYOUT title, the request hint, the rows above the first
  *    shape); with none, `headers.ts` `detectHeaderRows` over the cell text (keyword ≻ caps), skipping the printed
  *    title row (`title.ts` `titleBottom`). Rows above the header block are kept as header rows (the title band).
@@ -164,9 +165,9 @@ function rulingsHyps(r: TableParseInput["rulings"], bbox: BboxMinMax): { col: Co
 }
 
 /** Rows with ids (step 4), in part order. */
-function mintRows(fused: FusedRows, prior: StructureTableModel | null): StructureRow[] {
+function mintRows(fused: FusedRows, prior: PriorBands | null): StructureRow[] {
   const bands = fused.rows.map((r) => ({ a: r.y0, b: r.y1, part: r.part ?? 0 }));
-  const ids = rematchBands(bands, prior ? prior.rows.map((r) => ({ id: r.id, a: r.y0, b: r.y1, part: r.part ?? 0 })) : [], "r");
+  const ids = rematchBands(bands, prior?.rows ?? [], "r", prior?.rowIds ?? []);
   return fused.rows.map((r, i) => {
     const row: StructureRow = { id: ids[i], y0: r.y0, y1: r.y1, role: r.role };
     if (r.part) row.part = r.part;
@@ -175,9 +176,31 @@ function mintRows(fused: FusedRows, prior: StructureTableModel | null): Structur
   });
 }
 
-function priorTable(request: ParseRequest): StructureTableModel | null {
+interface PriorBands {
+  rows: { id: string; a: number; b: number; part: number }[];
+  cols: { id: string; a: number; b: number }[];
+  /** Every id the prior uses: a band that matches nothing never takes an id an op minted (it would then re-land). */
+  rowIds: string[];
+  colIds: string[];
+}
+
+/**
+ * The bands ids re-match against: a corrected prior's `opsBase` (the machine bands its ops were recorded on), else its
+ * own bands. Re-matching against corrected bands would hand a fresh full row the id an `add-line` minted for its
+ * lower part, and the replayed op would then edit the wrong row (WP-3.D verify HIGH-1).
+ */
+function priorBands(request: ParseRequest): PriorBands | null {
   const p = request.prior;
-  return p && (p.kind === "schedule" || p.kind === "keynote" || p.kind === "legend") ? p : null;
+  if (!p || (p.kind !== "schedule" && p.kind !== "keynote" && p.kind !== "legend")) return null;
+  const t: StructureTableModel = p;
+  const rows = t.opsBase?.rows ?? t.rows;
+  const cols = t.opsBase?.cols ?? t.cols;
+  return {
+    rows: rows.map((r) => ({ id: r.id, a: r.y0, b: r.y1, part: r.part ?? 0 })),
+    cols: cols.map((c) => ({ id: c.id, a: c.x0, b: c.x1 })),
+    rowIds: t.rows.map((r) => r.id),
+    colIds: t.cols.map((c) => c.id),
+  };
 }
 
 /**
@@ -231,10 +254,10 @@ export function parseTable(input: TableParseInput): TableParseOutput {
   }
 
   // 4. ids
-  const prior = priorTable(request);
+  const prior = priorBands(request);
   const rows = mintRows(fused, prior);
   const colBands = cols.colLines.slice(0, -1).map((x, i) => ({ a: x, b: cols.colLines[i + 1] }));
-  const colIds = rematchBands(colBands, prior ? prior.cols.map((c) => ({ id: c.id, a: c.x0, b: c.x1 })) : [], "c");
+  const colIds = rematchBands(colBands, prior?.cols ?? [], "c", prior?.colIds ?? []);
   const geomCols = colBands.map((b, i) => ({ id: colIds[i], x0: b.a, x1: b.b }));
 
   // 6. spans from the coinciding Textract table

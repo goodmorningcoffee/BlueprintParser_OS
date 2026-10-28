@@ -6,7 +6,9 @@
 import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { runParseEngine } from "../engine";
-import { kindFromClassId, kindFromBox } from "../engine-kind";
+import { CLASS_KINDS, REGION_CLASS_KINDS, kindFromClassId, kindFromBox } from "../engine-kind";
+import { OTHER_SCHEDULE, SCHEDULE_KINDS } from "@/lib/classifier-engine/vocabulary";
+import regionClasses from "@/data/classifiers/regions.v1.json";
 import { legacyView, type LegacyGridView } from "../legacy-view";
 import { DEFAULT_PROFILE } from "../profile";
 import { zStructureModel } from "../schema";
@@ -157,6 +159,29 @@ describe("kind head (request ≻ proposal ≻ box)", () => {
     expect(kindFromClassId(null)).toBeNull();
   });
 
+  it("maps every classifier vocabulary id explicitly; 'specialties' is a schedule, not a spec (verify MED-1)", () => {
+    const regionIds = (regionClasses as { classes: { id: string }[] }).classes.map((c) => c.id).sort();
+    expect(Object.keys(REGION_CLASS_KINDS).sort()).toEqual(regionIds);
+    for (const k of SCHEDULE_KINDS) {
+      expect(CLASS_KINDS.has(k.id), k.id).toBe(true);
+      expect(kindFromClassId(k.id), k.id).toBe(k.id === "finish-legend" ? "legend" : "schedule");
+    }
+    expect(kindFromClassId(OTHER_SCHEDULE)).toBe("schedule");
+    for (const id of regionIds) expect(CLASS_KINDS.get(id), id).toBe(REGION_CLASS_KINDS[id]);
+    expect(regionIds.map((id) => kindFromClassId(id))).not.toContain("spec");
+    expect(kindFromClassId("specialties")).toBe("schedule");
+    expect(kindFromClassId("Specialties")).toBe("schedule");
+    expect(kindFromClassId("specification-section")).toBe("spec");
+    expect(kindFromClassId("specs")).toBe("spec");
+  });
+
+  it("a schedule box owned by a 'specialties' proposal parses as a schedule (verify MED-1, probe2)", async () => {
+    const f = fixture("syn-sched-basic");
+    const r = await run(fixtureEvidence(f, { proposals: [{ id: "QX1", b: f.region, classId: "specialties", p: 0.9 }] }), fixtureRequest(f, { kind: undefined }));
+    expect(r.model.kind).toBe("schedule");
+    expect(r.kindSuggestion).toMatchObject({ kind: "schedule", classId: "specialties" });
+  });
+
   it("no kind + an owning proposal → the proposal's kind, returned as kindSuggestion", async () => {
     const f = fixture("syn-keynote-basic");
     const ev = fixtureEvidence(f, { proposals: [{ id: "QX1", b: f.region, classId: "keynote-table", p: 0.83 }] });
@@ -264,6 +289,15 @@ describe("prior id re-matching (§2.1 Ids)", () => {
     const shifted: StructureTableModel = { ...first, rows: first.rows.map((r) => ({ ...r, id: `r${Number(r.id.slice(1)) + 100}` })) };
     const re = (await run(ev, fixtureRequest(f, { prior: shifted }))).model as StructureTableModel;
     expect(re.rows.map((r) => r.id)).toEqual(shifted.rows.map((r) => r.id));
+  });
+
+  it("paramsHash does not depend on prior (verify LOW-1, M9)", async () => {
+    const f = fixture("syn-sched-basic");
+    const ev = fixtureEvidence(f);
+    const first = await run(ev, fixtureRequest(f));
+    const shifted: StructureTableModel = { ...(first.model as StructureTableModel), rows: (first.model as StructureTableModel).rows.map((r) => ({ ...r, id: `r${Number(r.id.slice(1)) + 100}` })) };
+    const withPrior = await run(ev, fixtureRequest(f, { prior: shifted }));
+    expect(withPrior.stamp.paramsHash).toBe(first.stamp.paramsHash);
   });
 });
 

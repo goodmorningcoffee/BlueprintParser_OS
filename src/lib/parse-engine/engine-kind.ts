@@ -5,8 +5,11 @@
  * Order (first that holds wins):
  * 1. the request's `kind` (the workspace sends the inbox item's kind) — no suggestion is returned;
  * 2. the owning classifier proposal (`hints.proposalId`, else the stored proposal over the box at IoU ≥ .5): its
- *    `classId` read by name — `keynote…` → keynote; `…legend…`, `symbol…`, `abbreviation…` → legend;
- *    `spec…`/`…specification…` → spec; `…note…` → notes; any other class → schedule. `p` = the proposal's p;
+ *    `classId` looked up in the classifier vocabularies (`CLASS_KINDS`: the 45 schedule kinds of
+ *    `classifier-engine/vocabulary.ts` → schedule, `finish-legend` → legend; the 8 text-region classes of
+ *    `src/data/classifiers/regions.v1.json` → keynote / legend / notes). An id in neither is read by whole name parts:
+ *    `keynote…` → keynote; `legend`, `symbol…`, `abbreviation…` → legend; `spec`/`specs`/`specification(s)` → spec;
+ *    `note(s)` → notes; anything else → schedule (so `specialties` is a schedule). `p` = the proposal's p;
  * 3. the box itself: the paragraph segmenter's reading (`paragraphs/segment.ts`) — at least 3 keyed paragraphs
  *    holding ≥ 60 % of them, not a key–value list, and the table probe found ≤ 2 columns → notes / spec (as the
  *    segmenter names it), p .6; otherwise schedule, p .5.
@@ -14,6 +17,7 @@
  * head only decides which model family to build, so a wrong suggestion costs one `set-kind` and a re-parse.
  */
 
+import { OTHER_SCHEDULE, SCHEDULE_KINDS } from "@/lib/classifier-engine/vocabulary";
 import type { BboxMinMax, EngineProposal, StructureKind, StructureParagraphDoc } from "./types";
 
 export const KIND_HEAD_VERSION = 1;
@@ -21,15 +25,41 @@ export const KIND_PROPOSAL_IOU = 0.5;
 export const KIND_MIN_KEYED = 3;
 export const KIND_MIN_KEYED_SHARE = 0.6;
 
+/** The text-region classes (`src/data/classifiers/regions.v1.json`); the vocabulary test pins this list to the file. */
+export const REGION_CLASS_KINDS: Readonly<Record<string, StructureKind>> = Object.freeze({
+  keynotes: "keynote",
+  "symbol-legend": "legend",
+  abbreviations: "legend",
+  "general-notes": "notes",
+  "sheet-coded-notes": "notes",
+  "demolition-notes": "notes",
+  "code-life-safety-notes": "notes",
+  "structural-notes": "notes",
+});
+
+/** Every known classifier class id → its structure kind (rule 2). */
+export const CLASS_KINDS: ReadonlyMap<string, StructureKind> = new Map<string, StructureKind>([
+  ...SCHEDULE_KINDS.map((k): [string, StructureKind] => [k.id, k.id === "finish-legend" ? "legend" : "schedule"]),
+  [OTHER_SCHEDULE, "schedule"],
+  ...Object.entries(REGION_CLASS_KINDS),
+]);
+
+/** A class id outside the vocabularies, read by whole name parts (never a prefix: `specialties` is not `spec`). */
+function kindFromName(c: string): StructureKind {
+  const parts = c.split(/[^a-z0-9]+/).filter(Boolean);
+  const has = (...xs: string[]): boolean => parts.some((p) => xs.includes(p));
+  if (parts.some((p) => p.startsWith("keynote")) || c.includes("key-note") || c.includes("keyed-note")) return "keynote";
+  if (has("legend", "legends") || parts.some((p) => p.startsWith("symbol") || p.startsWith("abbreviation"))) return "legend";
+  if (has("spec", "specs", "specification", "specifications")) return "spec";
+  if (has("note", "notes")) return "notes";
+  return "schedule";
+}
+
 /** A classifier class id read as a structure kind (see the file header, rule 2). */
 export function kindFromClassId(classId: string | null | undefined): StructureKind | null {
   if (typeof classId !== "string" || !classId.trim()) return null;
-  const c = classId.toLowerCase();
-  if (c.includes("keynote")) return "keynote";
-  if (c.includes("legend") || c.startsWith("symbol") || c.includes("abbreviation")) return "legend";
-  if (c.startsWith("spec") || c.includes("specification")) return "spec";
-  if (c.includes("note")) return "notes";
-  return "schedule";
+  const c = classId.trim().toLowerCase();
+  return CLASS_KINDS.get(c) ?? kindFromName(c);
 }
 
 const iou = (a: readonly number[], b: readonly number[]): number => {

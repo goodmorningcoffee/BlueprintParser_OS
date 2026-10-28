@@ -83,12 +83,15 @@ export function parseParagraphs(input: ParagraphParseInput): ParagraphParseOutpu
   if (docs.length > 1) flags.add("parts");
 
   // ids re-matched to the prior parse (blocks first, so paragraphs keep pointing at their block)
+  // A corrected prior is matched through its `opsBase` (the machine boxes its ops were recorded on), and its own ids
+  // stay reserved, so a replayed `split-paragraph` mints the same id again (WP-3.D verify HIGH-1).
   const prior = priorDoc(request);
   if (prior) {
-    const bIds = rematchBoxes(blocks, prior.blocks, "b");
+    const base = prior.opsBase ?? prior;
+    const bIds = rematchBoxes(blocks, base.blocks, "b", prior.blocks.map((b) => b.id));
     const bMap = new Map(blocks.map((b, i) => [b.id, bIds[i]]));
     blocks.forEach((b, i) => { b.id = bIds[i]; });
-    const pIds = rematchBoxes(paragraphs, prior.paragraphs, "p");
+    const pIds = rematchBoxes(paragraphs, base.paragraphs, "p", prior.paragraphs.map((p) => p.id));
     paragraphs.forEach((p, i) => { p.id = pIds[i]; p.blockId = bMap.get(p.blockId) ?? p.blockId; });
   }
   if (paragraphs.length > PARSE_ENGINE_CAPS.paragraphs) {

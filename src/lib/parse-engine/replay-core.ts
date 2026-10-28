@@ -4,6 +4,10 @@
  * A committed region carries its recipe (`data.recipe`: the parse request), its ops (`data.ops`) and the stamp of
  * the engine that produced it (`data.engine`). Replay = re-run the recipe on the page's CURRENT evidence with the
  * stored model as `prior` (so row / column / paragraph ids re-match at band IoU ≥ .5), then re-apply the ops by id.
+ * The stored model is the CORRECTED one; when its ops changed a band it carries `opsBase` (the machine band ids the
+ * ops were recorded on, set by `applyOps`), and the engine re-matches against that, never against the corrected
+ * bands. Otherwise an `add-line` at ≤ 50 % would hand the fresh full row the minted id, and the replayed edit on
+ * that id would land on the other half without being reported (WP-3.D verify HIGH-1).
  * The same step is the commit's rebase when the evidence changed under a draft (WP-3.G step 3): every op must land,
  * else the rebase is refused.
  *
@@ -38,7 +42,10 @@ export interface ReplayPlan {
   prior: StructureModel | null;
 }
 
-/** What a stored region `data` would replay; null when it carries no recipe (a classic save). */
+/**
+ * What a stored region `data` would replay; null when it carries no recipe (a classic save). `prior` is the stored
+ * (corrected) model as is: its `opsBase` is what the re-parse re-matches against.
+ */
 export function replayPlan(data: { structure?: StructureModel; engine?: EngineStamp; recipe?: ParseRecipe; ops?: CorrectionOp[] } | null | undefined): ReplayPlan | null {
   if (!data?.recipe?.request) return null;
   return {

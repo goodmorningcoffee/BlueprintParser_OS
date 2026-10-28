@@ -50,7 +50,7 @@ import { CAPABILITY_VERSIONS } from "./version";
 export interface RunParseEngineOptions {
   /** `stamp.at` (ISO time). Default: now. Pin it for byte-equal results. */
   at?: string;
-  /** R8 weights. Default: `eval/parse-engine/profile.json` when present, else the defaults (`profile.ts`). */
+  /** R8 weights. Default: the shipped `src/data/parse-engine/profile.json` (`profile.ts`; `{v:1,id:"default"}` = R8). */
   profile?: ParseEngineProfile;
 }
 

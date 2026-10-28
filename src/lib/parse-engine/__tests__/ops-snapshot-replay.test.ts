@@ -286,3 +286,142 @@ describe("replay: ops re-applied onto a re-parse with re-matched ids", () => {
     expect(replayPlan({ structure: r.model })).toBeNull();
   });
 });
+
+describe("replay of a stored CORRECTED model: ids re-match against its opsBase (WP-3.D verify HIGH-1)", () => {
+  const opts = { at: AT, profile: DEFAULT_PROFILE };
+  const rowOf = (m: StructureTableModel, t: string): [string, number, number] | null => {
+    const c = m.cells.find((x) => x.text === t);
+    const r = c ? m.rows.find((x) => x.id === c.row) : undefined;
+    return r ? [r.id, r.y0, r.y1] : null;
+  };
+  const nextNum = (ids: string[]): number => Math.max(...ids.map((id) => Number(id.slice(1)))) + 1;
+
+  for (const frac of [0.3, 0.5, 0.7]) {
+    it(`add-line at ${frac * 100} % of a row + an edit on each half, replayed through replayPlan(stored data)`, async () => {
+      const f = fixture("syn-sched-basic");
+      const ev = fixtureEvidence(f);
+      const base = await parse("syn-sched-basic");
+      const m = T(base.model);
+      const r4 = m.rows[3];
+      const minted = `r${nextNum(m.rows.map((r) => r.id))}`;
+      const ops: CorrectionOp[] = [
+        { op: "add-line", axis: "rows", at: r4.y0 + frac * (r4.y1 - r4.y0) },
+        { op: "edit-cell", row: minted, col: m.cols[1].id, text: "QX LOWER" },
+        { op: "edit-cell", row: r4.id, col: m.cols[1].id, text: "QX UPPER" },
+      ];
+      const applied = applyOpsDetailed(base, ops);
+      expect(applied.landed).toEqual([true, true, true]);
+      // what WP-3.G stores: the corrected model, which names the machine ids its ops were recorded on
+      const stored = T(applied.model);
+      expect(stored.opsBase?.rows.map((r) => r.id)).toEqual(m.rows.map((r) => r.id));
+      expect(zStructureModel.safeParse(stored).success).toBe(true);
+      const plan = replayPlan({ structure: stored, engine: base.stamp, recipe: { request: fixtureRequest(f), origin: "draw" }, ops })!;
+      const out = await replayRegion(ev, plan.recipe, plan.ops, plan.prior, runParseEngine, opts);
+      expect(T(out.result.model).rows.map((r) => r.id)).toEqual(m.rows.map((r) => r.id));
+      expect(out.landed).toEqual([true, true, true]);
+      expect(out.lost).toEqual([]);
+      expect(rowOf(T(out.model), "QX LOWER")).toEqual(rowOf(stored, "QX LOWER"));
+      expect(rowOf(T(out.model), "QX UPPER")).toEqual(rowOf(stored, "QX UPPER"));
+      expect(out.model).toEqual(stored);
+    });
+  }
+
+  it("split-paragraph + a key on the new paragraph, replayed through replayPlan(stored data)", async () => {
+    let checked = 0;
+    for (const id of ["syn-notes-dimension-start", "syn-notes-lettered"]) {
+      const f = fixture(id);
+      const ev = fixtureEvidence(f);
+      const base = await parse(id);
+      const d = P(base.model);
+      const multi = d.paragraphs.find((p) => p.lineCount >= 2);
+      if (!multi) continue;
+      const minted = `p${nextNum(d.paragraphs.map((p) => p.id))}`;
+      const ops: CorrectionOp[] = [{ op: "split-paragraph", p: multi.id, atLine: 1 }, { op: "set-paragraph-key", p: minted, key: "QK" }];
+      const applied = applyOpsDetailed(base, ops);
+      expect(applied.landed, id).toEqual([true, true]);
+      const stored = P(applied.model);
+      expect(stored.opsBase?.paragraphs.map((p) => p.id)).toEqual(d.paragraphs.map((p) => p.id));
+      expect(zStructureModel.safeParse(stored).success).toBe(true);
+      const plan = replayPlan({ structure: stored, recipe: { request: fixtureRequest(f), origin: "draw" }, ops })!;
+      const out = await replayRegion(ev, plan.recipe, plan.ops, plan.prior, runParseEngine, opts);
+      expect(out.landed, id).toEqual([true, true]);
+      const qk = (doc: StructureParagraphDoc) => doc.paragraphs.find((p) => p.key === "QK");
+      expect(qk(P(out.model))?.b, id).toEqual(qk(stored)?.b);
+      expect(out.model, id).toEqual(stored);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it("ops that change no band leave no opsBase; a base's own opsBase is kept", async () => {
+    const base = await parse("syn-sched-basic");
+    const m = T(base.model);
+    expect(T(applyOps(base, [{ op: "edit-cell", row: m.rows[2].id, col: m.cols[1].id, text: "QX" }])).opsBase).toBeUndefined();
+    const moved = T(applyOps(base, [{ op: "add-line", axis: "rows", at: (m.rows[3].y0 + m.rows[3].y1) / 2 }]));
+    const again = T(applyOps({ ...base, model: moved }, [{ op: "add-line", axis: "rows", at: (m.rows[5].y0 + m.rows[5].y1) / 2 }]));
+    expect(again.opsBase).toEqual(moved.opsBase);
+  });
+
+  it("a fresh band that matches no machine band never takes an id an op minted", async () => {
+    const f = fixture("syn-sched-basic");
+    const base = await parse("syn-sched-basic");
+    const m = T(base.model);
+    const stored = T(applyOps(base, [{ op: "add-line", axis: "rows", at: (m.rows[3].y0 + m.rows[3].y1) / 2 }]));
+    const minted = `r${nextNum(m.rows.map((r) => r.id))}`;
+    expect(stored.rows.map((r) => r.id)).toContain(minted);
+    // the machine parse the ops were recorded on lacked the last band (the evidence has grown a row since)
+    const last = m.rows[m.rows.length - 1].id;
+    const prior: StructureTableModel = { ...stored, opsBase: { ...stored.opsBase!, rows: stored.opsBase!.rows.filter((r) => r.id !== last) } };
+    const re = T((await runParseEngine(fixtureEvidence(f), fixtureRequest(f, { prior }), opts)).model);
+    expect(re.rows.map((r) => r.id)).not.toContain(minted);
+    expect(re.rows[re.rows.length - 1].id).toBe(`r${nextNum([...stored.rows.map((r) => r.id)])}`);
+  });
+});
+
+describe("op edge cases pinned by the WP-3.D verify mutations (LOW-1, LOW-3)", () => {
+  it("remove-line never merges across parts (M5)", async () => {
+    const f = fixture("syn-sched-two-blocks");
+    const mid = (f.region[0] + f.region[2]) / 2;
+    const left: [number, number, number, number] = [f.region[0], f.region[1], mid, f.region[3]];
+    const right: [number, number, number, number] = [mid, f.region[1], f.region[2], f.region[3]];
+    const base = await runParseEngine(fixtureEvidence(f), { page: 1, bbox: left, parts: [right], budget: "instant", kind: "schedule" }, { at: AT, profile: DEFAULT_PROFILE });
+    const m = T(base.model);
+    const lastOfPart0 = m.rows.filter((r) => (r.part ?? 0) === 0).pop()!;
+    expect(m.rows[m.rows.indexOf(lastOfPart0) + 1]?.part).toBe(1);
+    const r = applyOpsDetailed(base, [{ op: "remove-line", axis: "rows", after: lastOfPart0.id }]);
+    expect(r.landed).toEqual([false]);
+    expect(r.model).toEqual(base.model);
+  });
+
+  it("add-line hands a shape key to the band that holds its shape (M6)", async () => {
+    let checked = 0;
+    for (const id of ["syn-sched-shapes-centred-3line", "syn-sched-shapes-hex", "syn-keynote-shapes"]) {
+      const base = await parse(id);
+      const m = T(base.model);
+      const row = m.rows.find((r) => r.key && r.key.kind !== "text");
+      if (!row || !row.key || row.key.kind === "text") continue;
+      const cy = (row.key.shapeBbox[1] + row.key.shapeBbox[3]) / 2;
+      if (!(cy > row.y0 && cy < row.y1)) continue;
+      const minted = `r${Math.max(...m.rows.map((r) => Number(r.id.slice(1)))) + 1}`;
+      const below = T(applyOps(base, [{ op: "add-line", axis: "rows", at: (cy + row.y1) / 2 }]));
+      expect(below.rows.find((r) => r.id === row.id)?.key, id).toEqual(row.key);
+      expect(below.rows.find((r) => r.id === minted)?.key, id).toBeUndefined();
+      const above = T(applyOps(base, [{ op: "add-line", axis: "rows", at: (row.y0 + cy) / 2 }]));
+      expect(above.rows.find((r) => r.id === minted)?.key, id).toEqual(row.key);
+      expect(above.rows.find((r) => r.id === row.id)?.key, id).toBeUndefined();
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it("pin-source on columns keeps the box edges as the outer lines, as fusion does (LOW-3)", async () => {
+    const base = await parse("syn-sched-textract-header-row");
+    const m = T(base.model);
+    const alt = base.alternatives.find((a) => a.method === "textract-cells")!;
+    const pinned = T(applyOps(base, [{ op: "pin-source", axis: "cols", method: "textract-cells" }]));
+    expect(pinned.cols[0].x0).toBe(m.bbox[0]);
+    expect(pinned.cols[pinned.cols.length - 1].x1).toBe(m.bbox[2]);
+    const inner = alt.geometry.colLines.slice(1, -1).filter((x) => x > m.bbox[0] && x < m.bbox[2]);
+    expect(pinned.cols.slice(1).map((c) => c.x0.toFixed(6))).toEqual(inner.map((x) => (Math.round(x * 1e6) / 1e6).toFixed(6)));
+  });
+});

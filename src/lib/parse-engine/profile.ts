@@ -1,17 +1,23 @@
 /**
- * Fusion weights (table pipeline WP-3.D; PLAN §1.4 R8, §5 WP-3.Q). Server-only (reads a file).
+ * Fusion weights (table pipeline WP-3.D; PLAN §1.4 R8, §5 WP-3.Q). Server-only (`loadParseEngineProfile` reads a file).
  *
  * R8 initial weights: rows `textract-cells 1.0 · rulings 1.0 · hanging-indent .6 · primitive-grid .6 · ocr-lines .5
  * · layout .4 · img2table .7 · tatr .8` (`types-rows.ts` `DEFAULT_ROW_WEIGHTS`, WP-3.A); columns `x-starts .7 ·
  * textract-cells 1.0 · rulings 1.0 · primitive-grid .6`. WP-3.Q refits them on the ODD gold sets and writes
- * `eval/parse-engine/profile.json` (a ledger of numbers only); when that file is present and valid it overrides the
- * defaults, else the defaults stand. A malformed file is ignored (logged once by the caller through `error`), never
- * half-applied. The resolved profile is cached per process.
+ * `src/data/parse-engine/profile.json` (`PROFILE_PATH`, a ledger of numbers only; it ships `{ v: 1, id: "default" }`
+ * = the R8 values). Valid, it overrides the defaults; malformed, it is ignored as a whole (the reason is kept in
+ * `parseEngineProfileError()`), never half-applied.
+ *
+ * The production path IMPORTS the file statically, so the bundle carries it. It used to be read from
+ * `process.cwd()/eval/…` at run time, and `.dockerignore` excludes `eval/`, so the image always ran the defaults
+ * while dev, tests and eval read the refit (WP-3.D verify MED-2). `loadParseEngineProfile(root, read)` reads the
+ * file from disk for tools that rewrite it in-process (the eval harness); the server never calls it.
  *
  * File shape: `{ "v": 1, "id": "<free text>", "rows": { "<method>": w, … }, "cols": { "<method>": w, … } }`.
  * Weights are finite numbers in [0, 4]; an unknown method id makes the file invalid.
  */
 
+import shippedProfile from "@/data/parse-engine/profile.json";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { METHOD_IDS, type MethodId } from "./types";
@@ -36,7 +42,7 @@ export const DEFAULT_COL_WEIGHTS: MethodWeights = Object.freeze({
 
 export const DEFAULT_PROFILE: ParseEngineProfile = Object.freeze({ id: "default", rows: DEFAULT_ROW_WEIGHTS, cols: DEFAULT_COL_WEIGHTS });
 
-export const PROFILE_PATH = "eval/parse-engine/profile.json";
+export const PROFILE_PATH = "src/data/parse-engine/profile.json";
 const MAX_WEIGHT = 4;
 
 function weights(value: unknown): MethodWeights | null {
@@ -64,7 +70,13 @@ export function parseProfile(json: unknown): { profile: ParseEngineProfile } | {
 
 let cached: { profile: ParseEngineProfile; error?: string } | null = null;
 
-/** The process profile: `eval/parse-engine/profile.json` under `root` when present and valid, else the R8 defaults. */
+/** A profile from already-parsed JSON (the shipped import, or a file read from disk), else the defaults + why. */
+export function resolveParseEngineProfile(json: unknown): { profile: ParseEngineProfile; error?: string } {
+  const r = parseProfile(json);
+  return "profile" in r ? { profile: r.profile } : { profile: DEFAULT_PROFILE, error: r.error };
+}
+
+/** `PROFILE_PATH` under `root`, read from disk (tools only; see the file header). A missing file → the defaults. */
 export function loadParseEngineProfile(root: string = process.cwd(), read: (p: string) => string = (p) => readFileSync(p, "utf8")): { profile: ParseEngineProfile; error?: string } {
   let text: string;
   try {
@@ -73,17 +85,22 @@ export function loadParseEngineProfile(root: string = process.cwd(), read: (p: s
     return { profile: DEFAULT_PROFILE };
   }
   try {
-    const r = parseProfile(JSON.parse(text));
-    return "profile" in r ? { profile: r.profile } : { profile: DEFAULT_PROFILE, error: r.error };
+    return resolveParseEngineProfile(JSON.parse(text));
   } catch {
     return { profile: DEFAULT_PROFILE, error: "profile is not valid JSON" };
   }
 }
 
-/** Cached `loadParseEngineProfile()` (one read per process). */
+/** The production profile: the statically imported `PROFILE_PATH` (resolved once per process). */
 export function parseEngineProfile(): ParseEngineProfile {
-  if (!cached) cached = loadParseEngineProfile();
+  if (!cached) cached = resolveParseEngineProfile(shippedProfile);
   return cached.profile;
+}
+
+/** Why the shipped profile was rejected (the defaults then run), or undefined. */
+export function parseEngineProfileError(): string | undefined {
+  parseEngineProfile();
+  return cached?.error;
 }
 
 /** Tests only: forget the cached profile. */
