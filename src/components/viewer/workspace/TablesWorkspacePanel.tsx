@@ -3,7 +3,9 @@
 // [TP-3 WP-3.L] The workspace's right panel (PLAN §3.1): header, inbox, and (WP-3.M) the item detail below the
 // selected row. 420 px wide by default, resizable from its left edge with pointer capture (no window listeners).
 // Keys are handled HERE, on the panel, never on `window` (§1.6 rule 14): J / K move through the inbox's visible
-// order, Enter opens the selected item. Typing in a field is never hijacked, and handled keys stop propagating.
+// order. Enter belongs to the panel only on the panel itself (opens the selected item) or on an inbox row (opens
+// THAT row); on any other control — a button, a chip, a select — Enter keeps its native meaning (WP-3.L verify
+// MED-2). Typing in a field is never hijacked, and handled keys stop propagating.
 // Esc stays owned by ProposalFocusLayer.
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
@@ -56,7 +58,9 @@ export default function TablesWorkspacePanel() {
     if (key === "j") next();
     else if (key === "k") prev();
     else if (e.key === "Enter") {
-      const target = ordered.find((i) => i.id === selectedKey);
+      const rowId = e.target instanceof Element ? e.target.closest("[data-item-id]")?.getAttribute("data-item-id") : null;
+      if (!rowId && e.target !== e.currentTarget) return;
+      const target = ordered.find((i) => i.id === (rowId ?? selectedKey));
       if (!target) return;
       openItem(target);
     } else return;
@@ -102,7 +106,7 @@ export default function TablesWorkspacePanel() {
         {showEmpty ? (
           <EmptyState reason={emptyReason(!!error, view.total, view.counts.todo, filter)} scope={scope} />
         ) : (
-          <InboxList data={items} rows={view.rows} low={view.low} pageNumber={pageNumber} onOpen={onOpen} />
+          <InboxList rows={view.rows} low={view.low} pageNumber={pageNumber} onOpen={onOpen} />
         )}
       </div>
     </aside>

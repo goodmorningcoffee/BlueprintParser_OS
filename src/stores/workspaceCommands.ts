@@ -32,6 +32,45 @@ export function drawItemKey(pageNumber: number, bbox: BboxMinMax): string {
   return `draw:${pageNumber}:${bbox.map((v) => v.toFixed(2)).join(",")}`;
 }
 
+/**
+ * Inbox kind of a classifier proposal, or null when its target is not a structure (page units, plans, cuts).
+ * ⚠ MIRROR of WP-3.F's `proposalInboxKind` (`src/lib/parse-engine/inbox-derive.ts`), which is not on this branch
+ * (§5.1: no shared files inside a group). The items read and "Parse this table" must give one proposal ONE kind,
+ * so at integration replace this body with a re-export of that function (WP-3.L verify MED-4).
+ */
+export function proposalWorkspaceKind(target: unknown, classId: unknown): StructureKind | null {
+  const cls = typeof classId === "string" ? classId : "";
+  switch (target) {
+    case "schedule": return "schedule";
+    case "keynote-table": return "keynote";
+    case "symbol-legend": return "legend";
+    case "general-notes": return "notes";
+    case "text-region":
+      if (cls === "keynotes") return "keynote";
+      if (cls === "symbol-legend" || cls === "abbreviations") return "legend";
+      return "notes";
+    default: return null;
+  }
+}
+
+/**
+ * Closing the workspace takes its canvas marks with it: the hover outline and the green focus box (with its dim),
+ * when they point at a workspace item. Marks another surface set are left alone (WP-3.L verify LOW-2, LOW-3).
+ */
+function releaseCanvas(): void {
+  const { queue, selectedKey } = ws();
+  const ids = new Set<string>(queue.map((q) => q.proposalId ?? q.id));
+  if (selectedKey) ids.add(selectedKey);
+  const focus = useProposalFocusStore.getState();
+  if (focus.hover && ids.has(focus.hover.proposalId)) focus.setHover(null);
+  if (focus.focus && ids.has(focus.focus.proposalId)) focus.clearFocus();
+}
+
+function closeAndRelease(): void {
+  releaseCanvas();
+  ws().closeWorkspace();
+}
+
 function classicOpen(group: WorkspaceGroup): boolean {
   const ui = useUiStore.getState();
   return group === "tables" ? ui.showTableParsePanel : ui.showSpecsNotesPanel;
@@ -66,7 +105,7 @@ export function openFromToolbar(group: WorkspaceGroup): void {
     return;
   }
   if (state.open && state.group === group) {
-    state.closeWorkspace();
+    closeAndRelease();
     return;
   }
   openWorkspaceFor(group);
@@ -75,19 +114,19 @@ export function openFromToolbar(group: WorkspaceGroup): void {
 /** Open or close the workspace (opening keeps the current group unless one is given). */
 export function toggleWorkspace(group?: WorkspaceGroup): void {
   const state = ws();
-  if (state.open && (!group || group === state.group)) state.closeWorkspace();
+  if (state.open && (!group || group === state.group)) closeAndRelease();
   else if (state.enabled) openWorkspaceFor(group ?? state.group);
 }
 
 /** Close the workspace (drafts stay; they are restored when the item is reopened). */
 export function closeWorkspace(): void {
-  ws().closeWorkspace();
+  closeAndRelease();
 }
 
 /** "Classic tools ▸": close the workspace and open this group's classic panel. */
 export function openClassicTools(group?: WorkspaceGroup): void {
   const target = group ?? ws().group;
-  ws().closeWorkspace();
+  closeAndRelease();
   if (!classicOpen(target)) toggleClassic(target);
 }
 

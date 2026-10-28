@@ -6,8 +6,28 @@
 import { useState, type ReactNode } from "react";
 import { FOCUS_RING } from "./WorkspaceHeader";
 
-export default function LowConfidenceFold({ count, holdsSelection = false, children }: { count: number; holdsSelection?: boolean; children: ReactNode }) {
-  const [toggled, setOpen] = useState(false);
+// The owner may control the toggle (`open` + `onToggle`) when it needs to know what is on screen: the bulk
+// "Not a table" acts only on rows the user can see (WP-3.L verify MED-1).
+export default function LowConfidenceFold({
+  count,
+  holdsSelection = false,
+  open: controlled,
+  onToggle,
+  children,
+}: {
+  count: number;
+  holdsSelection?: boolean;
+  open?: boolean;
+  onToggle?: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  const [local, setLocal] = useState(false);
+  const toggled = controlled ?? local;
+  const setOpen = (fn: (v: boolean) => boolean) => {
+    const nextOpen = fn(toggled);
+    if (controlled === undefined) setLocal(nextOpen);
+    onToggle?.(nextOpen);
+  };
   const open = toggled || holdsSelection;
   if (count === 0) return null;
   return (

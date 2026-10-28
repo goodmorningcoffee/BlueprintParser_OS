@@ -5,35 +5,65 @@
 // inside `src/queries/`, through `getJson` (§1.6 rule 6). staleTime 30 s; a commit or a verdict invalidates
 // `workspaceKeys.items(publicId)` (every scope and page at once).
 //
-// The wire shape below is the client's reading of the WP-3.F response: `items` (each row an `InboxSlim` plus its
-// page and the scores and chips the inbox shows) and an optional `lowConfidence` group (items below the server's
-// threshold). The reader is tolerant: a missing array is empty, so a partial response renders, never throws.
+// The wire is WP-3.F's `WorkspaceItemsResponse` (`src/lib/parse-engine/types-items.ts`): per-sheet `groups`, each
+// with its `items` and `lowConfidence` (PLAN §3.2). The reader flattens the groups. A body without a `groups`
+// array is a contract break and is raised as an ERROR (the panel says "could not be loaded"), never read as an
+// empty inbox (WP-3.L verify HIGH-1). Single rows that are malformed are dropped.
+//
+// ⚠ INTEGRATION: `types-items.ts` is WP-3.F's file and is not on this branch (§5.1: no two WPs share a file), so
+// the wire types below MIRROR it field for field. When 3.F merges, replace the mirror block with
+// `import type { WorkspaceItem as WireItem, WorkspaceItemsGroup, WorkspaceItemsResponse } from
+// "@/lib/parse-engine/types-items";` and delete the mirror.
 
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { getJson, persistFetch } from "@/lib/client-persist";
-import type { InboxSlim } from "@/lib/parse-engine/types";
+import type { BboxMinMax, StructureKind } from "@/lib/parse-engine/types";
 import { workspaceKeys } from "@/queries/workspaceKeys";
-import type { WorkspaceFilter, WorkspaceItemRef, WorkspaceScope } from "@/stores/tablesWorkspaceStore";
+import type { WorkspaceFilter, WorkspaceScope } from "@/stores/tablesWorkspaceStore";
 
-export interface WorkspaceItemChips {
-  shapes?: number;
-  textract?: boolean;
-  cols?: number;
-  paragraphs?: number;
-}
-
-export interface WorkspaceItem extends WorkspaceItemRef {
-  origin: InboxSlim["origin"];
+// ── MIRROR of WP-3.F `types-items.ts` (see INTEGRATION above) ────────────────────────────────────
+export type WorkspaceItemOrigin = "proposal" | "text-region" | "region" | "classified-table" | "ensemble";
+export interface WireItem {
+  id: string;
+  origin: WorkspaceItemOrigin;
+  page: number;
+  kind: StructureKind;
+  classId?: string | null;
   title: string | null;
-  /** Kind probability. */
+  b: BboxMinMax;
   p: number;
-  /** Table-ness, when the recipe scored it; the inbox sorts by `tableP × p`. */
   tableP?: number;
-  state: InboxSlim["state"];
-  /** The saved region predates a capability bump (WP-3.H `stale`). */
-  stale?: boolean;
-  chips?: WorkspaceItemChips;
+  score: number;
+  state: "todo" | "parsed" | "rejected";
+  proposalId?: string;
+  regionId?: string;
+  verdict?: "accept" | "reject" | "rename";
+  regionType?: string;
+  legacyId?: string;
+  tagRows?: number;
+  regionOrigin?: "workspace" | "classic";
 }
+export interface WorkspaceItemsGroup { page: number; items: WireItem[]; lowConfidence: WireItem[] }
+export interface WorkspaceItemsResponse {
+  scope: "all" | "sheet";
+  page?: number;
+  indexReady: boolean;
+  threshold: number;
+  groups: WorkspaceItemsGroup[];
+}
+// ── end mirror ──────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One inbox row: the wire item, plus `stale`, which the items read does not carry yet. WP-5.A adds the stale
+ * capability badge from `structureIndex.regions[].stale`; until then the Stale filter stays hidden (it would
+ * always count 0).
+ */
+export interface WorkspaceItem extends WireItem {
+  stale?: boolean;
+}
+
+/** The only origins the verdict route takes (WP-3.F `verdict.ts`: proposals and text regions). */
+export const VERDICT_ORIGINS: ReadonlySet<WorkspaceItemOrigin> = new Set(["proposal", "text-region"]);
 
 export interface WorkspaceItemsData {
   items: WorkspaceItem[];
@@ -56,9 +86,18 @@ function rows(value: unknown): WorkspaceItem[] {
     typeof (row as WorkspaceItem).page === "number" && Array.isArray((row as WorkspaceItem).b));
 }
 
+/** Flatten WP-3.F's per-sheet groups. Throws when the body is not that shape (a contract break is an error). */
 export function normalizeItems(body: unknown): WorkspaceItemsData {
-  const obj = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-  return { items: rows(obj.items), lowConfidence: rows(obj.lowConfidence) };
+  const groups = body && typeof body === "object" ? (body as Partial<WorkspaceItemsResponse>).groups : undefined;
+  if (!Array.isArray(groups)) throw new Error("The inbox response is not in the expected shape.");
+  const items: WorkspaceItem[] = [];
+  const lowConfidence: WorkspaceItem[] = [];
+  for (const group of groups) {
+    if (!group || typeof group !== "object") continue;
+    items.push(...rows(group.items));
+    lowConfidence.push(...rows(group.lowConfidence));
+  }
+  return { items, lowConfidence };
 }
 
 /** One inbox read. `scope = "sheet"` needs a page; never fetched for demo projects (the route refuses them). */
@@ -84,8 +123,12 @@ export function invalidateWorkspaceItems(qc: QueryClient, publicId: string): voi
 
 // ── pure inbox model ──────────────────────────────────────────────────────────────────────────────
 
-/** The inbox sort key: table-ness × kind probability (an unscored table-ness counts as 1). */
-export function itemScore(item: Pick<WorkspaceItem, "p" | "tableP">): number {
+/**
+ * The inbox sort key: the server's `score` (`tableP × p`, the key its threshold split uses), else table-ness ×
+ * kind probability computed here (an unscored table-ness counts as 1).
+ */
+export function itemScore(item: Pick<WorkspaceItem, "p" | "tableP"> & { score?: number }): number {
+  if (typeof item.score === "number" && Number.isFinite(item.score)) return item.score;
   const p = Number.isFinite(item.p) ? item.p : 0;
   const t = item.tableP === undefined || !Number.isFinite(item.tableP) ? 1 : item.tableP;
   return t * p;
@@ -150,6 +193,11 @@ export function verdictRequestFor(item: WorkspaceItem, verdict: "reject" | "acce
     verdict,
     ...(classId ? { classId } : {}),
   };
+}
+
+/** Can the bulk "Not a table" take this row? Only To-review proposals and text regions take a verdict. */
+export function bulkRejectable(item: WorkspaceItem): boolean {
+  return item.state === "todo" && VERDICT_ORIGINS.has(item.origin);
 }
 
 /**

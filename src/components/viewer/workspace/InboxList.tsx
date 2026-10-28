@@ -2,17 +2,20 @@
 
 // [TP-3 WP-3.L] The inbox list (PLAN §3.1). This sheet: rows sorted by `tableP × p`, then the low-confidence fold.
 // All sheets: one collapsible group per sheet from the project-level read; expanding a sheet loads that sheet's
-// detail read (which also carries its low-confidence items). Bulk "Not a table: rest of this sheet" rejects every
-// remaining To-review item of the current sheet (two-step confirm; sequential; stops on the first failure).
+// detail read (which also carries its low-confidence items). Bulk "Not a table: rest of this sheet" (This sheet
+// scope) rejects the To-review rows the user can SEE: the main list, plus the low-confidence fold only while it is
+// open, and only proposals and text regions — the verdict route refuses the classified-table / ensemble items,
+// and a reject is a negative label, so it is never recorded on an unseen row (WP-3.L verify MED-1). Two-step
+// confirm; sequential; stops on the first failure.
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  bulkRejectable,
   inboxView,
   rejectItems,
   useWorkspaceItems,
   type WorkspaceItem,
-  type WorkspaceItemsData,
 } from "@/queries/useWorkspaceItems";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTablesWorkspaceStore } from "@/stores/tablesWorkspaceStore";
@@ -79,13 +82,11 @@ function SheetGroup({
 }
 
 export default function InboxList({
-  data,
   rows,
   low,
   pageNumber,
   onOpen,
 }: {
-  data: WorkspaceItemsData;
   rows: WorkspaceItem[];
   low: WorkspaceItem[];
   pageNumber: number;
@@ -97,17 +98,17 @@ export default function InboxList({
   const drawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   const pageNames = useSessionStore((s) => s.pageNames);
   const scope = useTablesWorkspaceStore((s) => s.scope);
-  const kinds = useTablesWorkspaceStore((s) => s.kinds);
   const selectedKey = useTablesWorkspaceStore((s) => s.selectedKey);
-  const currentPage = useTablesWorkspaceStore((s) => s.queue.find((q) => q.id === s.selectedKey)?.page ?? null);
+  const [lowOpen, setLowOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // "This sheet" for the bulk reject: the selected item's sheet, else the sheet on screen.
-  const sheetPage = currentPage ?? pageNumber;
-  const rest = [...data.items, ...data.lowConfidence].filter((i) =>
-    i.page === sheetPage && i.state === "todo" && i.id !== selectedKey && kinds.includes(i.kind));
+  // The visible rows of the sheet on screen (`rows`/`low` are already kind- and filter-filtered); the fold opens
+  // by its toggle or because it holds the selection.
+  const lowVisible = lowOpen || low.some((i) => i.id === selectedKey);
+  const rest = scope !== "sheet" ? [] : [...rows, ...(lowVisible ? low : [])].filter((i) =>
+    i.page === pageNumber && i.id !== selectedKey && bulkRejectable(i));
 
   const rejectRest = async () => {
     setBusy(true);
@@ -127,7 +128,7 @@ export default function InboxList({
               <InboxRow key={item.id} item={item} selected={item.id === selectedKey} onOpen={onOpen} />
             ))}
           </ul>
-          <LowConfidenceFold count={low.length} holdsSelection={low.some((i) => i.id === selectedKey)}>
+          <LowConfidenceFold count={low.length} holdsSelection={low.some((i) => i.id === selectedKey)} open={lowOpen} onToggle={setLowOpen}>
             {low.map((item) => (
               <InboxRow key={item.id} item={item} selected={item.id === selectedKey} onOpen={onOpen} />
             ))}

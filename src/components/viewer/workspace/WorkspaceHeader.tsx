@@ -2,6 +2,8 @@
 
 // [TP-3 WP-3.L] Workspace header (PLAN §3.1): scope [This sheet | All sheets] · filter [To review n | Parsed n |
 // Rejected n | Stale n] · kind chips [Schedules Keynotes Legends | Notes Specs] · "+ Region" · "Classic tools ▸".
+// "Stale" shows only when the read has a stale item (or it is the active filter): the items read has no stale
+// field until WP-5.A, and a filter that always counts 0 is noise (WP-3.L verify HIGH-1).
 
 import type { StructureKind } from "@/lib/parse-engine/types";
 import {
@@ -82,7 +84,7 @@ export default function WorkspaceHeader({ counts }: { counts: Record<WorkspaceFi
         </button>
       </div>
       <div className="flex flex-wrap gap-1" role="group" aria-label="Filter">
-        {FILTERS.map(([value, label]) => (
+        {FILTERS.filter(([value]) => value !== "stale" || filter === "stale" || (counts?.stale ?? 0) > 0).map(([value, label]) => (
           <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={wsButton(filter === value)}>
             {label}
             {counts ? ` ${counts[value]}` : ""}

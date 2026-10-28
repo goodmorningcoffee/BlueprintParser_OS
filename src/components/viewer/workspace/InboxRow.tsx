@@ -2,7 +2,11 @@
 
 // [TP-3 WP-3.L] One inbox row (PLAN §3.1): kind icon · title · confidence · chips (⬡ shapes · Textract ✓ · n cols ·
 // n ¶) · status. Hover → soft outline on the canvas (proposalFocusStore.hover); click → focus + open.
+// Chips show only what the items read carries (WP-3.F): a proposal's tag rows, a classic-saved region, and the
+// stale badge once WP-5.A sends it. The plan's shape / Textract / column / paragraph chips need fields the read
+// does not have yet, so they are not invented here (WP-3.L verify HIGH-1).
 
+import { useEffect } from "react";
 import type { WorkspaceItem } from "@/queries/useWorkspaceItems";
 import { itemScore } from "@/queries/useWorkspaceItems";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
@@ -24,12 +28,9 @@ const STATE_LABELS: Readonly<Record<WorkspaceItem["state"], string>> = {
 };
 
 export function rowChips(item: WorkspaceItem): string[] {
-  const c = item.chips ?? {};
   const out: string[] = [];
-  if (c.shapes) out.push(`⬡ ${c.shapes}`);
-  if (c.textract) out.push("Textract ✓");
-  if (c.cols) out.push(`${c.cols} cols`);
-  if (c.paragraphs) out.push(`${c.paragraphs} ¶`);
+  if (item.tagRows) out.push(`⬡ ${item.tagRows} tags`);
+  if (item.regionOrigin === "classic") out.push("classic");
   if (item.stale) out.push("stale");
   return out;
 }
@@ -47,6 +48,12 @@ export default function InboxRow({
 }) {
   const publicId = useSessionStore((s) => s.publicId);
   const setHover = useProposalFocusStore((s) => s.setHover);
+  const focusId = item.proposalId ?? item.id;
+  // A click that pages the viewer unmounts the row without a mouseleave: drop this row's outline (verify LOW-2).
+  useEffect(() => () => {
+    const focus = useProposalFocusStore.getState();
+    if (focus.hover?.proposalId === focusId) focus.setHover(null);
+  }, [focusId]);
   const title = item.title?.trim() || `Untitled ${KIND_LABELS[item.kind].replace(/s$/, "").toLowerCase()}`;
   const chips = rowChips(item);
   return (
@@ -56,7 +63,7 @@ export default function InboxRow({
         data-item-id={item.id}
         aria-current={selected ? "true" : undefined}
         onClick={() => onOpen(item)}
-        onMouseEnter={() => setHover({ publicId, proposalId: item.proposalId ?? item.id, pageNumber: item.page, bbox: item.b })}
+        onMouseEnter={() => setHover({ publicId, proposalId: focusId, pageNumber: item.page, bbox: item.b })}
         onMouseLeave={() => setHover(null)}
         className={`w-full text-left px-2 py-1 rounded border text-[11px] ${FOCUS_RING} ${
           selected ? "border-[#00E676]/60 bg-[#00E676]/10" : "border-transparent hover:border-[var(--border)]"

@@ -10,12 +10,13 @@ import { SessionContext } from "next-auth/react";
 import type { ReactNode } from "react";
 
 import ProposedTablesSection from "@/components/viewer/ProposedTablesSection";
+import ViewerToolbar from "@/components/viewer/ViewerToolbar";
 import TablesWorkspaceHost from "@/components/viewer/workspace/TablesWorkspaceHost";
 import { seedProposalsFromBootstrap } from "@/queries/useProposals";
 import { useTableParseHintStore } from "@/stores/tableParseHintStore";
 import type { ProjectProposalSummary } from "@/lib/classifier-engine/types";
 import EmptyState from "@/components/viewer/workspace/EmptyState";
-import { inboxView, itemScore, normalizeItems, sortItems, type WorkspaceItem } from "@/queries/useWorkspaceItems";
+import { inboxView, itemScore, normalizeItems, sortItems, type WorkspaceItem, type WorkspaceItemsResponse } from "@/queries/useWorkspaceItems";
 import { workspaceOn } from "@/queries/useParseEngineFlags";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -28,6 +29,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { toggleSpecsNotesParsePanel, toggleTableParsePanel } from "@/stores/viewerCommands";
 import {
+  closeWorkspace,
   drawItemKey,
   focusItem,
   next,
@@ -35,6 +37,7 @@ import {
   openFromToolbar,
   openItem,
   prev,
+  proposalWorkspaceKind,
 } from "@/stores/workspaceCommands";
 import type { ParseEngineFlags } from "@/lib/parse-engine/types";
 
@@ -50,16 +53,21 @@ const FLAGS_ON: ParseEngineFlags = {
 };
 const FLAGS_OFF: ParseEngineFlags = { ...FLAGS_ON, tools: { ...FLAGS_ON.tools, workspace: "legacy" } };
 
-const row = (over: Partial<WorkspaceItem> & { id: string }): WorkspaceItem => ({
-  page: 1,
-  b: [0.1, 0.1, 0.4, 0.3],
-  kind: "schedule",
-  origin: "proposal",
-  title: `Synthetic ${over.id}`,
-  p: 0.8,
-  state: "todo",
-  ...over,
-});
+// `score` is computed the way WP-3.F's items service does: tableP × p (p when there is no table head).
+const row = (over: Partial<WorkspaceItem> & { id: string }): WorkspaceItem => {
+  const p = over.p ?? 0.8;
+  return {
+    page: 1,
+    b: [0.1, 0.1, 0.4, 0.3],
+    kind: "schedule",
+    origin: "proposal",
+    title: `Synthetic ${over.id}`,
+    p,
+    score: (over.tableP ?? 1) * p,
+    state: "todo",
+    ...over,
+  };
+};
 
 // Synthetic inbox for page 1 (no real drawing text — PLAN §1.6 rule 12).
 const PAGE1_ITEMS: WorkspaceItem[] = [
@@ -94,8 +102,16 @@ function installFetch() {
 
 const flagsRoute = (flags: ParseEngineFlags): Route => (url) =>
   url.endsWith("/parse-engine/flags") ? { status: 200, body: flags } : undefined;
+/** WP-3.F's wire (`types-items.ts`): one group per sheet, each with its items and its low-confidence fold. */
+function itemsBody(items: WorkspaceItem[], low: WorkspaceItem[] = []): WorkspaceItemsResponse {
+  const pages = [...new Set([...items, ...low].map((i) => i.page))].sort((a, b) => a - b);
+  return {
+    scope: "sheet", indexReady: true, threshold: 0.3,
+    groups: pages.map((page) => ({ page, items: items.filter((i) => i.page === page), lowConfidence: low.filter((i) => i.page === page) })),
+  };
+}
 const itemsRoute = (items: WorkspaceItem[], low: WorkspaceItem[] = []): Route => (url) =>
-  url.includes("/parse-engine/items?") ? { status: 200, body: { items, lowConfidence: low } } : undefined;
+  url.includes("/parse-engine/items?") ? { status: 200, body: itemsBody(items, low) } : undefined;
 
 let qc: QueryClient;
 function Providers({ children, session }: { children: ReactNode; session?: unknown }) {
@@ -181,6 +197,52 @@ describe("toolbar re-point (openFromToolbar)", () => {
     openFromToolbar("tables");
     ws().setEnabled(false);
     expect(ws().open).toBe(false);
+  });
+});
+
+describe("ViewerToolbar buttons (rendered)", () => {
+  const renderToolbar = () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    render(<Providers><ViewerToolbar projectName="Synthetic project" /></Providers>);
+    return {
+      tables: screen.getByTitle("Schedules & Table Parser"),
+      notes: screen.getByTitle(/^Specs \/ Notes/),
+    };
+  };
+  const lit = (el: HTMLElement, cls: string) => el.className.split(/\s+/).includes(cls);
+
+  it("workspace on: Schedules/Tables and Specs/Notes open the workspace and light up while it is open", () => {
+    ws().setEnabled(true);
+    const { tables, notes } = renderToolbar();
+    expect(lit(tables, "text-pink-300")).toBe(false);
+    fireEvent.click(tables);
+    expect(ws().open).toBe(true);
+    expect(ws().group).toBe("tables");
+    expect(ui().showTableParsePanel).toBe(false);
+    expect(lit(tables, "text-pink-300")).toBe(true);
+    expect(lit(notes, "text-amber-300")).toBe(false);
+    fireEvent.click(notes);
+    expect(ws().group).toBe("notes");
+    expect(ui().showSpecsNotesPanel).toBe(false);
+    expect(lit(notes, "text-amber-300")).toBe(true);
+    expect(lit(tables, "text-pink-300")).toBe(false);
+    fireEvent.click(notes);
+    expect(ws().open).toBe(false);
+    expect(lit(notes, "text-amber-300")).toBe(false);
+  });
+
+  it("workspace off: the same buttons toggle the classic panels, as before", () => {
+    const { tables, notes } = renderToolbar();
+    fireEvent.click(tables);
+    expect(ui().showTableParsePanel).toBe(true);
+    expect(ws().open).toBe(false);
+    expect(lit(tables, "text-pink-300")).toBe(true);
+    fireEvent.click(notes);
+    expect(ui().showSpecsNotesPanel).toBe(true);
+    expect(lit(notes, "text-amber-300")).toBe(true);
+    fireEvent.click(tables);
+    expect(ui().showTableParsePanel).toBe(false);
   });
 });
 
@@ -324,6 +386,55 @@ describe("inbox", () => {
     }
   });
 
+  it("Enter opens the selected item only from the panel itself, a focused row opens THAT row, other controls keep Enter", async () => {
+    const { panel } = await openInbox();
+    act(() => next());
+    expect(ws().selectedKey).toBe("p-high");
+    // A control inside the panel: Enter is not taken (native activation still works).
+    const classic = within(panel).getByRole("button", { name: /Classic tools/ });
+    expect(fireEvent.keyDown(classic, { key: "Enter" })).toBe(true); // true = not defaultPrevented
+    expect(ws().open).toBe(true);
+    const chip = within(panel).getByRole("button", { name: "Notes" });
+    expect(fireEvent.keyDown(chip, { key: "Enter" })).toBe(true);
+    // A focused row: Enter opens that row, not the selected one.
+    const midRow = within(panel).getByText("Synthetic p-mid").closest("button")!;
+    expect(fireEvent.keyDown(midRow, { key: "Enter" })).toBe(false);
+    expect(ws().selectedKey).toBe("p-mid");
+    expect(useProposalFocusStore.getState().focus?.proposalId).toBe("p-mid");
+    // The panel itself: Enter opens the selected item.
+    act(() => next());
+    expect(fireEvent.keyDown(panel, { key: "Enter" })).toBe(false);
+    expect(useProposalFocusStore.getState().focus?.proposalId).toBe("p-low-table");
+  });
+
+  it("closing the workspace clears its own canvas outline and focus, never another surface's", async () => {
+    const { panel } = await openInbox();
+    fireEvent.mouseEnter(within(panel).getByText("Synthetic p-mid").closest("button")!);
+    fireEvent.click(within(panel).getByText("Synthetic p-mid"));
+    expect(useProposalFocusStore.getState().hover?.proposalId).toBe("p-mid");
+    expect(useProposalFocusStore.getState().focus?.proposalId).toBe("p-mid");
+    act(() => closeWorkspace());
+    expect(useProposalFocusStore.getState().hover).toBeNull();
+    expect(useProposalFocusStore.getState().focus).toBeNull();
+    // A focus another surface set (e.g. the classic proposals list) survives a workspace close.
+    act(() => openFromToolbar("tables"));
+    const foreign = { publicId: PUB, proposalId: "classic-only", pageNumber: 1, bbox: [0, 0, 0.2, 0.2] as [number, number, number, number] };
+    act(() => useProposalFocusStore.getState().focusProposal(foreign));
+    act(() => openFromToolbar("tables"));
+    expect(ws().open).toBe(false);
+    expect(useProposalFocusStore.getState().focus?.proposalId).toBe("classic-only");
+  });
+
+  it("a row unmounted under the pointer drops its hover outline", async () => {
+    const { panel } = await openInbox();
+    fireEvent.mouseEnter(within(panel).getByText("Synthetic p-mid").closest("button")!);
+    expect(useProposalFocusStore.getState().hover?.proposalId).toBe("p-mid");
+    fireEvent.click(within(panel).getByRole("button", { name: "Notes" })); // keep the list non-empty
+    fireEvent.click(within(panel).getByRole("button", { name: "Schedules" })); // schedules off: p-mid unmounts, no mouseleave
+    expect(within(panel).queryByText("Synthetic p-mid")).toBeNull();
+    expect(useProposalFocusStore.getState().hover).toBeNull();
+  });
+
   it("next / prev walk the visible order (main rows, then the fold) without wrapping; the fold opens on selection", async () => {
     const { panel } = await openInbox();
     act(() => { next(); next(); next(); });
@@ -336,19 +447,41 @@ describe("inbox", () => {
     expect(ws().selectedKey).toBe("p-low-table");
   });
 
-  it("bulk 'Not a table: rest of this sheet' rejects the remaining To-review items sequentially", async () => {
-    routes = [(url, init) => (url.endsWith("/parse-engine/verdict") && init?.method === "POST" ? { status: 200, body: { ok: true } } : undefined)];
+  it("bulk 'Not a table: rest of this sheet' rejects only the VISIBLE To-review rows, sequentially", async () => {
+    routes = [(url, init) => (url.endsWith("/parse-engine/verdict") && init?.method === "POST" ? { status: 200, body: { inboxRefreshed: true } } : undefined)];
     const items = [...PAGE1_ITEMS, row({ id: "other-page", page: 2 })];
     const { panel } = await openInbox(items);
     fireEvent.click(within(panel).getByText("Synthetic p-high")); // the item being worked on is kept
-    fireEvent.click(within(panel).getByRole("button", { name: /Not a table: rest of this sheet \(3\)/ }));
-    fireEvent.click(within(panel).getByRole("button", { name: /Confirm: 3 not a table/ }));
-    await within(panel).findByText("Marked 3 as not a table.");
+    // The fold is closed: p-noise is not on screen, so it is not rejected (a reject is a negative label).
+    fireEvent.click(within(panel).getByRole("button", { name: /Not a table: rest of this sheet \(2\)/ }));
+    fireEvent.click(within(panel).getByRole("button", { name: /Confirm: 2 not a table/ }));
+    await within(panel).findByText("Marked 2 as not a table.");
     const posted = calls.filter((c) => c.method === "POST").map((c) => (c.body as { itemId: string }).itemId);
-    expect(posted).toEqual(["p-low-table", "p-mid", "p-noise"]);
+    expect(posted).toEqual(["p-mid", "p-low-table"]);
     expect(calls.filter((c) => c.method === "POST")[0].body).toMatchObject({
-      pageNumber: 1, itemId: "p-low-table", origin: "proposal", kind: "schedule", proposalId: "p-low-table", verdict: "reject",
+      pageNumber: 1, itemId: "p-mid", origin: "proposal", kind: "schedule", proposalId: "p-mid", verdict: "reject",
     });
+  });
+
+  it("bulk reject: an open fold adds its rows; classified-table / ensemble items never take a verdict", async () => {
+    routes = [(url, init) => (url.endsWith("/parse-engine/verdict") && init?.method === "POST" ? { status: 200, body: { inboxRefreshed: true } } : undefined)];
+    const low = [...PAGE1_LOW, row({ id: "ct:0.10,0.60,0.40,0.80", origin: "classified-table", p: 0.5 }),
+      row({ id: "ens:0.50,0.60,0.90,0.80", origin: "ensemble", p: 0.4 })];
+    const { panel } = await openInbox(PAGE1_ITEMS, low);
+    fireEvent.click(within(panel).getByRole("button", { name: /Low confidence \(3\)/ }));
+    expect(within(panel).getByText("Synthetic ct:0.10,0.60,0.40,0.80")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: /Not a table: rest of this sheet \(4\)/ }));
+    fireEvent.click(within(panel).getByRole("button", { name: /Confirm: 4 not a table/ }));
+    await within(panel).findByText("Marked 4 as not a table.");
+    const posted = calls.filter((c) => c.method === "POST").map((c) => (c.body as { itemId: string }).itemId);
+    expect(posted).toEqual(["p-high", "p-mid", "p-low-table", "p-noise"]);
+  });
+
+  it("All sheets offers no bulk reject (there is no single sheet on screen)", async () => {
+    const { panel } = await openInbox();
+    fireEvent.click(within(panel).getByRole("button", { name: "All sheets" }));
+    await waitFor(() => expect(within(panel).getByRole("list", { name: "Inbox by sheet" })).toBeInTheDocument());
+    expect(within(panel).queryByRole("button", { name: /Not a table: rest of this sheet/ })).toBeNull();
   });
 
   it("bulk reject stops on the first failure", async () => {
@@ -373,6 +506,17 @@ describe("empty state", () => {
     fireEvent.click(within(within(panel).getByRole("status")).getByRole("button", { name: "+ Region" }));
     expect(ws().correction).toBe("draw-region");
     expect(within(panel).queryByRole("link", { name: "Run detection" })).toBeNull();
+  });
+
+  it("a body that is not WP-3.F's grouped shape is an ERROR, never 'nothing detected'", async () => {
+    routes = [flagsRoute(FLAGS_ON), (url) => (url.includes("/parse-engine/items?")
+      ? { status: 200, body: { items: [row({ id: "flat" })], lowConfidence: [] } } : undefined)];
+    mountHost();
+    await waitFor(() => expect(ws().enabled).toBe(true));
+    act(() => openFromToolbar("tables"));
+    const panel = await screen.findByRole("complementary", { name: /tables and notes workspace/i });
+    expect(await within(panel).findByText("The inbox could not be loaded.")).toBeInTheDocument();
+    expect(within(panel).queryByText(/No tables or notes were detected/)).toBeNull();
   });
 
   it("everything reviewed reads differently from nothing detected", async () => {
@@ -432,9 +576,31 @@ describe("drafts", () => {
 });
 
 describe("pure inbox model", () => {
-  it("normalizeItems tolerates partial responses", () => {
-    expect(normalizeItems(null)).toEqual({ items: [], lowConfidence: [] });
-    expect(normalizeItems({ items: [{ id: 1 }, row({ id: "ok" })] }).items.map((i) => i.id)).toEqual(["ok"]);
+  it("normalizeItems flattens WP-3.F's groups, drops malformed rows, and throws on any other shape", () => {
+    const body = itemsBody([row({ id: "a" }), row({ id: "b", page: 3 })], [row({ id: "low", page: 3, p: 0.1 })]);
+    (body.groups[0].items as unknown[]).push({ id: 1 });
+    const data = normalizeItems(body);
+    expect(data.items.map((i) => i.id)).toEqual(["a", "b"]);
+    expect(data.lowConfidence.map((i) => i.id)).toEqual(["low"]);
+    expect(normalizeItems({ scope: "all", indexReady: false, threshold: 0.3, groups: [] })).toEqual({ items: [], lowConfidence: [] });
+    expect(() => normalizeItems(null)).toThrow();
+    expect(() => normalizeItems({ items: [row({ id: "flat" })], lowConfidence: [] })).toThrow();
+  });
+
+  it("the server's score is the sort key when present", () => {
+    expect(itemScore({ p: 0.9, tableP: 0.5, score: 0.2 })).toBeCloseTo(0.2);
+    expect(itemScore({ p: 0.9, tableP: 0.5 })).toBeCloseTo(0.45);
+  });
+
+  it("the Stale filter is hidden while no item is stale (the read has no stale field until WP-5.A)", async () => {
+    const { panel } = await openInbox();
+    expect(within(panel).queryByRole("button", { name: /^Stale/ })).toBeNull();
+    cleanup();
+    resetAll();
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }); // a fresh read, not the cached one
+    routes = [];
+    const again = await openInbox([...PAGE1_ITEMS, row({ id: "old", stale: true, state: "parsed" })]);
+    expect(within(again.panel).getByRole("button", { name: /^Stale 1$/ })).toBeInTheDocument();
   });
 
   it("sort is deterministic on ties (page, then top, then id)", () => {
@@ -454,12 +620,36 @@ describe("classic 'Parse this table' (ProposedTablesSection)", () => {
     }],
   };
 
-  const parseThis = async () => {
-    seedProposalsFromBootstrap(qc, PUB, { proposals: summary });
+  const parseThis = async (s: ProjectProposalSummary = summary, label = "Door schedule", button = "Parse this table") => {
+    seedProposalsFromBootstrap(qc, PUB, { proposals: s });
     render(<Providers><ProposedTablesSection /></Providers>);
-    fireEvent.click(screen.getByText("Door schedule", { selector: "span" }).closest("button")!);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Parse this table" })); });
+    fireEvent.click(screen.getByText(label, { selector: "span" }).closest("button")!);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: button })); });
   };
+
+  it("the proposal opens as its OWN kind (same table as WP-3.F's proposalInboxKind)", async () => {
+    expect(proposalWorkspaceKind("schedule", "door")).toBe("schedule");
+    expect(proposalWorkspaceKind("keynote-table", null)).toBe("keynote");
+    expect(proposalWorkspaceKind("symbol-legend", null)).toBe("legend");
+    expect(proposalWorkspaceKind("general-notes", null)).toBe("notes");
+    expect(proposalWorkspaceKind("text-region", "keynotes")).toBe("keynote");
+    expect(proposalWorkspaceKind("text-region", "abbreviations")).toBe("legend");
+    expect(proposalWorkspaceKind("text-region", "general")).toBe("notes");
+    expect(proposalWorkspaceKind("page-unit", null)).toBeNull();
+    ws().setEnabled(true);
+    const notes: ProjectProposalSummary = { ...summary, items: [{ ...summary.items[0], id: "prop-n", target: "general-notes", classId: null, className: "General notes", displayName: "General notes" }] };
+    await parseThis(notes, "General notes");
+    expect(ws().group).toBe("notes");
+    expect(ws().queue.find((q) => q.id === "prop-n")?.kind).toBe("notes");
+  });
+
+  it("'Accept with tags' opens the workspace at the Tags step", async () => {
+    ws().setEnabled(true);
+    const tagged: ProjectProposalSummary = { ...summary, items: [{ ...summary.items[0], tagRows: 4, tagShape: "circle" } as never] };
+    await parseThis(tagged, "Door schedule", "Accept with tags");
+    expect(ws().selectedKey).toBe("prop-a");
+    expect(ws().step).toBe("tags");
+  });
 
   it("workspace on: opens the proposal as a workspace item and closes the classic panel", async () => {
     ws().setEnabled(true);
