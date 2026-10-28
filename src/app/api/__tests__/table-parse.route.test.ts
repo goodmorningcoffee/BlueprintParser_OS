@@ -85,6 +85,13 @@ vi.mock("@/lib/parse-history", () => ({ addToHistory: h.addToHistory }));
 // The route's crop helper does `(await import("sharp")).default` — vi.mock intercepts
 // dynamic imports too (S024 child_process precedent).
 vi.mock("sharp", () => ({ default: h.sharp }));
+// [TP-3 WP-3.I] THE legacy leg: `tablesRoute` pinned to the shipped default (`legacy`), so a parallel file that stores a
+// global `parseEngine` row (parse-engine-flags.route.test.ts) can never flip this file onto the engine mid-run. The
+// engine leg is table-parse-engine.route.test.ts.
+vi.mock("@/server/services/parse-engine/flags", async (orig) => {
+  const m = await orig<typeof import("@/server/services/parse-engine/flags")>();
+  return { ...m, readParseEngineFlags: async () => m.resolveParseEngineFlags(undefined).flags };
+});
 
 import { POST } from "@/app/api/table-parse/route";
 import {

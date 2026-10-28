@@ -181,6 +181,7 @@ export default function AutoParseTab({
         let tagColumn: string | undefined;
         let firstColBoundaries: number[] | undefined;
         let firstRowBoundaries: number[] | undefined;
+        const serverCsi: { code: string; description: string }[] = []; // K15: the route's company-context CSI
 
         for (let i = 0; i < targetRegions.length; i++) {
           // Each region request is a newly launched async stage. In-flight work may settle, but an
@@ -210,6 +211,7 @@ export default function AutoParseTab({
           lastMethodInfo = result.methods || null;
           lastMethodResults = result.methodResults || null;
           lastMergerNotes = result.mergerNotes || null;
+          for (const t of result.csiTags ?? []) if (!serverCsi.some((s) => s.code === t.code)) serverCsi.push(t);
           if (Array.isArray(result.infraErrors) && result.infraErrors.length > 0) {
             // Tag with region index when multi-region so users can pinpoint
             const tagged = targetRegions.length > 1
@@ -246,7 +248,7 @@ export default function AutoParseTab({
           headers: mergedHeaders,
           rows: mergedRows,
           tagColumn,
-          csiTags: [],
+          csiTags: serverCsi,
           tableName: targetRegions.length > 1 ? `Merged (${targetRegions.length} regions)` : undefined,
           regionId: regionIdFor(targetPageNumber, reviewRegion), // the id detectCsiAndPersist saves under (K01)
           ...(targetRegions.length === 1 && targetHints[0].proposalId ? { proposalId: targetHints[0].proposalId } : {}), // K58: accepted on save

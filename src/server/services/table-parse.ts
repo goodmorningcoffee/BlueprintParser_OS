@@ -57,6 +57,10 @@ import { assertPageNumber } from "@/server/api/parser-input";
 import { resolveProjectOrThrow } from "@/server/api/access";
 import { audit } from "@/lib/audit";
 import { checkTextractCap, recordComputeUsage } from "@/lib/compute-usage";
+// [TP-3 WP-3.I, K15/K20/K27] `tablesRoute = engine`: the parse engine is the merge base (table-parse-engine.ts).
+import { trustedClientIp } from "@/lib/trusted-client-ip";
+import { parseEngineMode, readParseEngineFlags } from "@/server/services/parse-engine/flags";
+import { tableParseOnEngine } from "@/server/services/table-parse-engine";
 
 /**
  * Crop a PNG buffer to a normalized region [x0, y0, x1, y1] using sharp.
@@ -219,8 +223,10 @@ async function resolveTextractTables(
  * POST /api/table-parse — runs multiple parsing methods on a user-selected table
  * region, merges results, and returns the best grid. Returns the response body as a
  * plain object (the shell wraps it) OR the demo-gate NextResponse verbatim (passthrough).
+ * [TP-3 WP-3.I] With the `tablesRoute` flag at `engine` the steps after the OCR check run on the parse
+ * engine instead (`tableParseOnEngine`); at `legacy` (the shipped default) nothing below changes.
  */
-export async function tableParse(rawBody: Record<string, unknown>): Promise<unknown> {
+export async function tableParse(rawBody: Record<string, unknown>, req?: Request): Promise<unknown> {
   const {
     projectId, pageNumber, regionBbox,
     rowTolerance, minColGap, colHitRatio, headerMode,
@@ -259,7 +265,7 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     throw new ApiError("VALIDATION", "Invalid regionBbox: values must be finite numbers in [0,1] with min < max");
   }
 
-  const { project, session } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
+  const { project, session, scope } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 
   if (project.isDemo) {
     const gate = await assertDemoFeatureEnabled(project.companyId, "tableParse");
@@ -296,10 +302,12 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
   }
 
   const textractData = pageRow.textractData as TextractPageData;
+  const engineFlags = await readParseEngineFlags();
+  const onEngine = parseEngineMode(engineFlags, "tablesRoute") === "engine";
 
   // [shape-tags] the page's tag shapes for the shape-centre rows: yolo_primitive rows + the classical parse (`pages.keynotes`).
   let pageShapes: ColumnShape[] = [];
-  if (shapeRows) {
+  if (shapeRows && !onEngine) {
     const yolo = await db
       .select({ name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, data: annotations.data })
       .from(annotations)
@@ -324,6 +332,14 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
     if (persistentEnabled) effectiveDebugMode = true;
   } catch {
     // appSettings query failure is non-fatal — fall back to request-level flag
+  }
+
+  if (onEngine) {
+    return tableParseOnEngine({
+      project, session, scope, ip: trustedClientIp(req?.headers.get("x-forwarded-for") ?? null), pageNumber, regionBbox,
+      storedTableCovers: !!textractData.tables?.length && hasOverlappingTable(textractData.tables, regionBbox),
+      proposalId: rawBody.proposalId, csiCtx, flags: engineFlags, debugMode: effectiveDebugMode, requestDebugMode: !!debugMode,
+    });
   }
 
   // Fetch PDF + rasterize for image-based methods.
