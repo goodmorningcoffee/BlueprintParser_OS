@@ -542,6 +542,15 @@ export const MUTATION_SURFACES = [
   mutation("parse-label-delete", "/api/projects/[id]/parse-labels", "DELETE", "shared-guard", [
     ["src/server/services/parse-labels.ts", "deleteParseLabel"],
   ]),
+  // [table pipeline WP-3.G 2026-10-28] The workspace commit (region + label + verdicts + page CSI + tag
+  // projection, then summaries) and region delete; demo refused for every role by assertProjectWritable
+  // (allowDemo:true only to answer 403). Their helpers are reached only from these routes, so no new sink.
+  mutation("parse-engine-commit", "/api/projects/[id]/parse-engine/commit", "POST", "shared-guard", [
+    ["src/server/services/parse-engine/commit.ts", "commitStructure"],
+  ]),
+  mutation("parse-engine-region-delete", "/api/projects/[id]/parse-engine/region", "DELETE", "shared-guard", [
+    ["src/server/services/parse-engine/region-delete.ts", "deleteWorkspaceRegion"],
+  ]),
   mutation("region-promote", "/api/regions/promote", "POST", "shared-guard", [
     ["src/server/services/regions.ts", "promoteRegion"],
   ]),

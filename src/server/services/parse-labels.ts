@@ -22,7 +22,8 @@
  *
  * Deleting a region drops its label under the same page lock (`withoutParseLabel`, called by
  * `deleteParsedRegion`), so an orphan never pins the page as human work or re-attaches to a later parse of
- * the same box. A whole-array PATCH that drops a region still leaves the label (TP-3 WP-3.G follow-up).
+ * the same box. A whole-array PATCH that drops a region prunes the label under its page lock too
+ * (`pruneOrphanParseLabels`, TP-3 WP-3.G).
  *
  * Demo projects are refused for every method: writes by `assertProjectWritable`; the read explicitly
  * (labels carry user ids).
@@ -174,6 +175,20 @@ export function withoutParseLabel<T extends object>(pageIntelligence: T, regionI
   const rest: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
   delete rest[regionId];
   return { ...pageIntelligence, parseLabels: rest };
+}
+
+/**
+ * [TP-3 WP-3.G] The stored `parseLabels` without the labels whose region is gone from `parsedRegions` (the
+ * whole-array `PATCH /api/pages/intelligence` drops a region without naming it; an orphan label would pin the page
+ * as human work and re-attach to a later parse of the same box). Returns `labels` itself when nothing is pruned
+ * or when it is not an object (a missing key stays missing). Pure; the caller holds the page row lock.
+ */
+export function pruneOrphanParseLabels(labels: unknown, parsedRegions: unknown): unknown {
+  if (!labels || typeof labels !== "object" || Array.isArray(labels)) return labels;
+  const live = new Set(records(parsedRegions).map((r) => r.id).filter((id): id is string => typeof id === "string"));
+  const entries = Object.entries(labels as Record<string, unknown>);
+  const kept = entries.filter(([regionId]) => live.has(regionId));
+  return kept.length === entries.length ? labels : Object.fromEntries(kept);
 }
 
 function isLabel(value: unknown): value is ParseLabel {
