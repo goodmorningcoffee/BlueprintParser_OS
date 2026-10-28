@@ -23,6 +23,7 @@ import { apiErrorMessage, persistFetch, persistFetchResult } from "@/lib/client-
 import { refreshPageCsiSpatialMapForTarget } from "@/lib/csi-spatial-refresh-target";
 import { viewHash } from "@/lib/parse-engine/legacy-view";
 import type { BboxMinMax, CorrectionOp, ParseRecipe, StructureKind, StructureModel } from "@/lib/parse-engine/types";
+import type { CommitRefusal, CommitRequest, CommitResponse, TagSummary } from "@/lib/parse-engine/types-commit";
 import { ensurePageIntelligence, readPageIntelligence, setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { invalidateWorkspaceItems } from "@/queries/useWorkspaceItems";
@@ -36,50 +37,8 @@ export const commitUrl = (publicId: string) => `${base(publicId)}/commit`;
 export const verdictUrl = (publicId: string) => `${base(publicId)}/verdict`;
 
 // ── wire ──────────────────────────────────────────────────────────────────────────────────────────
-// ⚠ MIRROR, field for field, of WP-3.G's `src/lib/parse-engine/types-commit.ts` (tp/wp-3-g 2f214a8). That file is
-// a sibling WP's (§5.1: no shared files inside a group), so it is not on this branch. AT INTEGRATION delete these
-// five declarations and write `export type { CommitRequest, TagSummary, CommitTagsDelta, CommitResponse,
-// CommitRefusal } from "@/lib/parse-engine/types-commit";` — the tests also check the body against a copy of
-// 3.G's `zCommitBody`, to be swapped for the real one then.
-
-export interface CommitRequest {
-  recipe: ParseRecipe;
-  ops: CorrectionOp[];
-  base?: StructureModel;
-  evidenceHash?: string;
-  regionId?: string;
-  revision?: number;
-  viewHash?: string;
-  onConflict?: "keep-both";
-  tableName?: string;
-  links?: { proposalId?: string; textRegionKey?: string; continues?: string };
-  secondsToAccept?: number;
-}
-
-/** "Mapped 14 tags · 212 hits · 3 with none" (C3-M2). Absent when the model has no tag keys. */
-export interface TagSummary { keys: number; tags: number; hits: number; none: number; noneKeys: string[]; scope: "sheet" | "project" }
-
-export interface CommitTagsDelta { rows: unknown[]; removed: string[]; replacedRegionIds: string[] }
-
-export interface CommitResponse {
-  ok: true;
-  regionId: string;
-  revision: number;
-  kind: StructureKind;
-  parsedRegion: unknown;
-  updatedIntelligence: unknown;
-  csiCodeCount: number;
-  tagSummary?: TagSummary;
-  tags: CommitTagsDelta;
-  summaries: unknown;
-}
-
-export type CommitRefusal =
-  | { reason: "stale"; regionId: string; revision: number | null; viewHash?: string }
-  | { reason: "conflict"; conflict: { regionId: string; kind: StructureKind; title: string; revision: number; viewHash: string; bbox: BboxMinMax } }
-  | { reason: "rebased"; rebased: StructureModel; changedRows: number | null; evidenceHash: string }
-  | { reason: "ops-lost"; lost: { index: number; op: CorrectionOp["op"] }[] }
-  | { reason: "paid-expired"; paidExpired: true; methods: string[] };
+// WP-3.G's contract, the single copy (integrate g2 replaced WP-3.M's field-for-field mirror).
+export type { CommitRequest, TagSummary, CommitTagsDelta, CommitResponse, CommitRefusal } from "@/lib/parse-engine/types-commit";
 
 // ── outcomes ─────────────────────────────────────────────────────────────────────────────────────
 

@@ -18,20 +18,18 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { PARSE_ENGINE_CAPS, type BboxMinMax, type CorrectionOp } from "@/lib/parse-engine/types";
-import { GROUP_KINDS, useTablesWorkspaceStore } from "@/stores/tablesWorkspaceStore";
+import { GROUP_KINDS, useTablesWorkspaceStore, type WorkspaceCorrection } from "@/stores/tablesWorkspaceStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useWorkspaceCanvasStore, type CanvasDrawMode } from "@/stores/workspaceCanvasStore";
 import { drawItemKey, openItem } from "@/stores/workspaceCommands";
+import { addContinuationPart } from "../ContinuationControls";
 import { isolateDispatcherKeys } from "../keyboard";
 import type { ToPage } from "./LineHandles";
 import { boxStyle } from "./StructureLines";
 import { pageUnit } from "./lineModel";
 
-/**
- * The `tablesWorkspaceStore.correction` value WP-3.M's "+ Add continuation box" arms. Typed `string` so this file
- * compiles before and after WP-3.M widens `WorkspaceCorrection` with it.
- */
-export const DRAW_CONTINUATION: string = "draw-continuation";
+/** The `tablesWorkspaceStore.correction` value WP-3.M's "+ Add continuation box" arms. */
+export const DRAW_CONTINUATION = "draw-continuation" satisfies WorkspaceCorrection;
 
 export type DrawMode = "draw-region" | "draw-continuation" | CanvasDrawMode;
 
@@ -48,23 +46,6 @@ const PROMPTS: Readonly<Record<DrawMode, string>> = {
 function cancel(mode: DrawMode): void {
   if (mode === "draw-region" || mode === "draw-continuation") useTablesWorkspaceStore.getState().setCorrection(null);
   else useWorkspaceCanvasStore.getState().disarm();
-}
-
-const sameBox = (a: readonly number[], b: readonly number[]) => a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
-
-/**
- * Add a continuation box to an item's draft. [integration] Same contract as WP-3.M's
- * `ContinuationControls.addContinuationPart` (not in this branch yet); once both are merged this lands through it.
- */
-function landContinuation(itemKey: string, bbox: BboxMinMax): boolean {
-  const ws = useTablesWorkspaceStore.getState();
-  const d = ws.drafts[itemKey];
-  if (!d) return false;
-  const parts = d.parts ?? [];
-  if (parts.length >= PARSE_ENGINE_CAPS.parts || sameBox(d.bbox, bbox) || parts.some((p) => sameBox(p, bbox))) return false;
-  ws.putDraft(itemKey, { ...d, parts: [...parts, [...bbox] as BboxMinMax], result: null });
-  if (ws.correction === DRAW_CONTINUATION) ws.setCorrection(null);
-  return true;
 }
 
 /** What a finished box does in each mode (exported for tests). */
@@ -86,7 +67,7 @@ export function completeBox(mode: DrawMode, pageNumber: number, bbox: BboxMinMax
       ws.setCorrection(null);
       return;
     }
-    landContinuation(key, bbox);
+    addContinuationPart(key, bbox); // WP-3.M's landing (integrate g2: replaced 3.O's same-contract copy)
     return;
   }
   const canvas = useWorkspaceCanvasStore.getState();

@@ -32,8 +32,7 @@ export default function WorkspaceCanvasLayer({ pageNumber }: { pageNumber: numbe
   const selectedKey = useTablesWorkspaceStore((s) => s.selectedKey);
   const draft = useTablesWorkspaceStore((s) => (s.selectedKey ? s.drafts[s.selectedKey] : undefined));
   const queuePage = useTablesWorkspaceStore((s) => (s.selectedKey ? s.queue.find((q) => q.id === s.selectedKey)?.page : undefined));
-  // read as a string: WP-3.M widens `WorkspaceCorrection` with "draw-continuation"
-  const correction: string | null = useTablesWorkspaceStore((s) => s.correction);
+  const correction = useTablesWorkspaceStore((s) => s.correction);
   const armed = useWorkspaceCanvasStore((s) => s.armed);
   const armedKey = armed?.itemKey;
   const armedDraftGone = useTablesWorkspaceStore((s) => armedKey !== undefined && !(armedKey in s.drafts));

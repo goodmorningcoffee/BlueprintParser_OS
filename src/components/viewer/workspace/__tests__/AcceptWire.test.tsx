@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readFileSync } from "node:fs";
 import type { ReactNode } from "react";
 import { z } from "zod";
 
@@ -28,8 +29,9 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { openFromToolbar, openItem } from "@/stores/workspaceCommands";
 import type { PageIntelligence } from "@/types";
 
-// ⚠ COPY of WP-3.G's `zCommitBody` (src/server/services/parse-engine/commit.ts @ tp/wp-3-g 2f214a8). It is not on this
-// branch (§5.1); at integration import the real one instead. Not strict, exactly like 3.G: unknown keys are DROPPED,
+// ⚠ COPY of WP-3.G's `zCommitBody` (src/server/services/parse-engine/commit.ts). Integrate g2 tried importing the
+// real one: commit.ts pulls next-auth → `next/server`, which does not resolve in this jsdom file, so the copy stays
+// and the "copy is verbatim" test below fails on any drift. Not strict, exactly like 3.G: unknown keys are DROPPED,
 // so the checks below also assert the body carries no key 3.G would silently drop.
 const ID = z.string().min(1).max(300);
 const zCommitBodyG = z.object({
@@ -131,6 +133,19 @@ afterEach(() => {
 });
 
 describe("the body against WP-3.G's zCommitBody", () => {
+  it("the copy above is verbatim WP-3.G's zCommitBody (integrate g2 drift guard)", () => {
+    const block = (src: string, start: string) => {
+      const i = src.indexOf(start);
+      const j = src.indexOf('path: ["revision"] });', i);
+      expect(i >= 0 && j > i).toBe(true);
+      return src.slice(i + start.length, j);
+    };
+    const real = block(readFileSync(`${process.cwd()}/src/server/services/parse-engine/commit.ts`, "utf8"), "export const zCommitBody = ");
+    const copy = block(readFileSync(`${process.cwd()}/src/components/viewer/workspace/__tests__/AcceptWire.test.tsx`, "utf8"), "const zCommitBodyG = ");
+    expect(copy).toBe(real);
+    expect(readFileSync(`${process.cwd()}/src/server/services/parse-engine/commit.ts`, "utf8")).toContain('const ID = z.string().min(1).max(300);');
+  });
+
   it("every shape the workspace sends is accepted and loses nothing (links nested, base sent, class on set-kind)", () => {
     const proposal = item({ id: "p-1", proposalId: "p-1", classId: "door-schedule" });
     const plain = buildCommitBody(proposal, drafted(proposal, { continues: "reg-9" }), { secondsToAccept: 4 });

@@ -27,12 +27,13 @@ import {
   removeOp,
 } from "@/components/viewer/workspace/canvas/lineModel";
 import { DISPATCHER_KEYS, focusScopedKeys, WorkspaceKeyScope } from "@/components/viewer/workspace/keyboard";
-import type {
-  CorrectionOp,
-  ParseEngineFlags,
-  ParseResult,
-  StructureParagraphDoc,
-  StructureTableModel,
+import {
+  ParseEngineNotImplementedError,
+  type CorrectionOp,
+  type ParseEngineFlags,
+  type ParseResult,
+  type StructureParagraphDoc,
+  type StructureTableModel,
 } from "@/lib/parse-engine/types";
 import type { WorkspaceItem, WorkspaceItemsResponse } from "@/queries/useWorkspaceItems";
 import { useProposalFocusStore } from "@/stores/proposalFocusStore";
@@ -48,8 +49,10 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { resetWorkspaceCanvasStore, useWorkspaceCanvasStore } from "@/stores/workspaceCanvasStore";
 import { drawItemKey, openFromToolbar, startDraw } from "@/stores/workspaceCommands";
 
-// applyOps is the WP-2.E stub on this branch; a test can make it fail differently (VERIFY F3).
+// applyOps is WP-3.D's real one since integrate g2; a test can make it fail (VERIFY F3) or play the WP-2.E stub
+// (`asStub()`: the local line preview only runs on that path).
 const opsMock = vi.hoisted(() => ({ fail: null as Error | null }));
+const asStub = () => { opsMock.fail = new ParseEngineNotImplementedError("applyOps"); };
 vi.mock("@/lib/parse-engine/ops", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/parse-engine/ops")>();
   return {
@@ -212,6 +215,7 @@ describe("lineModel (pure)", () => {
   });
 
   it("previews line ops locally while applyOps is the WP-2.E stub", () => {
+    asStub();
     const ops: CorrectionOp[] = [
       { op: "move-line", axis: "rows", after: "r1", at: 0.42 },
       { op: "add-line", axis: "rows", at: 0.15 },
@@ -262,6 +266,7 @@ describe("lineModel (pure)", () => {
       cols: [{ id: "c0", x0: 0.1, x1: 0.25, label: "Key", labelRaw: "KEY" }, { id: "c1", x0: 0.25, x1: 0.4, label: "Text", labelRaw: "TEXT" }],
     };
     const result: ParseResult = { ...RESULT, model: side };
+    asStub(); // the local preview's id-less added line (integrate g2; the real applyOps case follows this test)
     const ops: CorrectionOp[] = [{ op: "add-line", axis: "rows", at: 0.45 }];
     const linesNow = () => {
       const preview = previewModel(result, ops);
@@ -287,12 +292,48 @@ describe("lineModel (pure)", () => {
     expect(pinned.map((l) => [l.part, l.after, l.at])).toEqual([[0, null, 0.15], [0, null, 0.3], [1, "r3", 0.25]]);
   });
 
+  // integrate g2: the same side-by-side gesture through WP-3.D's real applyOps (an added line is id-keyed there)
+  it("side-by-side continuation parts with the real applyOps: dragging an added line never moves another part's lines", () => {
+    const side: StructureTableModel = {
+      ...TABLE, bbox: [0.1, 0.1, 0.4, 0.5], parts: [[0.5, 0.1, 0.8, 0.5]],
+      rows: [
+        { id: "r0", y0: 0.1, y1: 0.2, role: "header" },
+        { id: "r1", y0: 0.2, y1: 0.3, role: "body" },
+        { id: "r2", y0: 0.3, y1: 0.5, role: "body" },
+        { id: "r3", y0: 0.1, y1: 0.25, role: "body", part: 1 },
+        { id: "r4", y0: 0.25, y1: 0.5, role: "body", part: 1 },
+      ],
+      cols: [{ id: "c0", x0: 0.1, x1: 0.25, label: "Key", labelRaw: "KEY" }, { id: "c1", x0: 0.25, x1: 0.4, label: "Text", labelRaw: "TEXT" }],
+    };
+    const result: ParseResult = { ...RESULT, model: side };
+    const ops: CorrectionOp[] = [{ op: "add-line", axis: "rows", at: 0.45 }];
+    const linesNow = () => {
+      const preview = previewModel(result, ops);
+      expect(preview.exact).toBe(true);
+      return { lines: canvasLines(result, ops, preview, "rows"), edges: axisEdges(result, ops, preview, "rows") };
+    };
+    const asTuples = () => linesNow().lines.map((l) => [l.part, l.after, l.at]);
+    // add-line keeps the upper id (WP-3.D): the new line is after r2, so it is moved by id, never by set-lines
+    expect(asTuples()).toEqual([[0, "r0", 0.2], [0, "r1", 0.3], [0, "r2", 0.45], [1, "r3", 0.25]]);
+    let was = 0.45;
+    for (const to of [0.46, 0.47]) {
+      const { lines, edges } = linesNow();
+      const added = lines.find((l) => l.part === 0 && l.at === was)!;
+      was = to;
+      const op = moveOp(added, to, lines, edges)!;
+      expect(op).toEqual({ op: "move-line", axis: "rows", after: "r2", at: to });
+      ops.push(op);
+      expect(asTuples()).toEqual([[0, "r0", 0.2], [0, "r1", 0.3], [0, "r2", to], [1, "r3", 0.25]]);
+    }
+  });
+
   it("an id-less line of a later part has no op (set-lines is part 0's) and is not editable", () => {
     const stacked: StructureTableModel = {
       ...TABLE, parts: [[0.1, 0.6, 0.6, 0.8]],
       rows: [...TABLE.rows, { id: "r3", y0: 0.6, y1: 0.8, role: "body", part: 1 }],
     };
     const result: ParseResult = { ...RESULT, model: stacked };
+    asStub(); // "only reachable on the stub path" (lineModel.ts header); integrate g2
     const ops: CorrectionOp[] = [{ op: "add-line", axis: "rows", at: 0.7 }];
     const preview = previewModel(result, ops);
     const lines = canvasLines(result, ops, preview, "rows");
@@ -305,6 +346,7 @@ describe("lineModel (pure)", () => {
 
   it("only the not-implemented stub falls back to the local preview; any other applyOps failure is surfaced", () => {
     const ops: CorrectionOp[] = [{ op: "move-line", axis: "rows", after: "r1", at: 0.42 }];
+    asStub();
     expect(previewModel(RESULT, ops)).toEqual({ model: TABLE, exact: false });
     opsMock.fail = new Error("synthetic validation failure");
     const preview = previewModel(RESULT, ops);
@@ -562,7 +604,8 @@ describe("keyboard isolation against the real overlay dispatcher (§1.6 rule 14,
     fireEvent.keyDown(handle, { key: "Delete" });
     expect(opsOf()).toEqual([{ op: "remove-line", axis: "rows", after: "r0" }]);
     fireEvent.keyDown(screen.getByRole("slider", { name: "Row line 1" }), { key: "Backspace" });
-    expect(opsOf()[1]).toEqual({ op: "remove-line", axis: "rows", after: "r1" });
+    // WP-3.D's remove-line keeps `after` (r0 absorbs r1), so the line now under "Row line 1" is after r0 (integrate g2)
+    expect(opsOf()[1]).toEqual({ op: "remove-line", axis: "rows", after: "r0" });
     expect(options.removeAnnotation).not.toHaveBeenCalled();
     expect(options.setSelectedId).not.toHaveBeenCalled();
     expect(fetchCalls.filter((c) => c.method === "DELETE")).toEqual([]);
