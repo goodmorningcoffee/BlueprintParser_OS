@@ -37,6 +37,8 @@ import ViewAllPanel from "./ViewAllPanel";
 import PageWindowLoaderController from "./PageWindowLoaderController";
 import TextractLoaderController from "./TextractLoaderController";
 import VectorGeometryPrefetchController from "./VectorGeometryPrefetchController";
+import { useHighlightViewportFocus, useZoomAnchorReapply } from "./useViewerViewport";
+import { anchoredScroll, nextWheelScale, zoomAnchorAt } from "./viewerZoomAnchor";
 import {
   loadViewport,
   saveViewport,
@@ -61,6 +63,7 @@ export default function PDFViewer({
   onRename,
 }: PDFViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const pageWrapRef = useRef<HTMLDivElement>(null);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -113,26 +116,11 @@ export default function PDFViewer({
     }
   }, [pageNumber, numPages, assetBaseUrl]);
 
-  // Scroll to highlighted region (tag browse + LLM highlights)
+  // Centre (and for fit requests, zoom to) highlighted regions: tag browse, LLM, View All rows.
   const llmHighlight = useUiStore((s) => s.llmHighlight);
   const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
-  useEffect(() => {
-    if (!llmHighlight || !containerRef.current) return;
-    const dim = pageDimensions[llmHighlight.pageNumber];
-    if (!dim) return;
-    const [minX, minY, maxX, maxY] = llmHighlight.bbox;
-    const centerX = ((minX + maxX) / 2) * dim.width * scale;
-    const centerY = ((minY + maxY) / 2) * dim.height * scale;
-    const container = containerRef.current;
-    // Small delay to let page render after navigation
-    setTimeout(() => {
-      container.scrollTo({
-        left: Math.max(0, centerX - container.clientWidth / 2),
-        top: Math.max(0, centerY - container.clientHeight / 2),
-        behavior: "smooth",
-      });
-    }, 100);
-  }, [llmHighlight, pageDimensions, scale]);
+  useHighlightViewportFocus(containerRef, pageWrapRef, llmHighlight);
+  const armZoomAnchor = useZoomAnchorReapply(containerRef, pageWrapRef, scale);
 
   // Keyboard shortcuts: a = pointer/select, v = pan/zoom (hold V = temp pan in tools)
   const isPanningRef = useRef(false);
@@ -444,26 +432,20 @@ export default function PDFViewer({
       e.stopPropagation();
 
       const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left + container.scrollLeft;
-      const mouseY = e.clientY - rect.top + container.scrollTop;
-
+      const pageRect = pageWrapRef.current?.getBoundingClientRect() ?? null;
       const oldScale = scaleRef.current;
-      // Finer zoom steps for trackpad (1% per step) vs mouse wheel (3% per step)
-      const isFineScroll = e.deltaMode === 0 && Math.abs(e.deltaY) < 50;
-      const step = isFineScroll ? 0.995 : 0.97;
-      const factor = e.deltaY < 0 ? 1 / step : step;
-      const newScale = Math.max(0.2, Math.min(oldScale * factor, 10));
+      const newScale = nextWheelScale(oldScale, e.deltaY, e.deltaMode);
       scaleRef.current = newScale;
 
-      // Adjust scroll to keep cursor position stable
+      // Keep the PAGE point under the cursor (the padding around the page does not scale): scroll now, and
+      // re-apply once the page has resized, since this assignment is clamped to the old scroll size.
       const ratio = newScale / oldScale;
-      const newScrollLeft = mouseX * ratio - (e.clientX - rect.left);
-      const newScrollTop = mouseY * ratio - (e.clientY - rect.top);
-
-      // Set scroll BEFORE scale update so they apply in the same frame
-      // This eliminates the 1-frame position jump
-      container.scrollLeft = newScrollLeft;
-      container.scrollTop = newScrollTop;
+      const anchor = zoomAnchorAt(e.clientX, e.clientY, pageRect, rect);
+      const scroll = { left: container.scrollLeft, top: container.scrollTop };
+      const next = anchoredScroll(anchor, pageRect, rect, scroll, ratio, e);
+      container.scrollLeft = next.left;
+      container.scrollTop = next.top;
+      armZoomAnchor(anchor, (pageRect?.width ?? 0) * ratio);
 
       // Immediate scale update for CSS transform feedback
       // PDFPage debounces the expensive re-rasterization separately (300ms)
@@ -477,7 +459,7 @@ export default function PDFViewer({
     });
     return () =>
       document.removeEventListener("wheel", handleWheel, { capture: true });
-  }, [setScale]);
+  }, [setScale, armZoomAnchor]);
 
   // Click-drag pan
   const [isPanning, setIsPanning] = useState(false);
@@ -672,7 +654,7 @@ export default function PDFViewer({
                     paddingRight: "25vw",
                   }}
                 >
-                  <div style={{ width: "fit-content", margin: "0 auto" }}>
+                  <div ref={pageWrapRef} style={{ width: "fit-content", margin: "0 auto" }}>
                     <PDFPage
                       pdfDoc={pdfDoc}
                       pageNumber={pageNumber}
