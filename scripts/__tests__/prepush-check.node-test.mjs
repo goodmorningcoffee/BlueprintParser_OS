@@ -253,6 +253,25 @@ test("authors: a bad committer alone is refused, and so is a first name with a n
   }
 });
 
+test("authors: GitHub's web-flow committer (web merges and edits) is allowlisted; a personal committer with that name is not", async () => {
+  const repo = await repoWith(IGNORE_OK);
+  try {
+    await put(repo, "a.txt", "a\n");
+    git(repo, "add", "a.txt");
+    commitAs(repo, "a.txt", { GIT_COMMITTER_NAME: "GitHub", GIT_COMMITTER_EMAIL: "noreply@github.com" });
+    const ok = run(repo);
+    assert.equal(ok.status, 0, ok.stderr);
+    await put(repo, "b.txt", "b\n");
+    git(repo, "add", "b.txt");
+    const bad = commitAs(repo, "b.txt", { GIT_COMMITTER_NAME: "GitHub", GIT_COMMITTER_EMAIL: BAD_MAIL });
+    const r = run(repo);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, new RegExp(`\\n\\s+${bad} committer-email\\n`, "u"));
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("authors: a bad commit the remote already has (behind a remote-tracking ref) is not new and passes", async () => {
   const repo = await repoWith(IGNORE_OK);
   try {

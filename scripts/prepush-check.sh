@@ -90,11 +90,14 @@ MF_IGNORE_PAIRS='/src/data/csi-kb.json eval/csi/build-kb-v2.ts
 # Checks 8 and the pre-commit hook: the only identities allowed in pushed commits (author AND committer).
 # GitHub noreply addresses only — a personal mailbox in commit metadata is public forever. A contributor
 # adds their own noreply identity per clone: git config --add prepush.allowedEmail <addr> (and allowedName).
+# `GitHub <noreply@github.com>` is GitHub's own web-flow committer (web merges and web edits); it names no person.
 ALLOWED_EMAILS='goodmorningcoffee@users.noreply.github.com
 48738308+goodmorningcoffee@users.noreply.github.com
-251408002+deliciousnoodles@users.noreply.github.com'
+251408002+deliciousnoodles@users.noreply.github.com
+noreply@github.com'
 ALLOWED_NAMES='goodmorningcoffee
-deliciousnoodles'
+deliciousnoodles
+GitHub'
 
 ZERO_SHA='0000000000000000000000000000000000000000'
 US=$(printf '\037')   # field separator for git --format output: never appears in a name, path or message line
