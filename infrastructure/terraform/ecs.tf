@@ -36,8 +36,8 @@ locals {
   # P2/P5 safety freeze: there are exactly two admissible operational states.
   # Keeping each tuple explicit prevents a partial outage from leaving one
   # launcher live or an autoscaler able to repopulate a drained service.
-  beaver_writer_outage_tuple           = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled
-  beaver_writer_live_tuple             = var.ecs_desired_count == 1 && var.ecs_min_count == 1 && var.ecs_max_count == 1 && var.ecs_autoscaling_enabled && var.maintenance_worker_schedule_enabled
+  beaver_writer_outage_tuple            = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled
+  beaver_writer_live_tuple              = var.ecs_desired_count == 1 && var.ecs_min_count == 1 && var.ecs_max_count == 1 && var.ecs_autoscaling_enabled && var.maintenance_worker_schedule_enabled
   beaver_writer_operational_tuple_valid = local.beaver_writer_outage_tuple || local.beaver_writer_live_tuple
 }
 

@@ -416,7 +416,7 @@ resource "aws_iam_role_policy" "beaver_sagemaker_ecr" {
     Statement = [
       {
         Sid      = "ResolvePrivateRegistryToken"
-        Effect = "Allow"
+        Effect   = "Allow"
         Action   = "ecr:GetAuthorizationToken"
         Resource = "*"
       },
