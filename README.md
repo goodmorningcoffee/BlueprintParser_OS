@@ -1,76 +1,238 @@
 # BlueprintParser
 
-**Live demo**: https://app.blueprintparser.com/demo  
-**BP Docs**: https://app.blueprintparser.com/docs
+[![ci](https://github.com/goodmorningcoffee/BlueprintParser_OS/actions/workflows/ci.yml/badge.svg)](https://github.com/goodmorningcoffee/BlueprintParser_OS/actions/workflows/ci.yml)
 
-BlueprintParser is a Next.js PDF-viewer [web app] and a blueprint parsing engine.
+**Live demo:** https://app.blueprintparser.com/demo · **Docs:** https://app.blueprintparser.com/docs
 
-BlueprintParser **v2** is a complete refactor of the v1 code previously published in this
-repository: a layered server (`src/server/`), a query layer (`src/queries/`), split viewer stores,
-a deterministic CSI tagger, a Tables & Notes workspace on a new parse engine, and a hardened AWS
-deployment. It is **source-available, not open source** — see [License](#license).
+BlueprintParser turns a set of construction drawings into machine-readable, CSI-tagged data, and
+puts a PDF viewer, takeoff tools, schedule and note parsers and an LLM chat on top of it.
+
+Upload a drawing set and the pipeline rasterises every sheet, OCRs it, finds the sheet number, tags
+the text with MasterFormat (CSI) codes, classifies text regions, tables, keynotes and zones, builds
+per-sheet "page intelligence" and a project knowledge graph, and indexes everything for search. In
+the viewer you count, measure and bucket-fill, parse schedules and notes, map schedule tags back onto
+the drawings, and chat with the whole set through an LLM that can call BlueprintParser's own tools
+and point at what it found.
+
+**v2** is a complete refactor of the v1 code previously published in this repository: a layered
+server (`src/server/`), a query layer (`src/queries/`), split viewer stores, a deterministic CSI
+tagger, a Tables & Notes workspace on a new parse engine, and a hardened AWS deployment. It is
+**source-available, not open source** — see [License](#license).
 
 ---
 
-## Features
+## Contents
 
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Architecture on AWS](#architecture-on-aws)
+- [LLM chat and agent tools](#llm-chat-and-agent-tools)
+- [YOLO models](#yolo-models)
+- [Quick start (local development)](#quick-start-local-development)
+- [Build prerequisites: data and models that are not in this repository](#build-prerequisites-data-and-models-that-are-not-in-this-repository)
+- [Running the tests](#running-the-tests)
+- [Deploying to AWS](#deploying-to-aws)
+- [Security model](#security-model)
+- [Repository layout](#repository-layout)
+- [Tech stack](#tech-stack)
+- [Project goal](#project-goal)
+- [License](#license)
 
-- Manual and AI-assisted quantity takeoffs 
-- Extract schedules/tables from PDF to CSV
-- LLM chat with entire projects without blowing up context
-  - BP includes a context engine that uses multiple methods for creating dense, token-efficient blueprint embeddings
-- Agent tool use _(work in progress)_
-  - BP tools can be operated by agents
-  - Agents can query blueprints and provide more accurate answers with citations
-- Blueprint parsing engine
-  - Backend tooling that makes PDF CDs machine readable
-  - YOLO object detection models detect shapes and spatial zones.
-  - Rasterize PDF and OCR all text
-  - CSI tagging: tag all CSI codes in the drawings
-  - OpenCV tools for extracting shapes and visual information
-  - Auto name Sheets / Drawing numbers
-  - Network graph engine: build nodes and edges between sheets in a project and between projects in a portfolio.
+---
 
-See all features and more in the BlueprintParser docs, link up top.
+## What it does
 
-### New in v2
+### Takeoff
 
-- **Tables & Notes workspace** — table, keynote, general-note and spec proposals found during processing land in one inbox per project; focus one, parse it, correct it, commit it as tag maps. Runs on a new parse engine that replaces the legacy parsers tool by tool behind flags.
-- **CSI tagger v2** — a deterministic span tagger over a MasterFormat lookup table: no model at tagging time, same page → same codes, and every code points at the words that produced it.
-- **Bucket fill** — click inside a boundary to fill it; a raster engine by default and a vector engine (adapted from OpenTakeoff, Apache-2.0) that traces the PDF's own linework.
-- **Project knowledge graph and cross-set links** — sheets that reference each other, within a project and across projects.
-- **Classifier builder** — rule recipes with fitted weights for recognising schedules and other page regions.
-- **Admin data tools** — stuck jobs, duplicate pages and projects, annotation cleanup, permanent delete, and a portable `bp-export/1` project export; per-user and per-company usage quotas; security and usage logs.
-- **Mandatory two-factor login for root admins**, optional Google sign-in, database-backed login lockouts.
+- **Count, linear and area takeoffs** with groups, per-item notes and CSV export.
+- **Scale calibration** per sheet; every length and area is derived from the scale you set.
+- **Bucket fill** — click inside a boundary to fill it. The default raster engine works on the page
+  image; the vector engine (adapted from OpenTakeoff, Apache-2.0) traces the PDF's own linework.
+  Bucket fill outputs a polygon; square footage comes from your calibration.
+- **Auto-QTO** — a guided workflow that turns parsed schedules plus tag instances found on the
+  drawings into takeoff line items.
+- **Markup**: rectangles, polygons, text; annotation groups; split an annotation along a drawn
+  boundary; lasso multi-select.
 
-### Current YOLO Classes
+### Parsing
 
-There are two general categories: "discrete and spatial" classes.
+- **Tables & Notes workspace** — every table, keynote legend, general-note block and spec block
+  found during processing lands in one inbox per project, sorted by confidence. Focus one, pick the
+  row/column method, correct lines and cells on the page, add a continuation box when a table runs
+  onto another sheet, and commit it as tag maps. It runs on one **parse engine** that replaces the
+  legacy parsers tool by tool behind admin flags, with a kill switch back to the classic path.
+- **Classic parsers** — table parsing with OCR grid, Textract, OpenCV line detection, img2table and
+  Table Transformer methods (auto, guided and manual), plus keynote, general-note and spec parsers.
+- **Tag mapping** — schedule tags (`D-01`, `T-03`, …) are matched to their instances on the drawings
+  by five matchers that combine YOLO boxes, nearby text and inferred tag patterns.
+- **Symbol search** — draw a box around a symbol and template-match it across the set.
+- **Export** parsed tables to CSV, and the whole project as a portable `bp-export/1` bundle.
 
-#### Discrete Classes
+### Understanding the set
 
-Examples:
+- **CSI tagger v2** — a deterministic span tagger over a MasterFormat 2018 lookup table. No model at
+  tagging time, same page → same codes, and every code points at the words that produced it.
+- **Page intelligence** — text-region classification, a heuristic engine (keywords + YOLO spatial
+  signals + CSI affinity), a table meta-classifier (door schedule, finish schedule, …), page zones,
+  and a per-page evidence layer that the LLM context builder reads.
+- **Classifier builder** — rule recipes (CSI-tagged table words, sheet number, title-block and
+  header text) with fitted weights for recognising schedules and other regions, built in the admin.
+- **YOLO object detection** — bring your own Ultralytics model; inference runs as a SageMaker job
+  and the results re-score the heuristics, create annotations and feed the CSI heatmap.
+- **Knowledge graph and cross-set links** — which sheets reference which, within a project and across
+  projects; discipline breakdown, CSI topology and summaries per project.
+- **Duplicate detection** — hidden duplicate pages (hide, restore or permanently delete them) and
+  duplicate projects.
+- **Search** across OCR text, with ranked, highlighted results.
 
-- `door_single`
-- `square`
-- `schedule_table`
+### Operating it
 
-#### Spatial Classes
+- An **admin dashboard** with 19 tabs owns every tunable: pipeline toggles and page concurrency,
+  reprocess by scope, LLM context budgets and system prompt, CSI settings, heuristics, classifiers,
+  table parsing, AI models and RBAC, companies and users, quotas and usage, data tools (stuck jobs,
+  duplicates, annotation cleanup, export), security and visitor logs.
+- **Multi-tenant** by company, with per-user and per-company quotas and a public demo mode.
+- **Label Studio integration** for building YOLO datasets from your own drawings.
 
-Examples:
+---
 
-- `title_block`
-- `drawings`
-- `text_block`
+## How it works
 
-Spatial classes define regions of the drawings, and help with localization and corroboration. Since we use OCR, we also have the pixel coordinates of all text, which we can map against the YOLO outputs.
-For instance, when extracting the drawing number, we can check if the drawing number is located inside a title_block region.  
-Or, when looking for the door schedule, BP knows to look for the sheet where the words "door schedule" occur inside a "schedule_table" region, and can double check the title_block for coraberating text like "door and window schedule".  
-BP uses spatial data to build CSI-heatmaps, which show the distribution of CSI codes on a sheet. YOLO spatial data enables us to differentiate between a cluster of CSI codes that are occuring in a text_block vs the drawings vs inside a schedule vs the title_block. YOLO spatial classes are baby steps towards building a visual-reasoning engine for blueprints.
+Every sheet goes through the same cascade. Each stage is wrapped on its own, so one failing stage
+does not stop the sheet, and everything a stage produces is stored in PostgreSQL and fed, priority
+ordered and budgeted, into the LLM context.
 
-YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings.
+```mermaid
+flowchart TB
+  U["Upload a PDF set"] --> S3[("S3")]
+  S3 --> SFN["Step Functions"]
+  SFN --> T["ECS processing task<br/>8 sheets in parallel by default"]
 
-## NOTE on YOLO Models
+  subgraph sheet ["Per sheet"]
+    direction TB
+    R["Ghostscript raster at 300 DPI<br/>optional tile pyramid"] --> O["OCR<br/>Textract → half-res retry → local Tesseract"]
+    O --> N["Sheet number<br/>title-block regex + position scoring"]
+    N --> C["CSI span tagger<br/>MasterFormat lookup table"]
+    C --> D["Text-annotation detectors<br/>keynote and shape extraction"]
+    D --> PI["Page intelligence<br/>text regions · heuristics · table classifier · zones · evidence"]
+    PI --> H["CSI spatial heatmap"]
+    H --> FTS["Full-text search index"]
+  end
+
+  T --> R
+  FTS --> P["Project analysis<br/>disciplines · summaries · CSI topology"]
+  P --> KG["Knowledge graph · cross-set links<br/>duplicate detection"]
+  KG --> DB[("PostgreSQL")]
+
+  subgraph demand ["On demand"]
+    direction TB
+    Y["YOLO on SageMaker GPU<br/>→ annotations, heuristic re-scoring"]
+    L["CV Lambda fan-out<br/>symbol search · shape parse"]
+    E["Parse engine<br/>tables · keynotes · notes · specs → tag maps"]
+  end
+
+  DB --> demand
+  demand --> DB
+  DB --> V["Viewer"]
+  DB --> LLM["LLM context builder → chat"]
+```
+
+Read bottom-up, the outputs form a cascade where each system's output is the next one's input:
+
+```
+raw pixels → OCR words → spatial clusters → semantic regions → classified tables
+→ YOLO–text bindings → tag patterns → page intelligence → project graph → LLM context
+```
+
+Locally, the same code runs in-process inside `npm run dev` when `STEP_FUNCTION_ARN` is empty, so
+no Step Functions is needed to develop. The full tour — pipeline, CSI tagger, table parsing, tag
+mapping, Auto-QTO, bucket fill, LLM context builder, viewer architecture, admin tabs, database tables
+and the key design decisions — is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+---
+
+## Architecture on AWS
+
+The production stack is Terraform under `infrastructure/terraform/`, driven by `./deploy-aws.sh`.
+The browser never sees an S3 key: every PDF, page image and thumbnail is served by the app's own
+same-origin asset gateway with tenant checks, and the CloudFront distribution in front of the bucket
+is a deny-all gate with no read grant.
+
+```mermaid
+flowchart LR
+  B["Browser<br/>pdf.js viewer + canvas overlays"] -->|"HTTPS"| ALB["Application Load Balancer<br/>TLS 1.3 / 1.2 · circuit breaker"]
+
+  subgraph vpc ["VPC · private subnets behind NAT"]
+    direction LR
+    ALB --> APP["ECS Fargate · app<br/>Next.js 16 + API<br/>asset gateway"]
+    APP --> RDS[("RDS PostgreSQL 16<br/>Multi-AZ in production")]
+    APP --> S3[("Private S3<br/>PDFs · page images · results · weights")]
+    APP --> SEC["Secrets Manager"]
+    APP --> SFN["Step Functions"]
+    SFN --> CPU["ECS Fargate · processing task<br/>8 vCPU · Ghostscript · OpenCV · Python"]
+    CPU --> S3
+    CPU --> RDS
+    APP -.->|"root-only, on demand"| SAGE["SageMaker processing job<br/>YOLO on ml.g4dn.xlarge"]
+    APP -.->|"fan-out"| LAM["Lambda · CV<br/>symbol search · shape parse"]
+    S3 -->|"delete events"| EB["EventBridge → SQS"] --> DEL["ECS · asset deletion worker"]
+    ALB -.->|"optional"| LS["Label Studio on ECS + EFS"]
+  end
+
+  CPU --> TX["Textract OCR"]
+  CF["CloudFront<br/>deny-all gate, no S3 read grant"] -.->|"404"| S3
+```
+
+| Resource | Config |
+| --- | --- |
+| ECS Fargate | 2 vCPU / 4 GB app service (capacity capped by `ecs_max_count`), 8 vCPU / 16 GB processing tasks, a singleton schema migrator, a maintenance worker and the asset-deletion worker; task definitions are digest-pinned |
+| RDS | PostgreSQL 16, db.t4g.medium, 50 GB gp3, encrypted, 7-day backups |
+| S3 + CloudFront | One versioned private bucket; app-gated reads; CloudFront answers 404 |
+| ECR | 4 repositories (app, processing, YOLO, CV Lambda), scan on push |
+| SageMaker | On-demand processing jobs for YOLO; no local inference path |
+| Secrets Manager | 9 secrets, 7-day recovery window, injected through the task definitions |
+| Budgets / CloudWatch | Cost budget and CloudWatch alarms; one-day private ALB access logs |
+
+WAF, GuardDuty and CloudTrail are owner-managed and not created by this Terraform. Everything else,
+including the first-deploy bootstrap and the schema-change outage procedure, is in
+**[docs/DEPLOY.md](docs/DEPLOY.md)**.
+
+---
+
+## LLM chat and agent tools
+
+The context builder is the compression engine: it turns roughly 250K tokens of raw OCR for a set into
+about 6K tokens of structured, priority-ordered context, which is what makes small models viable for
+blueprint questions. Twenty page-level sections and six project-wide sections each have a priority
+and a percentage of a model-aware budget, with unused allocation flowing to an overflow pool. The
+section list, budgets, presets and system prompt are edited in Admin → LLM / Context, which also has
+a context preview.
+
+```mermaid
+flowchart LR
+  Q["Question in the viewer"] --> CB["Context builder<br/>26 sections · priority · budget"]
+  CB --> M["Provider<br/>Anthropic · OpenAI · Groq · OpenAI-compatible"]
+  M -->|"tool call (Anthropic)"| T["20 BlueprintParser tools<br/>search · read · analyse · act"]
+  T --> M
+  M -->|"streamed answer"| A["Answer with citations"]
+  T -.->|"navigate · highlight · markup"| V["Viewer follows along"]
+```
+
+With Anthropic models the chat runs an agentic loop of up to ten tool rounds over these tools:
+
+| Group | Tools |
+| --- | --- |
+| Find and read | `searchPages`, `getProjectOverview`, `getPageDetails`, `lookupPagesByIndex`, `getPageOcrText`, `getOcrTextInRegion`, `getAnnotations`, `getParsedSchedule` |
+| Spatial and structural | `getCsiSpatialMap`, `getSpatialContext`, `getCrossReferences` |
+| Analyse | `detectCsiFromText`, `scanYoloClassTexts`, `mapTagsToPages`, `detectTagPatterns` |
+| Act in the viewer | `navigateToPage`, `highlightRegion`, `createMarkup`, `addNoteToAnnotation`, `batchAddNotes` |
+
+OpenAI, Groq and OpenAI-compatible endpoints (for example Ollama) get the same context without tool
+use. Keys resolve per user, then per company, then from the environment; root admins can grant
+company users the owner's keys with caps.
+
+---
+
+## YOLO models
 
 The YOLO models used in the demo were hand-labeled and trained by myself.
 
@@ -79,35 +241,29 @@ The YOLO models used in the demo were hand-labeled and trained by myself.
 
 The trained weights and training datasets are not included in this repository.
 BlueprintParser is designed so users can upload and use their own object-detection models.
-(In this version, uploading weights is a root-admin action that stays off until `ALLOW_MODEL_UPLOAD=true`, and inference runs as an AWS SageMaker job — see [YOLO models](#yolo-models-bring-your-own) below.)
+(In this version, uploading weights is a root-admin action that stays off until `ALLOW_MODEL_UPLOAD=true`,
+and inference runs as an AWS SageMaker job — see [YOLO models (bring your own)](#yolo-models-bring-your-own) below.)
 
----
+There are two general categories of class: **discrete** and **spatial**.
 
-## Project Goal
+| Discrete classes (examples) | Spatial classes (examples) |
+| --- | --- |
+| `door_single` | `title_block` |
+| `square` | `drawings` |
+| `schedule_table` | `text_block` |
 
-It started with trying to build a free quantity takeoff tool, expanded with extracting schedules/tables to excel, and eventually evolved into a LLM harness for blueprints.
+Spatial classes define regions of the drawings and help with localisation and corroboration. Since we
+use OCR, we also have the pixel coordinates of all text, which we can map against the YOLO outputs.
+For instance, when extracting the drawing number, we can check whether it is located inside a
+`title_block` region. When looking for the door schedule, BP knows to look for the sheet where the
+words "door schedule" occur inside a `schedule_table` region, and can double-check the title block
+for corroborating text like "door and window schedule".
 
-Its not enough to rely on LLMs, it's necesary to give them tools that empower them to do more with blueprints.
-
----
----
-
-## How it works
-
-```
-Upload PDF ─► S3 ─► Step Functions ─► processing task (per page, 8 at a time)
-   Ghostscript raster ─► OCR (AWS Textract → half-res retry → local Tesseract)
-   ─► drawing number ─► CSI codes ─► text annotations ─► page intelligence
-      (text regions, heuristics, table/schedule classification) ─► CSI heatmap ─► search index
-   ─► project analysis ─► knowledge graph and cross-set links
-User-triggered: YOLO (SageMaker GPU job) ─► YOLO-aware re-scoring; table/keynote parsing; Auto-QTO; LLM chat
-```
-
-Every step is independent: one failing step does not stop the page. Everything a step produces is
-stored in PostgreSQL and fed, priority-ordered and budgeted, into the LLM context. The full tour —
-pipeline, CSI tagger, table parsing, tag mapping, Auto-QTO, bucket fill, LLM context builder, viewer
-architecture, admin tabs, database tables and the key design decisions — is in
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+BP uses spatial data to build CSI heatmaps, which show the distribution of CSI codes on a sheet. YOLO
+spatial data lets us differentiate between a cluster of CSI codes occurring in a `text_block`, in the
+`drawings`, inside a schedule, or in the `title_block`. YOLO spatial classes are baby steps towards a
+visual-reasoning engine for blueprints: YOLO acts as the "eyes" for LLMs and agents, enabling them to
+"see" into the drawings.
 
 ---
 
@@ -203,9 +359,9 @@ fails without it. Locally, TATR is simply unavailable when the folder is missing
 
 ### YOLO models (bring your own)
 
-The demo's YOLO weights are the maintainer's own work and are not distributed (see "NOTE on YOLO
-Models" above); every weight file is gitignored and `scripts/prepush-check.sh` refuses weights in any
-pushed commit. To use your own:
+The demo's YOLO weights are the maintainer's own work and are not distributed (see
+[YOLO models](#yolo-models) above); every weight file is gitignored and `scripts/prepush-check.sh`
+refuses weights in any pushed commit. To use your own:
 
 - **Train** an [Ultralytics](https://docs.ultralytics.com/) YOLO detection model (`.pt`) on your
   classes. The in-app Label Studio integration (labeling sessions; `docker compose --profile labeling`
@@ -251,6 +407,10 @@ database on every run — never point `BP_TEST_DATABASE_URL` at data you care ab
 mention `scripts/bp-suite`: that is the maintainer's private wrapper, which runs vitest with
 `--maxWorkers=4`, both `BP_REQUIRE_*` flags set and the full log written to a file.)
 
+CI (`.github/workflows/ci.yml`) runs Terraform fmt and validate, the four policy checks, the
+typecheck, the script tests, the unit tests against a seeded PostgreSQL service, the production
+build, and the offline golden-path e2e.
+
 ---
 
 ## Deploying to AWS
@@ -261,7 +421,7 @@ Secrets Manager, driven by `./deploy-aws.sh` (`doctor`, `bootstrap`, `release`, 
 roughly $150–300 a month. Read **[docs/DEPLOY.md](docs/DEPLOY.md)** first — it covers the scripts, the
 Terraform resources, the first-deploy bootstrap and the schema-change outage procedure.
 
-## Configuration
+### Configuration
 
 | File | Purpose |
 | --- | --- |
@@ -297,13 +457,13 @@ Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 | Path | What |
 | --- | --- |
-| `src/app/` | Next.js App Router pages and API routes (route files are thin shells); in-app docs at `src/app/docs/` |
+| `src/app/` | Next.js App Router pages and 163 API route files (thin shells over `src/server/`); in-app docs at `src/app/docs/` |
 | `src/server/` | HTTP shell + services: routes declare `defineRoute()`, every project write goes through `withProjectWrite` |
 | `src/queries/` | TanStack Query layer (canonical keys in `queryKeys.ts`) |
-| `src/lib/` | Processing, OCR, CSI, parsing, tag mapping, LLM context, parse engine, classifier engine |
+| `src/lib/` | Processing, OCR, CSI, parsing, tag mapping, LLM context, parse engine, classifier engine, knowledge graph |
 | `src/components/`, `src/stores/` | React viewer/admin UI and Zustand stores |
-| `src/workers/` | Web workers (bucket fill) |
-| `drizzle/` | SQL migrations (`0000`–`0039`) and the migration journal |
+| `src/workers/` | Web workers (bucket fill, vector tracing) |
+| `drizzle/` | SQL migrations (`0000`–`0039`) and the migration journal; 31 tables |
 | `scripts/` | Gate scripts (`check-*.mjs`), Python CV helpers (`*.py`), setup and operator scripts, `prepush-check.sh` |
 | `eval/` | CSI tagger and parse-engine evaluation harnesses (numbers only; private inputs stay outside) |
 | `e2e/`, `perf/`, `playwright*.config.ts` | Playwright golden paths and performance harnesses |
@@ -334,6 +494,16 @@ Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short: run the checks above, install the push guard
 (`scripts/prepush-check.sh --install`), and commit with your GitHub noreply e-mail address.
+
+---
+
+## Project goal
+
+It started with trying to build a free quantity takeoff tool, expanded with extracting
+schedules/tables to spreadsheets, and eventually evolved into an LLM harness for blueprints.
+
+It's not enough to rely on LLMs; it's necessary to give them tools that empower them to do more with
+blueprints.
 
 ---
 
