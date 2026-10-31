@@ -90,39 +90,6 @@ It started with trying to build a free quantity takeoff tool, expanded with extr
 Its not enough to rely on LLMs, it's necesary to give them tools that empower them to do more with blueprints.
 
 ---
-
-## Future Goals as of May, 2026
-
-- Rebuild a headless version of the BP parsing engine
-  - Frontend agnostic
-  - Usable by tools like Claude Cowork/Code, Codex and agent harnesses.
-
-- Build a lightweight frontend optimized for LLM/"chat with the drawings".
-
-- Expand agent tool use
-  - Enable an agent to do a full QTO using BP's tools. With better tool use, agents can more effectively navigate the plans, answer more complex questions with citations derived from the drawings, and actually interact with blueprints.
-
-- Eventually rebuild the frontend entirely, it's full of bugs and the UI is janky.
-
----
-
-## Training Data requirements for YOLO
-
-I believe there are at least ~200 blueprint object classes that, if trained properly, could enable an AI-QTO engine to handle 80–90% of "each" takeoffs across trades.
-A truly comprehensive blueprint object-detection system would likely exceed 400 classes. To label this many classes, it would take 50-100+ annotators working full time for 6-12 months, require hundreds of thousands of bid grade CDs, a robust annotator workforce management system, and lots of data labeling and ML ops. Factor in hosting cost for that many annotators and the compute for training the models, the capital to build this dataset could be a 6 or 7 figure investment.
-
-Then, we have to do this again for image segmentation (surface area), classification, for fine tuning LLMs, and much more.
-
-There is a tremendous data labeling challenge ahead of the AEC industry.
-
----
-
-## Why This Matters
-
-We have to solve the "drawing problem" if the AEC industry wants to one day, build its own VLM or foundation models. Spatial reasoning is a must. To get there will require a massive and sustained data labeling campaign, that likely will require coordination between unlikely partners to succeed.
-
-BlueprintParser is a small step in that direction, and hopefully contributes toward the development of an open source ai community in AEC and specifically for Estimators.
-
 ---
 
 ## How it works
