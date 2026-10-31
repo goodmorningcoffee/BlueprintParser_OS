@@ -321,7 +321,76 @@ export default async function globalSetup() {
     console.log(
       `[e2e-setup] world ready: project ${publicId} + demo ${demoPublicId} (${E2E.pages} pages each)`,
     );
+    await warmDevServerRoutes({ publicId, demoPublicId });
   } finally {
     await pool.end();
   }
+}
+
+// Playwright boots the webServer entries before globalSetup, so the dev server is up here. Compile
+// the routes the golden paths touch ONE AT A TIME before any test does. Measured 2026-10-31 in the
+// first run on a cold `.next`: the viewer's project-open fires `/api/demo/projects/[id]` and its
+// sibling `/api/demo/projects/[id]/pages` in parallel, and the pages route answered a framework 404
+// for the rest of that dev-server lifetime (valid route, partial app-path manifest — the same
+// Next 16 behaviour e2e/start-dev-server.mjs cleans `.next/dev` for). The demo window then came back
+// empty and flow 4 saw no parsed table. A sequential warm-up with a bounded retry turns that into a
+// setup-time error with a name instead of a flaky assertion three minutes later.
+async function warmDevServerRoutes(ids: { publicId: string; demoPublicId: string }) {
+  const base = process.env.BP_E2E_BASE_URL ?? "http://localhost:3100";
+  const mustBe200 = [
+    `/api/demo/projects/${ids.demoPublicId}`,
+    `/api/demo/projects/${ids.demoPublicId}/pages?from=1&to=15`,
+  ];
+  // Compiled for warmth only; without a session these answer 401/redirects, never a framework 404
+  // once compiled, so any response is accepted.
+  const warmOnly = [
+    "/login",
+    "/home",
+    `/demo/project/${ids.demoPublicId}`,
+    `/project/${ids.publicId}`,
+    `/api/projects/${ids.publicId}`,
+    `/api/projects/${ids.publicId}/pages?from=1&to=15`,
+    `/api/annotation-groups?projectId=${ids.publicId}`,
+    `/api/projects/${ids.publicId}/parse-engine/flags`,
+    `/api/projects/${ids.publicId}/page-flags`,
+    `/api/pages/textract?publicId=${ids.publicId}&pageNumber=1`,
+    `/api/search?publicId=${ids.publicId}&q=page`,
+  ];
+  const attempts = 10;
+  const pauseMs = 2_000;
+  for (const path of mustBe200) {
+    let last = "no response";
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const res = await fetch(base + path, { redirect: "manual" });
+        if (res.status === 200) {
+          last = "";
+          break;
+        }
+        last = `HTTP ${res.status}`;
+      } catch (error) {
+        last = error instanceof Error ? error.message : String(error);
+        if (/ECONNREFUSED/.test(last)) {
+          console.warn(`[e2e-setup] dev server not reachable at ${base}; skipping route warm-up`);
+          return;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    }
+    if (last) {
+      throw new Error(
+        `[e2e-setup] ${path} never answered 200 (${last} after ${attempts} attempts): the dev server ` +
+          "returned a framework 404 for a valid route (partial .next/dev manifest) or is unhealthy",
+      );
+    }
+  }
+  for (const path of warmOnly) {
+    try {
+      const res = await fetch(base + path, { redirect: "manual" });
+      if (res.status === 404) console.warn(`[e2e-setup] warm-up ${path} answered 404`);
+    } catch (error) {
+      console.warn(`[e2e-setup] warm-up ${path} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  console.log(`[e2e-setup] routes warm (${mustBe200.length + warmOnly.length})`);
 }

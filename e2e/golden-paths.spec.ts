@@ -124,10 +124,22 @@ async function visibleCanvasBox(
 
 async function openSchedulesPanel(page: import("@playwright/test").Page) {
   const heading = page.getByRole("heading", { name: "Schedules / Tables" });
-  if (!(await heading.isVisible())) {
-    await page.getByTitle("Schedules & Table Parser").click();
+  if (await heading.isVisible()) return;
+  await page.getByTitle("Schedules & Table Parser").click();
+  // [TP-3] With the parse-engine workspace flag on (the code default) the toolbar opens the Tables
+  // workspace once its flags have loaded, and the classic panel is one click inside
+  // ("Classic tools ▸"). Before the flags resolve the same button opens the classic panel directly
+  // (and the demo viewer always does), so the outcome of one click is a fetch race: wait for
+  // whichever surface appears and step through the workspace when it is the one that did.
+  const classicTools = page.getByRole("button", { name: "Classic tools" });
+  await Promise.race([
+    heading.waitFor({ state: "visible", timeout: 15_000 }),
+    classicTools.waitFor({ state: "visible", timeout: 15_000 }),
+  ]).catch(() => undefined);
+  if (!(await heading.isVisible()) && (await classicTools.isVisible())) {
+    await classicTools.click();
   }
-  await expect(heading).toBeVisible();
+  await expect(heading).toBeVisible({ timeout: 15_000 });
 }
 
 async function openAllTables(page: import("@playwright/test").Page) {
