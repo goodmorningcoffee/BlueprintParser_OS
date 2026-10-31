@@ -416,8 +416,8 @@ test("schema cutover policy freezes exact writer tuples, witnessed modes, and le
         "infrastructure/terraform/ecs.tf",
         (source) =>
           source.replace(
-            "  beaver_writer_outage_tuple           = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled",
-            "  beaver_writer_outage_tuple           = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 2 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled\n  # beaver_writer_outage_tuple = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled",
+            "  beaver_writer_outage_tuple            = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled",
+            "  beaver_writer_outage_tuple            = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 2 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled\n  # beaver_writer_outage_tuple = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled",
           ),
       );
       const result = runSchemaPolicy(root);
