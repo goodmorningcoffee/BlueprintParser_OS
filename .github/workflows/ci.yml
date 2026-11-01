@@ -57,6 +57,10 @@ jobs:
       PROCESSING_WEBHOOK_SECRET: ci-dummy
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the deploy-aws script tests resolve the parent of the
+          # commit that introduced a migration; a depth-1 checkout has no parent.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
