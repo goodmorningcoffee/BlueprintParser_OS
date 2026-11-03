@@ -848,9 +848,10 @@ describe("viewer UI command freeze — unified project lifecycle", () => {
       }),
     );
     expect(properties).toEqual({
-      helpMode: "false",
+      helpMode: "true",
       showTips: "false",
       showChatPanel: "false",
+      showDetections: "true",
       showTableParsePanel: "true",
     });
 

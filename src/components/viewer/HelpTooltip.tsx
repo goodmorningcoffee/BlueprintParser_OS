@@ -75,6 +75,7 @@ export default function HelpTooltip({ id, children, position = "below" }: HelpTo
       className="relative inline-flex"
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
+      onMouseDown={handleLeave}
     >
       {children}
       {visible && helpMode && coords && createPortal(

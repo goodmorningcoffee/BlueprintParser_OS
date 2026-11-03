@@ -146,7 +146,7 @@ export function Section02Viewer() {
               </li>
               <li>
                 Menu dropdown
-                <div className="text-[var(--muted)]">Labeling wizard (YOLO training export), Settings, Page Intelligence toggle, Admin link, Help tips toggle, Export PDF (disabled placeholder).</div>
+                <div className="text-[var(--muted)]">Labeling wizard (YOLO training export), Settings, Page Intelligence toggle, Admin link, Help mode (hover tips) and Help banner (one-line button legend), Export PDF (disabled placeholder).</div>
               </li>
               <li>
                 Text search
@@ -489,7 +489,7 @@ export function Section02Viewer() {
           The menu collects operations that don&apos;t belong on the main toolbar:
           a labeling wizard for building YOLO training sets, a settings modal,
           a toggle for the Page Intelligence panel, a link to the admin dashboard,
-          and a help tips toggle that reveals contextual tooltips across the UI.
+          and two help switches: Help mode (hover tips on every wrapped control) and Help banner (a one-line legend of the toolbar buttons).
           <InlineCode>Export PDF</InlineCode> is present but disabled &mdash;
           it&apos;s the obvious future feature.
         </p>

@@ -15,6 +15,7 @@ import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useShallow } from "zustand/react/shallow";
 import PDFPage from "./PDFPage";
 import ViewerToolbar from "./ViewerToolbar";
+import HelpTooltip from "./HelpTooltip";
 import PageSidebar from "./PageSidebar";
 import TextPanel from "./TextPanel";
 import ChatPanel from "./ChatPanel";
@@ -525,7 +526,7 @@ export default function PDFViewer({
     useLayoutUiActions();
   const showTableCompareModal = useUiStore((s) => s.showTableCompareModal);
 
-  // Demo page sets helpMode: false, showTips: false directly — no auto-override needed
+  // Demo defaults (helpMode on, showTips off, showDetections on) are set by adoptProject in src/lib/project-lifecycle.ts
 
   return (
     <>
@@ -546,57 +547,43 @@ export default function PDFViewer({
           />
           <GroupActionsBar />
 
-          {/* Help tips banner — dismissible, toggleable from Menu → Help */}
+          {/* Help banner — one-line button legend, toggled from Menu → Help banner; the
+              Help ON/Off button inside it is the hover-tips switch (same as Menu → Help mode). */}
           {showTips && (
             <div className="h-8 bg-[var(--surface)] border-b border-[var(--border)] flex items-center justify-center px-4 shrink-0">
-              <div className="flex items-center gap-3 text-[11px] -ml-16">
-                <span className="text-[var(--fg)]/50 font-medium">
-                  BUTTONS:
-                </span>
-                <span className="text-[var(--fg)]/60">
-                  Menu — Data labeling & more
-                </span>
-                <span className="text-[var(--border)]">|</span>
-                <span className="text-purple-400/80">
-                  YOLO — Toggle AI detections on/off
-                </span>
-                <span className="text-[var(--border)]">|</span>
-                <span className="text-sky-400/80">
-                  Text — Phone, abbreviations & more
-                </span>
-                <span className="text-[var(--border)]">|</span>
-                <span className="text-blue-400/80">
-                  Chat — Talk with LLM about blueprints
-                </span>
-                <span className="text-[var(--border)]">|</span>
-                <span className="text-emerald-400/80">QTO — Count + area</span>
-                <span className="text-[var(--border)]">|</span>
-                <span className="text-amber-400/80 inline-flex items-center gap-1">
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    className="inline-block"
-                  >
-                    <ellipse cx="8" cy="8" rx="7" ry="4.5" />
-                    <circle cx="8" cy="8" r="2" fill="currentColor" />
-                  </svg>
-                  — Toggle simple_parse on/off
-                </span>
+              <div className="flex items-center gap-3 text-[11px] min-w-0 overflow-x-auto whitespace-nowrap">
+                <span className="text-[var(--fg)]/50 font-medium">BUTTONS:</span>
+                {[
+                  ["Menu", "labeling, settings, admin, help"],
+                  ["View All", "everything parsed, show/hide"],
+                  ["Tools", "CSI, text, page intel"],
+                  ["YOLO", "detections panel"],
+                  ["Parse", "shape, template, tag map"],
+                  ["QTO", "count, area, linear"],
+                  ["Chat", "ask the LLM"],
+                  ["Schedules", "schedule & table parser"],
+                  ["Specs/Notes", "keynotes, notes, tags"],
+                ].map(([name, what], i) => (
+                  <span key={name} className="text-[var(--fg)]/60 inline-flex items-center gap-3">
+                    {i > 0 && <span className="text-[var(--border)]">|</span>}
+                    <span>
+                      <span className="text-[var(--fg)]/80 font-medium">{name}</span> — {what}
+                    </span>
+                  </span>
+                ))}
               </div>
-              <button
-                onClick={toggleHelpMode}
-                className={`text-[11px] ml-4 px-2 py-0.5 rounded border transition-colors ${
-                  helpMode
-                    ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10 animate-pulse"
-                    : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]/50"
-                }`}
-              >
-                {helpMode ? "Help ON" : "Help Mode Off"}
-              </button>
+              <HelpTooltip id="help-mode-toggle">
+                <button
+                  onClick={toggleHelpMode}
+                  className={`text-[11px] ml-4 px-2 py-0.5 rounded border transition-colors ${
+                    helpMode
+                      ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10 animate-pulse"
+                      : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]/50"
+                  }`}
+                >
+                  {helpMode ? "Help ON" : "Help Mode Off"}
+                </button>
+              </HelpTooltip>
               <button
                 onClick={toggleTips}
                 className="text-[var(--muted)] hover:text-[var(--fg)] text-sm ml-2 w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--surface)]"

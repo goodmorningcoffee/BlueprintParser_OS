@@ -81,6 +81,9 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const setTradeFilter = useUiStore((s) => s.setTradeFilter);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
   const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
+  const helpMode = useUiStore((s) => s.helpMode);
+  const toggleHelpMode = useUiStore((s) => s.toggleHelpMode);
+  const toggleTips = useUiStore((s) => s.toggleTips);
   const showLabelingWizard = useSessionStore((s) => s.showLabelingWizard);
   const setShowLabelingWizard = useSessionStore((s) => s.setShowLabelingWizard);
 
@@ -266,7 +269,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
-            title="Drag to lasso-select annotations, shift-click to add. Then Group / Edit / Delete."
+            title="Drag to lasso-select, click to toggle. With 2+ selected: Group / Add to… / Delete."
           >
             <span className="block">Group</span><span className="block">Select</span>
           </button>
@@ -336,11 +339,19 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             >
               Admin
             </a>
+            {/* Help mode = hover tips (HelpTooltip); the banner is the one-line button legend.
+                Both used to sit behind a single "Help" entry that only opened the banner. */}
             <button
-              onClick={() => { setMenuOpen(false); useUiStore.getState().toggleTips(); }}
+              onClick={() => { setMenuOpen(false); toggleHelpMode(); }}
               className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
             >
-              Help
+              Help mode: {helpMode ? "on" : "off"}
+            </button>
+            <button
+              onClick={() => { setMenuOpen(false); toggleTips(); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
+            >
+              Help banner
             </button>
           </div>
         )}
@@ -481,17 +492,19 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       <div className="flex">
       {/* View All — unified tree + macro-visibility control. Positioned
           left of YOLO so it reads as the "everything" entry point. */}
-      <button
-        onClick={toggleViewAllPanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showViewAllPanel
-            ? "border-violet-400/60 text-violet-300 bg-violet-400/12"
-            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-        }`}
-        title="View All — unified tree over every parsed element + hide/show toggles at every level"
-      >
-        View All
-      </button>
+      <HelpTooltip id="view-all-button">
+        <button
+          onClick={toggleViewAllPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showViewAllPanel
+              ? "border-violet-400/60 text-violet-300 bg-violet-400/12"
+              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
+          }`}
+          title="View All — unified tree over every parsed element + hide/show toggles at every level"
+        >
+          View All
+        </button>
+      </HelpTooltip>
 
       {/* Tools — D4 container: CSI + Text + Page Intelligence
           (replaces the former standalone Text/CSI buttons and the "Page

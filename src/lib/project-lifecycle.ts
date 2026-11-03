@@ -229,10 +229,13 @@ function adoptProject(
     if (!canPublish()) return false;
     useParseFlowStore.setState({ tableParseTab: "auto" });
     if (!canPublish()) return false;
+    // Demo defaults (owner, 2026-11-03): hover help on, every YOLO detection drawn (confidence is
+    // zeroed above), chat closed, the classic Tables panel open. The help banner stays closed.
     useUiStore.setState({
-      helpMode: false,
+      helpMode: true,
       showTips: false,
       showChatPanel: false,
+      showDetections: true,
       showTableParsePanel: true,
     });
     if (!canPublish()) return false;

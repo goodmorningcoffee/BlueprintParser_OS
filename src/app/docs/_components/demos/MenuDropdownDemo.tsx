@@ -35,7 +35,10 @@ export function MenuDropdownDemo() {
           Admin
         </a>
         <button className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]">
-          Help
+          Help mode: on
+        </button>
+        <button className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]">
+          Help banner
         </button>
       </div>
     </div>

@@ -58,6 +58,8 @@ export default function DemoProjectPage() {
     return () => {
       handle.dispose();
       if (activeOpenRef.current === handle) activeOpenRef.current = null;
+      // Demo-only defaults (adoptProject demo branch) must not follow the visitor into a real project.
+      useUiStore.setState({ helpMode: false, showDetections: false });
     };
   }, [load]);
 
