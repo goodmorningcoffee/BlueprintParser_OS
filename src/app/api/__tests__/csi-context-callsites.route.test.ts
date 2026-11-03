@@ -56,6 +56,10 @@ import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { asUser, createPage, createUser, createWorld, makeReq } from "@/test/harness";
+import { existsSync as __hasKbExists } from "node:fs";
+import { join as __hasKbJoin } from "node:path";
+// KB-backed tests skip without src/data/csi-kb.json (gitignored, owner ruling D1; see src/test/global-setup.ts).
+const HAS_KB = __hasKbExists(__hasKbJoin(process.cwd(), "src/data/csi-kb.json"));
 
 const dbUp = inject("dbUp") as boolean;
 const RAW = "DUCTILE IRON UTILITY PIPING";
@@ -63,7 +67,7 @@ const codes = (v: unknown) => ((v as { code: string; triggers?: unknown[] }[]) |
 beforeEach(() => { calls.args.length = 0; dn.v = "C-101"; });
 
 describe.skipIf(!dbUp)("[csi-v2 S6] page context reaches detectCsiCodes at the 3 page-level call sites", () => {
-  it("pages.ts recomputePageCsi", async () => {
+  it.skipIf(!HAS_KB)("pages.ts recomputePageCsi", async () => {
     for (const [drawing, want] of [["C-101", ["33 05 19#1"]], ["A-101", []], [null, []]] as const) {
       calls.args.length = 0;
       const { user, project } = await createWorld();
@@ -78,7 +82,7 @@ describe.skipIf(!dbUp)("[csi-v2 S6] page context reaches detectCsiCodes at the 3
     }
   }, 60000);
 
-  it("reprocess.ts (admin reprocess, full scope)", async () => {
+  it.skipIf(!HAS_KB)("reprocess.ts (admin reprocess, full scope)", async () => {
     const { company, project } = await createWorld();
     const admin = await createUser(company.id, { role: "admin" });
     const page = await createPage(project.id, 1, { textractData: TD as never, rawText: RAW, drawingNumber: "C-101", csiCodes: [] as never });
@@ -93,7 +97,7 @@ describe.skipIf(!dbUp)("[csi-v2 S6] page context reaches detectCsiCodes at the 3
     expect(codes(r.csi)).toEqual(["33 05 19#1"]);
   }, 60000);
 
-  it("processing.ts processProject (fake Textract payload)", async () => {
+  it.skipIf(!HAS_KB)("processing.ts processProject (fake Textract payload)", async () => {
     for (const [drawing, want] of [["C-101", ["33 05 19#1"]], ["A-101", []]] as const) {
       calls.args.length = 0; dn.v = drawing;
       const { project } = await createWorld();

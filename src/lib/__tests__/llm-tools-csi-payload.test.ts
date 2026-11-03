@@ -6,6 +6,10 @@ import { describe, expect, inject, it } from "vitest";
 import { executeToolCall, type ToolContext } from "@/lib/llm/tools";
 import { assertProjectWritable } from "@/server/api/project-write-capability";
 import { createPage, createWorld } from "@/test/harness";
+import { existsSync as __hasKbExists } from "node:fs";
+import { join as __hasKbJoin } from "node:path";
+// KB-backed tests skip without src/data/csi-kb.json (gitignored, owner ruling D1; see src/test/global-setup.ts).
+const HAS_KB = __hasKbExists(__hasKbJoin(process.cwd(), "src/data/csi-kb.json"));
 
 const dbUp = inject("dbUp") as boolean;
 const SLIM_KEYS = new Set(["code", "description", "trade", "confidence"]);
@@ -50,7 +54,7 @@ describe.skipIf(!dbUp)("getPageDetails CSI payload", () => {
 });
 
 describe("detectCsiFromText payload", () => {
-  it("returns slim codes (no division/triggers) through the public demo path", async () => {
+  it.skipIf(!HAS_KB)("returns slim codes (no division/triggers) through the public demo path", async () => {
     const res = await executeToolCall(
       "detectCsiFromText",
       { text: "HOLLOW METAL DOORS AND FRAMES" },

@@ -35,6 +35,10 @@ import {
   readJson,
   signedOut,
 } from "@/test/harness";
+import { existsSync as __hasKbExists } from "node:fs";
+import { join as __hasKbJoin } from "node:path";
+// KB-backed tests skip without src/data/csi-kb.json (gitignored, owner ruling D1; see src/test/global-setup.ts).
+const HAS_KB = __hasKbExists(__hasKbJoin(process.cwd(), "src/data/csi-kb.json"));
 
 const dbUp = inject("dbUp") as boolean;
 const bbox = [0.1, 0.1, 0.2, 0.2];
@@ -98,7 +102,7 @@ describe.skipIf(!dbUp)("PUT/DELETE /api/annotation-groups/[id]", () => {
     expect(res.body.group.notes).toBe("hello");
   });
 
-  it("PUT auto-fills csiCode from notes when csiCode omitted; a manual csiCode wins", async () => {
+  it.skipIf(!HAS_KB)("PUT auto-fills csiCode from notes when csiCode omitted; a manual csiCode wins", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const a = await createGroup(project.publicId, await seedAnnotations(project.publicId, 1));

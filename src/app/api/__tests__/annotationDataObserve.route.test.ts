@@ -41,6 +41,10 @@ import {
   params,
   readJson,
 } from "@/test/harness";
+import { existsSync as __hasKbExists } from "node:fs";
+import { join as __hasKbJoin } from "node:path";
+// KB-backed tests skip without src/data/csi-kb.json (gitignored, owner ruling D1; see src/test/global-setup.ts).
+const HAS_KB = __hasKbExists(__hasKbJoin(process.cwd(), "src/data/csi-kb.json"));
 
 const dbUp = inject("dbUp") as boolean;
 const bbox = [0.1, 0.1, 0.3, 0.3];
@@ -137,7 +141,7 @@ describe.skipIf(!dbUp)("[P4.1 U1] observeAnnotationData at createAnnotationSingl
     expect(shapeRegistryWarns(warn)).toHaveLength(0);
   });
 
-  it("observation runs on the POST-mergeAutoCsi value: note-triggered calibration gains csiCodes and stays warn-free (zCsiExtension tolerance)", async () => {
+  it.skipIf(!HAS_KB)("observation runs on the POST-mergeAutoCsi value: note-triggered calibration gains csiCodes and stays warn-free (zCsiExtension tolerance)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const warn = vi.spyOn(logger, "warn");
@@ -709,7 +713,7 @@ describe.skipIf(!dbUp)("[P4.1 U6] observeAnnotationData — PUT sink + empty-mar
     expect(JSON.stringify(ctx)).not.toContain("hexagon");
   });
 
-  it("PUT note-only auto-csi seed observes the SEEDED value without a false positive", async () => {
+  it.skipIf(!HAS_KB)("PUT note-only auto-csi seed observes the SEEDED value without a false positive", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const id = await seed(project.publicId, { type: "count-marker", shape: "circle", color: "#333", takeoffItemId: 3 });
@@ -728,7 +732,7 @@ describe.skipIf(!dbUp)("[P4.1 U6] observeAnnotationData — PUT sink + empty-mar
   // note-only branch's observation must actually SURFACE drift, not just stay silent on
   // valid seeds. Existing blob is a malformed OBSERVED shape; the auto-csi seed re-persists
   // it → exactly one warn. An unwired seed-branch observe would leave this at zero warns.
-  it("note-only PUT over a MALFORMED existing observed blob warns once at sink=annotations.update (seed-path positive proof)", async () => {
+  it.skipIf(!HAS_KB)("note-only PUT over a MALFORMED existing observed blob warns once at sink=annotations.update (seed-path positive proof)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const id = await seed(project.publicId, {
@@ -788,7 +792,7 @@ describe.skipIf(!dbUp)("[P4.1 U6] observeAnnotationData — PUT sink + empty-mar
   // carry a coincidental top-level `v` key. A note-only PUT re-persists the row's OWN
   // blob (auto-csi seed) — an EXISTING wire, which must NEVER 400 (Verdict 2). The gate
   // arms only for client-supplied body.data.
-  it("note-only PUT on a legacy row with a coincidental v key STILL succeeds (seed path never gated)", async () => {
+  it.skipIf(!HAS_KB)("note-only PUT on a legacy row with a coincidental v key STILL succeeds (seed path never gated)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const id = await seed(project.publicId, { foo: "legacy" });

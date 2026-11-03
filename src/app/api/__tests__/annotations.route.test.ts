@@ -35,6 +35,10 @@ import {
   readJson,
   signedOut,
 } from "@/test/harness";
+import { existsSync as __hasKbExists } from "node:fs";
+import { join as __hasKbJoin } from "node:path";
+// KB-backed tests skip without src/data/csi-kb.json (gitignored, owner ruling D1; see src/test/global-setup.ts).
+const HAS_KB = __hasKbExists(__hasKbJoin(process.cwd(), "src/data/csi-kb.json"));
 
 const dbUp = inject("dbUp") as boolean;
 const bbox = [0.1, 0.1, 0.3, 0.3];
@@ -291,7 +295,7 @@ const postNote = async (publicId: string, note: string) =>
   );
 
 describe.skipIf(!dbUp)("POST /api/annotations — company config threads into detect (D-1)", () => {
-  it("stored tau: 0.99 (and a pre-v2 matchingConfidenceThreshold: 0.99) suppresses codes the default config detects", async () => {
+  it.skipIf(!HAS_KB)("stored tau: 0.99 (and a pre-v2 matchingConfidenceThreshold: 0.99) suppresses codes the default config detects", async () => {
     // Company A: no stored config → default engine → codes detected (I-6 byte-identical path).
     const a = await csiWorld();
     asUser(a.user);
@@ -344,7 +348,7 @@ describe.skipIf(!dbUp)("POST /api/annotations — custom CSI DB threads into det
     return { company, owner, proj };
   }
 
-  it("company with a valid own-prefix pointer detects against its uploaded DB", async () => {
+  it.skipIf(!HAS_KB)("company with a valid own-prefix pointer detects against its uploaded DB", async () => {
     const { owner, proj } = await companyWithCustomDb();
     vi.mocked(downloadFromS3).mockReset();
     vi.mocked(downloadFromS3).mockResolvedValue(Buffer.from(CUSTOM_TSV, "utf-8"));
@@ -362,7 +366,7 @@ describe.skipIf(!dbUp)("POST /api/annotations — custom CSI DB threads into det
     expect(b2.data.csiCodes).not.toContain("99 99 99");
   });
 
-  it("custom-DB load failure → builtin fallback (200, never throws); second request adds ZERO S3 calls", async () => {
+  it.skipIf(!HAS_KB)("custom-DB load failure → builtin fallback (200, never throws); second request adds ZERO S3 calls", async () => {
     const { owner, proj } = await companyWithCustomDb();
 
     // The pointer resolves but the object is gone (deleted-object case) → downloadFromS3 rejects.

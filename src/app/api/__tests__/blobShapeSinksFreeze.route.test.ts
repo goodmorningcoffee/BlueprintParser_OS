@@ -51,6 +51,10 @@ import {
   params,
   readJson,
 } from "@/test/harness";
+import { existsSync as __hasKbExists } from "node:fs";
+import { join as __hasKbJoin } from "node:path";
+// KB-backed tests skip without src/data/csi-kb.json (gitignored, owner ruling D1; see src/test/global-setup.ts).
+const HAS_KB = __hasKbExists(__hasKbJoin(process.cwd(), "src/data/csi-kb.json"));
 
 const dbUp = inject("dbUp") as boolean;
 const bbox = [0.1, 0.1, 0.3, 0.3];
@@ -296,7 +300,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] POST /api/annotations single — createAnnotat
 });
 
 describe.skipIf(!dbUp)("[P4.1 U0] mergeAutoCsi on create — annotations.ts:79-97 sink", () => {
-  it("note-triggered create merges detected codes into data.csiCodes; preserves manual codes, sentinel, and every other key (shallow copy — only csiCodes touched)", async () => {
+  it.skipIf(!HAS_KB)("note-triggered create merges detected codes into data.csiCodes; preserves manual codes, sentinel, and every other key (shallow copy — only csiCodes touched)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const data = {
@@ -330,7 +334,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] mergeAutoCsi on create — annotations.ts:79-9
     expect([...Object.keys(persisted)].sort()).toEqual([...Object.keys(data)].sort());
   });
 
-  it("note-triggered create ADDS a csiCodes key when absent; all other keys + sentinel survive", async () => {
+  it.skipIf(!HAS_KB)("note-triggered create ADDS a csiCodes key when absent; all other keys + sentinel survive", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const data = {
@@ -395,7 +399,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] PUT /api/annotations/[id] — updateAnnotation
     expectDataExactly((await rowById(id)).data, replacement);
   });
 
-  it("PUT note-only (auto-csi triggered, no body.data) MERGES detected codes into the EXISTING row data — sentinel + other keys survive, manual codes preserved (annotations.ts:585-595)", async () => {
+  it.skipIf(!HAS_KB)("PUT note-only (auto-csi triggered, no body.data) MERGES detected codes into the EXISTING row data — sentinel + other keys survive, manual codes preserved (annotations.ts:585-595)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const id = await seed(project.publicId, {
@@ -418,7 +422,7 @@ describe.skipIf(!dbUp)("[P4.1 U0] PUT /api/annotations/[id] — updateAnnotation
     );
   });
 
-  it("PUT with BOTH body.data and note — body.data replaces the blob, then detected codes merge into body.data.csiCodes (old sentinel gone, new key kept)", async () => {
+  it.skipIf(!HAS_KB)("PUT with BOTH body.data and note — body.data replaces the blob, then detected codes merge into body.data.csiCodes (old sentinel gone, new key kept)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const id = await seed(project.publicId, {
